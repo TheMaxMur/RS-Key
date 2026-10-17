@@ -45,7 +45,13 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   catalog expansion, structural refusal/recovery cases, witnessed OATH/FIDO/card
   state transitions, raw report faults, cross-writer configuration-lock checks,
   MSE/audit cryptography, and separate permissions for PIN/config changes and
-  applet reset. Full matrix closure and hardware verification remain pending.
+  applet reset. Expand the remaining numbered families into executable lifecycle,
+  slot/algorithm/policy, optional-extension, keyboard/pinpad, transport and
+  cross-applet scenarios. Include bounded PIN failure cycles, cryptographic
+  seed/identity witnesses, reset isolation, explicit reconnection binding and
+  cleanup failures that retain the original failed verdict. All 182 numbered
+  families have catalog entries; tags do not certify complete variation coverage.
+  Physical verification and model-specific external vendor catalogs remain pending.
 
 - Measure the host tools in their own workspaces (Phase 6): the Python CLI's
   invalid-argument exit and its two JSON streams (`status --json`,

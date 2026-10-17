@@ -8,6 +8,7 @@ from . import codec
 from .cards import connection, encoded_public, fixture_key, sdk_supported
 from .fido import verified
 from .runner import AIDS
+from .openpgp_objects import read_do
 
 PIV_FIXTURE_OBJECT = 0x5F0077
 PGP_PERSONAL_DOS = ((0x5B, b"Oracle<<Fixture"), (0x5E, b"oracle@example.invalid"),
@@ -169,24 +170,24 @@ def pgp_objects(session):
         with session.case(f"openpgp.transition.DO.{tag:04x}", ("O01", "O02", "O07", "G10", "G14"), effects=("write_and_restore_openpgp_DO",)):
             session.require(session.options.openpgp_admin is not None, "DO write requires --openpgp-admin-env")
             pgp = OpenPgpSession(connection(session))
-            original = pgp.get_data(tag)
+            original = read_do(pgp, tag)
             pgp.verify_admin(session.options.openpgp_admin)
             changed = False
             try:
                 pgp.put_data(tag, replacement)
                 changed = True
-                session.check("DO write readback", pgp.get_data(tag), replacement)
+                session.check("DO write readback", read_do(pgp, tag), replacement)
                 logout = session.apdu(codec.apdu(0x20, 0xFF, 0x83))
                 session.require(logout.status == 0x9000, "profile does not support explicit admin logout")
                 trigger = sdk_refused(session, lambda: pgp.put_data(tag, replacement), "unauthenticated DO replacement", 0x6982)
-                session.check("DO unchanged after ACL refusal", pgp.get_data(tag), replacement)
+                session.check("DO unchanged after ACL refusal", read_do(pgp, tag), replacement)
                 session.transition("openpgp.DO", "written_authenticated", "unchanged_unauthenticated", trigger, [trigger, session.evidence()])
             finally:
                 if changed and not session.broken:
                     session.trace.phase = "cleanup"
                     pgp.verify_admin(session.options.openpgp_admin)
                     pgp.put_data(tag, original)
-                    session.check("original DO restored", pgp.get_data(tag), original)
+                    session.check("original DO restored", read_do(pgp, tag), original)
 
 
 def pin_changes(session):

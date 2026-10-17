@@ -30,7 +30,7 @@ def test_OpenPGP_DO_ACL_cases_require_the_intended_refusal(tmp_path, monkeypatch
             if ins == 0x20:
                 self.authorized = p1 != 0xFF
             elif ins == 0xCA:
-                data = self.values[tag]
+                data = codec.tlv(0x65, b"".join(codec.tlv(key, self.values[key]) for key in (0x5B, 0x5F2D, 0x5F35))) if tag == 0x65 else self.values[tag]
             elif ins == 0xDA:
                 value = request[5:5 + request[4]]
                 if not self.authorized:

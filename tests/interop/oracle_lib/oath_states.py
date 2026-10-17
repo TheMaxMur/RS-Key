@@ -227,6 +227,8 @@ def increasing(session):
 
 def reset(session):
     with session.case("oath.transition.reset", ("A12", "X06"), effects=("applet_reset",)):
+        from .reset_witness import snapshot, preserved
+        neighbors = snapshot(session, "oath")
         oath_open(session)
         name = b"oracle-reset-" + session.fixture("oath.reset", 4).hex().encode()
         session.require(name not in oath_names(session), "fixture name already exists")
@@ -240,6 +242,7 @@ def reset(session):
         session.check("RESET empties records", oath_names(session), set())
         refused(session, 0xA2, codec.tlv(0x71, name) + codec.tlv(0x74, bytes(8)), p2=1, label="old-name-after-reset")
         session.transition("oath.lifecycle", "populated", "empty_unlocked", trigger, [trigger, session.evidence()])
+        preserved(session, "oath", neighbors)
 
 
 def run(session):

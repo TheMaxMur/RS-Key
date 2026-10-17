@@ -23,6 +23,12 @@ def raw(session, command, frames, label):
 
 
 def run(session):
+    lengths = sorted({length for boundary in range(57, MAX_HID_MESSAGE + 1, 59)
+                      for length in (boundary - 1, boundary, boundary + 1) if length <= MAX_HID_MESSAGE})
+    for length in lengths:
+        with session.case(f"transport.PING.frame-boundary.{length}", ("T03", "T04", "G03")):
+            payload = session.fixture("transport.every-boundary", length)
+            session.check("every continuation boundary echoes exactly", session.hid_call(HID_PING, payload).data, payload)
     for length in (0, 1, 7, 9, 16):
         with session.case(f"transport.INIT.invalid-length.{length}", ("T02", "G03", "G14")):
             session.require(session.hid is not None, "no HID selected", "excluded_by_mode")

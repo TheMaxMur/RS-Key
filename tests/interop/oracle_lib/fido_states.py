@@ -61,6 +61,7 @@ def pin_change(session):
         parsed = auth_data(registration[2])
         descriptor = {"id": parsed["credential_id"], "type": "public-key"}
         key = public_key(parsed["cose"])
+        readonly = pin_token(session, 64) if info(session).get(4, {}).get("perCredMgmtRO") else None
         version, token = pin_token(session, 2, rp)
         changed = False
         try:
@@ -71,6 +72,10 @@ def pin_change(session):
             query = {1: rp, 2: challenge, 3: [descriptor], 5: {"up": False},
                      6: token_mac(version, token, challenge), 7: version}
             rejected(session, session.ctap(2, query), "token-before-PIN-change")
+            if readonly is not None:
+                rejected(session, cm(session, *readonly, 1), "read-only-token-before-PIN-change")
+                _, renewed = pin_token(session, 64)
+                session.check("PIN change rotates persistent read-only token", renewed != readonly[1])
             authorize(session, query, 2, rp, challenge, 6, 7)
             query[5] = {"up": True}
             assertion = session.ctap_value(session.ctap(2, query))

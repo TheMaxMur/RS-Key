@@ -49,7 +49,7 @@ def oath_names(session):
 def oath(session):
     namespace = b"oracle-" + session.fixture("oath.namespace", 5).hex().encode()
     for algorithm, label, secret in OATH_HASHES:
-        for digits in (6, 8):
+        for digits in (6, 7, 8):
             name = namespace + f"-{label}-{digits}".encode()
             with session.case(f"oath.fixture.totp.{label}.{digits}", ("A02", "A03", "A04", "A06", "A07", "A08", "A09"), effects=("create_oath_record",)):
                 oath_open(session)

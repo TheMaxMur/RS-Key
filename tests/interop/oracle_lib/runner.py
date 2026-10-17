@@ -4,8 +4,9 @@
 """Named Python scenarios share capture, policy, and assertion handling."""
 import hashlib
 import sys
-from contextlib import AbstractContextManager
+from contextlib import AbstractContextManager, contextmanager
 from dataclasses import dataclass
+from enum import Enum
 
 from . import codec
 from .trace import CaptureError, Outcome, TransferError, json_value
@@ -25,13 +26,20 @@ AIDS = {
     "hsmauth": bytes.fromhex("a000000527210701"),
 }
 
-RESTRICTED_EFFECTS = ("pin_change", "applet_reset", "config_change", "otp_both_slots", "otp_extra_slots")
+RESTRICTED_EFFECTS = ("pin_change", "pin_attempts", "applet_reset", "config_change", "otp_both_slots", "otp_extra_slots",
+                      "replace_identity", "seed_change", "reboot", "capacity", "storage_setup")
+
+
+class CtapRoute(Enum):
+    HID = "hid"
+    CARD = "card"
 
 
 class SkipCase(Exception):
-    def __init__(self, reason, applicability="blocked_by_precondition"):
+    def __init__(self, reason, applicability="blocked_by_precondition", expected_cause=None):
         super().__init__(reason)
         self.applicability = applicability
+        self.expected_cause = expected_cause
 
 
 @dataclass
@@ -46,14 +54,21 @@ class Options:
     openpgp_admin: str | None = None
     management_key: bytes | None = None
     oath_password: str | None = None
+    piv_puk: str | None = None
+    oath_pin: str | None = None
+    openpgp_reset_code: str | None = None
+    operator: bool = False
+    recovery_layout: str | None = None
+    features: tuple = ()
     otp_slot: int = 2
     allow_effects: tuple = ()
 
 
 class Case(AbstractContextManager):
-    def __init__(self, session, name, families, effects, needs_touch):
+    def __init__(self, session, name, families, effects, needs_touch, parameters=None, method="explicit"):
         self.session, self.name = session, name
         self.families, self.effects, self.needs_touch = list(families), list(effects), needs_touch
+        self.parameters, self.method = parameters or {}, method
 
     def __enter__(self):
         session = self.session
@@ -61,10 +76,12 @@ class Case(AbstractContextManager):
             raise ValueError("nested scenarios are not supported")
         session.trace.case = self.name
         session.current = self
+        session.event_evidence = None
         self.assertions, self.observations = [], {}
         self.first_exchange = len(session.trace.exchanges)
         self.started_ns = session.trace.now()
-        session.trace.emit("scenario_started", families=self.families, effects=self.effects)
+        session.trace.emit("scenario_started", families=self.families, effects=self.effects,
+                           parameters=self.parameters, coverage_method=self.method)
         if not session.planning and self.needs_touch and session.options.touch and (not self.effects or session.options.exercise):
             print(f"oracle: {self.name} — confirm on the selected device when requested", file=sys.stderr)
         return self
@@ -80,7 +97,7 @@ class Case(AbstractContextManager):
             raise SkipCase("requires --allow-effect " + ", ".join(sorted(missing)), "excluded_by_mode")
         if self.needs_touch and not self.session.options.touch:
             raise SkipCase("operator interaction requires --touch", "excluded_by_mode")
-        if self.session.broken:
+        if self.session.broken and not self.session.recovering:
             raise SkipCase("a preceding transport failure left session state unknown")
 
     def __exit__(self, kind, error, traceback):
@@ -89,6 +106,7 @@ class Case(AbstractContextManager):
                   "scenario_revision": 1,
                   "timing": {"start_ns": self.started_ns, "end_ns": session.trace.now()},
                   "families": self.families, "effects": self.effects,
+                  "parameters": self.parameters, "coverage_method": self.method,
                   "assertions": self.assertions, "observations": self.observations,
                   "exchanges": [e["exchange_id"] for e in session.trace.exchanges[self.first_exchange:]],
                   "verdict": "pass", "applicability": "applicable", "reason": None}
@@ -98,12 +116,25 @@ class Case(AbstractContextManager):
             result.update(verdict="fail", reason=f"{kind.__name__}: {error}")
             if isinstance(error, TransferError):
                 session.broken |= error.outcome in (Outcome.DEADLINE, Outcome.DISCONNECTED)
+        propagate = None
         if error:
             causes, context = [], error.__context__
             while context is not None and len(causes) < 8:
                 causes.append(f"{type(context).__name__}: {context}")
                 context = context.__context__
             result["causes"] = causes
+            context = error.__context__
+            while isinstance(error, SkipCase) and context is not None:
+                if context is error.expected_cause:
+                    context = context.__context__
+                    continue
+                if isinstance(context, (CaptureError, KeyboardInterrupt, SystemExit)):
+                    propagate = context
+                if not isinstance(context, SkipCase) and not (isinstance(context, TransferError) and context.outcome == Outcome.HOST_REJECTED):
+                    result.update(verdict="fail", applicability="applicable",
+                                  reason=f"{type(context).__name__}: {context}; cleanup/precondition: {error}")
+                    break
+                context = context.__context__
         elif not self.assertions and not self.observations:
             result.update(verdict="inconclusive", reason="no property was checked")
         try:
@@ -114,6 +145,8 @@ class Case(AbstractContextManager):
             session.trace.case = None
             session.current = None
             session.trace.phase = "probe"
+        if propagate is not None:
+            raise propagate
         return error is not None and not isinstance(error, (CaptureError, KeyboardInterrupt, SystemExit))
 
 
@@ -121,6 +154,7 @@ class Session:
     def __init__(self, trace, hid=None, card=None, profile="generic", options=None, otp_hid=None):
         self.trace, self.hid, self.card, self.profile = trace, hid, card, profile
         self.options = options or Options()
+        self.initial_pin = self.options.pin
         self.otp_hid = otp_hid
         self.current = None
         self.broken = False
@@ -129,9 +163,60 @@ class Session:
         self.applet = None
         self.states = {}
         self.planning = False
+        self.attempt_budget = None
+        self.event_evidence = None
+        self.keyboard = None
+        self.ctap_route = CtapRoute.HID
+        self.recovering = False
 
-    def case(self, name, families=(), effects=(), touch=False):
-        return Case(self, name, families, effects, touch)
+    @contextmanager
+    def route(self, route):
+        if not isinstance(route, CtapRoute):
+            raise ValueError("CTAP route must be typed")
+        previous, self.ctap_route = self.ctap_route, route
+        try:
+            yield
+        finally:
+            self.ctap_route = previous
+
+    @contextmanager
+    def attempts(self, domain, limit):
+        self._gate()
+        self.require(self.profile != "trezor", "bounded PIN failures excluded on wallet device", "excluded_by_profile")
+        self.require(self.current is not None and "pin_attempts" in self.current.effects,
+                     "intentional failures require the pin_attempts case effect")
+        if self.attempt_budget is not None or not 1 <= limit <= 32:
+            raise ValueError("PIN attempt budget must be non-nested and between 1 and 32")
+        self.require(domain not in self.failed_auth, "a preceding unplanned failure left this secret unverified")
+        budget = {"domain": domain, "remaining": limit, "used": 0}
+        self.attempt_budget = budget
+        self.trace.emit("authorization_budget_started", domain=str(domain), limit=limit)
+        try:
+            yield
+        finally:
+            self.trace.emit("authorization_budget_finished", domain=str(domain), used=budget["used"], limit=limit)
+            self.attempt_budget = None
+
+    def _attempt(self, domain):
+        budget = self.attempt_budget
+        if budget is not None and budget["domain"] == domain:
+            self.require(budget["remaining"] > 0, "explicit PIN attempt budget exhausted")
+            budget["remaining"] -= 1
+            budget["used"] += 1
+            self.trace.emit("authorization_attempt", domain=str(domain), ordinal=budget["used"], remaining=budget["remaining"])
+        else:
+            self.require(domain not in self.failed_auth, "this PIN reference already refused a supplied secret; further attempts are blocked")
+
+    def _auth_result(self, domain, failed, succeeded):
+        if failed:
+            self.failed_auth.add(domain)
+            self.trace.emit("authorization_stopped", domain=str(domain))
+        elif succeeded and self.attempt_budget is not None and self.attempt_budget["domain"] == domain:
+            self.failed_auth.discard(domain)
+            self.trace.emit("authorization_recovered", domain=str(domain))
+
+    def case(self, name, families=(), effects=(), touch=False, parameters=None, method="explicit"):
+        return Case(self, name, families, effects, touch, parameters, method)
 
     def require(self, condition, reason, applicability="blocked_by_precondition"):
         self._gate()
@@ -143,7 +228,7 @@ class Session:
             raise ValueError("assertion outside a scenario")
         result = {"name": name, "actual": json_value(actual), "expected": json_value(expected),
                   "verdict": "pass" if actual == expected else "fail",
-                  "evidence": self.trace.exchanges[-1]["exchange_id"] if self.trace.exchanges else None}
+                  "evidence": self.event_evidence or (self.trace.exchanges[-1]["exchange_id"] if self.trace.exchanges else None)}
         self.current.assertions.append(result)
         self.trace.emit("assertion", **result)
         if actual != expected:
@@ -193,6 +278,7 @@ class Session:
             self.current.require()
 
     def _exchange(self, *args):
+        self.event_evidence = None
         try:
             return self.trace.exchange(*args)
         except TransferError as error:
@@ -209,7 +295,8 @@ class Session:
                 pin_attempt = isinstance(fields, dict) and fields.get(2) in (4, 5, 9)
             except (ValueError, TypeError):
                 pass
-        self.require(not pin_attempt or "fido.pin" not in self.failed_auth, "a PIN attempt already failed; further attempts are blocked")
+        if pin_attempt:
+            self._attempt("fido.pin")
 
         def transfer(deadline, observe):
             if self.profile == "trezor":
@@ -230,13 +317,14 @@ class Session:
 
         reply = self._exchange("hid", self.hid.layer, name or f"ctaphid.{command:02x}", data,
                                self.options.timeout, transfer)
-        if pin_attempt and reply.status in (0x31, 0x32, 0x34, 0x35, 0x3F):
-            self.failed_auth.add("fido.pin")
-            self.trace.emit("authorization_stopped", domain="fido.pin", status=reply.status)
+        if pin_attempt:
+            self._auth_result("fido.pin", reply.status in (0x31, 0x32, 0x34, 0x35, 0x3F), reply.protocol == "success")
         return reply
 
     def ctap(self, command, fields=None, raw=None):
         data = bytes([command]) + (raw if raw is not None else codec.encode(fields) if fields is not None else b"")
+        if self.ctap_route == CtapRoute.CARD:
+            return self.ctap_card(data)
         name = f"ctap.{command:02x}"
         key = 2 if command == 6 else 1 if command in (10, 13, 0x41) else None
         if isinstance(fields, dict) and isinstance(fields.get(key), int):
@@ -250,6 +338,33 @@ class Session:
                 self.trace.emit("decode_error", decoder="oracle.cbor.v1", error=str(error))
         return reply
 
+    def ctap_card(self, data):
+        from .trace import Reply
+        self._gate()
+        self.require(self.profile != "trezor", "wallet profile excludes card FIDO transport", "excluded_by_profile")
+        try:
+            fields = codec.decode(data[1:]) if data[:1] == b"\x06" else None
+        except (ValueError, TypeError):
+            fields = None
+        pin_attempt = isinstance(fields, dict) and fields.get(2) in (4, 5, 9)
+        if pin_attempt:
+            self._attempt("fido.pin")
+        response = self.apdu(codec.apdu(0x10, data=data, cla=0x80), "ctap.card." + data[:1].hex())
+        value = bytearray(response.data[:-2])
+        for _ in range(256):
+            if response.status >> 8 != 0x61:
+                break
+            response = self.apdu(codec.apdu(0xC0, le=response.status & 255 or 256), "ctap.card.GET-RESPONSE")
+            value.extend(response.data[:-2])
+        self.card_value(response)
+        self.check("card CTAP response has status byte", len(value) > 0)
+        result = Reply(bytes(value), "success" if value[0] == 0 else "applet_error", value[0])
+        self.trace.emit("protocol_result", protocol="ctap", status=value[0], evidence=self.evidence(), transport="card")
+        self.observe(f"ctap.card.{data[0]:02x}.step-{len(self.trace.exchanges)}.status", value[0])
+        if pin_attempt:
+            self._auth_result("fido.pin", result.status in (0x31, 0x32, 0x34, 0x35, 0x3F), result.status == 0)
+        return result
+
     def ctap_value(self, reply):
         self.check("CTAP success", (reply.protocol, reply.status), ("success", 0))
         return codec.decode(reply.data[1:]) if len(reply.data) > 1 else {}
@@ -259,13 +374,21 @@ class Session:
         self.require(self.card is not None, "no selected card transport", "excluded_by_mode")
         ins = request[1] if len(request) > 1 else None
         pin_attempt = len(request) > 5 and (ins in (0x20, 0x24, 0x2C) or self.applet == "oath" and ins in (0xB2, 0xB3))
+        if self.applet == "openpgp" and ins == 0x2C and request[2] == 2:
+            pin_attempt = False
         self.require(not pin_attempt or self.applet is not None, "select a known applet before submitting a PIN")
         auth_domain = (self.applet, request[3]) if pin_attempt else None
         if pin_attempt and self.applet == "piv" and ins == 0x2C:
             auth_domain = ("piv", 0x81)
         if pin_attempt and self.applet == "oath" and ins in (0xB2, 0xB3):
             auth_domain = ("oath", 0xB2)
-        self.require(auth_domain not in self.failed_auth, "this PIN reference already refused a supplied secret; further attempts are blocked")
+        if pin_attempt and self.applet == "openpgp":
+            if ins == 0x2C:
+                auth_domain = ("openpgp", "reset_code")
+            elif request[3] in (0x81, 0x82):
+                auth_domain = ("openpgp", 0x81)
+        if pin_attempt:
+            self._attempt(auth_domain)
 
         def transfer(deadline, observe):
             if self.profile == "trezor":
@@ -279,9 +402,8 @@ class Session:
             matches = [key for key, aid in AIDS.items() if len(selected) >= 5 and (aid.startswith(selected) or selected.startswith(aid))]
             self.applet = matches[0] if reply.status == 0x9000 and len(matches) == 1 else None
             self.state("selected_applet", self.applet if reply.status == 0x9000 else "unknown_after_refused_select")
-        if pin_attempt and (reply.status & 0xFFF0 == 0x63C0 or reply.status in (0x6982, 0x6983)):
-            self.failed_auth.add(auth_domain)
-            self.trace.emit("authorization_stopped", domain=str(auth_domain), status=reply.status)
+        if pin_attempt:
+            self._auth_result(auth_domain, reply.status & 0xFFF0 == 0x63C0 or reply.status in (0x6982, 0x6983), reply.protocol == "success")
         return reply
 
     def card_value(self, reply):
@@ -297,18 +419,21 @@ class Session:
         return self._exchange("otp", self.otp_hid.layer, f"otp.hid.{slot:02x}", request, self.options.timeout,
                               lambda deadline, observe: self.otp_hid.transfer(slot, data, expected_len, deadline, observe))
 
-    def select(self, applet):
-        self.trace.phase = "setup"
+    def select(self, applet, required=False):
+        previous = self.trace.phase
+        self.trace.phase = previous if previous in ("cleanup", "verify") else "setup"
         try:
             reply = self.apdu(codec.apdu(0xA4, 4, data=AIDS[applet]), f"select.{applet}")
             if reply.protocol == "applet_error" and reply.status in (0x6A82, 0x6D00):
+                if required:
+                    self.check("previously available applet remains selectable", reply.status, 0x9000)
                 raise SkipCase(f"{applet} selection refused: {reply.status:04x}", "unsupported_confirmed")
             return self.card_value(reply)
         finally:
-            self.trace.phase = "probe"
+            self.trace.phase = previous
 
     def close(self):
-        for session_id, transport in (("hid", self.hid), ("card", self.card), ("otp", self.otp_hid)):
+        for session_id, transport in (("hid", self.hid), ("card", self.card), ("otp", self.otp_hid), ("keyboard", self.keyboard)):
             if transport:
                 try:
                     if session_id == "hid" and getattr(transport, "active", False):

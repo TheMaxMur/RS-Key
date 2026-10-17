@@ -77,6 +77,8 @@ class Hid:
         self.cid = BROADCAST_CID
         self.capabilities = 0
         self.active = False
+        self.on_keepalive = None
+        self.on_report = None
         if backend is None:
             import hid
             backend = hid.device()
@@ -86,6 +88,17 @@ class Hid:
     def close(self):
         self.backend.close()
 
+    def reopen(self, operator=False):
+        descriptor = self.descriptor
+        self.close()
+        if descriptor.get("emulator"):
+            self.__init__(descriptor, self.clock, TcpReports(descriptor["emulator"]))
+            return descriptor
+        from .binding import rebind
+        selected = rebind(descriptor, "hid", operator)
+        self.__init__(selected, self.clock)
+        return selected
+
     def cancel(self, deadline, observe):
         _remaining(deadline, self.clock)
         frame = (self.cid + b"\x91\x00\x00").ljust(REPORT_LEN, b"\x00")
@@ -94,6 +107,17 @@ class Hid:
         if written is not None and written != REPORT_LEN + 1:
             raise TransferError("short HID CANCEL write", Outcome.DISCONNECTED)
         self.active = False
+        return Reply(b"", "no_response_expected", timing={"tx_complete_ns": self.clock()})
+
+    def send_only(self, frames, deadline, observe):
+        for frame in frames:
+            if len(frame) != REPORT_LEN:
+                raise TransferError("send-only HID requires full reports", Outcome.HOST_REJECTED)
+            _remaining(deadline, self.clock)
+            written = self.backend.write(b"\x00" + frame)
+            observe("tx", frame, report_id=0)
+            if written is not None and written != REPORT_LEN + 1:
+                raise TransferError("short send-only HID write", Outcome.DISCONNECTED)
         return Reply(b"", "no_response_expected", timing={"tx_complete_ns": self.clock()})
 
     def transfer(self, command, data, deadline, observe):
@@ -118,6 +142,7 @@ class Hid:
                 raise TransferError("short HID write", Outcome.DISCONNECTED)
         first_rx = None
         last_rx = None
+        keepalives = []
 
         def receive():
             nonlocal first_rx, last_rx
@@ -133,6 +158,8 @@ class Hid:
                 observe("rx", frame, timestamp, cid=frame[:4].hex())
                 if len(frame) != REPORT_LEN:
                     raise TransferError("short HID response report", protocol="malformed_response")
+                if self.on_report is not None:
+                    self.on_report(frame, timestamp)
                 if frame[:4] != self.cid:
                     continue
                 if first_rx is None:
@@ -146,6 +173,11 @@ class Hid:
                 break
             if int.from_bytes(frame[5:7], "big") != 1:
                 raise TransferError("invalid keepalive length", protocol="malformed_response")
+            if frame[7] not in (1, 2):
+                raise TransferError("unknown keepalive status", protocol="malformed_response")
+            keepalives.append({"observed_ns": last_rx, "status": frame[7]})
+            if self.on_keepalive is not None:
+                self.on_keepalive(frame[7], last_rx)
         response_command = frame[4] & 0x7F
         if not frame[4] & 0x80 or response_command not in (command, HID_ERROR):
             raise TransferError("unexpected HID response command", protocol="malformed_response")
@@ -162,7 +194,8 @@ class Hid:
             response.extend(frame[5:5 + min(59, total - len(response))])
             sequence += 1
         timing = {"tx_complete_ns": tx_complete, "first_rx_ns": first_rx,
-                  "first_final_rx_ns": first_final, "final_rx_ns": last_rx}
+                  "first_final_rx_ns": first_final, "final_rx_ns": last_rx,
+                  "keepalives": keepalives}
         data = bytes(response)
         self.active = False
         if response_command == HID_ERROR:
@@ -237,11 +270,31 @@ def _pcsc_worker(pipe, reader_name):
             started = time.monotonic_ns()
             pipe.send(("started", started))
             try:
-                data, sw1, sw2 = connection.transmit(list(request))
+                if isinstance(request, dict) and request.get("control") in ("reset", "transaction"):
+                    from smartcard import scard
+                    dispositions = {"leave": scard.SCARD_LEAVE_CARD, "reset": scard.SCARD_RESET_CARD, "unpower": scard.SCARD_UNPOWER_CARD}
+                    if request["control"] == "reset":
+                        connection.reconnect(disposition=dispositions[request.get("disposition", "reset")])
+                        result_data = bytes(connection.getATR())
+                    else:
+                        result = scard.SCardBeginTransaction(connection.hcard) if request["begin"] else scard.SCardEndTransaction(connection.hcard, dispositions[request.get("disposition", "leave")])
+                        if result != scard.SCARD_S_SUCCESS:
+                            raise RuntimeError(f"PC/SC transaction failed: {scard.SCardGetErrorMessage(result)} ({result})")
+                        result_data = b""
+                    ended = time.monotonic_ns()
+                    pipe.send(("control_reply", result_data, started, ended))
+                    continue
+                elif isinstance(request, dict) and request.get("control") == "ioctl":
+                    result = connection.control(request["code"], list(request["data"]))
+                    ended = time.monotonic_ns()
+                    pipe.send(("control_reply", bytes(result), started, ended))
+                    continue
+                else:
+                    data, sw1, sw2 = connection.transmit(list(request))
                 ended = time.monotonic_ns()
                 pipe.send(("reply", bytes(data) + bytes([sw1, sw2]), started, ended))
             except Exception as error:
-                pipe.send(("error", type(error).__name__, str(error)))
+                pipe.send(("error", type(error).__name__, str(error), getattr(error, "hresult", None)))
                 break
     except (EOFError, BrokenPipeError):
         pass
@@ -261,6 +314,8 @@ class Pcsc:
 
     def __init__(self, reader, clock, origin, timeout=10, worker=None):
         self.clock, self.origin = clock, origin
+        self.reader, self.worker = reader, worker
+        self.on_started = None
         self.broken = False
         context = multiprocessing.get_context("spawn")
         self.pipe, child = context.Pipe()
@@ -275,6 +330,38 @@ class Pcsc:
             self.close()
             raise TransferError(f"{self.layer} connection failed: {response[1:]}", Outcome.HOST_REJECTED)
         self.atr = response[1]
+
+    def control(self, action, deadline, observe):
+        if action not in ("reconnect", "card_reset", "power_cycle"):
+            raise TransferError("unsupported PC/SC control", Outcome.HOST_REJECTED)
+        if action == "card_reset":
+            return self.transfer({"control": "reset"}, deadline, observe)
+        reader, clock, origin, worker = self.reader, self.clock, self.origin, self.worker
+        self.close()
+        self.__init__(reader, clock, origin, _remaining(deadline, clock), worker)
+        return Reply(self.atr)
+
+    def probe_client(self, request, deadline, observe):
+        client = None
+        try:
+            client = Pcsc(self.reader, self.clock, self.origin, _remaining(deadline, self.clock), self.worker)
+            return client.transfer(request, deadline, observe)
+        finally:
+            if client is not None:
+                client.close()
+
+    def drop_response(self, request, deadline, observe):
+        self.pipe.send(request)
+        if not self.pipe.poll(_remaining(deadline, self.clock)):
+            raise TransferError("no PC/SC API start before injected interruption", Outcome.DEADLINE)
+        response = self.pipe.recv()
+        if response[0] != "started":
+            raise TransferError("unexpected PC/SC interruption boundary", Outcome.HOST_REJECTED)
+        observe("tx", request, response[1] - self.origin, evidence="pcsc_api_invoked; delivery unknown")
+        self.broken = True
+        self.process.terminate()
+        self.process.join(timeout=1)
+        raise TransferError("injected host worker interruption before response delivery", Outcome.CANCELLED, protocol="injected_response_loss")
 
     def transfer(self, request, deadline, observe):
         if self.broken:
@@ -295,17 +382,24 @@ class Pcsc:
                 raise TransferError("PC/SC worker exited", Outcome.DISCONNECTED) from error
             if response[0] == "started":
                 started = response[1] - self.origin
-                observe("tx", request, started, evidence="pcsc_api_invoked")
+                observe("tx", b"" if isinstance(request, dict) else request, started, evidence="pcsc_control_invoked" if isinstance(request, dict) else "pcsc_api_invoked")
+                if self.on_started is not None:
+                    self.on_started()
                 continue
             if response[0] == "error":
                 self.broken = True
-                raise TransferError(f"PC/SC {response[1]}: {response[2]}", Outcome.DISCONNECTED)
-            if response[0] != "reply" or started is None:
+                outcome = Outcome.DISCONNECTED if response[1] == "NoCardException" else Outcome.RUNNER_ERROR
+                from smartcard.scard import SCARD_E_SHARING_VIOLATION
+                if len(response) > 3 and response[3] == SCARD_E_SHARING_VIOLATION:
+                    outcome = Outcome.HOST_REJECTED
+                raise TransferError(f"PC/SC {response[1]}: {response[2]}", outcome, protocol="pcsc_api_error",
+                                    code=response[3] if len(response) > 3 else response[1])
+            if response[0] not in ("reply", "control_reply") or started is None:
                 raise TransferError("invalid PC/SC worker response")
             data, start, end = response[1:]
             observe("rx", data, end - self.origin, evidence="pcsc_api_returned")
-            status = int.from_bytes(data[-2:], "big")
-            return Reply(data, "success" if status == 0x9000 else "applet_error", status, {
+            status = int.from_bytes(data[-2:], "big") if response[0] == "reply" else None
+            return Reply(data, "success" if status in (None, 0x9000) else "applet_error", status, {
                 "backend_call_start_ns": start - self.origin,
                 "backend_call_end_ns": end - self.origin, "backend_api_duration_ns": end - start,
                 "final_rx_ns": end - self.origin,
@@ -326,11 +420,31 @@ class Pcsc:
 
 class EmuCard:
     layer = "ccid_message"
+    emulated = True
 
     def __init__(self, address, clock):
         host, port = address.rsplit(":", 1)
         self.socket = socket.create_connection((host, int(port)), timeout=5)
         self.clock, self.sequence = clock, 0
+        self.address = address
+        self.on_extension = None
+
+    def control(self, action, deadline, observe):
+        if action == "power_cycle":
+            self.socket.sendall(b"\x03\x00\x00\x00\x00")
+            observe("tx", b"\x03\x00\x00\x00\x00", control="emulator_power_cycle")
+            size = self._exact(4, deadline)
+            observe("rx", size, control="emulator_power_cycle")
+            if size != bytes(4):
+                raise TransferError("invalid emulator power-cycle acknowledgment", protocol="malformed_response")
+            return Reply(b"")
+        if action == "card_reset":
+            return self.transfer(b"", deadline, observe, 0x62)
+        if action == "reconnect":
+            self.close()
+            self.__init__(self.address, self.clock)
+            return self.transfer(b"", deadline, observe, 0x62)
+        raise TransferError("unsupported emulator control", Outcome.HOST_REJECTED)
 
     def _exact(self, size, deadline):
         result = bytearray()
@@ -346,6 +460,19 @@ class EmuCard:
         sequence = self.sequence
         self.sequence = (sequence + 1) & 255
         message = bytes([message_type]) + len(request).to_bytes(4, "little") + bytes([0, sequence, 0, 0, 0]) + request
+        response = self.raw(message, deadline, observe)
+        if response[7] & 0xC0:
+            return Reply(response, "transport_error", response[8])
+        data = response[10:]
+        if message_type != 0x6F:
+            return Reply(data)
+        if len(data) < 2:
+            raise TransferError("missing emulator APDU status", protocol="malformed_response")
+        status = int.from_bytes(data[-2:], "big")
+        return Reply(data, "success" if status == 0x9000 else "applet_error", status)
+
+    def raw(self, message, deadline, observe):
+        sequence = message[6]
         self.socket.sendall(b"\x00" + len(message).to_bytes(4, "big") + message)
         observe("tx", message)
         while True:
@@ -360,16 +487,18 @@ class EmuCard:
             if response[6] != sequence or int.from_bytes(response[1:5], "little") != len(response) - 10:
                 raise TransferError("CCID response sequence or length mismatch", protocol="malformed_response")
             if response[7] & 0xC0 == 0x80:
+                if self.on_extension is not None:
+                    self.on_extension(response)
                 continue
-            if response[7] & 0xC0:
-                return Reply(response, "transport_error", response[8])
-            data = response[10:]
-            if message_type != 0x6F:
-                return Reply(data)
-            if len(data) < 2:
-                raise TransferError("missing emulator APDU status", protocol="malformed_response")
-            status = int.from_bytes(data[-2:], "big")
-            return Reply(data, "success" if status == 0x9000 else "applet_error", status)
+            return response
+
+    def drop_response(self, request, deadline, observe):
+        message = b"\x6f" + len(request).to_bytes(4, "little") + bytes([0, self.sequence, 0, 0, 0]) + request
+        self.sequence = (self.sequence + 1) & 255
+        self.socket.sendall(b"\x00" + len(message).to_bytes(4, "big") + message)
+        observe("tx", message, evidence="emulator socket write; response not read")
+        self.close()
+        raise TransferError("injected emulator connection close before response read", Outcome.CANCELLED, protocol="injected_response_loss")
 
     def initialize(self, trace, timeout):
         reply = trace.exchange("ccid", self.layer, "ccid.power_on", b"", timeout,

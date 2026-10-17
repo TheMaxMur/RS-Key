@@ -3,9 +3,10 @@
 
 # USB applet oracle scenario matrix and trace format
 
-Status: scenario contract, 2026-10-17. The partial executable corpus and its
-remaining scope are documented in [oracle.md](oracle.md). This matrix does not
-claim that its cases have been implemented or measured.
+Status: scenario contract, 2026-10-17. The executable catalog represents every
+numbered family; its bounded expansions and observation limits are documented
+in [oracle.md](oracle.md). Catalog presence does not establish device coverage
+or measurement of every variation below.
 
 The oracle runs stateful scenarios against physical reference keys and
 RS-Key, records every observable request and response with timing, and compares
@@ -15,8 +16,8 @@ without the reference device attached.
 The RS-Key scope follows the current [host protocol](../../docs/protocol.md)
 and [architecture](../../docs/architecture.md). The existing
 [interop harness](README.md) provides capability snapshots, comparison rules,
-and a frozen YubiKey baseline. The additional `oracle.py` recorder implements
-part of the scenario contract specified here.
+and a frozen YubiKey baseline. The additional `oracle.py` recorder expands
+executable scenarios from the contract specified here.
 
 External devices need profiles keyed by manufacturer, model, firmware, and
 available interfaces. A device family name alone does not establish support.

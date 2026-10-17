@@ -23,6 +23,7 @@ def coverage(cases):
                          "invocations": len(rows), "executed": len(executed),
                          "passed": sum(row["verdict"] == "pass" for row in rows),
                          "failed": sum(row["verdict"] == "fail" for row in rows),
+                         "coverage_methods": sorted({row.get("coverage_method", "explicit") for row in rows}),
                          "scenarios": sorted({row["scenario_id"] for row in rows}),
                          "reasons": sorted({row["reason"] for row in rows if row["reason"]})})
     section = re.search(r"(?ms)^## 14\. Additional external-device profiles\n(.*?)^## 15\.", data.decode())

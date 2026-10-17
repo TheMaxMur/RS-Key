@@ -153,6 +153,15 @@ def test_effect_permissions_are_wired_through_capture_CLI(tmp_path, monkeypatch,
     class Card(OathStateCard):
         atr = b"synthetic"
 
+        def transfer(self, request, deadline, observe):
+            from oracle_lib.runner import AIDS
+            if request[1] == 0xA4 and request[5:5 + request[4]] != AIDS["oath"]:
+                self.requests.append(request)
+                observe("tx", request)
+                observe("rx", b"\x6a\x82")
+                return Reply(b"\x6a\x82", "applet_error", 0x6A82)
+            return super().transfer(request, deadline, observe)
+
         def initialize(self, trace, timeout):
             pass
 
@@ -191,7 +200,8 @@ def test_catalog_uses_normal_dispatch_without_enumeration(tmp_path, monkeypatch,
     assert {"oath.transition.access-code", "fido.transition.pin-change", "piv.transition.pin-policy.always",
             "transport.assembly.missing-continuation", "rsk.audit.checkpoint", "management.transition.lock.card"} <= names
     assert all(row["applicability"] == "not_run" for row in result["cases"])
-    assert "not_implemented" in {row["coverage"] for row in result["coverage"]["families"]}
+    assert {row["coverage"] for row in result["coverage"]["families"]} == {"implemented_not_run"}
+    assert all(row["executed"] == row["passed"] == 0 for row in result["coverage"]["families"])
     assert any(row["profile"] == "OnlyKey" and row["vendor_catalog_status"] == "unknown"
                for row in result["coverage"]["external_profiles"])
     assert not (tmp_path / "events.jsonl").exists()

@@ -85,7 +85,15 @@ class OtpFeature(Pcsc):
     layer = "otp_hid_feature"
 
     def __init__(self, descriptor, clock, origin, timeout=10):
+        self.descriptor = descriptor
         super().__init__(descriptor["path_hex"], clock, origin, timeout, _otp_worker)
+
+    def reopen(self, operator=False):
+        from .binding import rebind
+        descriptor = rebind(self.descriptor, "otp_hid", operator)
+        self.close()
+        self.__init__(descriptor, self.clock, self.origin)
+        return descriptor
 
     def transfer(self, slot, data, expected_len, deadline, observe):
         if self.broken:

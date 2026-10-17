@@ -28,13 +28,16 @@ def connection(session):
 
 
 def fixture_key(session, algorithm):
-    if algorithm == "RSA2048":
-        return rsa.generate_private_key(65537, 2048)
+    if algorithm.startswith("RSA"):
+        return rsa.generate_private_key(65537, int(algorithm[3:]))
     if algorithm == "ED25519":
         return ed25519.Ed25519PrivateKey.from_private_bytes(session.fixture("cards.ed25519"))
     if algorithm == "X25519":
         return x25519.X25519PrivateKey.from_private_bytes(session.fixture("cards.x25519"))
-    curve = ec.SECP256R1() if algorithm == "ECCP256" else ec.SECP384R1()
+    curve = {"ECCP256": ec.SECP256R1, "ECCP384": ec.SECP384R1,
+             "SECP256R1": ec.SECP256R1, "SECP384R1": ec.SECP384R1, "SECP521R1": ec.SECP521R1,
+             "SECP256K1": ec.SECP256K1, "BrainpoolP256R1": ec.BrainpoolP256R1,
+             "BrainpoolP384R1": ec.BrainpoolP384R1, "BrainpoolP512R1": ec.BrainpoolP512R1}[algorithm]()
     return ec.derive_private_key(int.from_bytes(session.fixture("cards." + algorithm, 24), "big") + 1, curve)
 
 
@@ -44,11 +47,12 @@ def encoded_public(key):
 
 def sdk_supported(session, operation):
     from yubikit.core import NotSupportedError
+    from .runner import SkipCase
     try:
         return operation()
     except NotSupportedError as error:
         session.trace.emit("host_rejected", library="yubikit", reason=str(error))
-        session.require(False, f"SDK capability check: {error}")
+        raise SkipCase(f"SDK capability check: {error}", expected_cause=error) from error
 
 
 def piv(session):

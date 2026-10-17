@@ -17,18 +17,20 @@ from . import codec
 from .transport import HID_MSG
 
 HASH_ALGORITHMS = {-7: hashes.SHA256, -35: hashes.SHA384, -36: hashes.SHA512,
+                   -47: hashes.SHA256, -9: hashes.SHA256, -51: hashes.SHA384, -52: hashes.SHA512,
                    -257: hashes.SHA256, -258: hashes.SHA384, -259: hashes.SHA512,
                    -37: hashes.SHA256, -38: hashes.SHA384, -39: hashes.SHA512}
-SUPPORTED_ALGORITHMS = (*HASH_ALGORITHMS, -8, -48, -49, -50)
+SUPPORTED_ALGORITHMS = (*HASH_ALGORITHMS, -8, -19, -48, -49, -50)
+RSK_ALGORITHMS = (-7, -35, -36, -47, -8, -9, -19, -51, -52, -48, -49, -50)
 
 
 def public_key(cose):
     if cose[1] == 2:
-        curve = {1: ec.SECP256R1, 2: ec.SECP384R1, 3: ec.SECP521R1}[cose[-1]]()
+        curve = {1: ec.SECP256R1, 2: ec.SECP384R1, 3: ec.SECP521R1, 8: ec.SECP256K1}[cose[-1]]()
         return ec.EllipticCurvePublicNumbers(int.from_bytes(cose[-2], "big"), int.from_bytes(cose[-3], "big"), curve).public_key()
     if cose[1] == 3:
         return rsa.RSAPublicNumbers(int.from_bytes(cose[-2], "big"), int.from_bytes(cose[-1], "big")).public_key()
-    if cose[3] == -8:
+    if cose[3] in (-8, -19):
         return ed25519.Ed25519PublicKey.from_public_bytes(cose[-2])
     if cose[3] in (-48, -49, -50):
         from cryptography.hazmat.primitives.asymmetric import mldsa
@@ -37,9 +39,9 @@ def public_key(cose):
 
 
 def verify(key, algorithm, signature, message):
-    if algorithm in (-8, -48, -49, -50):
+    if algorithm in (-8, -19, -48, -49, -50):
         key.verify(signature, message)
-    elif algorithm in (-7, -35, -36):
+    elif algorithm in (-7, -35, -36, -47, -9, -51, -52):
         key.verify(signature, message, ec.ECDSA(HASH_ALGORITHMS[algorithm]()))
     else:
         digest = HASH_ALGORITHMS[algorithm]()
@@ -188,7 +190,9 @@ def credential(session, algorithm, resident):
     with session.case(label, ("F11", "F12", "F13", "F17", "FE01", "FE02", "FE03", "FE05", "FE11", "FE12", "FE13"), effects=("create_fido_credential",), touch=True):
         capabilities = info(session)
         advertised = [item["alg"] for item in capabilities.get(10, [{"alg": -7}])]
-        session.require(algorithm in advertised, "algorithm is not advertised; command support is unmeasured", "unknown")
+        session.require(algorithm in advertised or session.profile == "rsk" and algorithm in RSK_ALGORITHMS,
+                        "algorithm is not in the advertised or confirmed profile catalog", "unknown")
+        session.observe("advertised_algorithm", algorithm in advertised)
         session.require(algorithm in SUPPORTED_ALGORITHMS, "no independent verifier for this algorithm")
         if resident:
             session.require(capabilities.get(4, {}).get("rk") and capabilities.get(4, {}).get("credMgmt") and session.options.pin,
@@ -302,6 +306,8 @@ def credential(session, algorithm, resident):
 def fido(session):
     pin_setup(session)
     algorithms = [entry["alg"] for entry in session.values.get("fido.info", {}).get(10, [{"alg": -7}])]
+    if session.profile == "rsk":
+        algorithms += list(RSK_ALGORITHMS)
     for algorithm in dict.fromkeys(algorithms):
         for resident in (False, True):
             credential(session, algorithm, resident)
@@ -315,20 +321,8 @@ def u2f(session):
         session.observe("status", reply.status)
         session.observe("version", reply.data[:-2])
     with session.case("u2f.fixture.lifecycle", ("U02", "U03", "U04", "U05", "U06"), effects=("create_u2f_credential",), touch=True):
-        challenge, application = session.fixture("u2f.challenge"), session.fixture("u2f.application")
-        reply = session.hid_call(HID_MSG, u2f_apdu(1, data=challenge + application), "u2f.register")
-        body = session.card_value(reply)
-        session.check("registration marker", body[0], 5)
-        handle_length = body[66]
-        point, handle = body[1:66], body[67:67 + handle_length]
-        rest = body[67 + handle_length:]
-        if rest[0] != 0x30 or rest[1] < 0x80:
-            cert_length = rest[1] + 2
-        else:
-            width = rest[1] & 0x7F
-            cert_length = 2 + width + int.from_bytes(rest[2:2 + width], "big")
-        certificate = x509.load_der_x509_certificate(rest[:cert_length])
-        verified(session, "U2F attestation signature", certificate.public_key(), -7, rest[cert_length:], b"\x00" + application + challenge + handle + point)
+        fixture = u2f_registration(session)
+        challenge, application, point, handle = [fixture[field] for field in ("challenge", "application", "public_key", "handle")]
         key = ec.EllipticCurvePublicKey.from_encoded_point(ec.SECP256R1(), point)
         payload = challenge + application + bytes([len(handle)]) + handle
         check = session.hid_call(HID_MSG, u2f_apdu(2, 7, payload), "u2f.check-only")
@@ -339,8 +333,26 @@ def u2f(session):
             if result.status == 0x9000:
                 signed = session.card_value(result)
                 verified(session, "U2F assertion signature", key, -7, signed[5:], application + signed[:5] + challenge)
+                session.check("U2F presence flag matches control mode", bool(signed[0] & 1), mode == 3)
                 session.observe(f"mode.{mode}.flags", signed[0])
                 session.observe(f"mode.{mode}.counter", int.from_bytes(signed[1:5], "big"), "presence")
+
+
+def u2f_registration(session, label="u2f"):
+    challenge, application = session.fixture(label + ".challenge"), session.fixture(label + ".application")
+    body = session.card_value(session.hid_call(HID_MSG, u2f_apdu(1, data=challenge + application), "u2f.register"))
+    session.check("registration marker", body[:1], b"\x05")
+    session.check("U2F registration public key and handle header present", len(body) >= 67)
+    length = body[66]
+    point, handle, rest = body[1:66], body[67:67 + length], body[67 + length:]
+    session.check("U2F key handle present", len(handle) == length and length > 0)
+    session.check("U2F certificate header present", len(rest) >= 2 and rest[0] == 0x30)
+    width = rest[1] & 0x7F if rest[1] & 0x80 else 0
+    session.check("bounded DER certificate length header", width <= 4 and len(rest) >= 2 + width)
+    size = 2 + width + int.from_bytes(rest[2:2 + width], "big") if width else 2 + rest[1]
+    certificate = x509.load_der_x509_certificate(rest[:size])
+    verified(session, "U2F attestation signature", certificate.public_key(), -7, rest[size:], b"\x00" + application + challenge + handle + point)
+    return session.bind("u2f.fixture", {"handle": handle, "application": application, "challenge": challenge, "public_key": point})
 
 
 def u2f_apdu(ins, p1=0, data=b""):
