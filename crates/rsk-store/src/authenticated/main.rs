@@ -14,6 +14,9 @@ use super::{Checkpoint, DELTA_BYTES, Delta, DeltaKind, Directory, Entry, Identit
 use super::{Journal, JournalScan, JournalStatus, MAX_MAIN_ENTRIES, Partition, Prepared, RootArm};
 use crate::verified_flash::VerifiedFlash;
 
+#[path = "main_read_proof.rs"]
+mod read_proof;
+
 struct Current {
     source: usize,
     scans: [JournalScan; 2],
@@ -36,6 +39,7 @@ pub struct Main<F: NorFlash + MultiwriteNorFlash, C: CacheImpl<u16>> {
     identity: Identity,
     arm: RootArm,
     read_cache: Option<ReadCache>,
+    read_tags: super::read_tags::ReadTags,
     authority: Authority,
     // Only skips optional mount maintenance; reads never consult this hint.
     checkpoint_due: bool,
@@ -60,6 +64,7 @@ impl<F: NorFlash + MultiwriteNorFlash, C: CacheImpl<u16>> Main<F, C> {
             },
             arm,
             read_cache: None,
+            read_tags: super::read_tags::ReadTags::new(),
             authority: Authority::New,
             checkpoint_due: true,
         }
@@ -67,7 +72,7 @@ impl<F: NorFlash + MultiwriteNorFlash, C: CacheImpl<u16>> Main<F, C> {
 
     #[cfg(test)]
     fn set_digest(&mut self, digest: super::BankDigest<F>) {
-        self.read_cache = None;
+        self.invalidate_read_cache();
         for journal in &mut self.journals {
             journal.set_digest(digest);
         }
@@ -80,7 +85,7 @@ impl<F: NorFlash + MultiwriteNorFlash, C: CacheImpl<u16>> Main<F, C> {
         };
         self.arm = arm;
         self.directory.clear();
-        self.read_cache = None;
+        self.invalidate_read_cache();
         self.checkpoint_due = true;
         self.buffer.wipe();
         self.map.invalidate_cache();
@@ -88,6 +93,11 @@ impl<F: NorFlash + MultiwriteNorFlash, C: CacheImpl<u16>> Main<F, C> {
 
     pub(super) fn publish_import(&mut self, key: &[u8; 32]) -> Result<()> {
         self.with_buffer(key, |this| this.snapshots(key, 0, 0).map(|_| ()))
+    }
+
+    pub(super) fn invalidate_read_cache(&mut self) {
+        self.read_cache = None;
+        self.read_tags.clear();
     }
 
     pub(super) fn has_authority(&self) -> bool {
@@ -101,7 +111,7 @@ impl<F: NorFlash + MultiwriteNorFlash, C: CacheImpl<u16>> Main<F, C> {
         arm: RootArm,
         digest: [u8; 32],
     ) -> Result<()> {
-        self.read_cache = None;
+        self.invalidate_read_cache();
         self.authority.admit(
             key,
             Snapshot {
@@ -347,7 +357,7 @@ impl<F: NorFlash + MultiwriteNorFlash, C: CacheImpl<u16>> Main<F, C> {
     }
 
     fn resolve(&mut self, key: &[u8; 32]) -> Result<Option<Current>> {
-        self.read_cache = None;
+        self.invalidate_read_cache();
         let current = self.resolve_inner(key)?;
         if let Some(current) = &current {
             if !current.scans.iter().all(|scan| {
@@ -517,6 +527,7 @@ impl<F: NorFlash + MultiwriteNorFlash, C: CacheImpl<u16>> Main<F, C> {
         operation: impl FnOnce(&mut Self) -> Result<T>,
     ) -> Result<T> {
         let cached = self.read_cache.take();
+        self.read_tags.clear();
         self.checkpoint_due = true;
         let result = (|| {
             if let Some(current) = cached {
@@ -559,7 +570,7 @@ impl<F: NorFlash + MultiwriteNorFlash, C: CacheImpl<u16>> Main<F, C> {
             result
         };
         if result.is_err() {
-            self.read_cache = None;
+            self.invalidate_read_cache();
         }
         result
     }

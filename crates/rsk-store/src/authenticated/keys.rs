@@ -8,6 +8,11 @@ use rsk_secret::Secret;
 const STORE_DOMAIN: &[u8] = b"STORE/V2/ROOT";
 const NO_OTP_SALT: &[u8] = b"NO-OTP";
 
+#[cfg(test)]
+std::thread_local! {
+    pub(super) static DERIVATIONS: core::cell::Cell<usize> = const { core::cell::Cell::new(0) };
+}
+
 /// The root under which one journal was authenticated.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RootArm {
@@ -75,29 +80,60 @@ impl KeySource {
     pub fn key(self, arm: RootArm) -> Result<Secret<[u8; 32]>> {
         let mut root = Secret::<[u8; 32]>::zeroed();
         let rows = (self.read)(root.expose_mut());
+        let result = self
+            .validate_arm(arm, rows)
+            .and_then(|()| self.derive_key(arm, root.expose()));
+        root.wipe();
+        result
+    }
+
+    fn validate_arm(self, arm: RootArm, rows: RootRead) -> Result<()> {
+        match (arm, rows, self.latched) {
+            (RootArm::PreOtp, RootRead::Blank | RootRead::Fused, false)
+            | (RootArm::Otp, RootRead::Fused, _) => Ok(()),
+            (RootArm::PreOtp, _, true)
+            | (_, RootRead::Unreadable, _)
+            | (RootArm::Otp, RootRead::Blank, _) => Err(Error::MemoryFatal),
+        }
+    }
+
+    fn derive_key(self, arm: RootArm, root: &[u8; 32]) -> Result<Secret<[u8; 32]>> {
+        #[cfg(test)]
+        DERIVATIONS.with(|count| count.set(count.get() + 1));
         let mut key = Secret::<[u8; 32]>::zeroed();
-        let result = match (arm, rows, self.latched) {
-            (RootArm::PreOtp, RootRead::Blank | RootRead::Fused, false) => hkdf_sha256(
+        let result = match arm {
+            RootArm::PreOtp => hkdf_sha256(
                 NO_OTP_SALT,
                 &self.serial_hash,
                 STORE_DOMAIN,
                 key.expose_mut(),
             ),
-            (RootArm::Otp, RootRead::Fused, _) => hkdf_sha256(
-                &self.serial_hash,
-                root.expose(),
-                STORE_DOMAIN,
-                key.expose_mut(),
-            ),
-            (RootArm::PreOtp, _, true)
-            | (_, RootRead::Unreadable, _)
-            | (RootArm::Otp, RootRead::Blank, _) => {
-                root.wipe();
-                return Err(Error::MemoryFatal);
-            }
+            RootArm::Otp => hkdf_sha256(&self.serial_hash, root, STORE_DOMAIN, key.expose_mut()),
         };
-        root.wipe();
         result.map_err(|_| Error::MemoryFatal)?;
         Ok(key)
+    }
+
+    pub(super) fn prepare_read(
+        self,
+        arm: RootArm,
+        needs_key: bool,
+    ) -> Result<super::read_proof::ReadProof> {
+        let mut root = Secret::<[u8; 32]>::zeroed();
+        let rows = (self.read)(root.expose_mut());
+        self.validate_arm(arm, rows)?;
+        let mac = rsk_crypto::mac::HmacSha256::new(match arm {
+            RootArm::PreOtp => NO_OTP_SALT,
+            RootArm::Otp => root.expose(),
+        });
+        let key = needs_key
+            .then(|| self.derive_key(arm, root.expose()))
+            .transpose()?;
+        root.wipe();
+        Ok(super::read_proof::ReadProof {
+            mac,
+            key,
+            serial_hash: self.serial_hash,
+        })
     }
 }

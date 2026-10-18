@@ -243,14 +243,15 @@ impl<F: NorFlash + MultiwriteNorFlash + Clone, C: CacheImpl<u16>> Authenticated<
     }
 
     fn read_checked(&mut self, fid: u16, out: &mut [u8]) -> Result<Option<usize>> {
-        let mut key = self.source.key(self.arm(fid))?;
-        let result = if crate::is_counter_fid(fid) {
-            self.counters.read(key.expose(), fid, out)
+        if crate::is_counter_fid(fid) {
+            let mut key = self.source.key(self.counter_arm)?;
+            let result = self.counters.read(key.expose(), fid, out);
+            key.wipe();
+            result
         } else {
-            self.main.read(key.expose(), fid, out)
-        };
-        key.wipe();
-        result
+            self.main
+                .read_with_source(self.source, self.main_arm, fid, out)
+        }
     }
 }
 

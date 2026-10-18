@@ -38,6 +38,15 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ## [Unreleased]
 
+- **bcdDevice → 0x0AD5:** Reuse authenticated Main read metadata without
+  repeating HKDF and the binding and record MAC checks on each warm lookup.
+  A warm tag hit reads OTP and verifies a full 32-byte software HMAC over the
+  exact mounted version and, for present files, the entry and complete value
+  digest. Cold reads and tag misses retain the original binding and record proofs.
+  Only metadata and tags survive a read. Main clears these hints before mutation
+  and on read errors while retaining the version floor. Persistent formats and
+  capacities remain unchanged.
+
 - **bcdDevice → 0x0AD4:** Reduce Non-secure backup USB polling from every
   millisecond to every 16 ms, leaving more CPU time for authenticated storage
   reads. Secure progress interrupts still wake waiters immediately; missed

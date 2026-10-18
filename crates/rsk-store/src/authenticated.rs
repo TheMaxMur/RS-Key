@@ -18,6 +18,8 @@ mod directory;
 pub use directory::Directory;
 
 mod authority;
+mod read_proof;
+mod read_tags;
 
 mod keys;
 pub use keys::{KeySource, RootArm, RootRead};

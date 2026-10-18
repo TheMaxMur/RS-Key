@@ -9,6 +9,11 @@ use super::{Entry, FORMAT, Identity, Prepared, RootArm};
 
 const MOUNT_DOMAIN: &[u8; 8] = b"RSKV2RAM";
 
+#[cfg(test)]
+std::thread_local! {
+    pub(super) static READ_MAC_PROOFS: core::cell::Cell<usize> = const { core::cell::Cell::new(0) };
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct Snapshot {
     pub identity: Identity,
@@ -24,11 +29,32 @@ pub(super) struct Bound {
 }
 
 impl Bound {
+    #[cfg(test)]
+    pub(super) fn alter_for_test(
+        mut self,
+        change: impl FnOnce(&mut Snapshot, &mut [u8; 32]),
+    ) -> Self {
+        change(&mut self.snapshot, &mut self.tag);
+        self
+    }
+
+    pub(super) fn same_context(self, other: Self) -> bool {
+        self.snapshot == other.snapshot && ct_eq(&self.tag, &other.tag)
+    }
+
     fn new(key: &[u8; 32], snapshot: Snapshot) -> Result<Self> {
         Self::new_with(snapshot, |frame| hmac_sha256(key, frame))
     }
 
     fn new_with(snapshot: Snapshot, tag: impl FnOnce(&[u8]) -> [u8; 32]) -> Result<Self> {
+        let frame = Self::frame(snapshot)?;
+        Ok(Self {
+            snapshot,
+            tag: tag(&frame),
+        })
+    }
+
+    fn frame(snapshot: Snapshot) -> Result<[u8; 68]> {
         let mut frame = [0; 68];
         field(&mut frame, 0, MOUNT_DOMAIN)?;
         field(
@@ -43,10 +69,14 @@ impl Bound {
         field(&mut frame, 12, &snapshot.identity.epoch)?;
         field(&mut frame, 28, &snapshot.sequence.to_le_bytes())?;
         field(&mut frame, 36, &snapshot.digest)?;
-        Ok(Self {
-            snapshot,
-            tag: tag(&frame),
-        })
+        Ok(frame)
+    }
+
+    pub(super) fn read_frame(self) -> Result<[u8; 100]> {
+        let mut frame = [0; 100];
+        field(&mut frame, 0, &Self::frame(self.snapshot)?)?;
+        field(&mut frame, 68, &self.tag)?;
+        Ok(frame)
     }
 
     fn verify(self, key: &[u8; 32], snapshot: Snapshot) -> Result<()> {
@@ -111,11 +141,13 @@ impl Authority {
         identity: Identity,
         arm: RootArm,
     ) -> Result<()> {
+        #[cfg(test)]
+        READ_MAC_PROOFS.with(|count| count.set(count.get() + 1));
         let bound = self.read_bound(identity, arm)?;
         bound.verify_with(bound.snapshot, |frame| mac.tag(frame))
     }
 
-    fn read_bound(&self, identity: Identity, arm: RootArm) -> Result<Bound> {
+    pub(super) fn read_bound(&self, identity: Identity, arm: RootArm) -> Result<Bound> {
         let Self::Stable(bound) = *self else {
             return Err(Error::MemoryFatal);
         };

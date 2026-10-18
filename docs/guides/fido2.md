@@ -7,9 +7,14 @@ rollback; the firmware rebuilds its inventory and reports no spare capacity
 until an incomplete scan can finish. Record formats are unchanged.
 
 From build `0x0ACF`, repeated `getInfo` requests use the complete authenticated
-main directory held in protected RAM. Each backend read freshly derives the root
+main directory held in protected RAM. Each backend read freshly checks the root
 and authenticates the full requested value against its expected version. Absence
 comes from that complete directory. Root keys and plaintext values are not cached.
+
+Build `0x0AD5` retains only metadata and full 32-byte read tags after the original
+checks succeed. Warm tag hits verify them with a freshly read root, avoiding
+repeated HKDF, mounted-binding and record MAC work. The tag binds the mounted
+version and complete requested value, even when the caller requests only its length.
 
 Build `0x0AD0` further shortens warm reads by clearing only the scratch span that
 the read can fill, including alignment padding. Every borrowed byte is cleared

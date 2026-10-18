@@ -6,6 +6,62 @@ use super::*;
 
 const KEY: [u8; 32] = [0x35; 32];
 const NEW_KEY: [u8; 32] = [0x47; 32];
+
+#[test]
+fn payload_tag_association_covers_the_whole_stable_binding() {
+    use super::super::read_tags::ReadTags;
+    let bound = stable().read_bound(BASE.identity, BASE.arm).unwrap();
+    let entry = Entry::live(BASE.identity, &KEY, 0xB000, 10, b"owner").unwrap();
+    let mut cache = ReadTags::new();
+    cache.insert(bound, entry, [0x75; 32]);
+    assert_eq!(cache.find(bound, entry), Some([0x75; 32]));
+    for index in 0..32 {
+        let mut changed = bound;
+        *changed.tag.get_mut(index).unwrap() ^= 1;
+        assert!(cache.find(changed, entry).is_none());
+        let mut changed = bound;
+        *changed.snapshot.digest.get_mut(index).unwrap() ^= 1;
+        assert!(cache.find(changed, entry).is_none());
+    }
+    for snapshot in [
+        Snapshot {
+            sequence: BASE.sequence + 1,
+            ..BASE
+        },
+        Snapshot {
+            arm: RootArm::Otp,
+            ..BASE
+        },
+        Snapshot {
+            identity: Identity {
+                epoch: [0x4C; 16],
+                ..BASE.identity
+            },
+            ..BASE
+        },
+        Snapshot {
+            identity: Identity {
+                partition: Partition::Counter,
+                ..BASE.identity
+            },
+            ..BASE
+        },
+    ] {
+        assert!(
+            cache
+                .find(Bound::new(&KEY, snapshot).unwrap(), entry)
+                .is_none()
+        );
+    }
+    for changed in [
+        Entry::live(BASE.identity, &KEY, 0xB001, 10, b"owner").unwrap(),
+        Entry::live(BASE.identity, &KEY, 0xB000, 11, b"owner").unwrap(),
+        Entry::live(BASE.identity, &KEY, 0xB000, 10, b"owne").unwrap(),
+        Entry::live(BASE.identity, &KEY, 0xB000, 10, b"forge").unwrap(),
+    ] {
+        assert!(cache.find(bound, changed).is_none());
+    }
+}
 const BASE: Snapshot = Snapshot {
     identity: Identity {
         partition: Partition::Main,

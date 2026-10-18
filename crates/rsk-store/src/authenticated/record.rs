@@ -105,6 +105,7 @@ impl Entry {
 
     pub fn verify(self, identity: Identity, key: &[u8; 32], data: &[u8]) -> Result<()> {
         self.verify_with(identity, data, |frame| hmac_sha256(key, frame))
+            .map(|_| ())
     }
 
     pub(super) fn verify_with_mac(
@@ -112,7 +113,7 @@ impl Entry {
         identity: Identity,
         mac: &rsk_crypto::mac::HmacSha256,
         data: &[u8],
-    ) -> Result<()> {
+    ) -> Result<[u8; 32]> {
         self.verify_with(identity, data, |frame| mac.tag(frame))
     }
 
@@ -121,14 +122,16 @@ impl Entry {
         identity: Identity,
         data: &[u8],
         tag: impl FnOnce(&[u8]) -> [u8; 32],
-    ) -> Result<()> {
-        let expected = match self.length() {
-            Some(length) if length == data.len() => self.authenticate_with(identity, data, tag)?,
-            None if data.is_empty() => self.authenticate_with(identity, data, tag)?,
+    ) -> Result<[u8; 32]> {
+        match self.length() {
+            Some(length) if length == data.len() => {}
+            None if data.is_empty() => {}
             _ => return Err(Error::MemoryFatal),
-        };
+        }
+        let digest = sha256(data);
+        let expected = self.authenticate_digest(identity, &digest, tag)?;
         if ct_eq(&expected, &self.tag) {
-            Ok(())
+            Ok(digest)
         } else {
             Err(Error::MemoryFatal)
         }
@@ -149,6 +152,15 @@ impl Entry {
         data: &[u8],
         tag: impl FnOnce(&[u8]) -> [u8; 32],
     ) -> Result<[u8; TAG_BYTES]> {
+        self.authenticate_digest(identity, &sha256(data), tag)
+    }
+
+    fn authenticate_digest(
+        self,
+        identity: Identity,
+        digest: &[u8; 32],
+        tag: impl FnOnce(&[u8]) -> [u8; 32],
+    ) -> Result<[u8; TAG_BYTES]> {
         let mut frame = [0; AUTH_BYTES];
         field(&mut frame, 0, RECORD_DOMAIN)?;
         field(&mut frame, 8, &[FORMAT, identity.partition.code()])?;
@@ -156,7 +168,7 @@ impl Entry {
         field(&mut frame, 12, &identity.epoch)?;
         field(&mut frame, 28, &self.generation.to_le_bytes())?;
         field(&mut frame, 36, &self.fid.to_le_bytes())?;
-        field(&mut frame, 40, &sha256(data))?;
+        field(&mut frame, 40, digest)?;
         let full_tag = tag(&frame);
         let mut tag = [0; TAG_BYTES];
         tag.copy_from_slice(full_tag.get(..TAG_BYTES).ok_or(Error::MemoryFatal)?);

@@ -220,7 +220,7 @@ success. Invalid occupied suffixes retain authenticated progress as a minimum
 generation; an older replica cannot silently replace that progress.
 
 From build `0x0ACF`, Main keeps its complete authenticated version directory
-in protected RAM. A warm read freshly derives the root, verifies its binding to
+in protected RAM. A warm read freshly checks the root, verifies its binding to
 the mounted directory, and authenticates the complete requested payload against
 its expected entry. The complete directory also authorizes absence. Neither root
 keys nor payload plaintext are cached. Before reusing a mounted directory for
@@ -239,14 +239,34 @@ scratch span, under a wipe guard. Cold reads and mutation paths clear the whole
 scratch before reusing a mount; warm reads wipe everything the map could have
 filled, including padding and partially completed failing reads. A fallback drops
 the bounded guard before full-buffer lookup and cleanup. Absence borrows no
-scratch. The root and both MAC checks remain fresh.
+scratch. Fresh root checks and complete value authentication remain required.
 
-From `0x0AD3`, a ready read prepares one command-local HMAC context for the
+Build `0x0AD3` prepares one operation-local HMAC context for the
 full mounted binding and complete payload checks, using the prefix reuse from
 [RFC 2104 section 4](https://www.rfc-editor.org/rfc/rfc2104.html#section-4). The context stays in returned
 stack frames covered by the Secure sweep; no keyed state is retained for a
 later backend read, which derives its root afresh. Authentication frames and
 persistent records are unchanged.
+
+From `0x0AD5`, Main can retain 32 read tags and one mounted-binding tag, with
+their exact public metadata, in protected RAM. Every admitted backend read still
+reads OTP and applies the original arm and latch rules. A miss derives the persisted
+key and verifies the full binding and record MACs before seeding a tag from that
+same OTP observation. A hit instead verifies a full 32-byte root-key HMAC:
+`RSKV2RM1 || serial_hash || bound[100]` for absence, or
+`RSKV2RD1 || serial_hash || bound[100] || entry[32] || SHA256(value)` for a value.
+The bound contains the canonical snapshot and its full mounted-binding tag.
+Every payload byte is hashed before any requested prefix is returned; a miss
+reuses the digest already verified by the record MAC. Root bytes are wiped
+before map I/O. No root, derived key, plaintext or keyed state survives a read
+in Main or KeySource; returned crypto frames remain covered by the Secure sweep.
+
+CRC or missing-map recovery first verifies the original observation's mounted
+tag, then freshly reads and derives the root again. The existing full binding
+proof checks this second observation before recovery reads payloads. A cached
+payload-tag mismatch refuses immediately. Main clears the read tags with its
+other hints before mutation and on read errors, retaining the authority floor.
+These tags have no persistent representation and do not change journal or record formats.
 
 Boot mounts authority before scanning or provisioning applets. Wholly blank
 media and readable legacy stores are initialized or imported automatically.
