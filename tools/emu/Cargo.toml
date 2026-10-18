@@ -102,4 +102,5 @@ opt-level = "s"
 # what `for_each_key` hands `Fs::scan` to decide a key is absent. An emulator that
 # confuses "unreadable" for "absent" passes exactly the case the device fails.
 [patch.crates-io]
+p384 = { path = "../../third_party/p384" }
 sequential-storage = { path = "../../third_party/sequential-storage" }

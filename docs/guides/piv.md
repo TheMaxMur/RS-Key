@@ -22,6 +22,8 @@ Build `0x0ACA` also uses compact SHA-2 rounds for deterministic ECDSA nonces,
 reducing P-384 signing latency without changing signatures or key validation.
 Build `0x0ACB` accelerates P-384 ECDH with constant-time Jacobian multiplication,
 retaining peer-point validation and the same shared secret.
+Build `0x0ACC` also accelerates P-384 field arithmetic on 32-bit boards, including
+signing and the public-key derivation performed during attestation validation.
 A failed management-key read refuses that SELECT and can be retried; a
 malformed management-key seal keeps certificate access and recovery available.
 

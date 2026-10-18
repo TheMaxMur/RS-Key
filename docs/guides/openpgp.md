@@ -6,6 +6,8 @@ SSH login (via gpg-agent), and end-to-end mail/file encryption.
 
 Build `0x0ACB` accelerates P-384 ECDH decryption with constant-time Jacobian
 multiplication, retaining peer-point validation and the same shared secret.
+Build `0x0ACC` also accelerates the underlying P-384 field products on 32-bit
+boards; existing keys and signatures remain compatible.
 
 GET DATA returns `6581` if its output buffer cannot hold the complete data
 object. An undersized buffer does not produce a successful partial template.

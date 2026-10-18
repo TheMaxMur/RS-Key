@@ -201,5 +201,8 @@ opt-level = "s"    # embassy/HAL needs some opt even in dev to fit/behave
 # rollback. This is the flash KV store that holds every sealed secret, so the
 # fork is deliberately kept that narrow — one file, and the patch says which
 # functions; upstream tracks the idea in tweedegolf/sequential-storage#105.
+# P-384 keeps its existing RustCrypto types and validation; only 32-bit field
+# products use the local CIOS kernel (provenance: third_party/p384.patch).
 [patch.crates-io]
+p384 = { path = "third_party/p384" }
 sequential-storage = { path = "third_party/sequential-storage" }

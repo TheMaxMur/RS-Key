@@ -8,11 +8,14 @@ unrelated kinds live here:
   validated without checking out the upstream repos. They are **not** part of RS-Key's own test
   suite (`tests/`, `cargo test`) — they are the upstream ecosystems' own tests,
   kept runnable against this implementation. Everything below is about them.
-- **A vendored crate carrying a local fork** — `sequential-storage/` plus
+- **Vendored crates carrying local forks** — `sequential-storage/` plus
   `sequential-storage.patch`, wired into `[patch.crates-io]` by the root,
   `fuzz/` and `tools/emu/` manifests. All three, or the emulator runs a
   different KV store from the firmware. The patch file's own header is the
   record of what each change is and why the fork stays inside `src/map.rs` and `src/lib.rs`.
+  `p384/` plus `p384.patch` specialize 32-bit P-384 field products with a
+  constant-time CIOS kernel; the same three workspaces resolve that fork.
+  The patch records its origin, unchanged surfaces and host/ARM verification.
 - **The image emulator** — `picoem/`, the two host libraries and pinned A4
   ROM used by `tools/emu`. Origin, local isolation changes and checks are
   recorded in [TrustZone](../docs/trustzone.md#emulator-source-and-isolation-checks).

@@ -38,6 +38,11 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ## [Unreleased]
 
+- Accelerate P-384 field products on 32-bit targets with a modulus-specific,
+  constant-time Montgomery CIOS kernel. ECDH, ECDSA commitments and public-key
+  derivation retain canonical results, point validation and secret cleanup.
+  Existing credentials and flash records are unchanged. bcdDevice `0x0ACC`.
+
 - Accelerate P-384 ECDH with Jacobian doubling and mixed addition. Signed
   windows retain fixed work, full table selection and masked equality,
   opposite-point and identity handling. Peer validation, errors and shared

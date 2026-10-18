@@ -282,3 +282,11 @@ pub fn sign_p521(
 #[cfg(test)]
 #[path = "tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "../../../third_party/p384/src/arithmetic/montgomery32.rs"]
+mod p384_montgomery32;
+
+#[cfg(test)]
+#[path = "p384_montgomery32_tests.rs"]
+mod p384_montgomery32_tests;

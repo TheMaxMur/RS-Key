@@ -27,6 +27,12 @@ confidence-threshold = 0.9
 # Our own firmware crates are `publish = false`; don't license-scan them.
 private = { ignore = true }
 
+# The local P-384 kernel uses this repository's AGPL; upstream files retain
+# Apache-2.0 OR MIT. Keep this version of the mixed fork license-checked.
+[[licenses.exceptions]]
+crate = "p384@0.14.0"
+allow = ["AGPL-3.0-only", "Apache-2.0", "MIT"]
+
 [bans]
 multiple-versions = "warn"
 
