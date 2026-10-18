@@ -15,4 +15,6 @@ rustflags = [
   "-C", "target-cpu=cortex-m33",
   "--cfg", "bp256_backend=\"bigint\"",
   "--cfg", "bp384_backend=\"bigint\"",
+  # Looped SHA-2 rounds fit Cortex-M33 XIP; unrolled SHA-512 thrashes it.
+  "--cfg", "sha2_backend_soft=\"compact\"",
 ]

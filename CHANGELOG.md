@@ -38,6 +38,11 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ## [Unreleased]
 
+- Use compact software SHA-2 rounds for the firmware's RustCrypto 0.11
+  dependency paths, reducing P-384 deterministic-signature latency and code
+  size on Cortex-M33. Nonces, signatures and validation remain unchanged.
+  bcdDevice `0x0ACA`.
+
 - Use command-free continuous Quad reads on the allowlisted Puya flash, at the
   existing clock rate. A single-word priming transaction precedes a full probe;
   failed probes release enhanced read mode, restore QMI and verify the old mode.

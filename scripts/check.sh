@@ -102,13 +102,13 @@ embassy_revs_match() {
 
 # The shipping image must fit the 2560K code region (firmware/memory.x); this
 # ceiling is a *ratchet* well under that hard limit. It hugs the current image
-# (876 KiB) plus a small margin, so a runaway — an accidental fat dependency
+# (819 KiB) plus a small margin, so a runaway — an accidental fat dependency
 # (one extra EC curve is ~150 KiB) — or any surprise growth trips it, while
 # ordinary build noise does not. Ratchet discipline: when the image shrinks,
 # lower this to lock the win in; when a real feature grows it, raise this in the
 # same commit. Measured on the default (shipping) build before the display/
 # no-touch rebuilds overwrite the ELF; arm-none-eabi-size ships in the dev shell.
-FIRMWARE_FLASH_BUDGET_KIB=918
+FIRMWARE_FLASH_BUDGET_KIB=885
 firmware_size_budget() {
   local elf="target/thumbv8m.main-none-eabihf/release/firmware"
   local bytes kib

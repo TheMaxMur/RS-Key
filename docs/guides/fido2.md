@@ -211,6 +211,10 @@ getInfo advertises these COSE algorithms. A relying party picks one in its
 RS-Key selects the **first** supported algorithm a site offers, so put your
 preferred curve first in the list.
 
+Build `0x0ACA` uses compact software SHA-2 rounds for the ECDSA dependency
+paths on Cortex-M33. This reduces ES384 signing latency while preserving
+deterministic nonces, signatures and credential keys.
+
 The curve-explicit COSE ids (`-9` ESP256, `-19` Ed25519, `-51` ESP384, `-52`
 ESP512) are accepted too, and a credential comes back stamped with **the id the
 site asked for** — offer only `-9` and the attested key says `-9`, not `-7`.
