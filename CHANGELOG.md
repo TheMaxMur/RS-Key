@@ -38,6 +38,12 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ## [Unreleased]
 
+- Reduce P-384 public-key and ECDSA commitment work with two fixed-base comb
+  groups and the curve library's complete doubling formula. Fixed loop counts,
+  full constant-time table selection, coordinate validation and sealed-key /
+  certificate checks remain in place. This shortens the first PIV SELECT and
+  its delay to queued commands. bcdDevice `0x0AC7`.
+
 - Feed complete SHA-256 blocks with straight-line word writes and peripheral
   byte swapping in the shared flash backend. Eager readiness, error and timeout
   checks still run before and after each block; full fresh bank, tail, root and

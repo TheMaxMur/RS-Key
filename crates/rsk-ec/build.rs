@@ -1,11 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 RS-Key contributors
 
-//! Generates the width-4 Lim–Lee fixed-base comb tables `lib.rs` uses for
-//! `k·G` / `d·G` — one per curve (P-256, P-384, P-521, secp256k1). Each entry is
-//! `T[i] = Σ_{j ∈ set-bits(i)} 2^{j·D}·G` (`D = ceil(bits/4)`) as affine
-//! big-endian bytes; `T[0]` is an identity sentinel the runtime comb never adds.
-//! Each table is KAT-checked at runtime against `mul_by_generator` (see tests).
+//! Generates width-four fixed-base tables; P-384 also uses `2^48·T[i]`.
+//! `T[i] = Σ_{j ∈ set-bits(i)} 2^{j·D}·G`, with an identity sentinel at zero.
+//! Differential tests compare the comb with generator multiplication.
 
 use std::env;
 use std::fs;
@@ -14,12 +12,19 @@ use std::path::Path;
 const W: usize = 4;
 
 macro_rules! gen_comb {
-    ($curve:ident, $d:expr, $coord:expr, $constname:literal, $file:literal) => {{
+    ($curve:ident, $d:expr, $coord:expr, $constname:literal, $file:literal) => {
+        gen_comb!($curve, $d, $coord, $constname, $file, 0);
+    };
+    ($curve:ident, $d:expr, $coord:expr, $constname:literal, $file:literal, $shift:expr) => {{
         use $curve::ProjectivePoint;
         use $curve::elliptic_curve::sec1::ToSec1Point;
 
-        // base[j] = 2^{j·D}·G, by repeated doubling of the generator.
-        let mut base = [ProjectivePoint::GENERATOR; W];
+        // base[j] = 2^{shift+j·D}·G, by repeated doubling of the generator.
+        let mut first = ProjectivePoint::GENERATOR;
+        for _ in std::iter::repeat_n((), $shift) {
+            first += first;
+        }
+        let mut base = [first; W];
         for j in 1..W {
             let mut p = base[j - 1];
             for _ in 0..$d {
@@ -67,6 +72,7 @@ fn main() {
     gen_comb!(p521, 131, 66, "GEN_COMB", "gen_comb_p521.rs"); // ceil(521/4) = 131
     gen_comb!(p256, 64, 32, "GEN_COMB_P256", "gen_comb_p256.rs"); // ceil(256/4) = 64
     gen_comb!(p384, 96, 48, "GEN_COMB_P384", "gen_comb_p384.rs"); // ceil(384/4) = 96
+    gen_comb!(p384, 96, 48, "GEN_COMB_P384_HI", "gen_comb_p384_hi.rs", 48);
     gen_comb!(k256, 64, 32, "GEN_COMB_K256", "gen_comb_k256.rs"); // ceil(256/4) = 64
     println!("cargo:rerun-if-changed=build.rs");
 }

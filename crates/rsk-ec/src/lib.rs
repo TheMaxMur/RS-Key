@@ -32,11 +32,13 @@
 
 pub mod pubdo;
 
+mod comb_p384;
 mod curve;
 mod error;
 mod key;
 mod rng;
 
+pub use comb_p384::comb_mul_p384;
 pub use curve::Curve;
 pub use error::EcError;
 pub use key::{MAX_EC_POINT, MAX_EC_SIG, PrivKey};
@@ -48,6 +50,7 @@ pub use rng::Rng;
 include!(concat!(env!("OUT_DIR"), "/gen_comb_p521.rs"));
 include!(concat!(env!("OUT_DIR"), "/gen_comb_p256.rs"));
 include!(concat!(env!("OUT_DIR"), "/gen_comb_p384.rs"));
+include!(concat!(env!("OUT_DIR"), "/gen_comb_p384_hi.rs"));
 include!(concat!(env!("OUT_DIR"), "/gen_comb_k256.rs"));
 
 /// Comb width / bits-per-block — MUST match `build.rs`.
@@ -119,7 +122,7 @@ macro_rules! comb_mul_fn {
 
 comb_mul_fn!(comb_mul_p521, p521, GEN_COMB, COMB_D_P521, 521, 66);
 comb_mul_fn!(comb_mul_p256, p256, GEN_COMB_P256, COMB_D_P256, 256, 32);
-comb_mul_fn!(comb_mul_p384, p384, GEN_COMB_P384, COMB_D_P384, 384, 48);
+
 comb_mul_fn!(comb_mul_k256, k256, GEN_COMB_K256, COMB_D_K256, 256, 32);
 
 /// A prehash as `N`-byte field bytes, exactly as `ecdsa`'s `bits2field` for a
