@@ -15,8 +15,8 @@ SELECT preserves damaged empty PIN, PUK, retry and private-key records rather
 than provisioning factory credentials over them. A missing or damaged public
 attestation certificate remains repairable from its unchanged private key.
 The first SELECT loads each existing management and attestation key once.
-Build `0x0AC7` accelerates P-384 public-key derivation with two fixed-base comb
-groups and specialized complete doubling. It still checks the attestation
+Build `0x0AC8` accelerates P-384 public-key derivation with four signed fixed-base
+comb groups and specialized complete doubling. It still checks the attestation
 private key against its certificate before making the key available.
 A failed management-key read refuses that SELECT and can be retried; a
 malformed management-key seal keeps certificate access and recovery available.

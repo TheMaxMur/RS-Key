@@ -33,6 +33,7 @@
 pub mod pubdo;
 
 mod comb_p384;
+mod comb_p384_params;
 mod curve;
 mod error;
 mod key;
@@ -45,19 +46,17 @@ pub use key::{MAX_EC_POINT, MAX_EC_SIG, PrivKey};
 pub use pubdo::{MAX_EC_PUBDO, make_ec_pubkey_do};
 pub use rng::Rng;
 
-// Fixed-base comb tables (`build.rs`-generated): 16 entries `T[i]`, affine `(x, y)`
-// big-endian; `T[0]` is an unused identity sentinel.
+// Generated affine coordinates; P-384 keeps centered half-tables and a correction.
+// Other curves retain sixteen entries, with an identity sentinel at zero.
 include!(concat!(env!("OUT_DIR"), "/gen_comb_p521.rs"));
 include!(concat!(env!("OUT_DIR"), "/gen_comb_p256.rs"));
-include!(concat!(env!("OUT_DIR"), "/gen_comb_p384.rs"));
-include!(concat!(env!("OUT_DIR"), "/gen_comb_p384_hi.rs"));
+include!(concat!(env!("OUT_DIR"), "/gen_signed_p384.rs"));
 include!(concat!(env!("OUT_DIR"), "/gen_comb_k256.rs"));
 
 /// Comb width / bits-per-block — MUST match `build.rs`.
 const COMB_W: usize = 4;
 const COMB_D_P521: usize = 131; // P-521: ceil(521 / 4)
 const COMB_D_P256: usize = 64; // P-256: ceil(256 / 4)
-const COMB_D_P384: usize = 96; // P-384: ceil(384 / 4)
 const COMB_D_K256: usize = 64; // secp256k1: ceil(256 / 4)
 
 /// Emits `<name>(k) -> k·G` for one curve via a width-`COMB_W` Lim–Lee comb over its

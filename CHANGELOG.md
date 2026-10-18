@@ -38,6 +38,10 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ## [Unreleased]
 
+- Halve P-384 comb doublings again with four centered signed groups and a
+  public correction point. Table decoding still validates every point; selection
+  and sign application use fixed work for every scalar. bcdDevice `0x0AC8`.
+
 - Reduce P-384 public-key and ECDSA commitment work with two fixed-base comb
   groups and the curve library's complete doubling formula. Fixed loop counts,
   full constant-time table selection, coordinate validation and sealed-key /
