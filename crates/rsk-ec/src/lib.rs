@@ -22,8 +22,9 @@
 //! `k·G` (the ECDSA nonce commitment) and `d·G` (public-key derivation) are both
 //! *fixed-base* on `G`, so a width-4 comb over a `build.rs`-precomputed table runs
 //! them several× faster than the crate's generic `mul_by_generator` on the in-order
-//! Cortex-M33 — and **bit-identical** to it (KAT-checked in `tests`). ECDH is
-//! variable-base (`d·P`) and stays on the crate, untouched.
+//! Cortex-M33 — and **bit-identical** to it (KAT-checked in `tests`). P-384 ECDH
+//! uses a constant-time Jacobian multiplier; other variable-base curves use
+//! their upstream multiplier.
 //!
 //! The ECDSA signers reproduce `ecdsa` 0.17's `sign_prehashed_rfc6979` body with the
 //! comb spliced in for `R = k·G`, so their output is byte-for-byte the crate's — the
@@ -35,6 +36,7 @@ pub mod pubdo;
 mod comb_p384;
 mod comb_p384_params;
 mod curve;
+mod ecdh_p384;
 mod error;
 mod key;
 mod rng;

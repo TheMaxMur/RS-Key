@@ -20,6 +20,8 @@ comb groups and specialized complete doubling. It still checks the attestation
 private key against its certificate before making the key available.
 Build `0x0ACA` also uses compact SHA-2 rounds for deterministic ECDSA nonces,
 reducing P-384 signing latency without changing signatures or key validation.
+Build `0x0ACB` accelerates P-384 ECDH with constant-time Jacobian multiplication,
+retaining peer-point validation and the same shared secret.
 A failed management-key read refuses that SELECT and can be retried; a
 malformed management-key seal keeps certificate access and recovery available.
 

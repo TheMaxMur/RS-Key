@@ -38,6 +38,11 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ## [Unreleased]
 
+- Accelerate P-384 ECDH with Jacobian doubling and mixed addition. Signed
+  windows retain fixed work, full table selection and masked equality,
+  opposite-point and identity handling. Peer validation, errors and shared
+  secrets are unchanged. bcdDevice `0x0ACB`.
+
 - Use compact software SHA-2 rounds for the firmware's RustCrypto 0.11
   dependency paths, reducing P-384 deterministic-signature latency and code
   size on Cortex-M33. Nonces, signatures and validation remain unchanged.

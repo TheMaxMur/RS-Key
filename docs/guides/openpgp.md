@@ -4,6 +4,9 @@ A full OpenPGP card 3.4 over CCID: three key slots (signature, decryption,
 authentication), works with stock GnuPG. The same slots cover commit signing,
 SSH login (via gpg-agent), and end-to-end mail/file encryption.
 
+Build `0x0ACB` accelerates P-384 ECDH decryption with constant-time Jacobian
+multiplication, retaining peer-point validation and the same shared secret.
+
 GET DATA returns `6581` if its output buffer cannot hold the complete data
 object. An undersized buffer does not produce a successful partial template.
 GET DATA `7A` also returns `6581` when the signature counter is absent,

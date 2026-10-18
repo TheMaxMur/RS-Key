@@ -446,10 +446,12 @@ fn ecdh_p384(scalar: &[u8; 48], peer_point: &[u8], out: &mut [u8]) -> Result<usi
     let sk = p384::SecretKey::from_bytes(&p384::FieldBytes::from(*scalar))
         .map_err(|_| EcError::Failed)?;
     let peer = sec1_peer::<p384::NistP384>(peer_point)?;
-    let shared = p384::ecdh::diffie_hellman(sk.to_nonzero_scalar(), peer.as_affine());
-    let z = shared.raw_secret_bytes();
-    out[..z.len()].copy_from_slice(z.as_slice());
-    Ok(z.len())
+    let shared = crate::ecdh_p384::mul(&peer, &sk.to_nonzero_scalar())?;
+    let z = Secret::new(p384::elliptic_curve::point::AffineCoordinates::x(
+        shared.expose(),
+    ));
+    out[..z.expose().len()].copy_from_slice(z.expose().as_slice());
+    Ok(z.expose().len())
 }
 
 /// P-521 ECDH — 66-byte shared x-coordinate.
