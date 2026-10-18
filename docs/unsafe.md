@@ -355,7 +355,10 @@ stream checks progress without raw XIP pointers or a new executable window.
 Quad commands execute before core1 starts; mode changes run then or after its
 interrupt-masked SRAM acknowledgment. Core0 masks interrupts during direct QMI
 access, restores the old mode on a failed public-byte probe, and runs the full
-USB fence in SRAM if QMI cannot quiesce. Only the allowlisted chip's volatile
+USB fence in SRAM if QMI cannot quiesce. Continuous reads are primed with one
+word before omitting EBh. A failed probe exits enhanced read before restoring
+QMI, then verifies the original mode; a failed restore probe fences USB.
+Only the allowlisted chip's volatile
 QE bit is written, without WEL; unsupported protection layouts are refused.
 
 ## What is *not* here

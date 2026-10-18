@@ -1,7 +1,47 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 RS-Key contributors
 
-//! Volatile-only Quad Enable for the Waveshare One's Puya P25Q32H.
+//! Volatile Quad Enable and continuous-read sequencing for the Puya P25Q32H.
+
+pub const QUAD_READ: u8 = 0xeb;
+pub const CONTINUOUS_SUFFIX: u8 = 0xa0;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ReadStep {
+    Prepare,
+    Prime,
+    OmitPrefix,
+    Probe,
+    Release,
+    Restore,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ReadMode {
+    Unchanged,
+    Continuous,
+    Restored,
+    Fatal,
+}
+
+/// Prime exactly one word, then omit EBh; never return through an unproven mode.
+#[inline(always)]
+pub fn continuous_read(mut step: impl FnMut(ReadStep) -> bool) -> ReadMode {
+    if !step(ReadStep::Prepare) {
+        return ReadMode::Unchanged;
+    }
+    let primed = step(ReadStep::Prime);
+    if !step(ReadStep::OmitPrefix) {
+        return ReadMode::Fatal;
+    }
+    if primed && step(ReadStep::Probe) {
+        return ReadMode::Continuous;
+    }
+    if !step(ReadStep::Release) || !step(ReadStep::Restore) || !step(ReadStep::Probe) {
+        return ReadMode::Fatal;
+    }
+    ReadMode::Restored
+}
 
 const PUYA_ID: [u8; 3] = [0x85, 0x60, 0x16];
 const QE: u8 = 2;

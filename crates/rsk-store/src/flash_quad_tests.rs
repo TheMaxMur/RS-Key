@@ -3,6 +3,70 @@
 
 use super::*;
 
+fn transition(fail: &[usize]) -> (ReadMode, Vec<ReadStep>) {
+    let mut steps = Vec::new();
+    let mode = continuous_read(|step| {
+        steps.push(step);
+        !fail.contains(&steps.len())
+    });
+    (mode, steps)
+}
+
+#[test]
+fn continuous_read_primes_once_before_omitting_the_prefix_and_probing() {
+    use ReadStep::*;
+    assert_eq!(
+        transition(&[]),
+        (
+            ReadMode::Continuous,
+            vec![Prepare, Prime, OmitPrefix, Probe]
+        )
+    );
+    assert_eq!(transition(&[1]), (ReadMode::Unchanged, vec![Prepare]));
+    assert_eq!(
+        transition(&[3]),
+        (ReadMode::Fatal, vec![Prepare, Prime, OmitPrefix])
+    );
+}
+
+#[test]
+fn either_failed_read_releases_the_chip_before_restoring_and_reprobes() {
+    use ReadStep::*;
+    assert_eq!(
+        transition(&[2]),
+        (
+            ReadMode::Restored,
+            vec![Prepare, Prime, OmitPrefix, Release, Restore, Probe]
+        )
+    );
+    assert_eq!(
+        transition(&[4]),
+        (
+            ReadMode::Restored,
+            vec![Prepare, Prime, OmitPrefix, Probe, Release, Restore, Probe]
+        )
+    );
+}
+
+#[test]
+fn every_failed_rollback_step_is_fatal_and_stops_immediately() {
+    use ReadStep::*;
+    let steps = [Prepare, Prime, OmitPrefix, Probe, Release, Restore, Probe];
+    for failed in 5..=7 {
+        assert_eq!(
+            transition(&[4, failed]),
+            (ReadMode::Fatal, steps[..failed].to_vec())
+        );
+    }
+    let steps = [Prepare, Prime, OmitPrefix, Release, Restore, Probe];
+    for failed in 4..=6 {
+        assert_eq!(
+            transition(&[2, failed]),
+            (ReadMode::Fatal, steps[..failed].to_vec())
+        );
+    }
+}
+
 struct Fake {
     id: [u8; 3],
     status: u8,

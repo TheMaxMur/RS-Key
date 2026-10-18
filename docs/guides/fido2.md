@@ -23,6 +23,9 @@ standard build). Unknown chips or protected status layouts keep the ROM's read
 mode. A failed public-byte comparison restores the previous mode. This read
 path is shared by FIDO, PIV, OpenPGP and OATH; it does not cache authentication
 results between reads.
+Build `0x0AC9` primes continuous reads with one word, then omits the command
+prefix at the same clock rate. Rollback exits enhanced read before restoring
+QMI and checks the original read mode before returning.
 The checked FIFO loop also reduces time spent on each shared storage read;
 the fresh bank, erased-tail, root and payload checks remain in place.
 From build `0x0AC6`, the hardware SHA-256 feed writes each block directly as

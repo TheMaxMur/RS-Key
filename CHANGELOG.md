@@ -38,6 +38,12 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ## [Unreleased]
 
+- Use command-free continuous Quad reads on the allowlisted Puya flash, at the
+  existing clock rate. A single-word priming transaction precedes a full probe;
+  failed probes release enhanced read mode, restore QMI and verify the old mode.
+  Fresh bank, erased-tail and record authentication checks are unchanged.
+  bcdDevice `0x0AC9`.
+
 - Halve P-384 comb doublings again with four centered signed groups and a
   public correction point. Table decoding still validates every point; selection
   and sign application use fixed work for every scalar. bcdDevice `0x0AC8`.
