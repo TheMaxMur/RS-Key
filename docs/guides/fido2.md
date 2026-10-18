@@ -16,6 +16,12 @@ interruption, each such cycle consumes at least half a bank of obsolete history;
 short histories skip the extra scan. Actual reads still inspect both full banks
 and erased tails, while hashing fewer obsolete journal bytes.
 
+From build `0x0ACE`, the board checks aligned erased journal tails directly from
+fresh FIFO words, without staging them in SRAM. It still reads every word and
+checks FIFO status and final transfer progress. QSPI mode checks and the 100 ms
+wait bound retain their existing 4 KiB transfer boundaries. No authentication
+snapshot is reused between backend reads.
+
 Repeated `getInfo` requests reuse the parsed storage directory after checking
 both journal banks again. Each backend read checks the peer bank before the
 selected bank under a freshly read root, including both erased tails.

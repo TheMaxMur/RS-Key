@@ -122,6 +122,19 @@ pub(super) fn digest(
     }
     let mut at = range.start;
     while at < range.end {
+        // Keep mode checks and wait bounds at the existing chunk boundaries.
+        if at >= boundary && at.is_multiple_of(4) && (range.end - at).is_multiple_of(4) {
+            flash.quad.borrow_mut().ensure_mode();
+            let _owner = flash.inner.borrow_mut();
+            let count = usize::try_from(range.end - at)
+                .map_err(|_| Error::MemoryFatal)?
+                .min(CHUNK);
+            if !super::stream::read_erased(at, count).map_err(|_| Error::MemoryFatal)? {
+                return Err(Error::MemoryFatal);
+            }
+            at += u32::try_from(count).map_err(|_| Error::MemoryFatal)?;
+            continue;
+        }
         let limit = if at < boundary { boundary } else { range.end };
         let count = usize::try_from(limit - at)
             .map_err(|_| Error::MemoryFatal)?

@@ -6,6 +6,10 @@ It retains all live objects and generations, and checks both full banks, erased
 tails, the fresh root and each payload MAC on every backend read. This occasional
 maintenance adds startup work and erases; see the [shared-storage behavior](fido2.md).
 
+From build `0x0ACE`, these reads also use direct erased-tail checks in the shared
+flash stream. Every tail word is freshly read; the authentication checks and
+storage capacities remain unchanged.
+
 A full OpenPGP card 3.4 over CCID: three key slots (signature, decryption,
 authentication), works with stock GnuPG. The same slots cover commit signing,
 SSH login (via gpg-agent), and end-to-end mail/file encryption.

@@ -75,19 +75,55 @@ pub fn read(
     offset: u32,
     bytes: &mut [u8],
 ) -> Result<(), Error> {
+    let length = bytes.len();
+    let mut words = bytes.as_chunks_mut::<WORD_BYTES>().0.iter_mut();
+    transfer(stream, capacity, offset, length, |value| {
+        words
+            .next()
+            .ok_or(Error::Transfer)?
+            .copy_from_slice(&value.to_le_bytes());
+        Ok(())
+    })
+}
+
+/// Check freshly streamed words without copying an erased tail into SRAM.
+#[inline(always)]
+pub fn read_erased(
+    stream: &mut impl Stream,
+    capacity: usize,
+    offset: u32,
+    length: usize,
+) -> Result<bool, Error> {
+    let mut erased = u32::MAX;
+    transfer(stream, capacity, offset, length, |word| {
+        erased &= word;
+        Ok(())
+    })?;
+    Ok(erased == u32::MAX)
+}
+
+/// Read complete words freshly; abort on a stall or inconsistent final progress.
+#[inline(always)]
+fn transfer(
+    stream: &mut impl Stream,
+    capacity: usize,
+    offset: u32,
+    length: usize,
+    mut consume: impl FnMut(u32) -> Result<(), Error>,
+) -> Result<(), Error> {
     if !offset.is_multiple_of(4)
-        || !bytes.len().is_multiple_of(WORD_BYTES)
-        || bytes.len() / WORD_BYTES > MAX_WORDS
+        || !length.is_multiple_of(WORD_BYTES)
+        || length / WORD_BYTES > MAX_WORDS
     {
         return Err(Error::Unaligned);
     }
     let end = usize::try_from(offset)
         .map_err(|_| Error::OutOfBounds)?
-        .checked_add(bytes.len())
+        .checked_add(length)
         .filter(|end| *end <= capacity)
         .ok_or(Error::OutOfBounds)?;
     let end = u32::try_from(end).map_err(|_| Error::OutOfBounds)?;
-    if bytes.is_empty() {
+    if length == 0 {
         return Ok(());
     }
     stream.stop();
@@ -103,9 +139,9 @@ pub fn read(
     }
     active.0.start(
         offset,
-        u32::try_from(bytes.len() / WORD_BYTES).map_err(|_| Error::OutOfBounds)?,
+        u32::try_from(length / WORD_BYTES).map_err(|_| Error::OutOfBounds)?,
     );
-    for word in bytes.as_chunks_mut::<WORD_BYTES>().0 {
+    for _ in 0..length / WORD_BYTES {
         loop {
             if active.0.readable()? {
                 break;
@@ -114,7 +150,7 @@ pub fn read(
                 return Err(Error::Transfer);
             }
         }
-        word.copy_from_slice(&active.0.read_word().to_le_bytes());
+        consume(active.0.read_word())?;
     }
     if active.0.remaining() != 0 || active.0.address() != end || active.0.readable()? {
         return Err(Error::Transfer);

@@ -346,7 +346,10 @@ never ships inside the firmware.
 `firmware/src/core1.rs` place digest, stream, QMI and park routines
 in the existing `.data.ram_func` input section. Startup copies it before use;
 the TrustZone linker includes it in the read-only executable SRAM range. The
-digest reads each bank through `SharedFlash::read` and checks its entire tail.
+digest reads journal bytes through `SharedFlash::read` and checks aligned tails
+with the same exclusive CPU stream. Its direct erased-tail routine also lives
+in `.data.ram_func`: each FIFO word is checked without a staging copy, with the
+same bounds, status, timeout, final count and final address checks.
 *Safe alternative:* ordinary flash placement is correct but competes with the
 journal stream for XIP cache lines.
 *Containment:* SHA sees public metadata only; the CPU stream serves bulk reads

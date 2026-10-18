@@ -20,6 +20,9 @@ struct Fake {
     extra: bool,
     invalid_available: bool,
     single_word: bool,
+    fill: Option<u32>,
+    damage: Option<(u32, u32)>,
+    reads: usize,
     flags: Option<(bool, bool)>,
 }
 
@@ -45,7 +48,16 @@ impl Stream for Fake {
         if !self.stall {
             let capacity = if self.single_word { 1 } else { FIFO_WORDS };
             while self.fifo.len() < capacity && self.remaining != 0 {
-                self.fifo.push_back(self.address);
+                let word = if let Some((at, value)) = self.damage {
+                    if self.address == at {
+                        value
+                    } else {
+                        self.fill.unwrap_or(self.address)
+                    }
+                } else {
+                    self.fill.unwrap_or(self.address)
+                };
+                self.fifo.push_back(word);
                 self.address += WORD_BYTES as u32;
                 self.remaining -= 1;
             }
@@ -69,6 +81,7 @@ impl Stream for Fake {
             self.stale -= 1;
             return 0xbad;
         }
+        self.reads += 1;
         self.fifo.pop_front().expect("driver read an empty FIFO")
     }
     fn remaining(&mut self) -> u32 {
@@ -256,4 +269,107 @@ fn byte_pairs_check_both_bounds_before_either_callback() {
         );
         assert_eq!(calls, [offset, offset + 1]);
     }
+}
+
+#[test]
+fn erased_stream_checks_every_word_and_every_bit_before_accepting() {
+    for length in [4, 8, 60, 4096] {
+        let mut flash = Fake {
+            fill: Some(u32::MAX),
+            ..Fake::default()
+        };
+        assert_eq!(read_erased(&mut flash, 8192, 256, length), Ok(true));
+        assert_eq!(flash.reads, length / WORD_BYTES);
+        assert_eq!((flash.stops, flash.starts), (2, 1));
+        for index in 0..length / WORD_BYTES {
+            for bit in 0..32 {
+                let mut flash = Fake {
+                    fill: Some(u32::MAX),
+                    damage: Some((
+                        256 + index as u32 * WORD_BYTES as u32,
+                        u32::MAX ^ (1 << bit),
+                    )),
+                    ..Fake::default()
+                };
+                assert_eq!(read_erased(&mut flash, 8192, 256, length), Ok(false));
+                assert_eq!(flash.reads, length / WORD_BYTES);
+                assert_eq!((flash.stops, flash.starts), (2, 1));
+            }
+        }
+    }
+}
+
+#[test]
+fn erased_stream_preserves_transfer_faults_even_when_every_word_is_erased() {
+    for mut flash in [
+        Fake {
+            stall: true,
+            ..Fake::default()
+        },
+        Fake {
+            stale: FIFO_WORDS + 1,
+            ..Fake::default()
+        },
+        Fake {
+            bad_count: true,
+            ..Fake::default()
+        },
+        Fake {
+            bad_address: true,
+            ..Fake::default()
+        },
+        Fake {
+            extra: true,
+            ..Fake::default()
+        },
+        Fake {
+            invalid_available: true,
+            ..Fake::default()
+        },
+    ] {
+        flash.fill = Some(u32::MAX);
+        assert_eq!(read_erased(&mut flash, 64, 4, 16), Err(Error::Transfer));
+        assert_eq!(
+            (flash.stops, flash.starts),
+            (2, usize::from(flash.stale == 0))
+        );
+    }
+    for (stale, delay, single_word) in [(1, 3, false), (FIFO_WORDS, 0, false), (0, 0, true)] {
+        let mut flash = Fake {
+            stale,
+            delay,
+            single_word,
+            fill: Some(u32::MAX),
+            ..Fake::default()
+        };
+        assert_eq!(read_erased(&mut flash, 64, 4, 16), Ok(true));
+        assert_eq!(flash.reads, 4);
+        assert_eq!((flash.stops, flash.starts), (2, 1));
+    }
+}
+
+#[test]
+fn erased_stream_refuses_invalid_ranges_before_touching_flash() {
+    for (capacity, offset, length, error) in [
+        (64, 1, 4, Error::Unaligned),
+        (64, 0, 3, Error::Unaligned),
+        (64, 64, 4, Error::OutOfBounds),
+        (usize::MAX, u32::MAX - 3, 4, Error::OutOfBounds),
+        (
+            usize::MAX,
+            0,
+            (MAX_WORDS + 1) * WORD_BYTES,
+            Error::Unaligned,
+        ),
+    ] {
+        let mut flash = Fake::default();
+        assert_eq!(
+            read_erased(&mut flash, capacity, offset, length),
+            Err(error)
+        );
+        assert_eq!((flash.stops, flash.starts, flash.reads), (0, 0, 0));
+    }
+    let mut flash = Fake::default();
+    assert_eq!(read_erased(&mut flash, 64, 64, 0), Ok(true));
+    assert_eq!((flash.stops, flash.starts, flash.reads), (0, 0, 0));
 }

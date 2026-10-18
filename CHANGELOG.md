@@ -38,6 +38,12 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ## [Unreleased]
 
+- **bcdDevice → 0x0ACE:** Check erased journal tails directly from the flash stream
+  instead of copying them through SRAM. Each backend read retains fresh checks
+  of both complete banks, their tails, the root and each complete payload MAC;
+  Every FIFO word and final transfer progress remain checked. QSPI mode checks
+  and the 100 ms wait bound keep their existing 4 KiB transfer boundaries.
+
 - **bcdDevice → 0x0ACD:** Shorten shared storage reads after long update histories: at mount, checkpoint
   authenticated main journals when obsolete history can release at least half a
   bank. Live files, counters, sequence and record formats are preserved. This

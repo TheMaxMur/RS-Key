@@ -88,3 +88,17 @@ pub(super) fn read(offset: u32, bytes: &mut [u8]) -> Result<(), Error> {
         }
     })
 }
+
+// SAFETY: startup copies .data.ram_func into the existing read-only executable
+// SRAM range; this routine runs under the same exclusive flash borrow as read.
+#[unsafe(link_section = ".data.ram_func")]
+#[inline(never)]
+pub(super) fn read_erased(offset: u32, length: usize) -> Result<bool, Error> {
+    flash_stream::read_erased(&mut Cpu { started: 0 }, super::FLASH_SIZE, offset, length).map_err(
+        |error| match error {
+            flash_stream::Error::Unaligned => Error::Unaligned,
+            flash_stream::Error::OutOfBounds => Error::OutOfBounds,
+            flash_stream::Error::Transfer => Error::Other,
+        },
+    )
+}
