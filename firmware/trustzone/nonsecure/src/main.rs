@@ -17,6 +17,7 @@ use rsk_usb::worker_abi as abi;
 #[cfg(feature = "test-gateway-probes")]
 mod diagnostics;
 mod keyboard;
+mod notify;
 #[cfg(feature = "test-hostile-access")]
 mod probe;
 mod session;
@@ -29,7 +30,6 @@ use embassy_rp::{
     interrupt::{InterruptExt, Priority},
 };
 use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, mutex::Mutex};
-use embassy_time::Timer;
 use embassy_usb::{
     Builder, Config, UsbDevice,
     class::hid::{self, HidReaderWriter, HidWriter, State},
@@ -86,6 +86,7 @@ async fn exchange(kind: u32, cid: u32, data: &[u8], out: &mut [u8]) -> Reply {
     let epoch = session::epoch();
     let length = u32::try_from(data.len()).unwrap();
     let ticket = loop {
+        let observed = notify::generation();
         // SAFETY: SG validates the slice range and copies it into Secure-owned storage.
         let status = unsafe { rsk_tz_submit(kind, cid, data.as_ptr(), length) };
         if status != abi::PENDING && status != abi::INVALID {
@@ -95,12 +96,13 @@ async fn exchange(kind: u32, cid: u32, data: &[u8], out: &mut [u8]) -> Reply {
         if session::epoch() != epoch {
             return Reply::abandoned();
         }
-        Timer::after_millis(1).await;
+        notify::wait(observed).await;
     };
     let _pending = session::Pending::new(ticket, kind);
     let mut buffer = [0u8; rsk_usb::ctaphid::CTAP_MAX_MESSAGE + abi::REPLY_HEADER];
     let mut reply = rsk_secret::WipeGuard::new(&mut buffer);
     let len = loop {
+        let observed = notify::generation();
         // SAFETY: the whole output slice is valid NS RAM for the gateway to fill.
         let n = unsafe {
             rsk_tz_poll(
@@ -116,7 +118,7 @@ async fn exchange(kind: u32, cid: u32, data: &[u8], out: &mut [u8]) -> Reply {
             assert_ne!(n, abi::INVALID);
             break usize::try_from(n).unwrap();
         }
-        Timer::after_millis(1).await;
+        notify::wait(observed).await;
     };
     let body = &reply[abi::REPLY_HEADER..len];
     assert!(body.len() <= out.len());
@@ -350,6 +352,7 @@ fn init() {
         let (reader, writer) = hid.split();
         CTAP.init_with(|| CtapHid::new(reader, writer, CtapClient, up_pending, cancel))
     });
+    notify::init();
     interrupt::SWI_IRQ_1.set_priority(Priority::P2);
     let spawner = EXECUTOR.start(interrupt::SWI_IRQ_1);
     spawner.spawn(usb_task(SendUsb(usb)).unwrap());

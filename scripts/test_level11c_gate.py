@@ -79,9 +79,9 @@ def test_every_rule_ran(audit):
     [
         ("73% of the foreign half", "70% of the foreign half",
          r"the assembly's share reads '70', the tree says 73"),
-        ("seven of the 27 `[[boundary]]`", "seven of the 24 `[[boundary]]`",
-         r"`\[\[boundary\]\]` rows reads '24', the tree says 27"),
-        ("seven of the 27 `[[boundary]]`", "six of the 27 `[[boundary]]`",
+        ("seven of the 28 `[[boundary]]`", "seven of the 24 `[[boundary]]`",
+         r"`\[\[boundary\]\]` rows reads '24', the tree says 28"),
+        ("seven of the 28 `[[boundary]]`", "six of the 28 `[[boundary]]`",
          r"linker-symbol boundaries reads 'six', the tree says 7"),
         ("177 of those carry", "178 of those carry",
          r"`<S: Storage` sites reads '178', the tree says 177"),

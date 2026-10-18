@@ -502,7 +502,8 @@ covers = [
   "unsafe:crates/rsk-rsa/src/lib.rs#attr:link_section-data-small_primes-static-small_primes-u32",
   "unsafe:crates/rsk-rsa/src/lib.rs#attr:link_section-data-sieve_step-pub-fn-step",
   "unsafe:firmware/src/flash_storage/sha256.rs#attr:link_section-data-ram_func-pub-super-fn",
-  "unsafe:firmware/src/flash_storage/stream.rs#attr:link_section-data-ram_func-pub-super-fn",
+  "unsafe:firmware/src/flash_storage/stream.rs#attr:link_section-data-ram_func-pub-super-fn-read",
+  "unsafe:firmware/src/flash_storage/stream.rs#attr:link_section-data-ram_func-pub-super-fn-read_erased",
   "unsafe:firmware/src/core1.rs#attr:link_section-data-ram_func-fn-service_xip_pause",
   "unsafe:firmware/src/flash_storage/quad.rs#attr:link_section-data-ram_func-fn-enable_volatile_quad-bool",
   "unsafe:firmware/src/flash_storage/quad.rs#attr:link_section-data-ram_func-fn-apply-expected",
@@ -1178,7 +1179,7 @@ supports = ["SEC-FIDO-003"]
 id = "PLAT-PRES-001"
 class = "model-abstraction"
 statement = "`Owners` — the four `SCOPE_*` bytes plus `Panel`, the model-only split of `SCOPE_NONE` — is the whole domain a presence decision can be produced for or applied to, so a wait owner outside those five does not exist."
-discharge = "Reading the byte and its writers. `crates/rsk-device/src/presence.rs:26-32` defines exactly four `SCOPE_*` constants and `firmware/src/worker.rs:667, :781, :920, :924` are every `set_wait_scope` call site in the tree; `formal/RSKeySecurityState.tla:127-144` maps them and splits `SCOPE_NONE` into `NoOwner` and `Panel` because `request_cancel` refuses in both while only one can be ENDED by a touch. What would falsify it is a fifth interface that opens a wait: the byte is a `u8`, nothing bounds it, and a new transport arrives as an owner no configuration and no harness checks."
+discharge = "Reading the byte and its writers. `crates/rsk-device/src/presence.rs:26-32` defines exactly four `SCOPE_*` constants and `firmware/src/worker.rs:681, :795, :934, :938` are every `set_wait_scope` call site in the tree; `formal/RSKeySecurityState.tla:127-144` maps them and splits `SCOPE_NONE` into `NoOwner` and `Panel` because `request_cancel` refuses in both while only one can be ENDED by a touch. What would falsify it is a fifth interface that opens a wait: the byte is a `u8`, nothing bounds it, and a new transport arrives as an owner no configuration and no harness checks."
 discharge_owner = "contributor"
 status = "pending"
 failure_direction = "coverage: a new wait owner is silently outside every configuration and every harness, and the invariant stays GREEN over a domain that no longer describes the device"
@@ -1610,7 +1611,7 @@ discharge = "Source contracts: firmware/src/trustzone/usb.rs, firmware/src/trust
 discharge_owner = "contributor"
 status = "pending"
 failure_direction = "memory-safety and confidentiality: an aliased controller, unchecked span or output copied after revocation can corrupt memory or release an old-session packet"
-covers = ["unsafe:firmware/src/trustzone/usb/control.rs#block:executor-on_interrupt", "unsafe:firmware/src/trustzone/usb/control.rs#impl:send-for-sendpipe", "unsafe:firmware/src/trustzone/usb.rs#fn:on_interrupt-observe", "unsafe:firmware/src/usb_fence.rs#block:let-data-rp_pac-usb_dpram-as_ptr-as", "unsafe:firmware/src/trustzone/usb.rs#attr:no_mangle-pub-extern-fn-rsk_tz_usb_impl-operation", "unsafe:firmware/src/trustzone/usb.rs#extern:fn-rsk_tz_usb_impl-operation-u32-argument-u32", "unsafe:firmware/src/trustzone/usb.rs#block:core-slice-from_raw_parts-buffer-cast_const-length", "unsafe:firmware/src/trustzone/usb.rs#block:core-slice-from_raw_parts_mut-buffer-count"]
+covers = ["unsafe:firmware/src/trustzone/usb/control.rs#block:executor-on_interrupt", "unsafe:firmware/src/trustzone/usb/control.rs#impl:send-for-sendpipe", "unsafe:firmware/src/trustzone/usb.rs#fn:on_interrupt-observe-super-notify_nonsecure", "unsafe:firmware/src/usb_fence.rs#block:let-data-rp_pac-usb_dpram-as_ptr-as", "unsafe:firmware/src/trustzone/usb.rs#attr:no_mangle-pub-extern-fn-rsk_tz_usb_impl-operation", "unsafe:firmware/src/trustzone/usb.rs#extern:fn-rsk_tz_usb_impl-operation-u32-argument-u32", "unsafe:firmware/src/trustzone/usb.rs#block:core-slice-from_raw_parts-buffer-cast_const-length", "unsafe:firmware/src/trustzone/usb.rs#block:core-slice-from_raw_parts_mut-buffer-count"]
 
 [[assumption]]
 id = "PLAT-TZ-003"
@@ -1625,12 +1626,12 @@ covers = ["unsafe:firmware/src/worker.rs#attr:no_mangle-pub-extern-fn-rsk_tz_sub
 [[assumption]]
 id = "PLAT-TZ-004"
 class = "toolchain"
-statement = "The NS critical section runs only on core0 and restores its own saved PRIMASK; NS USB task ownership moves once to SWI_IRQ_1 and TIMER1 is enabled only after its NS handler exists. It shares no Secure lock implementation or mutable controller reference."
-discharge = "Source contracts: firmware/trustzone/nonsecure/src/main.rs, firmware/trustzone/nonsecure/src/time.rs. Review the acquire/release pair and all NS task and interrupt starters; confirm the Secure startup routes only SWI_IRQ_1 and TIMER1_IRQ_0 to NS. Exercise reset and keepalive while Secure crypto owns its separate executor."
+statement = "The NS critical section runs only on core0 and restores its own saved PRIMASK; NS USB task ownership moves once to SWI_IRQ_1 and TIMER1 and SWI_IRQ_4 are enabled only after their NS handlers exist. SWI_IRQ_4 wakes only NS-local waiters for public progress. It shares no Secure lock implementation or mutable controller reference."
+discharge = "Source contracts: firmware/trustzone/nonsecure/src/main.rs, firmware/trustzone/nonsecure/src/time.rs, firmware/trustzone/nonsecure/src/notify.rs. Review the acquire/release pair and all NS task and interrupt starters; confirm the Secure startup routes only SWI_IRQ_1, SWI_IRQ_4 and TIMER1_IRQ_0 to NS. Confirm registration rechecks generation, a one-millisecond fallback remains, and worker publication follows the Secure stack sweep. Exercise reset and keepalive while Secure crypto owns its separate executor."
 discharge_owner = "contributor"
 status = "pending"
 failure_direction = "memory-safety and availability: an incorrect PRIMASK restore, mismatched executor interrupt or second USB task owner races NS state or wedges the transport"
-covers = ["unsafe:firmware/trustzone/nonsecure/src/main.rs#impl:critical_section-impl-for-localcriticalsection-fn-acquire", "unsafe:firmware/trustzone/nonsecure/src/main.rs#fn:acquire-bool-let-enabled-cortex_m-register", "unsafe:firmware/trustzone/nonsecure/src/main.rs#fn:release-enabled-bool-if-enabled-cortex_m", "unsafe:firmware/trustzone/nonsecure/src/main.rs#block:cortex_m-interrupt-enable", "unsafe:firmware/trustzone/nonsecure/src/main.rs#attr:no_mangle-extern-fn-swi_irq_1", "unsafe:firmware/trustzone/nonsecure/src/main.rs#block:executor-on_interrupt", "unsafe:firmware/trustzone/nonsecure/src/main.rs#impl:send-for-sendusb", "unsafe:firmware/trustzone/nonsecure/src/time.rs#attr:no_mangle-extern-fn-timer1_irq_0", "unsafe:firmware/trustzone/nonsecure/src/time.rs#block:embassy_rp-interrupt-timer1_irq_0-enable"]
+covers = ["unsafe:firmware/trustzone/nonsecure/src/main.rs#impl:critical_section-impl-for-localcriticalsection-fn-acquire", "unsafe:firmware/trustzone/nonsecure/src/main.rs#fn:acquire-bool-let-enabled-cortex_m-register", "unsafe:firmware/trustzone/nonsecure/src/main.rs#fn:release-enabled-bool-if-enabled-cortex_m", "unsafe:firmware/trustzone/nonsecure/src/main.rs#block:cortex_m-interrupt-enable", "unsafe:firmware/trustzone/nonsecure/src/main.rs#attr:no_mangle-extern-fn-swi_irq_1", "unsafe:firmware/trustzone/nonsecure/src/main.rs#block:executor-on_interrupt", "unsafe:firmware/trustzone/nonsecure/src/main.rs#impl:send-for-sendusb", "unsafe:firmware/trustzone/nonsecure/src/time.rs#attr:no_mangle-extern-fn-timer1_irq_0", "unsafe:firmware/trustzone/nonsecure/src/time.rs#block:embassy_rp-interrupt-timer1_irq_0-enable", "unsafe:firmware/trustzone/nonsecure/src/notify.rs#block:interrupt-swi_irq_4-enable", "unsafe:firmware/trustzone/nonsecure/src/notify.rs#attr:no_mangle-extern-fn-swi_irq_4"]
 
 [[assumption]]
 id = "PLAT-TZ-005"

@@ -335,6 +335,23 @@ fn session<T>(f: impl FnOnce(&mut rsk_device::transport_session::Session) -> T) 
 }
 
 #[cfg(rsk_trustzone_prototype)]
+fn complete_portal_work(job: rsk_device::transport_session::Job) {
+    use rsk_device::transport_session::Job;
+    match job {
+        Job::Dispatch(ticket) => {
+            if session(|state| state.finish(ticket)) {
+                DONE.signal(());
+            }
+        }
+        Job::Discard(ticket) => {
+            session(|state| state.release(ticket));
+        }
+        Job::Reset => session(|state| state.reset_complete()),
+    }
+    crate::trustzone::notify_nonsecure();
+}
+
+#[cfg(rsk_trustzone_prototype)]
 pub fn revoke_transport() {
     SESSION.lock(|state| state.borrow_mut().reset());
     REQ.signal(());
@@ -570,10 +587,16 @@ impl<'a> Worker<'a> {
             {
                 Either3::First(_) => {
                     #[cfg(rsk_trustzone_prototype)]
-                    self.handle_portal_work().await;
+                    while let Some(job) = session(|state| state.next_job()) {
+                        self.handle_portal_work(job).await;
+                        crate::sweep::dead_stack();
+                        complete_portal_work(job);
+                    }
                     #[cfg(not(rsk_trustzone_prototype))]
-                    self.handle_transport().await;
-                    crate::sweep::dead_stack();
+                    {
+                        self.handle_transport().await;
+                        crate::sweep::dead_stack();
+                    }
                     // A reboot the dispatch queued (a vendor REBOOT, a TRNG fault) runs only
                     // after its response is sent: the reset can't run mid-dispatch.
                     if let Some(mode) = crate::vendor::take_reboot() {
@@ -600,36 +623,27 @@ impl<'a> Worker<'a> {
     }
 
     #[cfg(rsk_trustzone_prototype)]
-    async fn handle_portal_work(&mut self) {
+    async fn handle_portal_work(&mut self, job: rsk_device::transport_session::Job) {
         use rsk_device::transport_session::Job;
-        while let Some(job) = session(|state| state.next_job()) {
-            match job {
-                Job::Dispatch(ticket) => {
-                    self.handle_transport().await;
-                    if session(|state| state.finish(ticket)) {
-                        DONE.signal(());
-                    }
+        match job {
+            Job::Dispatch(_) => self.handle_transport().await,
+            Job::Discard(_) => {
+                let mut exchange = EXCHANGE.lock().await;
+                {
+                    let _request = WipeGuard::new(&mut exchange.req);
                 }
-                Job::Discard(ticket) => {
-                    let mut exchange = EXCHANGE.lock().await;
-                    {
-                        let _request = WipeGuard::new(&mut exchange.req);
-                    }
-                    {
-                        let _response = WipeGuard::new(&mut exchange.resp);
-                    }
-                    exchange.req_len = 0;
-                    exchange.resp_len = 0;
-                    DONE.reset();
-                    session(|state| state.release(ticket));
+                {
+                    let _response = WipeGuard::new(&mut exchange.resp);
                 }
-                Job::Reset => {
-                    self.ccid.reset_transport_session();
-                    self.ctap.reset_transport_session();
-                    crate::otp_kbd::scrub();
-                    self.last_msg_cid = None;
-                    session(|state| state.reset_complete());
-                }
+                exchange.req_len = 0;
+                exchange.resp_len = 0;
+                DONE.reset();
+            }
+            Job::Reset => {
+                self.ccid.reset_transport_session();
+                self.ctap.reset_transport_session();
+                crate::otp_kbd::scrub();
+                self.last_msg_cid = None;
             }
         }
     }

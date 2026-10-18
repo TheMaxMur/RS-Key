@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 RS-Key contributors
 
-use embassy_time::Timer;
 use embassy_usb::driver::{
     self, EndpointAddress, EndpointAllocError, EndpointError, EndpointInfo, EndpointType, Event,
     Unsupported,
@@ -51,9 +50,6 @@ fn result(value: u32) -> Result<usize, EndpointError> {
         INVALID | abi::DISABLED => Err(EndpointError::Disabled),
         n => usize::try_from(n).map_err(|_| EndpointError::BufferOverflow),
     }
-}
-async fn tick() {
-    Timer::after_millis(1).await;
 }
 
 #[derive(Clone, Copy)]
@@ -155,13 +151,14 @@ impl driver::Bus for Bus {
     }
     async fn poll(&mut self) -> Event {
         loop {
+            let observed = super::notify::generation();
             match call(abi::BUS_POLL, 0) {
                 abi::POWER_DETECTED => return Event::PowerDetected,
                 abi::POWER_REMOVED => return Event::PowerRemoved,
                 abi::RESET => return Event::Reset,
                 abi::SUSPEND => return Event::Suspend,
                 abi::RESUME => return Event::Resume,
-                _ => tick().await,
+                _ => super::notify::wait(observed).await,
             }
         }
     }
@@ -189,8 +186,12 @@ impl driver::Endpoint for Endpoint {
         &self.info
     }
     async fn wait_enabled(&mut self) {
-        while call(endpoint(abi::EP_READY, self.info.addr), epoch()) != 1 {
-            tick().await;
+        loop {
+            let observed = super::notify::generation();
+            if call(endpoint(abi::EP_READY, self.info.addr), epoch()) == 1 {
+                break;
+            }
+            super::notify::wait(observed).await;
         }
     }
 }
@@ -202,15 +203,16 @@ impl driver::EndpointOut for Endpoint {
             return Err(EndpointError::BufferOverflow);
         };
         loop {
+            let observed = super::notify::generation();
             let value = transfer(endpoint(abi::EP_READ, self.info.addr), epoch, packet);
             if value == abi::DISABLED && call(abi::EPOCH, 0) == epoch {
-                tick().await;
+                super::notify::wait(observed).await;
                 continue;
             }
             if value != PENDING {
                 return result(value);
             }
-            tick().await;
+            super::notify::wait(observed).await;
         }
     }
 }
@@ -224,15 +226,16 @@ impl driver::EndpointIn for Endpoint {
         };
         buffer.copy_from_slice(data);
         loop {
+            let observed = super::notify::generation();
             let value = transfer(endpoint(abi::EP_WRITE, self.info.addr), epoch, buffer);
             if value == abi::DISABLED && call(abi::EPOCH, 0) == epoch {
-                tick().await;
+                super::notify::wait(observed).await;
                 continue;
             }
             if value != PENDING {
                 return result(value).map(|_| ());
             }
-            tick().await;
+            super::notify::wait(observed).await;
         }
     }
 }
@@ -251,9 +254,10 @@ async fn control(
 ) -> Result<usize, EndpointError> {
     let epoch = epoch();
     let ticket = loop {
+        let observed = super::notify::generation();
         let value = transfer(operation, epoch, input);
         if value == PENDING {
-            tick().await;
+            super::notify::wait(observed).await;
             continue;
         }
         if value == INVALID || value == abi::DISABLED {
@@ -263,11 +267,12 @@ async fn control(
     };
     let _pending = Pending(ticket);
     loop {
+        let observed = super::notify::generation();
         let value = transfer(abi::CTRL_POLL, ticket, output);
         if value != PENDING {
             return result(value);
         }
-        tick().await;
+        super::notify::wait(observed).await;
     }
 }
 impl driver::ControlPipe for ControlPipe {
@@ -276,11 +281,12 @@ impl driver::ControlPipe for ControlPipe {
     }
     async fn setup(&mut self) -> [u8; 8] {
         loop {
+            let observed = super::notify::generation();
             let mut setup = [0; 8];
             if control(abi::CTRL_SETUP, &mut [], &mut setup).await.is_ok() {
                 return setup;
             }
-            tick().await;
+            super::notify::wait(observed).await;
         }
     }
     async fn data_out(

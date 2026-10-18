@@ -269,6 +269,7 @@ async fn control_task(mut pipe: SendPipe) {
                         }
                     });
                 });
+                crate::trustzone::notify_nonsecure();
             }
             None => COMMAND_READY.wait().await,
         }

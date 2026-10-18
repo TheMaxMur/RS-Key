@@ -282,6 +282,11 @@ provider = "rustc"
 statement = "cortex-m-rt produces the Non-secure vector table that calls the NS transport executor handler."
 
 [[boundary]]
+id = "export:firmware/trustzone/nonsecure/src/notify.rs:SWI_IRQ_4"
+provider = "rustc"
+statement = "cortex-m-rt produces the NS progress-notification vector; Secure startup attributes the IRQ to NS and the handler changes only NS-local waiters."
+
+[[boundary]]
 id = "export:firmware/trustzone/nonsecure/src/time.rs:TIMER1_IRQ_0"
 provider = "rustc"
 statement = "cortex-m-rt produces the NS timer vector; Secure startup controls its attribution and peripheral grant."

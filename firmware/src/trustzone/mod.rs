@@ -66,6 +66,13 @@ static EXECUTOR: InterruptExecutor = InterruptExecutor::new();
 
 static READY: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 
+pub fn notify_nonsecure() {
+    if READY.load(core::sync::atomic::Ordering::Acquire) {
+        cortex_m::asm::dmb();
+        interrupt::SWI_IRQ_4.pend();
+    }
+}
+
 #[embassy_executor::task]
 async fn boot() {
     // SAFETY: this task is polled only by Embassy's Secure interrupt executor.
@@ -74,6 +81,8 @@ async fn boot() {
 }
 
 pub fn start() {
+    interrupt::SWI_IRQ_4.disable();
+    interrupt::SWI_IRQ_4.unpend();
     interrupt::DMA_IRQ_0.set_priority(Priority::P1);
     interrupt::PIO0_IRQ_0.set_priority(Priority::P1);
     embassy_rp::interrupt::SWI_IRQ_0.set_priority(Priority::P3);
@@ -161,6 +170,7 @@ unsafe fn launch_nonsecure() -> ! {
         }
         for irq in [
             rp_pac::Interrupt::SWI_IRQ_1,
+            rp_pac::Interrupt::SWI_IRQ_4,
             rp_pac::Interrupt::TIMER1_IRQ_0,
         ] {
             let n = irq as u32;

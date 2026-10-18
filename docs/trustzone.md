@@ -234,8 +234,15 @@ The output is `target/trustzone/combined.elf` and `combined.uf2`. The ELF embeds
 the Non-secure image so the existing image emulator loads both. The build
 checks that embedding it did not change the gateway import library.
 
-Secure startup, worker and display tasks share Secure SWI_IRQ_0 at P3. Non-secure USB tasks use SWI_IRQ_1 at P2;
-USBCTRL targets Secure at P0 and the EP0 executor uses Secure SWI_IRQ_2 at P1;
+Secure startup and worker tasks use Secure SWI_IRQ_0 at P3; the Secure LED
+executor uses SWI_IRQ_3 at P2. Non-secure USB tasks use SWI_IRQ_1 at P2.
+USBCTRL targets Secure at P0 and the EP0 executor uses Secure SWI_IRQ_2 at P1.
+Secure signals public USB and worker progress through Non-secure SWI_IRQ_4 at P2;
+its handler wakes NS-local waiters. Polling retains a one-millisecond fallback,
+and registering a waiter rechecks its observed generation to avoid lost wakes.
+The worker publishes a reply or completed reset only after its command future
+has returned and the Secure dead-stack sweep has finished. Epoch, ticket and
+response checks still decide whether output may cross the gateway.
 TIMER1 targets Non-secure. Secure TIMER0 and core1 retain
 their existing ownership. Non-secure critical sections use the core0 interrupt
 mask and do not take Secure's hardware spinlock 31.

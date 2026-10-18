@@ -377,6 +377,51 @@ def reset_window(args):
         hid.sock.close()
 
 
+def interleaved_reads(args):
+    for cycle in range(3):
+        old = Ccid(args.ccid_port, args.inspect_port)
+        card = hid = None
+        try:
+            old.authorize()
+            before = crypto.inspect(args.inspect_port, "status")
+            reset = crypto.inspect(args.inspect_port, "usb-reset")
+            assert reset["power_ups"] == before["power_ups"]
+            wait_ready(args)
+            card = Ccid(args.ccid_port, args.inspect_port)
+            card.assert_auth_cleared()
+            card.apdu(0xA4, 4, 0, bytes.fromhex("d27600012401"))
+            expected, _ = card.apdu(0xCA, 0, 0x6E)
+            assert expected[0] == 0x6E and len(expected) > 250
+            hid = Hid(args.fido_port, args.inspect_port)
+            for _ in range(8):
+                hid.begin(4, {})
+                card.begin(0x6F, bytes.fromhex("00ca006e00"))
+                answer = hid.response()
+                assert answer[0] == 0 and "FIDO_2_1" in crypto.decode(answer[1:])[1]
+                message = card.response()
+                assert message[7] & 0xC0 == 0, message[7:10].hex()
+                status = message[-2:]
+                body = bytearray(message[10:-2])
+                for _ in range(32):
+                    if status[0] != 0x61:
+                        break
+                    card.begin(0x6F, bytes([0, 0xC0, 0, 0, status[1]]))
+                    message = card.response()
+                    assert message[7] & 0xC0 == 0, message[7:10].hex()
+                    status = message[-2:]
+                    body.extend(message[10:-2])
+                assert status == bytes.fromhex("9000"), status.hex()
+                assert body == expected, "interleaved response changed or lost a continuation"
+            after = crypto.inspect(args.inspect_port, "status")
+            assert after["dead"] == "false" and after["power_ups"] == before["power_ups"]
+            print(json.dumps({"case": "interleaved_reads", "cycle": cycle + 1,
+                              "authorization_cleared": True, "complete_reply_pairs": 8}), flush=True)
+        finally:
+            old.sock.close()
+            if card: card.sock.close()
+            if hid: hid.sock.close()
+
+
 CASES = {
     "mldsa_cancel": mldsa_cancel,
     "mldsa_reset": lambda args: mldsa_bus(args, "usb-reset"),
@@ -389,6 +434,7 @@ CASES = {
     "rsa_sign_disconnect": lambda args: rsa_event(args, "usb-disconnect", "sign"),
     "card_reset": card_reset,
     "fido_token_reset": fido_authorization_reset,
+    "interleaved_reads": interleaved_reads,
 }
 
 if __name__ == "__main__":

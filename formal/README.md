@@ -233,7 +233,7 @@ mutants nothing catches.
 | Mutation switch | Removes | Target property | Caught in |
 |---|---|---|---|
 | `BugAssertWedgesOnTimeout` | only a confirm completes a getAssertion | `EveryOpQuiesces` | 79 523 states |
-| `BugWaitScopeNotCleared` | `worker.rs:781` `set_wait_scope(SCOPE_NONE)` | `EveryWaitReleases` | 76 446 states |
+| `BugWaitScopeNotCleared` | `worker.rs:795` `set_wait_scope(SCOPE_NONE)` | `EveryWaitReleases` | 76 446 states |
 | `BugWalkNeverExpires` | `state.rs:733-739` `expire_stale_sequences` | `EveryWalkCloses` | 93 607 states |
 
 **Two mutants need a companion, and that is a result — IN THE MODEL.** Read the
@@ -794,8 +794,8 @@ the record rather than preventing it.
 
 `HostCancel` required an open wait, so the model could not raise a
 `CTAPHID_CANCEL` at any other moment. The firmware can, and it matters:
-`set_wait_scope` is called around the whole **dispatch** (`worker.rs:667`,
-`:781`), not around the touch wait, so `Arbiter::request_cancel` (`crates/rsk-device/src/presence.rs:118-122`)
+`set_wait_scope` is called around the whole **dispatch** (`worker.rs:681`,
+`:795`), not around the touch wait, so `Arbiter::request_cancel` (`crates/rsk-device/src/presence.rs:118-122`)
 accepts a cancel during a FIDO command that never opens one — getInfo, a
 capability-denied CBOR, a silent `up:false`. **Nothing clears
 `CANCEL_REQUESTED` when that dispatch ends**, and the next dispatch may be CCID
@@ -1357,7 +1357,7 @@ model used to have one value for both, which left the panel unable to own a
 ceremony at all — so a physical hold spent on an on-panel flow was invisible to
 the one-hold-one-ceremony rule, and E45's ruling had nothing to be true of.
 `Panel` is a distinct owner here, `SCOPE_OTP` is a third
-(`firmware/src/worker.rs:918-920`), and `request_cancel`'s single `if`
+(`firmware/src/worker.rs:932-934`), and `request_cancel`'s single `if`
 (`crates/rsk-device/src/presence.rs:118-122`) is what refuses a host cancel
 against any of them. `BugPanelCancelable` loosens exactly the panel half of that
 test — the narrow mistake somebody could make while keeping the CCID half — and
@@ -3412,7 +3412,7 @@ than a settled abstraction.
 `Liveness.cfg` checks `EveryOpQuiesces`, `EveryWaitReleases` and
 `EveryWalkCloses` against it. The fairness is the load-bearing part, because an
 assumption the implementation does not honour makes its property meaningless:
-the synchronous worker (`worker.rs:637-663`) never parks a sequence, the
+the synchronous worker (`worker.rs:651-677`) never parks a sequence, the
 presence wait times out on its own budget (`crates/rsk-device/src/presence.rs:215-216`), and
 `expire_stale_sequences` (`state.rs:733-739`) retires an idle cursor. Nothing
 else is fair — not a press, a release, a host cancel, a power cut, a warm reset
@@ -3433,10 +3433,10 @@ All four conjuncts read against the code:
 
 | Conjunct | Shape | What owes it in the firmware | Verdict |
 |---|---|---|---|
-| `WF_vars(OpAdvances)` | **18 actions** | the synchronous worker: one `Exchange` at a time, under a lock, dispatch runs to completion (`worker.rs:637-663`) | sound **because** every disjunct is gated on `op.kind` while `Idle` gates every `*Start` — now asserted, not argued |
+| `WF_vars(OpAdvances)` | **18 actions** | the synchronous worker: one `Exchange` at a time, under a lock, dispatch runs to completion (`worker.rs:651-677`) | sound **because** every disjunct is gated on `op.kind` while `Idle` gates every `*Start` — now asserted, not argued |
 | `WF_vars(TouchTimeout)` | one action | the wait's own timeout (`crates/rsk-device/src/presence.rs:215-216`) | sound |
 | `WF_vars(WalkExpires)` | one action | `expire_stale_sequences` (`state.rs:733-739`) | sound |
-| `WF_vars(LocalCeremonyEnds)` | one action | the ceremony's own dispatch puts `WAIT_SCOPE` back (`worker.rs:779-781`) | sound — the E160 repair |
+| `WF_vars(LocalCeremonyEnds)` | one action | the ceremony's own dispatch puts `WAIT_SCOPE` back (`worker.rs:793-795`) | sound — the E160 repair |
 
 `OpAdvancesIsOneActivity == ENABLED OpAdvances => ~Idle` is the first row's
 argument as an invariant: if no disjunct can be enabled while the device is

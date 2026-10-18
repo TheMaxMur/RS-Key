@@ -99,7 +99,7 @@ CONSTANTS
 (* listing them in the safety matrix would mean 3 mutants nothing catches.       *)
 CONSTANTS
     BugAssertWedgesOnTimeout,     \* getassertion.rs: only a confirm completes it
-    BugWaitScopeNotCleared,       \* worker.rs:781  set_wait_scope(SCOPE_NONE)
+    BugWaitScopeNotCleared,       \* worker.rs:795  set_wait_scope(SCOPE_NONE)
     BugWalkNeverExpires           \* state.rs:770-776 expire_stale_sequences
 
 (* A switch on the SHAPE of the fairness assumption rather than on a behaviour: *)
@@ -401,7 +401,7 @@ HostCancel ==
     /\ UNCHANGED << pin, gate, store, lock, tok, plat, walk, sys, op, snap,
                     upSpent, viol, ram >>
 
-\* WAIT_SCOPE is set around the whole DISPATCH (worker.rs:667-672), not around
+\* WAIT_SCOPE is set around the whole DISPATCH (worker.rs:681-686), not around
 \* the touch wait, so Arbiter::request_cancel accepts a cancel during a FIDO
 \* command that never opens one -- getInfo, a denied CBOR, getAssertion up:false.
 \* Nothing clears `cancel_requested` when that dispatch ends, so the latch
@@ -463,8 +463,8 @@ TouchTimeout ==
 \* THE PANEL AND THE OTP FRAME PROTOCOL ALSO OPEN WAITS, and neither is a host's
 \* to cancel. An on-panel ceremony -- Settings, Backup's reveal-recovery hold,
 \* the Passkeys delete -- runs BETWEEN dispatches, where the worker has left
-\* WAIT_SCOPE at SCOPE_NONE (firmware/src/worker.rs:779-781); an OTP frame's wait
-\* runs under SCOPE_OTP (firmware/src/worker.rs:918-920). Both clear a stale
+\* WAIT_SCOPE at SCOPE_NONE (firmware/src/worker.rs:793-795); an OTP frame's wait
+\* runs under SCOPE_OTP (firmware/src/worker.rs:932-934). Both clear a stale
 \* cancel at their own wait's entry -- the panel in its own loop
 \* (crates/rsk-display/src/presence.rs:41-44), not in ButtonWait::wait -- so
 \* OpenWaitFor stands for two different drops here and
@@ -1634,7 +1634,7 @@ TokenOutcomeActions ==
 \* strong fairness would buy nothing and would assert more than the code does.
 \*
 \* The worker is synchronous -- one `Exchange` at a time, under a lock, and the
-\* dispatch runs to completion before the next is accepted (worker.rs:903-928).
+\* dispatch runs to completion before the next is accepted (worker.rs:917-942).
 \* So every step that ADVANCES an in-flight sequence eventually happens: nothing
 \* in the firmware can park one. What it cannot survive is a power cut, and
 \* PowerCut is not fair, so "eventually" here still admits the cut.
@@ -1676,7 +1676,7 @@ OpAdvances ==
 \* button, but setPIN and changePIN need only `Idle`. So a panel wait that had
 \* taken its confirm sat open for ever while the PIN ladder kept OpAdvances
 \* satisfied on its own, and EveryWaitReleases failed in 423 900 states.
-\* Justified the same way worker.rs:779-781 justifies the FIDO half: the
+\* Justified the same way worker.rs:793-795 justifies the FIDO half: the
 \* ceremony's own dispatch runs to completion and puts WAIT_SCOPE back.
 FairSpec == Spec /\ WF_vars(OpAdvances)
                  /\ WF_vars(TouchTimeout)

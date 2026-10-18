@@ -7,7 +7,7 @@ contained. Adding a new `unsafe` requires updating this page. (Safe Rust rules
 out memory-corruption bugs in this code. It is not a security audit; see the
 [threat model](threat-model.md).)
 
-**Runtime sites: 65.** Thirty-one in the ordinary firmware and tools, plus thirty-four in the TrustZone build. Of the ordinary sites: Seventeen in the firmware proper (`main.rs` + `presence.rs`):
+**Runtime sites: 66.** Thirty-one in the ordinary firmware and tools, plus thirty-five in the TrustZone build. Of the ordinary sites: Seventeen in the firmware proper (`main.rs` + `presence.rs`):
 the interrupt-handler pair (2), the `Send` impl, the heap init and its zeroing
 allocator (5), and the eight GPIO-pin `steal`s (the presence button, the LED power-enable rail, the nuisance
 USR LED, the display build's wake button, and — display builds only — the panel's
@@ -395,14 +395,14 @@ These additional sites are compiled only in the separate Secure and Non-secure b
 *Safe alternative:* the CMSE C boundary carries raw pointers and integer lengths; Rust slices are created only after that boundary validates them.
 *Containment:* bounded copies, Secure-owned exchange state, generation tickets and USB epoch checks.
 
-### 46–52. Non-secure local interrupts and USB task ownership — `PLAT-TZ-004`
+### 46–53. Non-secure local interrupts and USB task ownership — `PLAT-TZ-004`
 
-`firmware/trustzone/nonsecure/src/main.rs` and `firmware/trustzone/nonsecure/src/time.rs`. NS masks and restores only its core0 interrupt state. Its critical-section implementation does not acquire a Secure spinlock. SendUsb moves once to the NS interrupt task; handlers store state in NS-local synchronization. TIMER1 has its installed NS handler before interrupt enable.
+`firmware/trustzone/nonsecure/src/main.rs`, `firmware/trustzone/nonsecure/src/time.rs` and `firmware/trustzone/nonsecure/src/notify.rs`. NS masks and restores only its core0 interrupt state. Its critical-section implementation does not acquire a Secure spinlock. SendUsb moves once to the NS interrupt task; handlers store state in NS-local synchronization. TIMER1 and SWI_IRQ_4 have their installed NS handlers before interrupt enable. SWI_IRQ_4 changes only an NS-local generation and waiter list; Secure pends it after publication and cleanup, without sharing a controller reference.
 
 *Safe alternative:* the critical-section backend, interrupt enable and Embassy task transfer require these unsafe contracts.
 *Containment:* one core, one task owner, NS-local locks, and matching interrupt starters and handlers.
 
-### 53–61. Non-secure calls to bounded Secure gateways — `PLAT-TZ-005`
+### 54–62. Non-secure calls to bounded Secure gateways — `PLAT-TZ-005`
 
 `firmware/trustzone/nonsecure/src/main.rs`, `firmware/trustzone/nonsecure/src/usb.rs`, `firmware/trustzone/nonsecure/src/session.rs` and `firmware/trustzone/nonsecure/src/keyboard.rs`. Calls use the Cargo-shared numeric ABI. Secure checks selectors, complete NS RAM spans, lengths and epochs, copies packets and retains no NS pointer. Ticket abandonment fences dropped futures. Keyboard calls consume only output already authorized by Secure; a revoked session blocks export. Deliberately invalid startup pointers must be rejected by the gateway without a memory access.
 
@@ -412,7 +412,7 @@ These additional sites are compiled only in the separate Secure and Non-secure b
 The CMSE export attributes and FFI declarations are counted separately from runtime sites. `firmware/src/trustzone/gateway.c` supplies GCC-generated SG veneers and BXNS returns. These software checks do not establish complete silicon isolation or physical disconnect detection.
 
 
-### 62. Secure MPU registers — `PLAT-TZ-006`
+### 63. Secure MPU registers — `PLAT-TZ-006`
 
 `firmware/src/trustzone/mpu.rs` writes only the current core's architectural MPU
 registers during Secure startup or a serialized Secure flash call. The checked
@@ -425,7 +425,7 @@ has no typed bank API covering this setup.
 an RAII restore on every normal return, including flash errors. Panic/fault
 recovery and hardware timing still require their own validation.
 
-### 63. Hostile NS image probe — `PLAT-TZ-007`
+### 64. Hostile NS image probe — `PLAT-TZ-007`
 
 `firmware/trustzone/nonsecure/src/probe.rs` is feature-gated test code that
 disables its own NS MPU, then deliberately reads protected memory or MMIO.
@@ -435,7 +435,7 @@ The Secure policy remains intact. Its marker contains no secret and is in NS RAM
 plus a relaxed-grant falsifier; excluded from normal builds.
 
 
-### 64. Fatal Secure exception — `PLAT-TZ-008`
+### 65. Fatal Secure exception — `PLAT-TZ-008`
 
 `firmware/src/trustzone/fault.rs` never resumes an interrupted worker or borrows
 its state. The fatal latch rejects all gateways; direct S-owned MMIO detaches
@@ -446,7 +446,7 @@ lets the image backend execute that cleanup before declaring the image dead.
 *Containment:* no reboot, flash/OTP write or unsafe RAM alias; terminal admission
 until cold boot. This path fences authorization but does not claim SRAM wiping.
 
-### 65. Uncached page-state byte reads — `PLAT-UNSAFE-015`
+### 66. Uncached page-state byte reads — `PLAT-UNSAFE-015`
 
 `firmware/src/flash_storage/stream.rs::read_uncached` reads one byte through the
 RP2350 translated uncached alias at `0x14000000`, as defined by the

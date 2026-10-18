@@ -98,6 +98,7 @@ pub struct InterruptHandler;
 impl Handler<interrupt::typelevel::USBCTRL_IRQ> for InterruptHandler {
     unsafe fn on_interrupt() {
         observe();
+        super::notify_nonsecure();
     }
 }
 
@@ -370,7 +371,7 @@ pub unsafe extern "C" fn rsk_tz_usb_impl(
             return INVALID;
         }
     }
-    serialized(|| {
+    let result = serialized(|| {
         let mut packet = [0; abi::PACKET_SIZE];
         let mut packet = rsk_secret::WipeGuard::new(&mut packet);
         let Some(data) = packet.get_mut(..length) else {
@@ -394,5 +395,14 @@ pub unsafe extern "C" fn rsk_tz_usb_impl(
             target.copy_from_slice(source);
         }
         result
-    })
+    });
+    if result == 0
+        && matches!(
+            operation & 0xff,
+            abi::EP_ENABLE | abi::EP_STALL | abi::BUS_DISABLE
+        )
+    {
+        super::notify_nonsecure();
+    }
+    result
 }
