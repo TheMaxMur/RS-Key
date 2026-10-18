@@ -170,3 +170,97 @@ fn a_failed_unpublished_write_can_be_cancelled_and_retried_in_the_same_backend()
     assert_eq!(main.read(&KEY, 0xB000, &mut out), Ok(Some(5)));
     assert_eq!(&out, b"retry");
 }
+
+#[test]
+fn bounded_warm_reads_leave_the_entire_scratch_clean_through_length_changes_and_fallbacks() {
+    let mut main = main();
+    main.initialize(&KEY, 0, &Directory::new()).unwrap();
+    for length in [0, 1, 2, 3, 4, 5, 31, 32, 33, rsk_fs::MAX_VALUE_BYTES] {
+        let value = std::vec![0x5a; length];
+        main.write(&KEY, 0xB000, Some(&value)).unwrap();
+        let mut out = std::vec![0; length];
+        for _ in 0..2 {
+            assert_eq!(main.read(&KEY, 0xB000, &mut out), Ok(Some(length)));
+            assert_eq!(out, value);
+            assert!(main.buffer.expose().iter().all(|&byte| byte == 0));
+        }
+        main.write(&KEY, 0xB001, Some(b"small")).unwrap();
+        assert_eq!(main.read(&KEY, 0xB000, &mut []), Ok(Some(length)));
+        assert_eq!(main.read(&KEY, 0xB001, &mut []), Ok(Some(5)));
+        assert!(main.buffer.expose().iter().all(|&byte| byte == 0));
+        main.map.invalidate_cache();
+        assert_eq!(main.read(&KEY, 0xB001, &mut []), Ok(Some(5)));
+        assert!(main.buffer.expose().iter().all(|&byte| byte == 0));
+        assert_eq!(main.read(&KEY, 0xB002, &mut []), Ok(None));
+        assert!(main.buffer.expose().iter().all(|&byte| byte == 0));
+    }
+}
+
+#[test]
+fn a_partially_filled_read_error_wipes_the_entire_bounded_span_including_padding() {
+    use core::cell::Cell;
+    use embedded_storage_async::nor_flash::{ErrorType, NorFlash, ReadNorFlash};
+    use std::rc::Rc;
+    #[derive(Clone)]
+    struct DirtyRead {
+        flash: crate::tests::FaultFlash,
+        fail_body: Rc<Cell<bool>>,
+        hits: Rc<Cell<usize>>,
+    }
+    impl ErrorType for DirtyRead {
+        type Error = crate::tests::FlashFault;
+    }
+    impl ReadNorFlash for DirtyRead {
+        const READ_SIZE: usize = 1;
+        async fn read(
+            &mut self,
+            offset: u32,
+            bytes: &mut [u8],
+        ) -> core::result::Result<(), Self::Error> {
+            if self.fail_body.get() && bytes.len() == 4 {
+                self.hits.set(self.hits.get() + 1);
+                bytes.fill(0x5a);
+                return Err(crate::tests::FlashFault);
+            }
+            self.flash.read(offset, bytes).await
+        }
+        fn capacity(&self) -> usize {
+            self.flash.capacity()
+        }
+    }
+    impl NorFlash for DirtyRead {
+        const WRITE_SIZE: usize = 4;
+        const ERASE_SIZE: usize = 4096;
+        async fn write(
+            &mut self,
+            offset: u32,
+            bytes: &[u8],
+        ) -> core::result::Result<(), Self::Error> {
+            self.flash.write(offset, bytes).await
+        }
+        async fn erase(&mut self, from: u32, to: u32) -> core::result::Result<(), Self::Error> {
+            self.flash.erase(from, to).await
+        }
+    }
+    impl MultiwriteNorFlash for DirtyRead {}
+    let flash = crate::tests::fault_flash_for_authenticated_tests();
+    let fail_body = Rc::new(Cell::new(false));
+    let hits = Rc::new(Cell::new(0));
+    let mut main = main_on(DirtyRead {
+        flash,
+        fail_body: fail_body.clone(),
+        hits: hits.clone(),
+    });
+    main.initialize(&KEY, 0, &Directory::new()).unwrap();
+    main.write(&KEY, 0xB000, Some(b"x")).unwrap();
+    assert_eq!(main.read(&KEY, 0xB000, &mut []), Ok(Some(1)));
+    fail_body.set(true);
+    assert_eq!(main.read(&KEY, 0xB000, &mut []), Err(Error::MemoryFatal));
+    assert_eq!(hits.get(), 1);
+    assert!(main.buffer.expose().iter().all(|&byte| byte == 0));
+    assert!(main.read_cache.is_none());
+    fail_body.set(false);
+    assert_eq!(main.read(&KEY, 0xB000, &mut []), Ok(Some(1)));
+    assert_eq!(main.read(&KEY, 0xB000, &mut []), Ok(Some(1)));
+    assert!(main.buffer.expose().iter().all(|&byte| byte == 0));
+}

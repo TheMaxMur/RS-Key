@@ -347,3 +347,27 @@ fn warm_absence_refuses_a_changed_but_readable_fused_root() {
     ROOT_BYTE.with(|byte| byte.set(0x62));
     assert_eq!(authenticated_value(&mut store, CRED + 1), Ok(None));
 }
+
+#[test]
+fn a_valid_warm_value_needs_only_one_payload_read() {
+    let flash = FaultFlash::new();
+    let mut store = mount_authenticated(&flash);
+    store.initialize_blank().unwrap();
+    let value = [0x5a; 16];
+    store.write(CRED, &value).unwrap();
+    let mut out = [0; 16];
+    assert_eq!(store.read(CRED, &mut out), Some(value.len()));
+    flash.arm(&[]);
+    assert_eq!(store.read(CRED, &mut out), Some(value.len()));
+    assert!(!store.last_error());
+    assert_eq!(out, value);
+    // Two FID bytes and this value occupy one aligned 20-byte payload window.
+    assert_eq!(
+        flash
+            .events()
+            .iter()
+            .filter(|event| event.0 == Io::Read && event.2 == 20)
+            .count(),
+        1
+    );
+}

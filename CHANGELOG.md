@@ -38,6 +38,12 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ## [Unreleased]
 
+- **bcdDevice → 0x0AD0:** Shorten warm authenticated reads by lending flash only
+  the aligned scratch span required for the requested value. That whole span is
+  wiped on every exit, including partial I/O failures; cold reads and recovery
+  keep the full scratch cleanup. Fresh root, mounted-directory binding and full
+  payload authentication remain mandatory. Formats and capacities are unchanged.
+
 - **bcdDevice → 0x0ACF:** Reuse the complete authenticated main directory in
   protected RAM between storage reads. Each read freshly derives its root and
   authenticates the complete requested payload against its mounted version;

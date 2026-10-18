@@ -5,7 +5,7 @@ use embassy_futures::block_on;
 use embedded_storage_async::nor_flash::{MultiwriteNorFlash, NorFlash};
 use rsk_crypto::ct_eq;
 use rsk_sdk::error::{Error, Result};
-use rsk_secret::Secret;
+use rsk_secret::{Secret, WipeGuard};
 use sequential_storage::cache::CacheImpl;
 use sequential_storage::map::{MapStorage, ReservedItem};
 
@@ -551,11 +551,64 @@ impl<F: NorFlash + MultiwriteNorFlash, C: CacheImpl<u16>> Main<F, C> {
     }
 
     pub fn read(&mut self, key: &[u8; 32], fid: u16, out: &mut [u8]) -> Result<Option<usize>> {
-        let result = self.read_inner(key, fid, out);
-        self.buffer.wipe();
+        let result = if let Some(current) = self.read_cache {
+            self.read_mounted(key, current, fid, out)
+        } else {
+            let result = self.read_inner(key, fid, out);
+            self.buffer.wipe();
+            result
+        };
         if result.is_err() {
             self.read_cache = None;
         }
+        result
+    }
+
+    fn read_mounted(
+        &mut self,
+        key: &[u8; 32],
+        current: ReadCache,
+        fid: u16,
+        out: &mut [u8],
+    ) -> Result<Option<usize>> {
+        self.journals
+            .get(current.source)
+            .ok_or(Error::MemoryFatal)?;
+        self.authority.verify_read(key, self.identity, self.arm)?;
+        let Some(entry) = self.directory.find(fid) else {
+            return Ok(None);
+        };
+        let length = entry.length().ok_or(Error::MemoryFatal)?;
+        let capacity = length
+            .checked_add(core::mem::size_of::<u16>())
+            .and_then(|length| length.checked_next_multiple_of(F::READ_SIZE.max(F::WRITE_SIZE)))
+            .ok_or(Error::MemoryFatal)?;
+        // Cold and mutation paths clear the entire scratch before a mount can be reused.
+        {
+            let mut scratch = WipeGuard::new(
+                self.buffer
+                    .expose_mut()
+                    .get_mut(..capacity)
+                    .ok_or(Error::MemoryFatal)?,
+            );
+            match block_on(self.map.fetch_item_unrepaired::<&[u8]>(&mut scratch, &fid)) {
+                Ok(Some(value)) if entry.verify(self.identity, key, value).is_ok() => {
+                    let count = out.len().min(length);
+                    out.get_mut(..count)
+                        .ok_or(Error::MemoryFatal)?
+                        .copy_from_slice(value.get(..count).ok_or(Error::MemoryFatal)?);
+                    return Ok(Some(length));
+                }
+                Ok(_)
+                | Err(
+                    sequential_storage::Error::Corrupted { .. }
+                    | sequential_storage::Error::BufferTooSmall(_),
+                ) => {}
+                Err(_) => return Err(Error::MemoryFatal),
+            }
+        }
+        let result = self.read_inner(key, fid, out);
+        self.buffer.wipe();
         result
     }
 

@@ -11,6 +11,10 @@ main directory held in protected RAM. Each backend read freshly derives the root
 and authenticates the full requested value against its expected version. Absence
 comes from that complete directory. Root keys and plaintext values are not cached.
 
+Build `0x0AD0` further shortens warm reads by clearing only the scratch span that
+the read can fill, including alignment padding. Every borrowed byte is cleared
+on errors too; recovery retains full-buffer cleanup.
+
 Before reusing the mounted directory for mutation, the backend checks both full
 journal banks, selected bank last, including erased tails. Without that ready
 state, authenticated journal resolution and recovery precede mutation. Errors and

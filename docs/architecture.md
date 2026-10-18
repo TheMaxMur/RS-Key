@@ -234,6 +234,13 @@ before any directory change. Unrelated journal or payload-map damage need not
 interrupt a warm read of known correct data; recovery and mutations check that
 media before consuming it. The cold-start rollback limitation still applies.
 
+From `0x0AD0`, a ready read lends the map only the requested record's aligned
+scratch span, under a wipe guard. Cold reads and mutation paths clear the whole
+scratch before reusing a mount; warm reads wipe everything the map could have
+filled, including padding and partially completed failing reads. A fallback drops
+the bounded guard before full-buffer lookup and cleanup. Absence borrows no
+scratch. The root and both MAC checks remain fresh.
+
 Boot mounts authority before scanning or provisioning applets. Wholly blank
 media and readable legacy stores are initialized or imported automatically.
 Read faults, damaged v2 authority and malformed legacy page layouts enter CCID

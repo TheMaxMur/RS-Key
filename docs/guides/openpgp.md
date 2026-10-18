@@ -10,6 +10,10 @@ than on each warm GET DATA. See [shared-storage behavior](fido2.md).
 Existing objects, capacities and persistent layouts are unchanged. Occasional
 mount-time history checkpointing still adds startup work and erases when due.
 
+Build `0x0AD0` also avoids clearing unused storage scratch after warm GET DATA.
+Every byte a read can fill is still cleared on success and failure; recovery
+retains full-buffer cleanup.
+
 A full OpenPGP card 3.4 over CCID: three key slots (signature, decryption,
 authentication), works with stock GnuPG. The same slots cover commit signing,
 SSH login (via gpg-agent), and end-to-end mail/file encryption.
