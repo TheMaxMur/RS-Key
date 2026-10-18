@@ -11,6 +11,7 @@ use embassy_sync::{
 use embassy_time::Timer;
 
 const WAITERS: usize = 8;
+const FALLBACK_POLL_MS: u64 = 16;
 static GENERATION: AtomicU32 = AtomicU32::new(0);
 static WAKERS: Mutex<CriticalSectionRawMutex, RefCell<MultiWakerRegistration<WAITERS>>> =
     Mutex::new(RefCell::new(MultiWakerRegistration::new()));
@@ -27,7 +28,7 @@ pub fn generation() -> u32 {
 }
 
 pub async fn wait(observed: u32) {
-    let mut timeout = pin!(Timer::after_millis(1));
+    let mut timeout = pin!(Timer::after_millis(FALLBACK_POLL_MS));
     poll_fn(|cx| {
         WAKERS.lock(|wakers| wakers.borrow_mut().register(cx.waker()));
         if generation() != observed {

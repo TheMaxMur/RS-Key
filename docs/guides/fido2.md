@@ -36,6 +36,9 @@ unknown chips keep the ROM mode, and a failed probe restores the old mode.
 TrustZone FIDO uses a 1 ms HID interval. Both encrypted getInfo members share
 one freshly loaded persistent token per command, with separate keys and IVs;
 a seed-read failure still leaves the credential-store member available.
+Secure progress interrupts wake the USB transports; the backup poll runs every
+16 ms to reduce interruptions of backend work. A missed notification can add
+up to 15 ms per wait compared with the earlier 1 ms fallback.
 
 Empty PIN/seed/lock records are damaged state, not a fresh device. Firmware
 preserves them and refuses the affected operation instead of installing a new

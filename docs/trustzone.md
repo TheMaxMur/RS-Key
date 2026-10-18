@@ -238,7 +238,7 @@ Secure startup and worker tasks use Secure SWI_IRQ_0 at P3; the Secure LED
 executor uses SWI_IRQ_3 at P2. Non-secure USB tasks use SWI_IRQ_1 at P2.
 USBCTRL targets Secure at P0 and the EP0 executor uses Secure SWI_IRQ_2 at P1.
 Secure signals public USB and worker progress through Non-secure SWI_IRQ_4 at P2;
-its handler wakes NS-local waiters. Polling retains a one-millisecond fallback,
+its handler wakes NS-local waiters. Polling retains a 16-millisecond fallback,
 and registering a waiter rechecks its observed generation to avoid lost wakes.
 The worker publishes a reply or completed reset only after its command future
 has returned and the Secure dead-stack sweep has finished. Epoch, ticket and

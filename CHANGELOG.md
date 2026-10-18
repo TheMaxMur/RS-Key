@@ -38,6 +38,12 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ## [Unreleased]
 
+- **bcdDevice → 0x0AD4:** Reduce Non-secure backup USB polling from every
+  millisecond to every 16 ms, leaving more CPU time for authenticated storage
+  reads. Secure progress interrupts still wake waiters immediately; missed
+  notifications can add up to 15 ms per wait. Root, payload and USB-epoch
+  checks and Secure stack cleanup are unchanged.
+
 - **bcdDevice → 0x0AD3:** Prepare the Main read HMAC key once for the mounted
   authority and requested record checks. The context exists only within that
   backend read; each later read freshly derives its root and verifies both MACs.
