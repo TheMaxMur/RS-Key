@@ -38,6 +38,10 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ## [Unreleased]
 
+- **bcdDevice → 0x0AD3:** Prepare the Main read HMAC key once for the mounted
+  authority and requested record checks. The context exists only within that
+  backend read; each later read freshly derives its root and verifies both MACs.
+
 - **bcdDevice → 0x0AD2:** Wake Non-secure USB tasks on Secure USB and worker
   progress instead of waiting for each polling interval. A one-millisecond
   fallback remains. Publish replies and completed resets only after command

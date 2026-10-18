@@ -25,6 +25,10 @@ pub(super) struct Bound {
 
 impl Bound {
     fn new(key: &[u8; 32], snapshot: Snapshot) -> Result<Self> {
+        Self::new_with(snapshot, |frame| hmac_sha256(key, frame))
+    }
+
+    fn new_with(snapshot: Snapshot, tag: impl FnOnce(&[u8]) -> [u8; 32]) -> Result<Self> {
         let mut frame = [0; 68];
         field(&mut frame, 0, MOUNT_DOMAIN)?;
         field(
@@ -41,12 +45,16 @@ impl Bound {
         field(&mut frame, 36, &snapshot.digest)?;
         Ok(Self {
             snapshot,
-            tag: hmac_sha256(key, &frame),
+            tag: tag(&frame),
         })
     }
 
     fn verify(self, key: &[u8; 32], snapshot: Snapshot) -> Result<()> {
-        if self.snapshot != snapshot || !ct_eq(&self.tag, &Self::new(key, snapshot)?.tag) {
+        self.verify_with(snapshot, |frame| hmac_sha256(key, frame))
+    }
+
+    fn verify_with(self, snapshot: Snapshot, tag: impl FnOnce(&[u8]) -> [u8; 32]) -> Result<()> {
+        if self.snapshot != snapshot || !ct_eq(&self.tag, &Self::new_with(snapshot, tag)?.tag) {
             return Err(Error::MemoryFatal);
         }
         Ok(())
@@ -93,13 +101,28 @@ impl Authority {
         identity: Identity,
         arm: RootArm,
     ) -> Result<()> {
+        let bound = self.read_bound(identity, arm)?;
+        bound.verify(key, bound.snapshot)
+    }
+
+    pub(super) fn verify_read_with_mac(
+        &self,
+        mac: &rsk_crypto::mac::HmacSha256,
+        identity: Identity,
+        arm: RootArm,
+    ) -> Result<()> {
+        let bound = self.read_bound(identity, arm)?;
+        bound.verify_with(bound.snapshot, |frame| mac.tag(frame))
+    }
+
+    fn read_bound(&self, identity: Identity, arm: RootArm) -> Result<Bound> {
         let Self::Stable(bound) = *self else {
             return Err(Error::MemoryFatal);
         };
         if bound.snapshot.identity != identity || bound.snapshot.arm != arm {
             return Err(Error::MemoryFatal);
         }
-        bound.verify(key, bound.snapshot)
+        Ok(bound)
     }
 
     pub(super) fn stage_write(

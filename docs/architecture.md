@@ -241,6 +241,13 @@ filled, including padding and partially completed failing reads. A fallback drop
 the bounded guard before full-buffer lookup and cleanup. Absence borrows no
 scratch. The root and both MAC checks remain fresh.
 
+From `0x0AD3`, a ready read prepares one command-local HMAC context for the
+full mounted binding and complete payload checks, using the prefix reuse from
+[RFC 2104 section 4](https://www.rfc-editor.org/rfc/rfc2104.html#section-4). The context stays in returned
+stack frames covered by the Secure sweep; no keyed state is retained for a
+later backend read, which derives its root afresh. Authentication frames and
+persistent records are unchanged.
+
 Boot mounts authority before scanning or provisioning applets. Wholly blank
 media and readable legacy stores are initialized or imported automatically.
 Read faults, damaged v2 authority and malformed legacy page layouts enter CCID

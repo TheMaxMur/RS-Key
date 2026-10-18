@@ -1212,7 +1212,7 @@ fuzz/fuzz_targets/fido_session.rs	crates/rsk-fido/src/state.rs	607-622	/// `rese
 scripts/bcd_gate.py	scripts/fuzz-coverage.sh	47-49	# A literal, not `${FUZZ_TARGET_FLOOR:-52}`: a floor the environment can lower is	FUZZ_TARGET_FLOOR=52
 scripts/comutate.py	crates/rsk-fido/src/state.rs	568-571	pub fn restore_pin_lock(&mut self, lock: PinLock) {	}
 scripts/ct_gate.py	crates/rsk-bench/src/lib.rs	12-12	//! bigger than the 16 KB XIP cache, so which lines collide and evict depends on	//! bigger than the 16 KB XIP cache, so which lines collide and evict depends on
-scripts/ct_gate.py	crates/rsk-crypto/src/mac.rs	55-55	if a.len() != b.len() {	if a.len() != b.len() {
+scripts/ct_gate.py	crates/rsk-crypto/src/mac.rs	71-71	if a.len() != b.len() {	if a.len() != b.len() {
 scripts/ct_gate.py	crates/rsk-otp/src/lib.rs	782-782	if apdu.p1 == P1_CHAL_HMAC_SLOT1 || apdu.p1 == P1_CHAL_HMAC_SLOT2 {	if apdu.p1 == P1_CHAL_HMAC_SLOT1 || apdu.p1 == P1_CHAL_HMAC_SLOT2 {
 scripts/narrow_gate.py	crates/rsk-device/src/presence.rs	196-196	arb.set_cancel_requested(false);	arb.set_cancel_requested(false);
 scripts/security_trace.py	crates/rsk-fido/src/clientpin.rs	145-145	match req.subcommand {	match req.subcommand {

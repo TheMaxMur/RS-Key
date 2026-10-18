@@ -564,6 +564,7 @@ impl<F: NorFlash + MultiwriteNorFlash, C: CacheImpl<u16>> Main<F, C> {
         result
     }
 
+    #[inline(never)]
     fn read_mounted(
         &mut self,
         key: &[u8; 32],
@@ -574,7 +575,9 @@ impl<F: NorFlash + MultiwriteNorFlash, C: CacheImpl<u16>> Main<F, C> {
         self.journals
             .get(current.source)
             .ok_or(Error::MemoryFatal)?;
-        self.authority.verify_read(key, self.identity, self.arm)?;
+        let mac = rsk_crypto::mac::HmacSha256::new(key);
+        self.authority
+            .verify_read_with_mac(&mac, self.identity, self.arm)?;
         let Some(entry) = self.directory.find(fid) else {
             return Ok(None);
         };
@@ -592,7 +595,7 @@ impl<F: NorFlash + MultiwriteNorFlash, C: CacheImpl<u16>> Main<F, C> {
                     .ok_or(Error::MemoryFatal)?,
             );
             match block_on(self.map.fetch_item_unrepaired::<&[u8]>(&mut scratch, &fid)) {
-                Ok(Some(value)) if entry.verify(self.identity, key, value).is_ok() => {
+                Ok(Some(value)) if entry.verify_with_mac(self.identity, &mac, value).is_ok() => {
                     let count = out.len().min(length);
                     out.get_mut(..count)
                         .ok_or(Error::MemoryFatal)?

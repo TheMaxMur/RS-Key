@@ -37,6 +37,22 @@ pub fn hmac_sha256(key: &[u8], msg: &[u8]) -> [u8; 32] {
     out
 }
 
+/// A command-local HMAC template; keep it in returned frames covered by the
+/// Secure stack sweep, never in a mounted store or between backend operations.
+pub struct HmacSha256(Hmac<Sha256>);
+
+impl HmacSha256 {
+    pub fn new(key: &[u8]) -> Self {
+        Self(Hmac::<Sha256>::new_from_slice(key).expect("HMAC accepts any key length"))
+    }
+
+    pub fn tag(&self, msg: &[u8]) -> [u8; 32] {
+        let mut mac = self.0.clone();
+        mac.update(msg);
+        mac.finalize().into_bytes().into()
+    }
+}
+
 /// HMAC-SHA512. Any key length is accepted.
 pub fn hmac_sha512(key: &[u8], msg: &[u8]) -> [u8; 64] {
     let mut mac = Hmac::<Sha512>::new_from_slice(key).expect("HMAC accepts any key length");

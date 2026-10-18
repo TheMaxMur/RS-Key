@@ -211,3 +211,23 @@ surface = "storage v2 complete physical bank fingerprints before reusing mounted
 [[caller]]
 symbol = "rsk_store::authenticated::main::Main<F,C>::resolve_inner"
 surface = "storage v2 main journal directory agreement during resolution and recovery"
+
+[[caller]]
+symbol = "rsk_store::authenticated::authority::Authority::verify_read_with_mac"
+surface = "the mounted directory binding on a warm backend read"
+
+[[caller]]
+symbol = "rsk_store::authenticated::authority::Bound::verify_with"
+surface = "the full mounted directory binding with a command-local HMAC context"
+
+[[caller]]
+symbol = "rsk_store::authenticated::main::Main<F,C>::read_mounted"
+surface = "the mounted binding and complete payload on a warm backend read"
+
+[[caller]]
+symbol = "rsk_store::authenticated::record::Entry::verify_with"
+surface = "the complete stored payload and expected entry"
+
+[[caller]]
+symbol = "rsk_store::authenticated::record::Entry::verify_with_mac"
+surface = "the complete stored payload with a command-local HMAC context"

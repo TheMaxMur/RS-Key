@@ -358,7 +358,7 @@ REGISTER = re.compile(r"\b(r\d+|sl|fp|ip|sp|lr|pc)\b")
 BASE = re.compile(r"\[(r\d+|sl|fp|ip|sp|pc)")
 
 #: Predication. `IT` makes the next instructions conditional, and the shipped
-#: comparator uses it: `crates/rsk-crypto/src/mac.rs:55`'s public length-equality early return lowers
+#: comparator uses it: `crates/rsk-crypto/src/mac.rs:71`'s public length-equality early return lowers
 #: to `cmp r0,#1 / it eq / cmpeq fp,r1 / beq`. A blanket refusal of any run
 #: containing an `IT` was the first rule here and it reported that as a finding —
 #: the DOCUMENTED public early return, called secret-dependent. The rule instead
