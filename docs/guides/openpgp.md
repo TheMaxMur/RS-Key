@@ -14,6 +14,10 @@ Build `0x0AD0` also avoids clearing unused storage scratch after warm GET DATA.
 Every byte a read can fill is still cleared on success and failure; recovery
 retains full-buffer cleanup.
 
+From build `0x0AD1`, key information reads the shared origin record once per
+response. Later responses read it again; an unreadable or unrecorded slot still
+reports imported.
+
 A full OpenPGP card 3.4 over CCID: three key slots (signature, decryption,
 authentication), works with stock GnuPG. The same slots cover commit signing,
 SSH login (via gpg-agent), and end-to-end mail/file encryption.

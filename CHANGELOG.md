@@ -38,6 +38,11 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ## [Unreleased]
 
+- **bcdDevice → 0x0AD1:** Read the OpenPGP key-origin record once when building
+  key information, instead of once per present signing, decryption and
+  authentication key. Each response reads afresh; absent, short, invalid or
+  unreadable origins still report imported. Attestation-key behavior is unchanged.
+
 - **bcdDevice → 0x0AD0:** Shorten warm authenticated reads by lending flash only
   the aligned scratch span required for the requested value. That whole span is
   wiped on every exit, including partial I/O failures; cold reads and recovery
