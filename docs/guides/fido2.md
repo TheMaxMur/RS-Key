@@ -6,6 +6,16 @@ new value already landed. Retry from the persistent state rather than assuming
 rollback; the firmware rebuilds its inventory and reports no spare capacity
 until an incomplete scan can finish. Record formats are unchanged.
 
+From build `0x0ACD`, mounting a store with a long main-journal history can
+checkpoint its current directory before USB attaches. It runs only when obsolete
+history can release at least half a bank; the complete payloads are authenticated
+before either bank is erased. This keeps the existing files, counters, epoch,
+root arm and generations, without changing capacities or record layouts.
+Maintenance adds startup work and erases when due. With a stable live set and no
+interruption, each such cycle consumes at least half a bank of obsolete history;
+short histories skip the extra scan. Actual reads still inspect both full banks
+and erased tails, while hashing fewer obsolete journal bytes.
+
 Repeated `getInfo` requests reuse the parsed storage directory after checking
 both journal banks again. Each backend read checks the peer bank before the
 selected bank under a freshly read root, including both erased tails.

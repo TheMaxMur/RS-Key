@@ -223,6 +223,13 @@ impl<F: NorFlash + MultiwriteNorFlash + Clone, C: CacheImpl<u16>> Authenticated<
         result
     }
 
+    pub(super) fn checkpoint_history(&mut self) -> Result<()> {
+        let mut key = self.source.key(self.main_arm)?;
+        let result = self.main.checkpoint_history(key.expose());
+        key.wipe();
+        result
+    }
+
     pub fn root_closed(&self) -> bool {
         self.main_arm == RootArm::Otp && self.counter_arm == RootArm::Otp
     }

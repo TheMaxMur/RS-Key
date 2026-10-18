@@ -38,6 +38,12 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ## [Unreleased]
 
+- **bcdDevice → 0x0ACD:** Shorten shared storage reads after long update histories: at mount, checkpoint
+  authenticated main journals when obsolete history can release at least half a
+  bank. Live files, counters, sequence and record formats are preserved. This
+  maintenance adds erases and startup work when due; every read still freshly
+  checks both complete banks, erased tails, root and full payload MAC.
+
 - Accelerate P-384 field products on 32-bit targets with a modulus-specific,
   constant-time Montgomery CIOS kernel. ECDH, ECDSA commitments and public-key
   derivation retain canonical results, point validation and secret cleanup.

@@ -1,5 +1,11 @@
 # OpenPGP card
 
+The shared backend checkpoints long main-journal histories at mount from build
+`0x0ACD`, reducing repeated GET DATA hashing without caching its authentication.
+It retains all live objects and generations, and checks both full banks, erased
+tails, the fresh root and each payload MAC on every backend read. This occasional
+maintenance adds startup work and erases; see the [shared-storage behavior](fido2.md).
+
 A full OpenPGP card 3.4 over CCID: three key slots (signature, decryption,
 authentication), works with stock GnuPG. The same slots cover commit signing,
 SSH login (via gpg-agent), and end-to-end mail/file encryption.

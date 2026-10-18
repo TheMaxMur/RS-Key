@@ -35,6 +35,8 @@ pub struct Main<F: NorFlash + MultiwriteNorFlash, C: CacheImpl<u16>> {
     identity: Identity,
     arm: RootArm,
     read_cache: Option<ReadCache>,
+    // Only skips optional mount maintenance; reads never consult this hint.
+    checkpoint_due: bool,
 }
 
 impl<F: NorFlash + MultiwriteNorFlash, C: CacheImpl<u16>> Main<F, C> {
@@ -56,6 +58,7 @@ impl<F: NorFlash + MultiwriteNorFlash, C: CacheImpl<u16>> Main<F, C> {
             },
             arm,
             read_cache: None,
+            checkpoint_due: true,
         }
     }
 
@@ -75,6 +78,7 @@ impl<F: NorFlash + MultiwriteNorFlash, C: CacheImpl<u16>> Main<F, C> {
         self.arm = arm;
         self.directory.clear();
         self.read_cache = None;
+        self.checkpoint_due = true;
         self.buffer.wipe();
         self.map.invalidate_cache();
     }
@@ -154,12 +158,13 @@ impl<F: NorFlash + MultiwriteNorFlash, C: CacheImpl<u16>> Main<F, C> {
 
     pub(super) fn repair_activation(&mut self, key: &[u8; 32]) -> Result<()> {
         self.with_buffer(|this| {
-            this.resolve(key)?.ok_or(Error::MemoryFatal)?;
+            let current = this.resolve(key)?.ok_or(Error::MemoryFatal)?;
             let fid = super::import::ACTIVATION_FID;
             let entry = this.directory.find(fid).ok_or(Error::MemoryFatal)?;
             let canonical = super::import::activation_bytes(this.identity.epoch)?;
             entry.verify(this.identity, key, &canonical)?;
             if this.mapped_value(key, entry).is_ok() {
+                this.checkpoint_due = this.history_reclaimable(&current)?;
                 return Ok(());
             }
             this.validate_retained_values(key, Some(fid))?;
@@ -185,7 +190,9 @@ impl<F: NorFlash + MultiwriteNorFlash, C: CacheImpl<u16>> Main<F, C> {
             .map_err(|_| Error::MemoryFatal)?
             .ok_or(Error::MemoryFatal)?;
             entry.verify(this.identity, key, value)?;
-            this.validate_values(key)
+            this.validate_values(key)?;
+            this.checkpoint_due = this.history_reclaimable(&current)?;
+            Ok(())
         })
     }
 
@@ -425,6 +432,7 @@ impl<F: NorFlash + MultiwriteNorFlash, C: CacheImpl<u16>> Main<F, C> {
 
     fn with_buffer<T>(&mut self, operation: impl FnOnce(&mut Self) -> Result<T>) -> Result<T> {
         self.read_cache = None;
+        self.checkpoint_due = true;
         let result = operation(self);
         self.buffer.wipe();
         result
@@ -570,6 +578,45 @@ impl<F: NorFlash + MultiwriteNorFlash, C: CacheImpl<u16>> Main<F, C> {
                     .ok_or(Error::MemoryFatal)?,
             );
         Ok(Some(length))
+    }
+
+    fn history_reclaimable(&self, current: &Current) -> Result<bool> {
+        if !current
+            .scans
+            .iter()
+            .all(|scan| scan.status == JournalStatus::Complete)
+        {
+            return Ok(false);
+        }
+        let snapshot = self
+            .directory
+            .entries()
+            .len()
+            .checked_mul(super::ENTRY_BYTES)
+            .and_then(|bytes| bytes.checked_add(super::CHECKPOINT_BYTES))
+            .and_then(|bytes| u32::try_from(bytes).ok())
+            .ok_or(Error::MemoryFatal)?;
+        let mut reclaim = false;
+        for (scan, journal) in current.scans.iter().zip(&self.journals) {
+            let history = scan.next.checked_sub(snapshot).ok_or(Error::MemoryFatal)?;
+            // Reclaim at least half a bank, rather than halving live-key headroom.
+            reclaim |= history >= journal.capacity().div_ceil(2);
+        }
+        Ok(reclaim)
+    }
+
+    pub(super) fn checkpoint_history(&mut self, key: &[u8; 32]) -> Result<()> {
+        if !self.checkpoint_due {
+            return Ok(());
+        }
+        self.with_buffer(|this| {
+            let current = this.resolve(key)?.ok_or(Error::MemoryFatal)?;
+            if this.history_reclaimable(&current)? {
+                this.snapshots(key, current.sequence, current.source)?;
+            }
+            this.checkpoint_due = false;
+            Ok(())
+        })
     }
 
     fn write_inner(&mut self, key: &[u8; 32], fid: u16, data: Option<&[u8]>) -> Result<()> {

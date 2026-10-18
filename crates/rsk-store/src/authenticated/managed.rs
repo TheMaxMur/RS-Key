@@ -186,6 +186,7 @@ impl<F: NorFlash + MultiwriteNorFlash + Clone, C: CacheImpl<u16>> Managed<F, C> 
         let active = self.active.as_mut().ok_or(Error::MemoryFatal)?;
         active.repair_activation()?;
         active.close_pre_otp()?;
+        active.checkpoint_history()?;
         self.ready = true;
         self.last_error = false;
         Ok(())

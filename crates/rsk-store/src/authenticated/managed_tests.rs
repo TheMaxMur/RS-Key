@@ -88,3 +88,11 @@ fn constructor_bank_digest_survives_mount_and_configuration() {
         assert!(store.last_error());
     }
 }
+
+#[expect(
+    clippy::unwrap_used,
+    clippy::indexing_slicing,
+    reason = "Fixtures index known NOR images and assert authenticated progress and injected failures."
+)]
+#[path = "managed_checkpoint_tests.rs"]
+mod checkpoint;
