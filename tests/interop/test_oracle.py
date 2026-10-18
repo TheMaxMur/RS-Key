@@ -13,7 +13,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent))
 from oracle_lib import codec, transport
 from oracle_lib.compare import compare
-from oracle_lib.runner import Options, Session
+from oracle_lib.runner import Options, Session, SCENARIO_REVISION
 from oracle_lib.trace import CaptureError, Outcome, Reply, Trace, TransferError, recover, summarize
 
 
@@ -64,6 +64,35 @@ def test_capture_recovery_and_private_permissions(tmp_path):
     assert os.stat(trace.directory).st_mode & 0o777 == 0o700
     for name in ("events.jsonl", "manifest.json", "results.json"):
         assert os.stat(trace.directory / name).st_mode & 0o777 == 0o600
+
+
+def test_exchange_steps_keep_sample_scope_without_rescanning_capture_history(tmp_path):
+    class AppendOnly(list):
+        def __iter__(self):
+            raise AssertionError("exchange recorder rescanned prior history")
+    trace = Trace(tmp_path / "step-scope", {}, Clock())
+    trace.exchanges = AppendOnly()
+    scopes = ((None, 0), ("first", 0), ("other", 0), ("first", 0), ("first", 1), ("first", 0), ("first", 1))
+    for name, sample in scopes:
+        trace.case, trace.sample = name, sample
+        trace.exchange("hid", "hid_report", "PING", b"", 1, lambda deadline, observe: Reply(b"echo"))
+    rows = trace.exchanges[:]
+    assert [(row["scenario_id"], row["sample"]) for row in rows] == list(scopes)
+    assert [row["step"] for row in rows] == [0, 0, 0, 1, 0, 2, 1]
+    trace.exchanges = rows
+    trace.finish()
+
+
+@pytest.mark.parametrize("field,value", [("scenario_revision", SCENARIO_REVISION + 1), ("parameters", {"bound": 3}), ("coverage_method", "different product")])
+def test_comparator_excludes_changed_contract_from_results_and_timing(tmp_path, field, value):
+    left, right = recorded(tmp_path / "left"), recorded(tmp_path / "right")
+    path = right.directory / "events.jsonl"
+    events = [json.loads(line) for line in path.read_text().splitlines()]
+    next(row for row in events if row["record_type"] == "scenario_finished")["result"][field] = value
+    path.write_text("".join(json.dumps(row) + "\n" for row in events))
+    result = compare(left.directory, right.directory)
+    assert result["not_comparable"] >= 1 and result["matched_cases"] == 0 and result["timing"] == []
+    assert any("scenario contract differs" in row.get("reason", "") for row in result["differences"])
 
 
 def test_interrupted_request_is_not_success(tmp_path):
@@ -234,7 +263,9 @@ def test_comparing_incomplete_capture_is_not_green(tmp_path):
     trace = recorded(tmp_path / "run")
     path = trace.directory / "events.jsonl"
     path.write_text("\n".join(path.read_text().splitlines()[:-1]) + "\n")
-    assert compare(trace.directory, trace.directory)["not_comparable"] == 2
+    report = compare(trace.directory, trace.directory)
+    assert report["not_comparable"] == 2
+    assert report["timing"] == []
 
 
 def test_comparison_of_only_excluded_cases_is_not_green(tmp_path):

@@ -8,7 +8,7 @@ from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 
 import oracle
 from oracle_lib import codec
-from oracle_lib.runner import Options, Session
+from oracle_lib.runner import AIDS, Options, Session
 from oracle_lib.trace import Reply, Trace
 from test_oracle_expanded import apdu_parts
 
@@ -28,6 +28,7 @@ class PivCard:
         self.key, self.algorithm, self.touch = DEFAULT_KEY, 3, 1
         self.has_pin, self.has_management, self.witness = False, False, None
         self.objects = {}
+        self.selected = None
 
     def encrypted(self, value):
         cipher = TripleDES(self.key) if self.algorithm == 3 else algorithms.AES(self.key)
@@ -40,7 +41,7 @@ class PivCard:
         current = self.pin if reference == 0 else self.puk
         if value.rstrip(b"\xff") != current:
             self.left[reference] -= 1
-            return 0x63C0 | self.left[reference]
+            return 0x6983 if self.left[reference] == 0 else 0x63C0 | min(self.left[reference], 15)
         self.left[reference] = self.totals[reference]
         return 0x9000
 
@@ -48,7 +49,12 @@ class PivCard:
         ins, p1, p2, data = apdu_parts(request)
         status, body = 0x9000, b""
         if ins == 0xA4:
-            self.has_pin, self.has_management = False, False
+            selected = next((name for name, aid in AIDS.items() if data and aid.startswith(data)), None)
+            if selected is None:
+                status = 0x6a82
+            elif self.selected != selected:
+                self.has_pin, self.has_management, self.witness = False, False, None
+                self.selected = selected
         elif ins == 0xFD:
             body = b"\x05\x08\x00"
         elif ins == 0xF7:
@@ -63,7 +69,7 @@ class PivCard:
             if p1 == 0xFF:
                 self.has_pin = False
             elif not data:
-                status = 0x9000 if self.has_pin else 0x63C0 | self.left[0] if self.left[0] else 0x6983
+                status = 0x9000 if self.has_pin else 0x63C0 | min(self.left[0], 15) if self.left[0] else 0x6983
             else:
                 status = self.compare(0, data)
                 self.has_pin = status == 0x9000

@@ -29,6 +29,10 @@ def replace(value, path, replacement):
     return result
 
 
+def read_path(command, path):
+    return not (command in (1, 2) and "transports" in path or command == 1 and path == (2, "name"))
+
+
 def commands():
     point = {-2: bytes(32), -3: bytes(32)}
     make = {1: bytes(32), 2: {"id": "fields.oracle.invalid", "name": "Oracle"},
@@ -54,8 +58,8 @@ def commands():
         yield f"authenticatorConfig-{subcommand}", 13, {1: subcommand, 2: parameters, 3: 2, 4: bytes(32)}, "F21", ("authnrCfg",)
     for subcommand in range(1, 16):
         parameters = {1: point, 2: bytes(1184)} if subcommand == 1 else {1: b"blob", 2: b"chain"} if subcommand == 9 else {
-            1: b"blob"} if subcommand in (3, 6, 8) else {1: 1, 2: b"config"} if subcommand == 12 else {
-            1: 1} if subcommand in (13, 14) else {}
+            1: b"blob"} if subcommand in (3, 6, 8) else {1: 3, 2: b"config"} if subcommand == 12 else {
+            1: 3 if subcommand == 14 else 1} if subcommand in (13, 14) else {}
         yield f"vendor-{subcommand}", 0x41, {1: subcommand, 2: parameters, 3: 2, 4: bytes(32)}, {
             1: "V01", 2: "V02", 3: "V03", 4: "V04", 5: "V02", 6: "V05", 7: "V07", 8: "V08", 9: "V06",
             10: "V06", 11: "V06", 12: "V09", 13: "V09", 14: "V07", 15: "V10"}[subcommand], ()
@@ -65,6 +69,8 @@ def inputs():
     alternatives = (("null", None), ("bool", False), ("integer", 1), ("bytes", b"x"), ("text", "x"), ("array", []), ("map", {}))
     for label, command, base, family, required in commands():
         for path, value in paths(base):
+            if not read_path(command, path):
+                continue
             for kind, other in alternatives:
                 if type(value) is type(other):
                     continue

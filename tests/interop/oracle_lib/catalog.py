@@ -24,9 +24,9 @@ class PlanTrace:
         pass
 
 
-def catalog(profile, suites, execute, seed="rs-key-oracle-v1"):
+def catalog(profile, suites, execute, seed="rs-key-oracle-v1", *, foreign_references=()):
     trace = PlanTrace()
-    session = Session(trace, profile=profile, options=Options(seed=seed))
+    session = Session(trace, profile=profile, options=Options(seed=seed, foreign_references=foreign_references))
     session.planning = True
     session.values["fido.info"] = {10: [{"alg": value} for value in SUPPORTED_ALGORITHMS]}
     execute(session, suites)

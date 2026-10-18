@@ -38,17 +38,20 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ## [Unreleased]
 
-- Audit USB oracle coverage below the family level and expose unresolved matrix
-  clauses in offline plans and capture reports. Add parsed-field type matrices,
-  scheduled HID assembly/foreign-CID/post-completion checks, explicit APDU
-  encodings and response-chain lifetimes, FIDO extension/secret/counter
-  properties, OATH counter/increasing/paging lifecycles and rescue calendar
-  boundaries. Separate APDU response continuations from applet rejections so
-  `61xx` cannot falsely satisfy a refusal check; stop the malformed-field corpus
-  if a result or PIN/public-state side effect differs from its contract. Extend
-  PIV wrong-PUK and partial reset-precondition controls and restore the known PIN
-  via PUK after interrupted assertions. Full matrix implementation and physical
-  verification remain open.
+- Complete the bounded USB oracle requirement matrix for confirmed profiles:
+  command-specific grammar, field/length/numeric/string boundaries, populated
+  private references, authorization/cursor lifetimes, native CCID/USB faults,
+  keyboard/button/pinpad input, applet reset isolation and cross-interface
+  cancellation, quotas, shared configuration and processing. Reconcile uncertain
+  writes through whole old/new/partial-state and private-key witnesses, retain
+  genuinely unknown outcomes, and halt mutations after failed recovery. Add
+  offline public foreign-reference proofs, seeded state histories and fresh
+  semantic-recipe minimization that preserves the original failure. Separate
+  warmups and witnessed session populations; omit latency ratios for mismatched
+  contexts or results. Scenario revision 3 requires fresh comparable captures.
+  Independent fault peers test the actual runner paths. Physical captures are
+  unperformed, external model-specific catalogs remain unknown, and Trezor's
+  wallet remains outside the recorder's allowed surface.
 
 - Add the host-only USB oracle recorder under `tests/interop`: durable raw
   CTAPHID/APDU captures, per-request monotonic timing, independently checked

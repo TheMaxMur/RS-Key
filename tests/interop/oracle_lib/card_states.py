@@ -4,6 +4,7 @@
 """Card ACLs, one-shot grants, object rollback, and populated-key controls."""
 from cryptography.hazmat.primitives import hashes
 
+from . import pgp_keys
 from . import codec
 from .cards import connection, encoded_public, fixture_key, sdk_supported
 from .fido import verified
@@ -140,7 +141,7 @@ def pgp_grants(session):
             key = fixture_key(session, "ECCP256")
             created = False
             try:
-                pgp.put_key(reference, key)
+                pgp_keys.put_key(session, pgp, reference, key)
                 created = True
                 message = session.fixture("pgp.PW-scope.message")
                 operation = pgp.sign if reference == KEY_REF.SIG else pgp.authenticate
@@ -161,7 +162,7 @@ def pgp_grants(session):
                 if created and not session.broken:
                     session.trace.phase = "cleanup"
                     pgp.verify_admin(session.options.openpgp_admin)
-                    sdk_supported(session, lambda: pgp.delete_key(reference))
+                    sdk_supported(session, lambda: pgp_keys.delete_key(session, pgp, reference))
 
 
 def pgp_objects(session):

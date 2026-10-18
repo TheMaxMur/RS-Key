@@ -30,9 +30,10 @@ def read(session, writer, required=False):
         session.check("HID config read success", reply.protocol, "success")
         body = reply.data
     elif writer == "otp":
+        from .otp_commands import feature_payload
         reply = session.otp_call(0x13)
         session.check("OTP config read success", reply.protocol, "success")
-        body = reply.data
+        body = feature_payload(reply.data)
     else:
         reply = session.hid_call(0x42, name="management.read-config-for-vendor-writer")
         session.check("HID config read success", reply.protocol, "success")

@@ -71,14 +71,15 @@ def fido(session):
         with session.case("negative.ctap." + case.name, (*case.families, "G14"),
                           effects=("malformed_known_command",)):
             session.observe("input_contract", "structural rejection; precedence is measured separately")
+            previous_versions = session.values.get("fido.info", {}).get(1)
             rejected = session.ctap(case.command, raw=case.raw)
             session.observe("rejection.status", rejected.status)
             session.check("structurally invalid CTAP input refused", rejected.protocol in ("applet_error", "transport_error"))
             trigger = session.evidence()
             control = session.ctap_value(session.ctap(4))
             session.check("recovery versions array", isinstance(control.get(1), list) and len(control[1]) > 0)
-            if "fido.info" in session.values:
-                session.check("recovery versions", control.get(1), session.values["fido.info"].get(1))
+            if previous_versions is not None:
+                session.check("recovery versions", control.get(1), previous_versions)
             session.transition("ctap.request", "ready", "ready_after_rejection", trigger, [trigger, session.evidence()])
     for name, raw in (("unknown-key", codec.encode({99: True})), ("non-shortest-key", bytes.fromhex("a118006100")),
                       ("duplicate-key", bytes.fromhex("a21818610018186101")), ("indefinite", b"\xbf\xff"),

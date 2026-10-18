@@ -20,12 +20,13 @@ AUT_ENABLE, AUT_DISABLE = 0x03E43F56B34285E2, 0x1831A40F04A25ED9
 
 
 def config(session, subcommand, parameters=None):
+    session.require(info(session).get(4, {}).get("clientPin") and session.options.pin,
+                    "positive CONFIG requires a known configured host PIN; absence never grants ACFG")
     request = {1: subcommand}
     if parameters is not None:
         request[2] = parameters
-    if info(session).get(4, {}).get("clientPin"):
-        version, token = pin_token(session, 32)
-        request.update({3: version, 4: token_mac(version, token, bytes([255]) * 32 + bytes([13, subcommand]) + (codec.encode(parameters) if parameters is not None else b""))})
+    version, token = pin_token(session, 32)
+    request.update({3: version, 4: token_mac(version, token, bytes([255]) * 32 + bytes([13, subcommand]) + (codec.encode(parameters) if parameters is not None else b""))})
     return session.ctap(13, request)
 
 
@@ -157,6 +158,7 @@ def attestation(session):
         finally:
             if installed and not session.broken:
                 session.trace.phase = "cleanup"
+                handshake(session)
                 session.ctap_value(vendor(session, 10, authenticated=True))
                 session.check("fixture organization identity cleared", session.ctap_value(vendor(session, 11))[1], False)
 

@@ -16,6 +16,7 @@ from oracle_lib import binding, codec, enterprise
 from oracle_lib.runner import Options, Session
 from oracle_lib.trace import Reply, Trace
 from test_oracle_seed_lifecycle import Peer as SeedPeer
+from test_oracle_token_matrix import Peer as TokenPeer
 
 
 def identity():
@@ -28,7 +29,7 @@ class Card:
     emulated = True
 
     def control(self, action, deadline, observe):
-        assert action == "power_cycle"
+        assert action in ("power_cycle", "card_reset", "reconnect")
         return Reply(b"")
 
     def transfer(self, request, deadline, observe):
@@ -43,6 +44,7 @@ class Peer(SeedPeer):
     def __init__(self, defect):
         super().__init__(defect)
         self.enabled, self.rps, self.org, self.chain = False, [], None, None
+        self.pin_backend = TokenPeer()
         name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "Synthetic device")])
         self.basic = x509.CertificateBuilder().subject_name(name).issuer_name(name).public_key(self.vendor.device_key.public_key()).serial_number(2).not_valid_before(datetime(2020, 1, 1, tzinfo=timezone.utc)).not_valid_after(datetime(2040, 1, 1, tzinfo=timezone.utc)).sign(self.vendor.device_key, hashes.SHA256()).public_bytes(serialization.Encoding.DER)
 
@@ -58,16 +60,28 @@ class Peer(SeedPeer):
             observe("rx", identity())
             return Reply(identity())
         operation = request[0]
+        if operation == 6:
+            reply = self.pin_backend.transfer(command, request, deadline, observe)
+            self.token, self.protocol, self.permissions = self.pin_backend.token, self.pin_backend.protocol, self.pin_backend.permissions
+            return reply
         fields = codec.decode(request[1:]) if len(request) > 1 else {}
         status, value, handled = 0, {}, True
         if operation == 4:
-            value = {1: ["FIDO_2_3"], 4: {"clientPin": False, "ep": self.enabled, "authnrCfg": True}, 6: [1, 2]}
+            value = {1: ["FIDO_2_3"], 4: {"clientPin": self.pin_backend.pin_value is not None, "ep": self.enabled, "authnrCfg": True, "pinUvAuthToken": True}, 6: [1, 2]}
         elif operation == 13:
-            if fields[1] == 1:
+            message = b"\xff" * 32 + bytes([13, fields[1]]) + (codec.encode(fields[2]) if 2 in fields else b"")
+            if fields.get(4) != self.mac(message) or not self.permissions & 32:
+                status = 0x33
+            elif fields[1] == 1:
                 self.enabled = self.defect != "enable-noop"
             elif fields[1] == 255:
                 assert fields[2][1] == enterprise.EA_RPIDS
-                self.rps = fields[2][4]
+                if len(codec.encode(fields[2])) > 384 and self.defect != "raw-RP-limit-ignored":
+                    status = 0x39
+                elif len(fields[2][4]) > 8 and self.defect != "RP-count-ignored":
+                    status = 0x28
+                elif fields[2][4] or self.defect != "empty-RPs-retain-old":
+                    self.rps = fields[2][4]
             else:
                 raise AssertionError("unexpected configuration operation")
         elif operation == 0x41 and fields[1] in (9, 10, 11):
@@ -83,9 +97,17 @@ class Peer(SeedPeer):
                 value = {1: self.org is not None}
         elif operation == 7:
             self.enabled, self.rps, self.records = False, [], {}
+            self.pin_backend.pin_value = None
         elif operation == 1:
             level = fields.get(10)
-            if 10 in fields and not self.enabled:
+            rp = fields[2]["id"]
+            if not rp:
+                status = 0x14
+            elif len(rp.encode()) > 253:
+                status = 3
+            elif any(value in b" \t\r\n\v\f" for value in rp.encode()):
+                status = 2
+            elif 10 in fields and not self.enabled:
                 status = 2
             elif 10 in fields and level not in (1, 2):
                 status = 0x2C
@@ -111,11 +133,13 @@ class Peer(SeedPeer):
 
 
 @pytest.mark.parametrize("defect,expected", [(None, None), ("enable-noop", "enterprise option enabled"),
-    ("type-1-RP-bypass", "enterprise RP eligibility controls ep"), ("wrong-org-signer", "InvalidSignature")])
+    ("type-1-RP-bypass", "enterprise RP eligibility controls ep"), ("wrong-org-signer", "InvalidSignature"),
+    ("raw-RP-limit-ignored", "RP count/raw-byte limit"), ("RP-count-ignored", "RP count/raw-byte limit"),
+    ("empty-RPs-retain-old", "enterprise RP eligibility controls ep")])
 def test_enterprise_attestation_through_normal_dispatch(tmp_path, defect, expected):
     trace = Trace(tmp_path / "enterprise", {})
     peer = Peer(defect)
-    session = Session(trace, hid=peer, card=Card(), profile="rsk", options=Options(exercise=True, touch=True,
+    session = Session(trace, hid=peer, card=Card(), profile="rsk", options=Options(exercise=True, touch=True, pin="fixture-PIN",
                       allow_effects=("replace_identity", "config_change", "applet_reset", "pin_change", "reboot")))
     binding.confirm(session)
     oracle.execute(session, ["enterprise-attestation"])

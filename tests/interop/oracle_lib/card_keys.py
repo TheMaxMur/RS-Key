@@ -2,6 +2,8 @@
 # Copyright (C) 2026 RS-Key contributors
 
 """Slot/algorithm/policy fixtures with public-key and certificate verification."""
+from itertools import product
+
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec, ed25519, padding, rsa, x25519
@@ -11,16 +13,17 @@ from .cards import encoded_public, fixture_key, sdk_supported
 from .fido import verified
 from .piv_lifecycle import fixture_session as piv_session
 from .openpgp_lifecycle import fixture_session as pgp_session, request
+from . import pgp_keys
 
 PIV_SLOTS = (*range(0x82, 0x96), 0x9A, 0x9C, 0x9D, 0x9E)
 PIV_ALGORITHMS = ("RSA1024", "RSA2048", "RSA3072", "RSA4096", "ECCP256", "ECCP384", "ED25519", "X25519")
-PGP_ALGORITHMS = ("RSA2048", "RSA3072", "RSA4096", "SECP256R1", "SECP384R1", "SECP521R1", "SECP256K1",
+PGP_ALGORITHMS = ("RSA1024", "RSA2048", "RSA3072", "RSA4096", "SECP256R1", "SECP384R1", "SECP521R1", "SECP256K1",
                   "BrainpoolP256R1", "BrainpoolP384R1", "BrainpoolP512R1", "ED25519", "X25519")
 
 
 def certificate(session, leaf, issuer, public):
     session.check("attestation public key matches slot", encoded_public(leaf.public_key()), encoded_public(public))
-    session.check("attestation issuer binds chain", leaf.issuer, issuer.subject)
+    session.check("attestation issuer binds chain", leaf.issuer.public_bytes(), issuer.subject.public_bytes())
     leaf.verify_directly_issued_by(issuer)
     session.check("attestation certificate signature", True)
 
@@ -38,13 +41,19 @@ def private_operation(session, sdk, slot, public, algorithm, piv=False):
         plain = session.fixture("card.matrix.rsa", 32)
         session.check("RSA independently encrypted plaintext", sdk.decrypt(public.encrypt(plain, padding.PKCS1v15())), plain)
     else:
+        digest = hashes.SHA256()
+        if not piv and isinstance(public, ec.EllipticCurvePublicKey):
+            if public.curve.key_size > 384:
+                digest = hashes.SHA512()
+            elif public.curve.key_size > 256:
+                digest = hashes.SHA384()
         if piv:
             from yubikit.piv import KEY_TYPE
             signature = sdk.sign(slot, KEY_TYPE[algorithm], message, hashes.SHA256(), padding.PKCS1v15() if isinstance(public, rsa.RSAPublicKey) else None)
         else:
             operation = sdk.sign if slot.name == "SIG" else sdk.authenticate
-            signature = operation(message, hashes.SHA256())
-        algorithm_id = -8 if isinstance(public, ed25519.Ed25519PublicKey) else -257 if isinstance(public, rsa.RSAPublicKey) else -7
+            signature = operation(message, digest)
+        algorithm_id = -8 if isinstance(public, ed25519.Ed25519PublicKey) else -257 if isinstance(public, rsa.RSAPublicKey) else {32: -7, 48: -35, 64: -36}[digest.digest_size]
         verified(session, "slot/algorithm signature", public, algorithm_id, signature, message)
         if piv and isinstance(public, ec.EllipticCurvePublicKey):
             sdk.verify_pin(session.options.piv_pin)
@@ -58,18 +67,16 @@ def private_operation(session, sdk, slot, public, algorithm, piv=False):
 
 def piv(session):
     from yubikit.piv import KEY_TYPE, PIN_POLICY, TOUCH_POLICY, SLOT
-    for slot_index, slot_number in enumerate(PIV_SLOTS):
-        for alg_index, algorithm in enumerate(PIV_ALGORITHMS):
+    for slot_number in PIV_SLOTS:
+        for algorithm in PIV_ALGORITHMS:
             for origin in ("generate", "import"):
-                for policy_index in range(4):
-                    pin_policy = tuple(PIN_POLICY)[policy_index]
-                    touch_policy = tuple(TOUCH_POLICY)[(policy_index + slot_index + alg_index) % len(TOUCH_POLICY)]
+                for pin_policy, touch_policy in product(PIN_POLICY, TOUCH_POLICY):
                     label = f"piv.matrix.{slot_number:02x}.{algorithm}.{origin}.{pin_policy.name}.{touch_policy.name}"
                     with session.case(label, ("P02", "P09", "P10", "P11", "P12", "P14", "P15", "P17"),
                                       effects=("replace_piv_keys",), touch=True,
                                       parameters={"slot": slot_number, "algorithm": algorithm, "origin": origin,
                                                   "pin_policy": pin_policy.name, "touch_policy": touch_policy.name},
-                                      method="full slot/algorithm/origin/PIN product; rotating touch policy covers policy pairs across the slot/algorithm product"):
+                                      method="full slot/algorithm/origin/PIN/touch product"):
                         sdk = piv_session(session)
                         slot = SLOT(slot_number)
                         created = False
@@ -100,10 +107,11 @@ def piv(session):
                                 sdk_supported(session, lambda: sdk.delete_key(slot))
                                 result = session.apdu(codec.apdu(0xF7, p2=slot_number), "piv.deleted.metadata")
                                 session.check("deleted slot metadata absent", result.status, 0x6A88)
+                                session.check("deleted slot cannot produce an attestation certificate", session.apdu(codec.apdu(0xf9, slot_number)).status, 0x6a88)
 
 
 def openpgp(session):
-    from yubikit.openpgp import KEY_REF, OID, RSA_SIZE
+    from yubikit.openpgp import KEY_REF
     for slot in (KEY_REF.SIG, KEY_REF.DEC, KEY_REF.AUT):
         for algorithm in PGP_ALGORITHMS:
             if algorithm == "X25519" and slot != KEY_REF.DEC or algorithm == "ED25519" and slot == KEY_REF.DEC:
@@ -116,13 +124,10 @@ def openpgp(session):
                     try:
                         if origin == "import":
                             key = fixture_key(session, algorithm)
-                            sdk_supported(session, lambda: sdk.put_key(slot, key))
+                            sdk_supported(session, lambda: pgp_keys.put_key(session, sdk, slot, key))
                             public = key.public_key()
-                        elif algorithm.startswith("RSA"):
-                            public = sdk_supported(session, lambda: sdk.generate_rsa_key(slot, RSA_SIZE[algorithm]))
                         else:
-                            oid_name = "Ed25519" if algorithm == "ED25519" else algorithm
-                            public = sdk_supported(session, lambda: sdk.generate_ec_key(slot, OID[oid_name]))
+                            public = sdk_supported(session, lambda: pgp_keys.generate(session, sdk, slot, algorithm))
                         created = True
                         session.check("generated/imported public readback", encoded_public(sdk.get_public_key(slot)), encoded_public(public))
                         attributes = sdk.get_algorithm_attributes(slot)
@@ -145,7 +150,7 @@ def openpgp(session):
                         if created and not session.broken:
                             session.trace.phase = "cleanup"
                             sdk.verify_admin(session.options.openpgp_admin)
-                            sdk_supported(session, lambda: sdk.delete_key(slot))
+                            sdk_supported(session, lambda: pgp_keys.delete_key(session, sdk, slot))
 
 
 def mse(session):
@@ -157,10 +162,7 @@ def mse(session):
             for index, slot in enumerate((KEY_REF.DEC, KEY_REF.AUT)):
                 key = ec.derive_private_key(int.from_bytes(session.fixture(f"mse.{index}", 24), "big") + 1, ec.SECP256R1())
                 keys[slot] = key
-                sdk.set_algorithm_attributes(slot, EcAttributes.create(KEY_REF.DEC, OID.SECP256R1))
-                scalar = key.private_numbers().private_value.to_bytes(32, "big")
-                body = slot.crt + codec.tlv(0x7F48, bytes([0x92, len(scalar)])) + codec.tlv(0x5F48, scalar)
-                request(session, 0xDB, 0x3F, 0xFF, codec.tlv(0x4D, body))
+                pgp_keys.put_key(session, sdk, slot, key)
             peer = ec.generate_private_key(ec.SECP256R1())
             point = peer.public_key().public_bytes(serialization.Encoding.X962, serialization.PublicFormat.UncompressedPoint)
             body = codec.tlv(0xA6, codec.tlv(0x7F49, codec.tlv(0x86, point)))
@@ -177,7 +179,7 @@ def mse(session):
                 session.trace.phase = "cleanup"
                 sdk.verify_admin(session.options.openpgp_admin)
                 for slot in keys:
-                    sdk_supported(session, lambda: sdk.delete_key(slot))
+                    sdk_supported(session, lambda: pgp_keys.delete_key(session, sdk, slot))
 
 
 def uif(session):
@@ -190,7 +192,7 @@ def uif(session):
                 original = sdk_supported(session, lambda: sdk.get_uif(slot))
                 session.require(not original.is_fixed, "existing fixed UIF policy cannot be restored")
                 key = fixture_key(session, "ECCP256")
-                sdk.put_key(slot, key)
+                pgp_keys.put_key(session, sdk, slot, key)
                 try:
                     sdk_supported(session, lambda: sdk.set_uif(slot, policy))
                     session.check("UIF policy readback", sdk.get_uif(slot), policy)
@@ -211,7 +213,7 @@ def uif(session):
                             session.options.openpgp_pin, session.options.openpgp_admin = "123456", "12345678"
                         else:
                             sdk.set_uif(slot, original)
-                            sdk_supported(session, lambda: sdk.delete_key(slot))
+                            sdk_supported(session, lambda: pgp_keys.delete_key(session, sdk, slot))
 
 
 def run(session):

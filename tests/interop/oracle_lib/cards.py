@@ -2,10 +2,22 @@
 # Copyright (C) 2026 RS-Key contributors
 
 """PIV and OpenPGP fixtures; SDK calls pass through the raw APDU recorder."""
+from contextlib import contextmanager
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec, ed25519, padding, rsa, x25519
 
+from . import pgp_keys
 from .fido import verified
+
+
+@contextmanager
+def selected_cleanup(session, applet, context):
+    with context as value:
+        try:
+            yield value
+        finally:
+            if not session.broken:
+                session.select(applet)
 
 
 def connection(session):
@@ -110,7 +122,7 @@ def piv(session):
 
 
 def openpgp(session):
-    from yubikit.openpgp import KEY_REF, OID, OpenPgpSession
+    from yubikit.openpgp import KEY_REF, OpenPgpSession
     for reference in (KEY_REF.SIG, KEY_REF.DEC, KEY_REF.AUT):
         for origin in ("import", "generate"):
             label = f"openpgp.fixture.{reference.name.lower()}.{origin}.p256"
@@ -123,10 +135,10 @@ def openpgp(session):
                 try:
                     if origin == "import":
                         private = fixture_key(session, "ECCP256")
-                        sdk_supported(session, lambda: pgp.put_key(reference, private))
+                        sdk_supported(session, lambda: pgp_keys.put_key(session, pgp, reference, private))
                         public = private.public_key()
                     else:
-                        public = sdk_supported(session, lambda: pgp.generate_ec_key(reference, OID.SECP256R1))
+                        public = sdk_supported(session, lambda: pgp_keys.generate(session, pgp, reference, "SECP256R1"))
                     created = True
                     session.state("openpgp." + reference.name, origin + ":p256")
                     session.check("public key readback", encoded_public(pgp.get_public_key(reference)), encoded_public(public))
@@ -147,6 +159,6 @@ def openpgp(session):
                     if created and not session.broken:
                         session.trace.phase = "cleanup"
                         pgp.verify_admin(session.options.openpgp_admin)
-                        sdk_supported(session, lambda: pgp.delete_key(reference))
+                        sdk_supported(session, lambda: pgp_keys.delete_key(session, pgp, reference))
                         session.state("openpgp." + reference.name, "empty")
                         session.observe("cleanup", "key deleted; algorithm attributes restored by SDK to RSA2048")

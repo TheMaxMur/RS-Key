@@ -170,8 +170,8 @@ class Hid:
                 observe("rx", frame, timestamp, cid=frame[:4].hex())
                 if len(frame) != REPORT_LEN:
                     raise TransferError("short HID response report", protocol="malformed_response")
-                if self.on_report is not None:
-                    self.on_report(frame, timestamp)
+                if self.on_report is not None and self.on_report(frame, timestamp) is True:
+                    continue
                 if frame[:4] != self.cid:
                     continue
                 if first_rx is None:
@@ -278,12 +278,20 @@ class TcpReports:
 def _pcsc_worker(pipe, reader_name):
     connection = None
     try:
+        sharing = "shared"
+        if isinstance(reader_name, tuple):
+            reader_name, sharing = reader_name
+        from smartcard import scard
+        modes = {"shared": scard.SCARD_SHARE_SHARED, "exclusive": scard.SCARD_SHARE_EXCLUSIVE, "direct": scard.SCARD_SHARE_DIRECT}
         from smartcard.System import readers
         matches = [reader for reader in readers() if str(reader) == reader_name]
         if len(matches) != 1:
             raise ValueError("reader name is absent or ambiguous")
         connection = matches[0].createConnection()
-        connection.connect()
+        if sharing == "shared":
+            connection.connect()
+        else:
+            connection.connect(mode=modes[sharing])
         pipe.send(("ready", bytes(connection.getATR())))
         while True:
             request = pipe.recv()
@@ -363,10 +371,13 @@ class Pcsc:
         self.__init__(reader, clock, origin, _remaining(deadline, clock), worker)
         return Reply(self.atr)
 
-    def probe_client(self, request, deadline, observe):
+    def probe_client(self, request, deadline, observe, sharing="shared"):
+        if sharing not in ("shared", "exclusive", "direct"):
+            raise TransferError("unknown PC/SC sharing mode", Outcome.HOST_REJECTED)
         client = None
         try:
-            client = Pcsc(self.reader, self.clock, self.origin, _remaining(deadline, self.clock), self.worker)
+            reader = self.reader if sharing == "shared" else (self.reader, sharing)
+            client = Pcsc(reader, self.clock, self.origin, _remaining(deadline, self.clock), self.worker)
             return client.transfer(request, deadline, observe)
         finally:
             if client is not None:
@@ -494,7 +505,7 @@ class EmuCard:
         return Reply(data, "success" if status == 0x9000 else "applet_error", status)
 
     def raw(self, message, deadline, observe):
-        sequence = message[6]
+        sequence = message[6] if len(message) > 6 else None
         self.socket.sendall(b"\x00" + len(message).to_bytes(4, "big") + message)
         observe("tx", message)
         while True:
@@ -506,7 +517,7 @@ class EmuCard:
             except socket.timeout as error:
                 raise TransferError("emulator card deadline", Outcome.DEADLINE) from error
             observe("rx", response)
-            if response[6] != sequence or int.from_bytes(response[1:5], "little") != len(response) - 10:
+            if (sequence is not None and response[6] != sequence) or int.from_bytes(response[1:5], "little") != len(response) - 10:
                 raise TransferError("CCID response sequence or length mismatch", protocol="malformed_response")
             if response[7] & 0xC0 == 0x80:
                 if self.on_extension is not None:

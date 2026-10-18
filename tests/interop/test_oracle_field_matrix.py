@@ -95,6 +95,10 @@ def test_every_parsed_field_type_variant_through_normal_dispatch(tmp_path, defec
             assert all(row["reason"] == "malformed field changed PIN retries; explicit recovery required" for row in trace.cases[1:])
     else:
         assert not failures and all(row["verdict"] == "pass" for row in trace.cases), trace.cases
+        assert not any(".transports." in row["scenario_id"]
+            for row in trace.cases if row["scenario_id"].startswith(("fields.makeCredential.", "fields.getAssertion.")))
+        assert not any(row["scenario_id"].startswith("fields.makeCredential.2.name.") for row in trace.cases)
+        assert any(row["scenario_id"].startswith("fields.credentialManagement-6.2.2.transports.") for row in trace.cases)
         deletion = next(row for row in trace.cases if row["scenario_id"] == "fields.credentialManagement-6.2.2.id.null")
         update = next(row for row in trace.cases if row["scenario_id"] == "fields.credentialManagement-7.2.3.name.null")
         assert deletion["families"] == ["G02", "G14", "F17"]

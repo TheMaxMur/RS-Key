@@ -6,6 +6,7 @@ import hashlib
 
 from cryptography.hazmat.primitives import hashes
 
+from . import pgp_keys
 from . import codec
 from .cards import connection, fixture_key
 from .card_states import sdk_refused
@@ -15,6 +16,7 @@ from .lifecycle import Action, change
 from .runner import CtapRoute
 from .trace import TransferError
 from .binding import require_pair
+from .otp import OATH_HASHES
 
 
 def authorization(session):
@@ -38,7 +40,7 @@ def authorization(session):
                     pgp.verify_pin(session.options.openpgp_pin)
                 else:
                     pgp.verify_admin(session.options.openpgp_admin)
-                    pgp.put_key(KEY_REF.SIG, key)
+                    pgp_keys.put_key(session, pgp, KEY_REF.SIG, key)
                     created = True
                     operation = lambda: pgp.sign(message, hashes.SHA256())
                     session.select("piv")
@@ -57,7 +59,7 @@ def authorization(session):
                     else:
                         session.select("openpgp")
                         pgp.verify_admin(session.options.openpgp_admin)
-                        pgp.delete_key(KEY_REF.SIG)
+                        pgp_keys.delete_key(session, pgp, KEY_REF.SIG)
 
 
 def ctap_scope(session):
@@ -159,7 +161,7 @@ def capacity(session):
             for index in range(4096):
                 name = b"oracle-capacity-" + session.fixture("capacity.namespace", 5).hex().encode() + str(index).encode()
                 session.require(name not in original, "capacity fixture name collides")
-                result = session.apdu(codec.apdu(1, data=codec.tlv(0x71, name) + codec.tlv(0x73, b"\x21\x06fixture-key")))
+                result = session.apdu(codec.apdu(1, data=codec.tlv(0x71, name) + codec.tlv(0x73, b"\x21\x06" + OATH_HASHES[0][2])))
                 if result.protocol == "success":
                     created.append(name)
                     continue

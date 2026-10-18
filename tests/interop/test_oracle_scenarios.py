@@ -173,7 +173,10 @@ def test_trezor_cli_profile_cannot_be_overridden(tmp_path, monkeypatch, capsys):
     result = oracle.main(["capture", "--out", str(tmp_path / "capture"), "--hid", "wallet", "--profile", "generic", "--exercise"])
     assert result == 2
     assert "cannot be overridden" in capsys.readouterr().err
-    assert not (tmp_path / "capture").exists()
+    from oracle_lib.trace import recover
+    run = recover(tmp_path / "capture")
+    assert run["execution_outcome"] == "runner_error"
+    assert not any(row["command"].startswith("open.") for row in run["exchanges"])
 
 
 def test_u2f_uses_extended_apdu_encoding():

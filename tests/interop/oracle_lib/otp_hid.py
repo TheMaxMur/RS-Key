@@ -51,6 +51,16 @@ def _otp_worker(pipe, path_hex):
             request = pipe.recv()
             if request is None:
                 break
+            if isinstance(request, dict) and "raw_feature" in request:
+                started = time.monotonic_ns()
+                report = request["raw_feature"]
+                if report is None:
+                    response = connection.receive()
+                else:
+                    connection.send(report)
+                    response = b""
+                pipe.send(("raw_reply", response, report is None, started, time.monotonic_ns()))
+                continue
             slot, data, expected_len = request
             started = time.monotonic_ns()
             try:
@@ -101,6 +111,15 @@ class OtpFeature(Pcsc):
         if slot != -1 and (not 0 <= slot <= 255 or len(data) > 64):
             raise TransferError("OTP command exceeds feature framing bounds", Outcome.HOST_REJECTED)
         self.pipe.send((slot, data, expected_len))
+        return self._receive_reply(deadline, observe)
+
+    def raw_feature(self, report, deadline, observe):
+        if self.broken or report is not None and (not isinstance(report, bytes) or len(report) != 8):
+            raise TransferError("raw OTP feature operation requires one 8-byte report or GET", Outcome.HOST_REJECTED)
+        self.pipe.send({"raw_feature": report})
+        return self._receive_reply(deadline, observe)
+
+    def _receive_reply(self, deadline, observe):
         last_rx = None
         while True:
             remaining = max(0, (deadline - self.clock()) / 1e9)
@@ -122,6 +141,11 @@ class OtpFeature(Pcsc):
             elif response[0] == "reply":
                 _, value, status, start, end = response
                 return Reply(value, "success" if status is None else "applet_error", status, {
+                    "backend_call_start_ns": start - self.origin, "backend_call_end_ns": end - self.origin,
+                    "backend_api_duration_ns": end - start, "final_rx_ns": last_rx})
+            elif response[0] == "raw_reply":
+                _, value, reading, start, end = response
+                return Reply(value, "success" if reading else "no_response_expected", timing={
                     "backend_call_start_ns": start - self.origin, "backend_call_end_ns": end - self.origin,
                     "backend_api_duration_ns": end - start, "final_rx_ns": last_rx})
             elif response[0] == "error":

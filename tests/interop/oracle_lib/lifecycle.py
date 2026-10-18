@@ -4,7 +4,7 @@
 """Explicit connection changes; operator reports never become device timestamps."""
 from enum import Enum
 
-from .trace import Reply
+from .trace import Reply, SessionStart
 
 
 class Action(Enum):
@@ -15,7 +15,7 @@ class Action(Enum):
 
 
 def change(session, action, transport="card"):
-    if session.broken and action == Action.RECONNECT and session.current and "session_recovery" in session.current.effects:
+    if session.broken and action in (Action.RECONNECT, Action.USB_RECONNECT, Action.POWER_CYCLE) and session.current and "session_recovery" in session.current.effects:
         session.recovering = True
         try:
             return _change(session, action, transport)
@@ -24,7 +24,7 @@ def change(session, action, transport="card"):
     return _change(session, action, transport)
 
 
-def _change(session, action, transport):
+def require_action(session, action, transport="card"):
     session._gate()
     if not isinstance(action, Action):
         raise ValueError("connection action must be typed")
@@ -38,6 +38,12 @@ def _change(session, action, transport):
     if rebind_usb:
         for name, interface in (("otp", session.otp_hid), ("keyboard", session.keyboard)):
             session.require(interface is None or hasattr(interface, "reopen"), name + " interface has no defined rebinding operation")
+    return backend
+
+
+def _change(session, action, transport):
+    backend = require_action(session, action, transport)
+    rebind_usb = action in (Action.POWER_CYCLE, Action.USB_RECONNECT)
     session.values.pop("same_instance_confirmed", None)
     started = session.trace.now()
     session.trace.emit("interaction", action=action.value, stage="requested", source="runner", transport=transport)
@@ -55,6 +61,11 @@ def _change(session, action, transport):
     session.values.pop("fido.info", None)
     session.trace.emit("session_changed", session_id=transport, cause=action.value, evidence=session.evidence(),
                        binding="same exact reader/path; no neighboring-device fallback")
+    population = SessionStart.EMULATED_POWER if action == Action.POWER_CYCLE and getattr(backend, "emulated", False) else SessionStart.REPORTED_POWER if action == Action.POWER_CYCLE else SessionStart.RESET if action == Action.CARD_RESET else SessionStart.RECONNECT
+    if hasattr(session.trace, "mark_session"):
+        session.trace.mark_session(transport, population)
+        if rebind_usb and session.hid is not None:
+            session.trace.mark_session("hid", population)
     if rebind_usb and session.hid is not None:
         descriptor = session.hid.reopen(session.options.operator)
         session.trace.emit("device_bound", session_id="hid", device=descriptor,

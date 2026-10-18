@@ -7,7 +7,7 @@ from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 
 import oracle
 from oracle_lib import codec
-from oracle_lib.runner import Options, Session
+from oracle_lib.runner import AIDS, Options, Session
 from oracle_lib.trace import Reply, Trace
 from test_oracle_expanded import apdu_parts
 
@@ -25,15 +25,24 @@ class Card:
         self.anchor = False
         self.values = {0x5E: b"", 0xDE: b"\x01\x00\x02\x00\x03\x00", 0xF9: b"\x81\x01\x00"}
         self.certs, self.aes, self.terminated = {i: b"original-" + bytes([i]) for i in range(3)}, None, False
+        self.selection = None
 
     def transfer(self, request, deadline, observe):
         ins, p1, p2, data = apdu_parts(request)
         tag, status, output = p1 * 256 + p2, 0x9000, b""
         if self.terminated and ins not in (0x44, 0xA4):
-            status = 0x6985
+            status = 0x6285
         elif ins == 0xA4:
-            self.grants.clear()
-            self.anchor = False
+            selected = next((name for name, aid in AIDS.items() if data and aid.startswith(data)), None)
+            if selected is None:
+                status = 0x6a82
+            else:
+                if selected != self.selection:
+                    self.grants.clear()
+                    self.anchor = False
+                self.selection = selected
+                if self.terminated and selected == "openpgp":
+                    status = 0x6285
         elif ins == 0x20:
             if p1 == 0xFF:
                 self.grants.discard(p2)
@@ -50,7 +59,7 @@ class Card:
                 self.pins[p2] = data[len(old):]
         elif ins == 0x2C:
             if p1 == 2 and 0x83 not in self.grants:
-                status = 0x6982
+                status = 0x6985
             elif p1 == 0 and not data.startswith(self.code):
                 status = 0x6982
             else:

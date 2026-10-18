@@ -65,6 +65,8 @@ def mutations(session):
                 proposal = config(session.fixture("otp.state.decoy-key", 20), new, allow_update)
                 reply = raw(session, update, proposal + old)
                 session.observe("update.status", reply.status)
+                if session.profile == "rsk":
+                    session.check("RS-Key UPDATE does not gate on ALLOW_UPDATE", reply.protocol, "success")
                 if reply.protocol == "success":
                     active = new
                     check_hmac(session, slot, key, "UPDATE preserves original secret")
@@ -98,13 +100,23 @@ def swaps(session):
                 for slot in populated:
                     accepted(session, raw(session, commands(slot)[0], config(keys[slot]) + bytes(6)))
                     check_hmac(session, slot, keys[slot], f"slot {slot} before swap")
-                accepted(session, raw(session, 6))
+                reply = raw(session, 6)
+                if session.profile == "rsk" and session.otp_hid:
+                    session.check("current RS-Key feature transport refuses its fixed 64-byte SWAP body", (reply.protocol, reply.status), ("applet_error", "CommandRejectedError"))
+                    for previous in populated:
+                        check_hmac(session, previous, keys[previous], "feature SWAP refusal preserves each original slot")
+                    session.observe("profile_swap_limit", "current process_hid passes 64 bytes; SWAP accepts only 0/2/6/8-byte APDU bodies")
+                    continue
+                accepted(session, reply)
                 trigger = session.evidence()
                 for previous in populated:
                     check_hmac(session, 3 - previous, keys[previous], "key moved to other slot")
                 for previous in set((1, 2)) - set(populated):
                     missing = raw(session, commands(3 - previous)[1], bytes(64), 20)
-                    session.check("empty slot moved to other slot", missing.is_rejection)
+                    if session.profile == "rsk" and not session.otp_hid:
+                        session.check("empty slot moved to other slot", (missing.status, missing.data[:-2]), (0x9000, b""))
+                    else:
+                        session.check("empty slot moved to other slot", missing.is_rejection)
                 if populated:
                     session.transition("otp.slot_pair", occupancy, "swapped", trigger, [trigger, session.evidence()])
                 else:

@@ -10,11 +10,11 @@ from .fido_fixtures import credential
 def lists(session):
     for operation in ("allow", "exclude"):
         for position in ("first", "middle", "last"):
-            for boundary in ("one", "maximum-minus-one", "maximum", "maximum-plus-one"):
+            for boundary in ("one", "two", "maximum-minus-one", "maximum", "maximum-plus-one"):
                 with session.case(f"fido.{operation}List.{position}.{boundary}", ("F11", "F12", "G03", "G09", "G14"), effects=("create_fido_credential",), touch=True):
                     maximum = info(session).get(7, 1)
                     session.require(1 <= maximum <= 1024, "advertised credential-list limit exceeds bounded generator")
-                    size = {"one": 1, "maximum-minus-one": max(1, maximum - 1), "maximum": maximum, "maximum-plus-one": maximum + 1}[boundary]
+                    size = {"one": 1, "two": 2, "maximum-minus-one": max(1, maximum - 1), "maximum": maximum, "maximum-plus-one": maximum + 1}[boundary]
                     with credential(session, session.current.name) as fixture:
                         descriptors = [{"type": "public-key", "id": session.fixture(f"foreign.{index}", 32)} for index in range(size)]
                         index = 0 if position == "first" else size // 2 if position == "middle" else size - 1
@@ -35,10 +35,14 @@ def lists(session):
 
 
 def identifiers(session):
-    for boundary in (0, 1, 31, 32, 33, 747, 748, 749):
+    for boundary in (0, 1, 31, 32, 33, 747, 748, 749, "profile-maximum-minus-one", "profile-maximum", "profile-maximum-plus-one"):
         with session.case(f"fido.credential-ID.length-{boundary}", ("F12", "G03", "G09", "G14"), effects=("create_fido_credential",), touch=True):
+            maximum = info(session).get(8, 1023)
+            session.require(1 <= maximum <= 16384, "advertised credential-ID limit exceeds bounded corpus")
+            size = boundary if isinstance(boundary, int) else maximum + {"profile-maximum-minus-one": -1, "profile-maximum": 0, "profile-maximum-plus-one": 1}[boundary]
+            session.observe("credential_ID_limit", maximum)
             with credential(session, session.current.name) as fixture:
-                foreign = {"type": "public-key", "id": session.fixture("foreign.id", boundary)}
+                foreign = {"type": "public-key", "id": session.fixture("foreign.id", size)}
                 result = session.ctap(2, fixture.query(session, allow=[foreign], options={"up": False}))
                 session.check("foreign credential ID cannot authenticate", result.protocol, "applet_error")
                 session.observe("foreign_ID_length_status", result.status)

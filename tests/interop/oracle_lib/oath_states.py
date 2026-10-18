@@ -181,6 +181,7 @@ def access(session):
             trigger = session.evidence()
             session.check("authorized LIST preserves names", oath_names(session), original)
             session.transition("oath.authorization", "locked", "authenticated", trigger, [trigger, session.evidence()])
+            session.select("piv")
             session.select("oath")
             refused(session, 0xA3, replay, label="stale-proof")
             refused(session, 0xA1, label="replay-did-not-unlock")

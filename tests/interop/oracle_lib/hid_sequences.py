@@ -92,15 +92,21 @@ def concurrent(session):
                 if not issued:
                     issued = True
                     send(session, HID_PING, other, b"busy-control", "ctaphid.foreign-PING")
-                elif foreign:
+                elif len([row for row in timeline if row[0] == 2]) >= 2:
                     send(session, 0x11, hid.cid)
+                timeline.append((status, timestamp))
+            timeline = []
             hid.on_report, hid.on_keepalive = on_report, on_keepalive
             result = session.ctap(11)
             session.require(result.status not in (1, 0x2B), "selection command not supported", "unsupported_confirmed")
             session.check("owner operation remains cancellable", result.status, 0x2D)
-            session.check("foreign busy response observed", len(foreign) > 0)
-            response = foreign[0][0]
-            session.check("foreign channel busy code", (response[4], response[5:8]), (HID_ERROR | 128, b"\x00\x01\x06"))
+            if foreign:
+                response = foreign[0][0]
+                session.check("foreign channel busy code", (response[4], response[5:8]), (HID_ERROR | 128, b"\x00\x01\x06"))
+            else:
+                session.require(session.profile == "rsk", "selected profile requires a CHANNEL_BUSY response")
+                session.check("ignored foreign traffic did not complete the owner wait", sum(status == 2 for status, _ in timeline) >= 3)
+            session.observe("foreign_during_UP", "CHANNEL_BUSY" if foreign else "ignored until owner cancellation")
             hid.on_keepalive, hid.on_report = None, None
             original = hid.cid
             try:

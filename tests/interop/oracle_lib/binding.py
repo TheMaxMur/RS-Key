@@ -2,6 +2,8 @@
 # Copyright (C) 2026 RS-Key contributors
 
 """Establish cross-interface serial agreement before state-sharing scenarios."""
+import os
+
 from . import codec
 
 
@@ -61,3 +63,15 @@ def rebind(descriptor, surface, operator=False):
 def require_pair(session):
     session.require(session.values.get("same_instance_confirmed") is True,
                     "cross-interface case requires the recorded binding identity check")
+
+
+def prove_credential(session, retained):
+    from .fido import auth_data, verified
+    policy = session.ctap_value(session.ctap(4))
+    session.check("identity continuity control does not ask an unproved device for local PIN entry", not policy.get(4, {}).get("alwaysUv"))
+    query = retained.query(session, authenticate=False, options={"up": False, "uv": False})
+    query[2] = os.urandom(32)
+    value = session.ctap_value(session.ctap(2, query))
+    signed = auth_data(value[2])
+    session.check("rebound interface retains the fixture RP binding", signed["rp_hash"], retained.parsed["rp_hash"])
+    verified(session, "rebound USB identity proves the original private credential before any PIN/config write", retained.key, retained.algorithm, value[3], value[2] + query[2])

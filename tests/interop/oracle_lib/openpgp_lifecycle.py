@@ -43,7 +43,7 @@ def references(session):
                 pgp.verify_pin(old_pin)
                 pgp.verify_admin(session.options.openpgp_admin)
             request(session, 0x20, 0xFF, 0x83)
-            request(session, 0x2C, 2, 0x81, b"oracle-new-user-pin", 0x6982)
+            request(session, 0x2C, 2, 0x81, b"oracle-new-user-pin", 0x6985)
             pgp.verify_pin(old_pin)
             pgp.verify_admin(session.options.openpgp_admin)
             pgp.reset_pin("oracle-new-user-pin")

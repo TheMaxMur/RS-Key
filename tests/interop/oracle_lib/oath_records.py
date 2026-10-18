@@ -35,7 +35,7 @@ def records(session):
             establish_record_access(session, name)
             fields = {0x71: name, 0x83: session.fixture("login", size), 0x84: session.fixture("password", size),
                       0x85: session.fixture("metadata", size)}
-            body = codec.tlv(0x71, name) + codec.tlv(0x73, b"\x21\x06fixture-key")
+            body = codec.tlv(0x71, name) + codec.tlv(0x73, b"\x21\x06" + OATH_HASHES[0][2])
             body += b"".join(codec.tlv(tag, value) for tag, value in fields.items() if tag != 0x71)
             created = False
             try:
@@ -43,7 +43,7 @@ def records(session):
                 created = True
                 session.check("password-safe exact readback", get_record(session, name), fields)
                 for tag in (0x83, 0x84, 0x85):
-                    invalid = codec.tlv(0x71, name) + codec.tlv(0x73, b"\x21\x06fixture-key") + codec.tlv(tag, bytes(256))
+                    invalid = codec.tlv(0x71, name) + codec.tlv(0x73, b"\x21\x06" + OATH_HASHES[0][2]) + codec.tlv(tag, bytes(256))
                     refused(session, 1, invalid, 0x6A80)
                     session.check("oversize replacement preserves all fields", get_record(session, name), fields)
             finally:
@@ -95,7 +95,7 @@ def pin_lifecycle(session):
         session.failed_auth.discard(("oath", 0xB2))
         pin = session.options.oath_pin.encode()
         new_pin, name = b"oracle-otp-pin-new", b"oracle-pin-record"
-        body = codec.tlv(0x71, name) + codec.tlv(0x73, b"\x21\x06fixture-key") + codec.tlv(0x84, b"fixture-password")
+        body = codec.tlv(0x71, name) + codec.tlv(0x73, b"\x21\x06" + OATH_HASHES[0][2]) + codec.tlv(0x84, b"fixture-password")
         reset_needed = False
         try:
             reply = session.apdu(codec.apdu(0xB4, data=codec.tlv(0x80, pin)), "oath.set-pin")

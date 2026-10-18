@@ -58,7 +58,7 @@ class SlotPeer:
             slot = (1 if command == 0x30 else 2) + offset
             config = self.slots.get(slot)
             if config is None:
-                status = 0x6985
+                status = 0x9000
             else:
                 key = config[22:38] + config[16:20]
                 body = hmac.digest(key, data, "sha1")

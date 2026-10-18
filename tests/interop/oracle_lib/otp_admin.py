@@ -5,7 +5,7 @@
 import hmac
 
 from . import codec
-from .keyboard import receive, US
+from .keyboard import receive, US, gesture
 from .otp import slot_config, slot_request, slot_select
 
 CHARSET = "cbdefghijklnrtuvCBDEFGHIJKLNRTUV0123456789!\t\r"
@@ -52,7 +52,7 @@ def run(session):
         try:
             slot_request(session, write, config + bytes(6))
             slot_request(session, 0x12, bytes([4]) * 45 + bytes(6))
-            text = receive(session, "short press" if slot == 1 else "long press")
+            text = receive(session, gesture(session, slot))
             session.check("scan map changes actual HID output", text, "aaaaaa")
         finally:
             if not session.broken:

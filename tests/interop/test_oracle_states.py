@@ -27,6 +27,7 @@ class OathStateCard:
         self.challenge = bytes(8)
         self.previous_challenge = bytes(8)
         self.requests = []
+        self.selected_aid = None
 
     def transfer(self, request, deadline, observe):
         self.requests.append(request)
@@ -35,9 +36,16 @@ class OathStateCard:
         data = request[5:5 + request[4]] if len(request) > 4 else b""
         status, result = 0x9000, b""
         if ins == 0xA4:
+            same = self.selected_aid == data
+            self.selected_aid = data
+            if data != bytes.fromhex("a000000527210101"):
+                self.authenticated = False
+                response = b"\x90\x00"
+                observe("rx", response)
+                return Reply(response, "success", 0x9000)
             self.counter += 1
             self.previous_challenge, self.challenge = self.challenge, self.counter.to_bytes(8, "big")
-            self.authenticated = False
+            self.authenticated = same and self.authenticated
             result = codec.tlv(0x79, b"\x05\x08\x00") + codec.tlv(0x71, b"oracleid")
             if self.key:
                 result += codec.tlv(0x74, self.challenge) + codec.tlv(0x7B, b"\x01")
@@ -70,7 +78,7 @@ class OathStateCard:
                     del self.records[name]
                 status = 0x6A80
             else:
-                self.records[name] = [key, increasing, -1]
+                self.records[name] = [key, increasing, 0 if increasing else -1]
         elif ins == 0xA1:
             result = b"".join(codec.tlv(0x72, entry[0][:1] + name) for name, entry in self.records.items())
         elif ins == 2:
@@ -94,8 +102,8 @@ class OathStateCard:
             else:
                 key, increasing, previous = entry
                 counter = int.from_bytes(fields[0x74], "big")
-                if increasing and counter < previous and self.defect != "increasing-bypass":
-                    status = 0x6985
+                if increasing and counter <= previous and self.defect != "increasing-bypass":
+                    status = 0x6A80
                 else:
                     digest = hmac.digest(key[2:], fields[0x74], "sha1")
                     offset = digest[-1] & 15
@@ -414,7 +422,13 @@ class ManagementOtp:
 
     def transfer(self, command, payload, expected, deadline, observe):
         if command == 0x13:
-            return self.peer.reply("otp", "read", b"", observe)
+            from oracle_lib.otp import crc16
+            self.peer.calls.append(("otp", "read", b""))
+            body = self.peer.read()
+            body += (~crc16(body) & 65535).to_bytes(2, "little")
+            body = body.ljust(((len(body) + 6) // 7) * 7, b"\x00")
+            observe("rx", body)
+            return Reply(body)
         return self.peer.reply("otp", "write", payload[1:1 + payload[0]], observe)
 
 

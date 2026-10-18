@@ -32,6 +32,14 @@ class Outcome(str, Enum):
     RUNNER_ERROR = "runner_error"
 
 
+class SessionStart(str, Enum):
+    OPEN = "first_after_session_open"
+    RECONNECT = "first_after_reconnect"
+    RESET = "first_after_card_reset"
+    REPORTED_POWER = "first_after_operator_reported_power_cycle"
+    EMULATED_POWER = "first_after_emulated_power_cycle"
+
+
 class TransferError(Exception):
     def __init__(self, message, outcome=Outcome.RUNNER_ERROR, protocol="no_response", code=None):
         super().__init__(message)
@@ -104,8 +112,12 @@ class Trace:
         self.sequence = self.exchange_count = 0
         self.case = None
         self.sample = 0
+        self.sample_role = "measured"
         self.phase = "probe"
         self.exchanges, self.cases = [], []
+        self._step_counts = {}
+        self._session_calls = {}
+        self._session_starts = {}
         self.closed = False
         self.metadata = {
             "schema_version": SCHEMA_VERSION, "run_id": self.run_id,
@@ -113,6 +125,7 @@ class Trace:
             "clock": "host_monotonic", "clock_resolution_ns": int(time.get_clock_info("monotonic").resolution * 1e9),
             "host": {"system": platform.system(), "release": platform.release(), "machine": platform.machine()},
             "flush_policy": "fsync before each request and after its result",
+            "capture_detail_mode": "raw events buffered during API; JSON and fsync outside the measured call",
             **metadata,
         }
         atomic_json(self.directory / "manifest.json", self.metadata)
@@ -126,6 +139,13 @@ class Trace:
         if not 0 <= value <= MAX_EXACT_INTEGER:
             raise CaptureError("monotonic clock outside the run's exact integer range")
         return value
+
+    def mark_session(self, session_id, start):
+        if not isinstance(start, SessionStart):
+            raise ValueError("session start must identify a typed observed boundary")
+        self._session_calls[session_id] = 0
+        self._session_starts[session_id] = start
+        self.emit("timing_session_boundary", session_id=session_id, population=start.value)
 
     def emit(self, record_type, **payload):
         if self.closed:
@@ -159,19 +179,28 @@ class Trace:
         self.exchange_count += 1
         exchange_id = f"exchange-{self.exchange_count}"
         operation_id = f"{self.case or 'session'}:{self.sample}"
+        journal_start = self.now()
+        ordinal = self._session_calls.get(session_id, 0)
+        population = self._session_starts.get(session_id, SessionStart.OPEN).value if ordinal == 0 else "subsequent_session_call"
+        self._session_calls[session_id] = ordinal + 1
         started = self.emit(
             "exchange_started", exchange_id=exchange_id, operation_id=operation_id,
             session_id=session_id, observation_layer=layer, phase=self.phase,
             command=command, request={"hex": request.hex(), "length": len(request)},
             timeout_ns=int(timeout * 1e9),
+            sample_role=self.sample_role, session_call_population=population,
         )
         self.flush()
         io_events = []
+        observer_duration = 0
 
         def observe(direction, data, timestamp=None, **fields):
+            nonlocal observer_duration
+            observer_start = self.now()
             io_events.append({"direction": direction, "_data": bytes(data),
-                              "observed_ns": self.now() if timestamp is None else timestamp,
+                              "observed_ns": observer_start if timestamp is None else timestamp,
                               **fields})
+            observer_duration += self.now() - observer_start
 
         t0 = self.now()
         deadline = t0 + int(timeout * 1e9)
@@ -203,11 +232,15 @@ class Trace:
             raw = event.pop("_data")
             self.emit("io_event", exchange_id=exchange_id, session_id=session_id,
                       observation_layer=layer, hex=raw.hex(), length=len(raw), **event)
+        step_key = (self.case, self.sample)
+        step = self._step_counts.get(step_key, 0)
+        self._step_counts[step_key] = step + 1
         result = {
             "exchange_id": exchange_id, "operation_id": operation_id,
             "scenario_id": self.case, "sample": self.sample, "phase": self.phase,
+            "sample_role": self.sample_role, "session_call_population": population,
             "session_id": session_id, "observation_layer": layer,
-            "step": sum(e["scenario_id"] == self.case and e["sample"] == self.sample for e in self.exchanges),
+            "step": step,
             "command": command, "request": started["request"],
             "response": {"hex": reply.data.hex(), "length": len(reply.data)} if reply and reply.protocol != "no_response_expected" else None,
             "status": reply.status if reply else getattr(error, "code", None),
@@ -220,6 +253,14 @@ class Trace:
         }
         self.exchanges.append(result)
         self.emit("exchange_finished", **result)
+        self.flush()
+        journal_end = self.now()
+        overhead = {"request_start_ns": journal_start, "request_end_ns": t0, "request_duration_ns": t0 - journal_start,
+                    "response_start_ns": t1, "response_end_ns": journal_end, "response_duration_ns": journal_end - t1,
+                    "runner_observer_duration_ns": observer_duration,
+                    "scope": "journal encoding and fsync outside API; observer estimate inside API; this overhead record/flush excluded"}
+        result["capture_overhead"] = overhead
+        self.emit("exchange_capture_overhead", exchange_id=exchange_id, overhead=overhead)
         self.flush()
         if interrupted:
             raise interrupted
@@ -247,7 +288,8 @@ def summarize(exchanges):
     for exchange in exchanges:
         key = (exchange["scenario_id"], exchange["step"], exchange["command"],
                exchange["execution_outcome"], exchange["protocol_outcome"], str(exchange["status"]),
-               exchange["observation_layer"])
+               exchange["observation_layer"], exchange.get("sample_role", "measured"),
+               exchange.get("session_call_population", "unrecorded"))
         groups.setdefault(key, []).append(exchange)
     result = []
     for key, rows in groups.items():
@@ -258,6 +300,7 @@ def summarize(exchanges):
             "scenario_id": key[0], "step": key[1], "command": key[2],
             "execution_outcome": key[3], "protocol_outcome": key[4], "status": rows[0]["status"],
             "observation_layer": key[6], "n": len(rows), "response_count": len(values),
+            "sample_role": key[7], "session_call_population": key[8],
             "censored_count": sum(r["execution_outcome"] == "deadline" for r in rows),
             "min_ns": min(values) if values else None, "median_ns": median,
             "mad_ns": statistics.median(abs(v - median) for v in values) if values else None,
@@ -320,6 +363,9 @@ def recover(directory):
         for field in ("scenario_id", "sample", "session_id", "observation_layer", "command", "phase"):
             if exchange[field] != starts[exchange_id][field]:
                 raise CaptureError("exchange scope changed between start and finish")
+        for field in ("sample_role", "session_call_population"):
+            if exchange.get(field) != starts[exchange_id].get(field):
+                raise CaptureError("exchange timing population changed between start and finish")
         if exchange["request"] != starts[exchange_id]["request"]:
             raise CaptureError("exchange request changed between start and finish")
         for field_name in ("request", "response"):
@@ -336,6 +382,25 @@ def recover(directory):
                 or timing["call_end_ns"] - timing["call_start_ns"] != timing["api_duration_ns"]):
             raise CaptureError("inconsistent exchange timing")
     by_id = {exchange["exchange_id"]: exchange for exchange in finished}
+    overhead_ids = set()
+    for event in events:
+        if event["record_type"] != "exchange_capture_overhead":
+            continue
+        identifier, overhead = event.get("exchange_id"), event.get("overhead", {})
+        if identifier not in by_id or identifier in overhead_ids or not isinstance(overhead, dict):
+            raise CaptureError("capture overhead lacks unique completed exchange evidence")
+        overhead_ids.add(identifier)
+        for prefix in ("request", "response"):
+            values = [overhead.get(prefix + "_" + field + "_ns") for field in ("start", "end", "duration")]
+            if not all(type(value) is int and value >= 0 for value in values) or values[1] - values[0] != values[2]:
+                raise CaptureError("inconsistent capture overhead interval")
+        if (overhead.get("request_end_ns") != by_id[identifier]["timing"]["call_start_ns"]
+                or overhead.get("response_start_ns") != by_id[identifier]["timing"]["call_end_ns"]
+                or type(overhead.get("runner_observer_duration_ns")) is not int
+                or not 0 <= overhead["runner_observer_duration_ns"] <= by_id[identifier]["timing"]["api_duration_ns"]
+                or event["sequence"] <= by_id[identifier]["sequence"] or event["time_ns"] < overhead["response_end_ns"]):
+            raise CaptureError("capture overhead does not bound its measured API")
+        by_id[identifier]["capture_overhead"] = overhead
     cases = [e["result"] for e in events if e["record_type"] == "scenario_finished"]
     for case in cases:
         expected = [e["exchange_id"] for e in finished if (e["scenario_id"], e["sample"]) == (case["scenario_id"], case["sample"])]

@@ -58,7 +58,7 @@ class PasswordPeer:
                     self.pin = fields[0x81]
         elif ins == 1:
             name = fields[0x71]
-            if any(len(value) > 255 for tag, value in fields.items() if tag in (0x83, 0x84, 0x85)):
+            if not 14 <= len(fields[0x73][2:]) <= 64 or any(len(value) > 255 for tag, value in fields.items() if tag in (0x83, 0x84, 0x85)):
                 status = 0x6A80
                 if self.defect == "invalid-write-damages-record":
                     self.records.pop(name, None)

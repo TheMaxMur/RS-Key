@@ -100,18 +100,22 @@ def public_bytes(public):
     return public.public_bytes(serialization.Encoding.X962, serialization.PublicFormat.UncompressedPoint)
 
 
+def device_certificate_fixture(session, public):
+    from cryptography import x509
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.x509.oid import NameOID
+    issuer = ec.derive_private_key(int.from_bytes(session.fixture("rescue.certificate.issuer", 24), "big") + 1, ec.SECP256R1())
+    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "Oracle fixture CA")])
+    leaf = x509.CertificateBuilder().subject_name(x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "Oracle rescue device")])).issuer_name(name).public_key(public).serial_number(1).not_valid_before(datetime(2020, 1, 1, tzinfo=timezone.utc)).not_valid_after(datetime(2040, 1, 1, tzinfo=timezone.utc)).sign(issuer, hashes.SHA256())
+    return leaf.public_bytes(serialization.Encoding.DER)
+
+
 def device_certificate(session):
     with session.case("rescue.device-key.certificate-install", ("R02", "G03", "G14"), effects=("replace_identity",), touch=True):
-        from cryptography import x509
-        from cryptography.hazmat.primitives import serialization
-        from cryptography.x509.oid import NameOID
         active(session)
         encoded = request(session, 0x10, 2)
         public = ec.EllipticCurvePublicKey.from_encoded_point(ec.SECP256K1(), encoded)
-        issuer = ec.derive_private_key(int.from_bytes(session.fixture("rescue.certificate.issuer", 24), "big") + 1, ec.SECP256R1())
-        name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "Oracle fixture CA")])
-        leaf = x509.CertificateBuilder().subject_name(x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "Oracle rescue device")])).issuer_name(name).public_key(public).serial_number(1).not_valid_before(datetime(2020, 1, 1, tzinfo=timezone.utc)).not_valid_after(datetime(2040, 1, 1, tzinfo=timezone.utc)).sign(issuer, hashes.SHA256())
-        request(session, 0x10, 3, data=leaf.public_bytes(serialization.Encoding.DER))
+        request(session, 0x10, 3, data=device_certificate_fixture(session, public))
         request(session, 0x10, 3, expected=0x6700)
         session.check("certificate upload preserves device signing key", request(session, 0x10, 2), encoded)
         session.observe("certificate_visibility", "upload acknowledged; certificate record has no read/export command")

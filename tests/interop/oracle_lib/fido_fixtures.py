@@ -18,6 +18,7 @@ class Credential:
     registration: dict
     parsed: dict
     challenge: bytes
+    deleted: bool = False
 
     def query(self, session, extensions=None, options=None, allow=None, authenticate=True):
         request = {1: self.rp, 2: self.challenge, 3: [self.descriptor] if allow is None else allow,
@@ -35,9 +36,16 @@ class Credential:
         verified(session, "fixture assertion signature", self.key, self.algorithm, value[3], value[2] + self.challenge)
         return value, signed
 
+    def delete(self, session):
+        if self.deleted:
+            raise ValueError("owned credential was already deleted")
+        version, token = pin_token(session, 4)
+        session.ctap_value(cm(session, version, token, 6, {2: self.descriptor}))
+        self.deleted = True
+
 
 @contextmanager
-def credential(session, label, resident=False, extensions=None, options=None, algorithms=None, rp=None, extra=None):
+def credential(session, label, resident=False, extensions=None, options=None, algorithms=None, rp=None, extra=None, *, authenticate=True):
     if resident:
         session.require(info(session).get(4, {}).get("rk") and info(session).get(4, {}).get("credMgmt") and session.options.pin,
                         "resident fixtures require rk, credMgmt and a PIN for deletion")
@@ -50,8 +58,9 @@ def credential(session, label, resident=False, extensions=None, options=None, al
         request[6] = extensions
     if extra is not None:
         request.update(extra)
-    authorize(session, request, 1, rp, challenge, 8, 9)
-    descriptor = None
+    if authenticate:
+        authorize(session, request, 1, rp, challenge, 8, 9)
+    descriptor = fixture = None
     try:
         value = session.ctap_value(session.ctap(1, request))
         parsed = auth_data(value[2])
@@ -61,7 +70,7 @@ def credential(session, label, resident=False, extensions=None, options=None, al
         session.bind(label + ".credential", descriptor)
         yield fixture
     finally:
-        if resident and descriptor is not None and not session.broken:
+        if resident and descriptor is not None and not session.broken and (fixture is None or not fixture.deleted):
             phase = session.trace.phase
             session.trace.phase = "cleanup"
             version, token = pin_token(session, 4)

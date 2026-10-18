@@ -49,7 +49,7 @@ def unblock(session):
             attempted = True
             with session.attempts(("piv", 0x80), metadata.attempts_remaining + 1):
                 for left in range(metadata.attempts_remaining - 1, -1, -1):
-                    status(session, 0x20, p2=0x80, data=wire_pin(wrong), expected=0x63C0 | left)
+                    status(session, 0x20, p2=0x80, data=wire_pin(wrong), expected=0x63C0 | left if left else 0x6983)
                 status(session, 0x20, p2=0x80, data=wire_pin(pin), expected=0x6983)
             puk_meta = sdk_supported(session, piv.get_puk_metadata)
             if puk_meta.attempts_remaining > 1:
@@ -112,6 +112,7 @@ def management_keys(session):
                     for length in sorted({0, 1, algorithm.key_len - 1, algorithm.key_len + 1}):
                         status(session, 0xFF, 0xFF, 0xFF, bytes([algorithm]) + codec.tlv(0x9B, bytes(length)), 0x6A80)
                         piv.authenticate(key)
+                    session.select("openpgp")
                     session.select("piv")
                     status(session, 0xFF, 0xFF, 0xFF, bytes([algorithm]) + codec.tlv(0x9B, key), 0x6982)
                     piv.authenticate(key)

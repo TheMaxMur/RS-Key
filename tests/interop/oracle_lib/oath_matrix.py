@@ -60,14 +60,14 @@ def increasing(session, reconnect=False):
             session.check("first increasing challenge", calculate(session, name, (1).to_bytes(8, "big")), otp_value(secret, (1).to_bytes(8, "big"), "sha1", 6))
             for counter in (0, 1):
                 reply = session.apdu(codec.apdu(0xA2, p2=1, data=codec.tlv(0x71, name) + codec.tlv(0x74, counter.to_bytes(8, "big"))))
-                session.check("equal and lower increasing challenges refused", reply.status, 0x6985)
+                session.check("equal and lower increasing challenges refused", reply.status, 0x6A80)
             entries = codec.parse_tlv(oath_request(session, 0xA4, codec.tlv(0x74, (2).to_bytes(8, "big")), p2=1))
             session.check("bulk includes both TOTP fixtures", {value for tag, value in entries if tag == 0x71}, {name, plain})
             if reconnect:
                 change(session, Action.POWER_CYCLE)
             oath_open(session)
             reply = session.apdu(codec.apdu(0xA2, p2=1, data=codec.tlv(0x71, name) + codec.tlv(0x74, (2).to_bytes(8, "big"))))
-            session.check("bulk increasing mark persists after reselect", reply.status, 0x6985)
+            session.check("bulk increasing mark persists after reselect", reply.status, 0x6A80)
             for counter in (0, 0, 1, 1):
                 session.check("plain TOTP is independent of increasing mark", calculate(session, plain, counter.to_bytes(8, "big")), otp_value(secret, counter.to_bytes(8, "big"), "sha1", 6))
             session.check("increasing record remains usable above mark", calculate(session, name, (3).to_bytes(8, "big")), otp_value(secret, (3).to_bytes(8, "big"), "sha1", 6))

@@ -61,7 +61,7 @@ class Card:
                 record = self.records[fields[0x71]]
                 number = int.from_bytes(challenge, "big")
                 if record["increasing"] and (number < record["mark"] or number == record["mark"] and self.defect != "accept-equal-mark"):
-                    status = 0x6985
+                    status = 0x6A80
                 else:
                     result = self.code(record, challenge)
                     record["mark"] = max(record["mark"], number)

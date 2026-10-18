@@ -12,10 +12,21 @@ from .trace import Outcome, TransferError
 MODHEX = "cbdefghijklnrtuv"
 US = {**{index + 4: chr(index + 97) for index in range(26)},
       **{index + 30: value for index, value in enumerate("1234567890")},
-      0x28: "\r", 0x2B: "\t", 0x2C: " ", 0x2D: "-", 0x2E: "="}
+      0x28: "\r", 0x2B: "\t", 0x2C: " ", 0x2D: "-", 0x2E: "=", 0x2f: "[", 0x30: "]",
+      0x31: "\\", 0x33: ";", 0x34: "'", 0x35: "`", 0x36: ",", 0x37: ".", 0x38: "/"}
+US_SHIFT = dict(zip("1234567890-=[]\\;'`,./", '!@#$%^&*()_+{}|:"~<>?'))
+
+
+def gesture(session, slot):
+    if session.profile == "rsk":
+        return f"{slot} click(s), each release less than 1 second apart; then release and wait more than 1 second"
+    session.require(slot in (1, 2) and session.profile == "yubikey", "gesture mapping needs a confirmed device profile", "unknown")
+    return "short press" if slot == 1 else "long press"
 
 
 class Keyboard:
+    continuous = True
+
     def __init__(self, descriptor, clock, backend=None):
         self.clock = clock
         self.descriptor = descriptor
@@ -25,14 +36,14 @@ class Keyboard:
             backend.open_path(bytes.fromhex(descriptor["path_hex"]))
         self.backend = backend
 
-    def reports(self, deadline, emit):
+    def reports(self, deadline, emit, *, until_deadline=False):
         seen, previous = False, self.clock()
         while self.clock() < deadline:
             frame = bytes(self.backend.read(64, 100))
             if frame:
                 previous, seen = self.clock(), True
                 emit(frame, previous)
-            elif seen and self.clock() - previous > 1000000000:
+            elif seen and not until_deadline and self.clock() - previous > 1000000000:
                 return
         if not seen:
             raise TransferError("no keyboard report before observation deadline", Outcome.DEADLINE)
@@ -48,7 +59,7 @@ class Keyboard:
         return descriptor
 
 
-def decode(reports):
+def decode(reports, allow_held=False):
     previous, text, pressed = set(), [], []
     for raw in reports:
         if len(raw) == 9 and raw[0] == 0:
@@ -64,14 +75,18 @@ def decode(reports):
                 if key not in US or raw[0] & ~0x22:
                     raise ValueError("key/modifier outside declared US fixture layout")
                 value = US[key]
-                text.append(value.upper() if raw[0] & 0x22 and value.isalpha() else value)
+                text.append(value.upper() if raw[0] & 0x22 and value.isalpha() else US_SHIFT.get(value, value) if raw[0] & 0x22 else value)
         previous = current
-    if previous:
+    if previous and not allow_held:
         raise ValueError("keyboard capture ended with a key held")
     return "".join(text), pressed
 
 
-def receive(session, gesture, comparison="exact"):
+class CaptureStopped(Exception):
+    pass
+
+
+def listen(session, gesture, allow_empty=False, max_reports=None, *, until_deadline=False):
     session.require(getattr(session, "keyboard", None) is not None, "select --keyboard-hid for unsolicited reports", "excluded_by_mode")
     session.require(session.options.operator, "keyboard gesture scenarios require --operator")
     started = session.trace.now()
@@ -85,7 +100,27 @@ def receive(session, gesture, comparison="exact"):
                                    observation_layer="hid_report", direction="rx", unsolicited=True,
                                    hex=raw.hex(), length=len(raw), observed_ns=timestamp)
         session.event_evidence = event["event_id"]
-    session.keyboard.reports(started + int(session.options.timeout * 1000000000), emit)
+        if max_reports is not None and len(frames) >= max_reports:
+            raise CaptureStopped()
+    try:
+        deadline = started + int(session.options.timeout * 1000000000)
+        if until_deadline:
+            session.require(getattr(session.keyboard, "continuous", False), "gesture timing needs a complete observation window", "excluded_by_mode")
+            session.keyboard.reports(deadline, emit, until_deadline=True)
+        else:
+            session.keyboard.reports(deadline, emit)
+    except CaptureStopped:
+        session.trace.emit("interaction", action="stop-keyboard-observation", source="runner", stage="completed", captured_reports=len(frames), device_output_interrupted=None)
+    except TransferError as error:
+        if not allow_empty or frames or error.outcome != Outcome.DEADLINE:
+            raise
+        session.event_evidence = session.trace.emit("interaction", action="observe-keyboard-silence", source="host_observation", stage="completed", interval_start_ns=started, interval_end_ns=session.trace.now())["event_id"]
+        session.observe("keyboard_silence", {"listen_started_ns": started, "observation_ended_ns": session.trace.now(), "outcome": "no_reports_before_deadline", "source": "host_observation"})
+    return frames, timestamps, started
+
+
+def receive(session, gesture, comparison="exact"):
+    frames, timestamps, started = listen(session, gesture)
     text, pressed = decode(frames)
     session.observe("keyboard_text", text, comparison)
     session.observe("keyboard_key_presses", pressed, comparison)
@@ -99,7 +134,6 @@ def run(session):
     from yubikit.yubiotp import HotpSlotConfiguration, StaticPasswordSlotConfiguration, YubiOtpSlotConfiguration
     slot = session.options.otp_slot
     write = 1 if slot == 1 else 3
-    gesture = "short press" if slot == 1 else "long press"
     for mode in ("yubico", "hotp6", "hotp8", "static"):
         for append in (False, True):
             for pacing in (0, 1, 2, 3):
@@ -122,7 +156,7 @@ def run(session):
                         created = True
                         previous = None
                         for counter in range(3):
-                            text = receive(session, gesture, "presence" if mode == "yubico" else "exact")
+                            text = receive(session, gesture(session, slot), "presence" if mode == "yubico" else "exact")
                             value = text[:-1] if append else text
                             if append:
                                 session.check("configured carriage return", text[-1:], "\r")

@@ -80,3 +80,52 @@ def run(session):
                             sdk.verify_admin(session.options.openpgp_admin)
                         sdk.put_data(tag, original)
                         session.check("DO catalog original restored", read_do(sdk, tag), original)
+    opaque_text(session)
+
+
+def opaque_text(session):
+    from .card_pin_matrix import pgp_key, pgp_sign
+    tags = {**{tag: maximum for tag, maximum in PERSONAL.items() if tag != 0x5f35}, **{tag: 2048 for tag in range(0x101, 0x105)}}
+    for tag, maximum in tags.items():
+        vectors = [("ASCII", b"Oracle"), ("multibyte", "é😀".encode()), ("invalid-UTF8", b"\xff\x80"),
+            ("embedded-NUL", b"a\x00b"), ("leading-NUL", b"\x00tail"), ("partial-codepoint-at-byte-bound", b"x" * (maximum - 1) + b"\xc3")]
+        for size in (maximum - 1, maximum, maximum + 1):
+            vectors.append(("multibyte-byte-bound-" + str(size), ("é" * (size // 2)).encode() + b"x" * (size % 2)))
+        for label, value in vectors:
+            with session.case(f"openpgp.DO-opaque-text.{tag:04x}.{label}", ("O07", "O11", "O22", "G03", "G08", "G14"),
+                    effects=("write_and_restore_openpgp_DO", "replace_openpgp_sig_key"), touch=True,
+                    parameters={"tag": tag, "byte_length": len(value), "text_semantics": "opaque bytes, no UTF-8/NUL normalization"}):
+                session.require(session.profile == "rsk", "opaque DO byte semantics require RS-Key", "excluded_by_profile")
+                with pgp_key(session) as (sdk, key):
+                    sdk.verify_pin(session.options.openpgp_pin, extended=True)
+                    original = read_do(sdk, tag)
+                    try:
+                        response = session.apdu(codec.apdu(0xda, tag >> 8, tag & 255, value))
+                        accepted = len(value) <= maximum
+                        session.check("OpenPGP text DO is byte-bounded rather than Unicode-normalized", response.status, 0x9000 if accepted else 0x6a80)
+                        session.check("OpenPGP DO retains every opaque byte or the original on refusal", read_do(sdk, tag), value if accepted else original)
+                        pgp_sign(session, sdk, key)
+                    finally:
+                        if not session.broken:
+                            session.trace.phase = "cleanup"
+                            sdk.verify_admin(session.options.openpgp_admin)
+                            sdk.verify_pin(session.options.openpgp_pin, extended=True)
+                            sdk.put_data(tag, original)
+                            session.check("opaque DO fixture restores the exact original bytes", read_do(sdk, tag), original)
+    for value in range(256):
+        with session.case(f"openpgp.DO-sex.byte-{value:02x}", ("O07", "O11", "G04", "G14"),
+                effects=("write_and_restore_openpgp_DO", "replace_openpgp_sig_key"), touch=True):
+            session.require(session.profile == "rsk", "sex DO uses its explicit profile value set", "excluded_by_profile")
+            with pgp_key(session) as (sdk, key):
+                original = read_do(sdk, 0x5f35)
+                try:
+                    response = session.apdu(codec.apdu(0xda, 0x5f, 0x35, bytes([value])))
+                    accepted = value in b"129"
+                    session.check("sex DO accepts exactly its three profiled byte values", response.status, 0x9000 if accepted else 0x6a80)
+                    session.check("reserved sex byte cannot change the prior value", read_do(sdk, 0x5f35), bytes([value]) if accepted else original)
+                    pgp_sign(session, sdk, key)
+                finally:
+                    if not session.broken:
+                        session.trace.phase = "cleanup"
+                        sdk.verify_admin(session.options.openpgp_admin)
+                        sdk.put_data(0x5f35, original)

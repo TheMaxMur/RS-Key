@@ -12,6 +12,8 @@ from . import codec
 from .trace import CaptureError, Outcome, TransferError, json_value
 from .transport import HID_CBOR, HID_INIT, HID_MSG, HID_PING
 
+SCENARIO_REVISION = 3
+
 AIDS = {
     "fido": bytes.fromhex("a0000006472f0001"),
     "management": bytes.fromhex("a000000527471117"),
@@ -59,9 +61,12 @@ class Options:
     openpgp_reset_code: str | None = None
     operator: bool = False
     recovery_layout: str | None = None
+    phy_defaults: dict | None = None
+    device_pin_state: str | None = None
     features: tuple = ()
     otp_slot: int = 2
     allow_effects: tuple = ()
+    foreign_references: tuple = ()
 
 
 class Case(AbstractContextManager):
@@ -69,6 +74,7 @@ class Case(AbstractContextManager):
         self.session, self.name = session, name
         self.families, self.effects, self.needs_touch = list(families), list(effects), needs_touch
         self.parameters, self.method = parameters or {}, method
+        self.uncertain_write = False
 
     def __enter__(self):
         session = self.session
@@ -81,7 +87,7 @@ class Case(AbstractContextManager):
         self.first_exchange = len(session.trace.exchanges)
         self.started_ns = session.trace.now()
         session.trace.emit("scenario_started", families=self.families, effects=self.effects,
-                           parameters=self.parameters, coverage_method=self.method)
+                           parameters=self.parameters, coverage_method=self.method, scenario_revision=SCENARIO_REVISION)
         if not session.planning and self.needs_touch and session.options.touch and (not self.effects or session.options.exercise):
             print(f"oracle: {self.name} — confirm on the selected device when requested", file=sys.stderr)
         return self
@@ -103,7 +109,8 @@ class Case(AbstractContextManager):
     def __exit__(self, kind, error, traceback):
         session = self.session
         result = {"scenario_id": self.name, "sample": session.trace.sample,
-                  "scenario_revision": 1,
+                  "sample_role": getattr(session.trace, "sample_role", "measured"),
+                  "scenario_revision": SCENARIO_REVISION,
                   "timing": {"start_ns": self.started_ns, "end_ns": session.trace.now()},
                   "families": self.families, "effects": self.effects,
                   "parameters": self.parameters, "coverage_method": self.method,
@@ -137,6 +144,9 @@ class Case(AbstractContextManager):
                 context = context.__context__
         elif not self.assertions and not self.observations:
             result.update(verdict="inconclusive", reason="no property was checked")
+        if result["verdict"] == "fail" and self.uncertain_write:
+            session.broken = True
+            session.values["halt_reason"] = "unknown-write recovery failed; no following case may mutate unresolved state"
         try:
             session.trace.cases.append(result)
             session.trace.emit("scenario_finished", result=result)
@@ -166,8 +176,20 @@ class Session:
         self.attempt_budget = None
         self.event_evidence = None
         self.keyboard = None
+        self.button_stimulus = None
         self.ctap_route = CtapRoute.HID
         self.recovering = False
+        self.case_prefix = ""
+
+    @contextmanager
+    def namespace(self, prefix):
+        if self.current is not None:
+            raise ValueError("scenario namespace cannot change inside a case")
+        previous, self.case_prefix = self.case_prefix, self.case_prefix + prefix
+        try:
+            yield
+        finally:
+            self.case_prefix = previous
 
     @contextmanager
     def route(self, route):
@@ -216,7 +238,7 @@ class Session:
             self.trace.emit("authorization_recovered", domain=str(domain))
 
     def case(self, name, families=(), effects=(), touch=False, parameters=None, method="explicit"):
-        return Case(self, name, families, effects, touch, parameters, method)
+        return Case(self, self.case_prefix + name, families, effects, touch, parameters, method)
 
     def require(self, condition, reason, applicability="blocked_by_precondition"):
         self._gate()
@@ -232,6 +254,9 @@ class Session:
         self.current.assertions.append(result)
         self.trace.emit("assertion", **result)
         if actual != expected:
+            if self.current.uncertain_write:
+                self.broken = True
+                self.values["halt_reason"] = "unknown-write readback/control failed; no later mutation or cleanup may guess the state"
             raise AssertionError(f"{name}: got {repr(actual)[:160]}, expected {repr(expected)[:160]}")
 
     def observe(self, name, value, comparison="exact"):
@@ -275,6 +300,12 @@ class Session:
 
     def _gate(self):
         if self.current:
+            if self.current.uncertain_write:
+                import sys
+                error = sys.exc_info()[1]
+                if error is not None and not isinstance(error, SkipCase):
+                    self.broken = True
+                    self.values["halt_reason"] = "unknown-write recovery raised an error; stop before cleanup can mutate unresolved state"
             self.current.require()
 
     def _exchange(self, *args):
@@ -285,16 +316,58 @@ class Session:
             self.broken |= error.outcome != Outcome.HOST_REJECTED or error.transmitted
             raise
 
+    def _ctap_uses_pin_reference(self, data):
+        if not data or data[0] not in (1, 2, 6, 0x41):
+            return False
+        try:
+            fields = codec.decode(data[1:])
+        except (ValueError, TypeError):
+            return False
+        if not isinstance(fields, dict):
+            return False
+        if data[0] == 6:
+            return fields.get(2) in (4, 5, 6, 9)
+        if data[0] == 0x41:
+            sub = fields.get(1)
+            parameters = fields.get(2, {})
+            if sub == 14 and (not isinstance(parameters, dict) or parameters.get(1, 0) not in (0, 1)):
+                return False
+            gated = sub in (2, 3, 4, 7, 8, 9, 10, 14) or sub == 12 and "strict-config" in self.options.features
+            policy = self.values.get("fido.info")
+            # getInfo's uv describes EF_PIN; it cannot disclose the separate device PIN.
+            return gated and (policy is None or not policy.get(4, {}).get("clientPin") and self.options.device_pin_state != "unset")
+        options_key, auth_key = (7, 8) if data[0] == 1 else (5, 6)
+        options = fields.get(options_key, {})
+        if auth_key in fields or not isinstance(options, dict) or "uv" in options and type(options["uv"]) is not bool:
+            return False
+        policy = self.values.get("fido.info")
+        # Before getInfo, a persisted alwaysUv policy may still ask for a local PIN.
+        return options.get("uv") is True or policy is None or bool(policy.get(4, {}).get("alwaysUv"))
+
+    def _record_ctap_policy(self, data, reply):
+        if not data or reply.protocol != "success" or reply.status != 0:
+            return
+        if data[0] in (7, 13):
+            self.values.pop("fido.info", None)
+        elif data[0] == 4:
+            try:
+                current = codec.decode(reply.data[1:])
+            except (ValueError, TypeError):
+                return
+            if isinstance(current, dict):
+                self.values["fido.info"] = current
+        elif data[0] == 6:
+            try:
+                fields = codec.decode(data[1:])
+            except (ValueError, TypeError):
+                return
+            if isinstance(fields, dict) and fields.get(2) in (3, 4):
+                self.values.pop("fido.info", None)
+
     def hid_call(self, command, data=b"", name=None):
         self._gate()
         self.require(self.hid is not None, "no selected HID transport", "excluded_by_mode")
-        pin_attempt = False
-        if command == HID_CBOR and data[:1] == b"\x06":
-            try:
-                fields = codec.decode(data[1:])
-                pin_attempt = isinstance(fields, dict) and fields.get(2) in (4, 5, 9)
-            except (ValueError, TypeError):
-                pass
+        pin_attempt = command == HID_CBOR and self._ctap_uses_pin_reference(data)
         if pin_attempt:
             self._attempt("fido.pin")
 
@@ -318,7 +391,9 @@ class Session:
         reply = self._exchange("hid", self.hid.layer, name or f"ctaphid.{command:02x}", data,
                                self.options.timeout, transfer)
         if pin_attempt:
-            self._auth_result("fido.pin", reply.status in (0x31, 0x32, 0x34, 0x35, 0x3F), reply.protocol == "success")
+            self._auth_result("fido.pin", reply.status in (0x31, 0x32, 0x34, 0x35, 0x3C, 0x3F), reply.protocol == "success")
+        if command == HID_CBOR:
+            self._record_ctap_policy(data, reply)
         return reply
 
     def ctap(self, command, fields=None, raw=None):
@@ -342,11 +417,7 @@ class Session:
         from .trace import Reply
         self._gate()
         self.require(self.profile != "trezor", "wallet profile excludes card FIDO transport", "excluded_by_profile")
-        try:
-            fields = codec.decode(data[1:]) if data[:1] == b"\x06" else None
-        except (ValueError, TypeError):
-            fields = None
-        pin_attempt = isinstance(fields, dict) and fields.get(2) in (4, 5, 9)
+        pin_attempt = self._ctap_uses_pin_reference(data)
         if pin_attempt:
             self._attempt("fido.pin")
         response = self.apdu(codec.apdu(0x10, data=data, cla=0x80), "ctap.card." + data[:1].hex())
@@ -362,7 +433,8 @@ class Session:
         self.trace.emit("protocol_result", protocol="ctap", status=value[0], evidence=self.evidence(), transport="card")
         self.observe(f"ctap.card.{data[0]:02x}.step-{len(self.trace.exchanges)}.status", value[0])
         if pin_attempt:
-            self._auth_result("fido.pin", result.status in (0x31, 0x32, 0x34, 0x35, 0x3F), result.status == 0)
+            self._auth_result("fido.pin", result.status in (0x31, 0x32, 0x34, 0x35, 0x3C, 0x3F), result.status == 0)
+        self._record_ctap_policy(data, result)
         return result
 
     def ctap_value(self, reply):
@@ -433,7 +505,7 @@ class Session:
             self.trace.phase = previous
 
     def close(self):
-        for session_id, transport in (("hid", self.hid), ("card", self.card), ("otp", self.otp_hid), ("keyboard", self.keyboard)):
+        for session_id, transport in (("button_stimulus", self.button_stimulus), ("hid", self.hid), ("card", self.card), ("otp", self.otp_hid), ("keyboard", self.keyboard)):
             if transport:
                 try:
                     if session_id == "hid" and getattr(transport, "active", False):

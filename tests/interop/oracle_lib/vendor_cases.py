@@ -116,10 +116,18 @@ def configuration(session):
             malformed = {1: target, 2: b"\x04\x82\xff"} if target != 2 else {1: target, 2: original[:-1]}
             reply = vendor(session, 12, malformed, authenticated=True)
             session.observe("malformed.status", reply.status)
-            session.check("malformed config refused", reply.protocol, "applet_error")
+            expected = ("success", 0) if target == 1 else ("applet_error", 3)
+            if (reply.protocol, reply.status) != expected:
+                session.broken = True
+                session.values["halt_reason"] = "unexpected vendor configuration grammar outcome; explicit inspection required"
+            session.check("each configuration grammar has its own incomplete-input outcome", (reply.protocol, reply.status), expected)
             trigger = session.evidence()
-            session.check("refusal preserved stored config", session.ctap_value(vendor(session, 13, {1: target}))[1], original)
-            session.transition("rsk.config", "original", "unchanged_after_refusal", trigger, [trigger, session.evidence()])
+            current = session.ctap_value(vendor(session, 13, {1: target}))[1]
+            if current != original:
+                session.broken = True
+                session.values["halt_reason"] = "incomplete config input changed the stored record; no mutation replayed"
+            session.check("incomplete-input outcome preserved stored config", current, original)
+            session.transition("rsk.config", "original", "unchanged_after_incomplete_input", trigger, [trigger, session.evidence()])
 
 
 def audit(session):

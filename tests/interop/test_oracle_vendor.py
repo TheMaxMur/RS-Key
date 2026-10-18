@@ -51,7 +51,7 @@ class VendorPeer:
                         result = {1: {1: 2, 3: -25, -1: 1, -2: own.x.to_bytes(32, "big"), -3: own.y.to_bytes(32, "big")}}
                         aad = b"\x04" + result[1][-2] + result[1][-3]
                         salt, context = b"", aad
-                        if 2 in params:
+                        if params.get(2):
                             from cryptography.hazmat.primitives.asymmetric.mlkem import MLKEM768PublicKey
                             secret, ciphertext = MLKEM768PublicKey.from_public_bytes(params[2]).encapsulate()
                             result[2], shared = ciphertext, shared + secret

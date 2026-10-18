@@ -125,6 +125,7 @@ def reset(session):
         session.require(session.card is not None and hasattr(session.card, "control"), "reset-window scenario needs an explicit power-cycle backend")
         from .reset_witness import snapshot, preserved
         neighbors = snapshot(session, "fido")
+        readonly = pin_token(session, 64) if info(session).get(4, {}).get("perCredMgmtRO") and session.options.pin else None
         old_u2f = None
         if not info(session).get(4, {}).get("alwaysUv"):
             version = session.hid_call(3, u2f_apdu(3), "u2f.before-FIDO-reset.version")
@@ -135,6 +136,8 @@ def reset(session):
         with credential(session, session.current.name) as fixture:
             fixture.assertion(session)
             change(session, Action.POWER_CYCLE)
+            if readonly is not None:
+                session.ctap_value(cm(session, *readonly, 1))
             session.ctap_value(session.ctap(7))
             session.options.pin = None
             session.values.pop("fido.info", None)
@@ -147,7 +150,11 @@ def reset(session):
                 old = old_u2f
                 payload = old["challenge"] + old["application"] + bytes([len(old["handle"])]) + old["handle"]
                 session.check("U2F handle from before reset is unusable", session.hid_call(3, u2f_apdu(2, 7, payload)).status, 0x6A80)
+            if readonly is not None:
+                session.check("reset invalidates the persistent RO grant", cm(session, *readonly, 1).status, 0x33)
             provision_after_reset(session, current)
+            if readonly is not None:
+                session.check("reprovisioning the original PIN cannot resurrect the old RO grant", cm(session, *readonly, 1).status, 0x33)
             preserved(session, "fido", neighbors)
             session.observe("cleanup_limit", "factory FIDO store retained; supplied fixture PIN reprovisioned when available")
 
