@@ -54,11 +54,35 @@ impl Sha256Compression for Engine {
         if !ready() {
             return false;
         }
-        for word in bytes.as_chunks::<4>().0 {
-            rp_pac::SHA256
-                .wdata()
-                .write_value(u32::from_be_bytes(*word));
+        let [
+            w0,
+            w1,
+            w2,
+            w3,
+            w4,
+            w5,
+            w6,
+            w7,
+            w8,
+            w9,
+            w10,
+            w11,
+            w12,
+            w13,
+            w14,
+            w15,
+        ] = bytes.as_chunks::<4>().0
+        else {
+            return false;
+        };
+        macro_rules! write_words {
+            ($($word:ident),+) => { $(
+                rp_pac::SHA256.wdata().write_value(u32::from_le_bytes(*$word));
+            )+ };
         }
+        write_words!(
+            w0, w1, w2, w3, w4, w5, w6, w7, w8, w9, w10, w11, w12, w13, w14, w15
+        );
         ready()
     }
 }
@@ -80,7 +104,7 @@ pub(super) fn digest(
     }
     rp_pac::SHA256.csr().write(|value| {
         value.set_start(true);
-        value.set_bswap(false);
+        value.set_bswap(true);
         value.set_dma_size(rp_pac::sha256::vals::DmaSize::_32bit);
         value.set_err_wdata_not_rdy(true);
     });

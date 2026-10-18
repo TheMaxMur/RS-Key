@@ -38,6 +38,11 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ## [Unreleased]
 
+- Feed complete SHA-256 blocks with straight-line word writes and peripheral
+  byte swapping in the shared flash backend. Eager readiness, error and timeout
+  checks still run before and after each block; full fresh bank, tail, root and
+  payload checks are unchanged. Records remain compatible. bcdDevice `0x0AC6`.
+
 - Batch fresh page-state probes across adjacent page boundaries in the shared
   storage backend. Both bytes are bounds-checked before uncached reads; successor
   and wrap checks remain fresh. Both whole journal banks, erased tails, the root

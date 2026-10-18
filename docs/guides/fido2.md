@@ -25,6 +25,9 @@ path is shared by FIDO, PIV, OpenPGP and OATH; it does not cache authentication
 results between reads.
 The checked FIFO loop also reduces time spent on each shared storage read;
 the fresh bank, erased-tail, root and payload checks remain in place.
+From build `0x0AC6`, the hardware SHA-256 feed writes each block directly as
+16 words and uses the peripheral to swap byte order. Bounded readiness and error
+checks still run before and after every block.
 From build `0x0AC5`, page-state sweeps read an end marker and the following
 page's start marker together. Each marker is freshly read, with full successor
 and wrap checks retained.
