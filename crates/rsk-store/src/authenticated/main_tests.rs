@@ -57,7 +57,7 @@ fn cached_reads_bind_the_current_root_and_invalidate_before_mutations_or_configu
 }
 
 #[test]
-fn cached_reads_check_physical_banks_once_with_either_selected_last() {
+fn warm_reads_use_the_mounted_directory_with_either_selected_bank() {
     let flash = crate::tests::fault_flash_for_authenticated_tests();
     let mut main = main_on(flash.clone());
     main.initialize(&KEY, 0, &Directory::new()).unwrap();
@@ -99,13 +99,7 @@ fn cached_reads_check_physical_banks_once_with_either_selected_last() {
                 })
                 .map(|event| event.1)
                 .collect();
-            assert_eq!(
-                starts,
-                [
-                    layout.main.get(1 - source).unwrap().start,
-                    layout.main.get(source).unwrap().start
-                ]
-            );
+            assert!(starts.is_empty());
             assert!(
                 flash
                     .events()
@@ -115,6 +109,35 @@ fn cached_reads_check_physical_banks_once_with_either_selected_last() {
             assert_eq!(flash.image(), original);
         }
     }
+    for source in [0, 1] {
+        assert_eq!(main.read(&KEY, 0xB000, &mut []), Ok(Some(5)));
+        main.read_cache.as_mut().unwrap().source = source;
+        flash.arm(&[]);
+        main.for_each_key(&KEY, |_| {}).unwrap();
+        let starts: Vec<_> = flash
+            .events()
+            .into_iter()
+            .filter(|event| {
+                event.0 == crate::tests::Io::Read
+                    && layout.main.iter().any(|range| range.start == event.1)
+            })
+            .map(|event| event.1)
+            .collect();
+        assert_eq!(
+            starts.get(..2).unwrap(),
+            &[
+                layout.main.get(1 - source).unwrap().start,
+                layout.main.get(source).unwrap().start,
+            ]
+        );
+        assert!(
+            flash
+                .events()
+                .iter()
+                .all(|event| event.0 == crate::tests::Io::Read)
+        );
+    }
+    assert_eq!(main.read(&KEY, 0xB000, &mut []), Ok(Some(5)));
     main.read_cache.as_mut().unwrap().source = 2;
     flash.arm(&[]);
     assert_eq!(main.read(&KEY, 0xB001, &mut []), Err(Error::MemoryFatal));
@@ -354,6 +377,7 @@ fn an_older_dirty_intent_does_not_prevent_aborting_a_newer_incomplete_candidate(
             &KEY,
         )
         .unwrap();
+    let mut main = main_on(flash);
     assert_eq!(main.read(&KEY, 0xB000, &mut [0; 3]), Ok(None));
     assert_eq!(main.read(&KEY, 0xB001, &mut [0; 3]), Ok(None));
     let recovered = main.journals[0]
@@ -556,8 +580,15 @@ fn accelerated_cache_rejects_backend_errors_mismatches_wrong_roots_and_each_read
         main.set_digest(callback);
         assert!(main.read_cache.is_none());
         assert_eq!(main.read(&KEY, 0xB000, &mut []), Ok(Some(5)));
-        assert_eq!(main.read(&KEY, 0xB000, &mut []), Err(Error::MemoryFatal));
+        let before = flash.image();
+        flash.arm(&[]);
+        assert_eq!(
+            main.write(&KEY, 0xB000, Some(b"new")),
+            Err(Error::MemoryFatal)
+        );
         assert!(main.read_cache.is_none());
+        assert_eq!(flash.image(), before);
+        assert!(flash.events().iter().all(|event| event.0 == Io::Read));
         assert!(main.buffer.expose().iter().all(|&byte| byte == 0));
     }
     main.set_digest(digest);
@@ -591,3 +622,10 @@ fn accelerated_cache_rejects_backend_errors_mismatches_wrong_roots_and_each_read
         assert_eq!(main.read(&KEY, 0xB000, &mut []), Ok(Some(5)));
     }
 }
+
+#[expect(
+    clippy::indexing_slicing,
+    reason = "Captured replica traces and fixed bank arrays select precise post-publication faults."
+)]
+#[path = "main_authority_tests.rs"]
+mod authority;

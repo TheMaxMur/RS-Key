@@ -38,6 +38,15 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ## [Unreleased]
 
+- **bcdDevice → 0x0ACF:** Reuse the complete authenticated main directory in
+  protected RAM between storage reads. Each read freshly derives its root and
+  authenticates the complete requested payload against its mounted version;
+  absence comes from the complete directory. Journal scans remain mandatory
+  before mutations and when rebuilding the directory. Retain exact publication
+  progress across errors and remounts to refuse live rollback and substitution.
+  Unrelated journal damage is detected when those journals are consumed, rather
+  than on every warm read. Persistent formats and capacities are unchanged.
+
 - **bcdDevice → 0x0ACE:** Check erased journal tails directly from the flash stream
   instead of copying them through SRAM. Each backend read retains fresh checks
   of both complete banks, their tails, the root and each complete payload MAC;

@@ -79,16 +79,64 @@ impl<const N: usize> Directory<N> {
     }
 
     pub fn digest(&self, identity: Identity, key: &[u8; 32], sequence: u64) -> Result<[u8; 32]> {
+        Self::digest_entries(
+            identity,
+            key,
+            sequence,
+            self.entries.len(),
+            self.entries.iter().copied(),
+        )
+    }
+
+    pub(super) fn digest_replacing(
+        &self,
+        identity: Identity,
+        key: &[u8; 32],
+        sequence: u64,
+        replacement: Entry,
+    ) -> Result<[u8; 32]> {
+        let count = self.entries.len() - usize::from(self.find(replacement.fid()).is_some())
+            + usize::from(replacement.length().is_some());
+        if count > N {
+            return Err(Error::NoMemory);
+        }
+        let before = self
+            .entries
+            .iter()
+            .copied()
+            .take_while(|entry| entry.fid() < replacement.fid());
+        let after = self
+            .entries
+            .iter()
+            .copied()
+            .skip_while(|entry| entry.fid() <= replacement.fid());
+        let middle = replacement.length().map(|_| replacement);
+        Self::digest_entries(
+            identity,
+            key,
+            sequence,
+            count,
+            before.chain(middle).chain(after),
+        )
+    }
+
+    fn digest_entries(
+        identity: Identity,
+        key: &[u8; 32],
+        sequence: u64,
+        count: usize,
+        entries: impl Iterator<Item = Entry>,
+    ) -> Result<[u8; 32]> {
         let mut prefix = [0; 40];
         field(&mut prefix, 0, DIRECTORY_DOMAIN)?;
         field(&mut prefix, 8, &[super::FORMAT, identity.partition.code()])?;
         field(&mut prefix, 12, &identity.epoch)?;
         field(&mut prefix, 28, &sequence.to_le_bytes())?;
-        let count = u32::try_from(self.entries.len()).map_err(|_| Error::MemoryFatal)?;
+        let count = u32::try_from(count).map_err(|_| Error::MemoryFatal)?;
         field(&mut prefix, 36, &count.to_le_bytes())?;
         let mut digest = hmac_sha256(key, &prefix);
         let mut frame = [0; 32 + ENTRY_BYTES];
-        for entry in &self.entries {
+        for entry in entries {
             field(&mut frame, 0, &digest)?;
             field(&mut frame, 32, &entry.encode()?)?;
             digest = hmac_sha256(key, &frame);

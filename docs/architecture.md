@@ -169,9 +169,9 @@ own ([build.md](build.md#the-partition-table)). What it is and is not worth:
 [threat-model.md](threat-model.md#flash-snapshot-rollback-the-pin-counter-reset).
 
 The board owns the SHA-256 peripheral behind a private `RefCell`. It hashes
-public journal bytes for cached-directory freshness checks, including a fresh
+public journal bytes before mutations of a mounted directory, including a fresh
 erased-tail check. Initial journal authentication and root-key HMACs use the
-software crypto path; an engine failure refuses the read. Bulk `SharedFlash`
+software crypto path; an engine failure refuses the operation. Bulk `SharedFlash`
 reads use the existing Secure Core0 XIP FIFO access, without DMA or additional
 bus-master permissions. The host-tested driver bounds the transfer, drains stale
 FIFO words and checks final count, flash-relative address and empty FIFO.
@@ -218,6 +218,21 @@ finishes a complete candidate or cancels its reserved span before allowing GC.
 Counter values and their authority are committed together and mirrored before
 success. Invalid occupied suffixes retain authenticated progress as a minimum
 generation; an older replica cannot silently replace that progress.
+
+From build `0x0ACF`, Main keeps its complete authenticated version directory
+in protected RAM. A warm read freshly derives the root, verifies its binding to
+the mounted directory, and authenticates the complete requested payload against
+its expected entry. The complete directory also authorizes absence. Neither root
+keys nor payload plaintext are cached. Before reusing a mounted directory for
+mutation, full physical-journal fingerprints are checked. Otherwise authenticated
+journal resolution and recovery precede mutation.
+A separate mounted authority tracks the exact epoch, root arm, sequence and
+directory digest through Prepare, Commit, Abort and rekey. Errors and remounts
+clear acceleration hints but retain this floor; the first verified publication
+closes its predecessor before a later replica write can fail. Ready is cleared
+before any directory change. Unrelated journal or payload-map damage need not
+interrupt a warm read of known correct data; recovery and mutations check that
+media before consuming it. The cold-start rollback limitation still applies.
 
 Boot mounts authority before scanning or provisioning applets. Wholly blank
 media and readable legacy stores are initialized or imported automatically.

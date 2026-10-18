@@ -568,3 +568,31 @@ fn transaction_chain_rejects_future_generation_foreign_partition_and_a_second_in
         Err(Error::MemoryFatal)
     );
 }
+
+#[test]
+fn projected_directory_digest_matches_insert_replace_delete_and_capacity_results() {
+    for mask in 0u8..8 {
+        for fid in 0..=4 {
+            for live in [false, true] {
+                let mut directory = Directory::<3>::new();
+                for existing in 1..=3 {
+                    if mask & (1 << (existing - 1)) != 0 {
+                        directory
+                            .apply(Entry::live(IDENTITY, &KEY, existing, 1, b"old").unwrap())
+                            .unwrap();
+                    }
+                }
+                let replacement = if live {
+                    Entry::live(IDENTITY, &KEY, fid, 2, b"new").unwrap()
+                } else {
+                    Entry::deleted(IDENTITY, &KEY, fid, 2).unwrap()
+                };
+                let projected = directory.digest_replacing(IDENTITY, &KEY, 0, replacement);
+                let actual = directory
+                    .apply(replacement)
+                    .and_then(|()| directory.digest(IDENTITY, &KEY, 0));
+                assert_eq!(projected, actual, "mask={mask}, fid={fid}, live={live}");
+            }
+        }
+    }
+}

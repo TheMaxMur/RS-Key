@@ -17,6 +17,8 @@ pub use record::{Entry, Identity, Partition};
 mod directory;
 pub use directory::Directory;
 
+mod authority;
+
 mod keys;
 pub use keys::{KeySource, RootArm, RootRead};
 

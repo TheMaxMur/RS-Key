@@ -6,50 +6,29 @@ new value already landed. Retry from the persistent state rather than assuming
 rollback; the firmware rebuilds its inventory and reports no spare capacity
 until an incomplete scan can finish. Record formats are unchanged.
 
-From build `0x0ACD`, mounting a store with a long main-journal history can
-checkpoint its current directory before USB attaches. It runs only when obsolete
-history can release at least half a bank; the complete payloads are authenticated
-before either bank is erased. This keeps the existing files, counters, epoch,
-root arm and generations, without changing capacities or record layouts.
-Maintenance adds startup work and erases when due. With a stable live set and no
-interruption, each such cycle consumes at least half a bank of obsolete history;
-short histories skip the extra scan. Actual reads still inspect both full banks
-and erased tails, while hashing fewer obsolete journal bytes.
+From build `0x0ACF`, repeated `getInfo` requests use the complete authenticated
+main directory held in protected RAM. Each backend read freshly derives the root
+and authenticates the full requested value against its expected version. Absence
+comes from that complete directory. Root keys and plaintext values are not cached.
 
-From build `0x0ACE`, the board checks aligned erased journal tails directly from
-fresh FIFO words, without staging them in SRAM. It still reads every word and
-checks FIFO status and final transfer progress. QSPI mode checks and the 100 ms
-wait bound retain their existing 4 KiB transfer boundaries. No authentication
-snapshot is reused between backend reads.
+Before reusing the mounted directory for mutation, the backend checks both full
+journal banks, selected bank last, including erased tails. Without that ready
+state, authenticated journal resolution and recovery precede mutation. Errors and
+remounts retain the mounted version floor, so replaying an older valid snapshot
+cannot turn a retry into old data or false absence. Damage to unrelated journal
+bytes or payload-map metadata can remain unnoticed by a warm read that uses only
+known correct data; it is checked when recovery or mutation consumes that media.
+The [cold-start rollback limitation](../limitations.md#cryptography) is unchanged.
 
-Repeated `getInfo` requests reuse the parsed storage directory after checking
-both journal banks again. Each backend read checks the peer bank before the
-selected bank under a freshly read root, including both erased tails.
-Payload authentication and page recovery still run;
-changed or unreadable journal bytes refuse that request and discard the cached
-directory. The next request resolves the persistent state again. Single-byte and adjacent-pair
-page-state probes use the translated uncached flash view; bulk reads keep their
-bounded FIFO and completion checks. On RP2350,
-repeat checks use the hardware SHA-256 engine; the first authenticated scan
-uses software hashing and supplies the digest the hardware result must match.
-Bulk reads use the CPU's XIP FIFO, with bounded waits and checked final progress.
-On a Waveshare RP2350-One with the matching 4 MiB Puya flash, firmware enables
-Quad reads using volatile status only and a clock divider of two (75 MHz in the
-standard build). Unknown chips or protected status layouts keep the ROM's read
-mode. A failed public-byte comparison restores the previous mode. This read
-path is shared by FIDO, PIV, OpenPGP and OATH; it does not cache authentication
-results between reads.
-Build `0x0AC9` primes continuous reads with one word, then omits the command
-prefix at the same clock rate. Rollback exits enhanced read before restoring
-QMI and checks the original read mode before returning.
-The checked FIFO loop also reduces time spent on each shared storage read;
-the fresh bank, erased-tail, root and payload checks remain in place.
-From build `0x0AC6`, the hardware SHA-256 feed writes each block directly as
-16 words and uses the peripheral to swap byte order. Bounded readiness and error
-checks still run before and after every block.
-From build `0x0AC5`, page-state sweeps read an end marker and the following
-page's start marker together. Each marker is freshly read, with full successor
-and wrap checks retained.
+Mount can checkpoint obsolete main-journal history when it releases at least half
+a bank. This authenticates the payloads before erasing and retains files,
+generations, formats and capacities. Maintenance adds startup work and erases
+when due. Hardware SHA-256 accelerates public-journal checks; the initial scan
+and root-key HMACs use software crypto. Shared flash reads retain bounded FIFO,
+address, mode and final-progress checks, including direct erased-tail checks.
+Allowlisted Puya chips use Quad continuous reads at the existing clock rate;
+unknown chips keep the ROM mode, and a failed probe restores the old mode.
+
 TrustZone FIDO uses a 1 ms HID interval. Both encrypted getInfo members share
 one freshly loaded persistent token per command, with separate keys and IVs;
 a seed-read failure still leaves the credential-store member available.

@@ -177,18 +177,6 @@ symbol = "rsk_store::authenticated::journal::checkpoint_digest_matches"
 surface = "storage v2 main journal replay and complete-directory validation"
 
 [[caller]]
-symbol = "rsk_store::authenticated::main::Main<F,C>::read"
-surface = "storage v2 cached main authority reads"
-
-[[caller]]
-symbol = "rsk_store::authenticated::main::Main<F,C>::read_inner"
-surface = "storage v2 cached main authority bank fingerprint validation"
-
-[[caller]]
-symbol = "rsk_store::authenticated::storage::Authenticated<F,C>::read_checked"
-surface = "storage v2 root-scoped main authority reads"
-
-[[caller]]
 symbol = "rsk_store::authenticated::journal::Journal<F>::write_snapshot"
 surface = "storage v2 main authority checkpoint and complete-directory validation"
 
@@ -207,3 +195,19 @@ surface = "storage v2 authenticated main write/delete transaction decoding"
 [[caller]]
 symbol = "rsk_store::authenticated::transaction::TransactionState::apply"
 surface = "storage v2 main transaction chain and publication validation"
+
+[[caller]]
+symbol = "rsk_store::authenticated::authority::Authority::stage_replace"
+surface = "mounted storage root equality before same-arm snapshot replacement"
+
+[[caller]]
+symbol = "rsk_store::authenticated::authority::Bound::verify"
+surface = "fresh root binding for storage v2 cached main authority reads"
+
+[[caller]]
+symbol = "rsk_store::authenticated::main::Main<F,C>::check_banks"
+surface = "storage v2 complete physical bank fingerprints before reusing mounted state for mutation"
+
+[[caller]]
+symbol = "rsk_store::authenticated::main::Main<F,C>::resolve_inner"
+surface = "storage v2 main journal directory agreement during resolution and recovery"

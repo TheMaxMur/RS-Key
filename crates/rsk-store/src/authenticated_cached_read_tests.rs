@@ -18,7 +18,31 @@ fn cached_store() -> (FaultFlash, AuthStore) {
 }
 
 #[test]
-fn cached_authority_rechecks_both_whole_banks_with_selected_last() {
+fn mounted_authority_survives_read_errors_without_accepting_older_snapshots() {
+    let flash = FaultFlash::new();
+    let mut store = mount_authenticated(&flash);
+    store.initialize_blank().unwrap();
+    store.write(CRED, b"old").unwrap();
+    let old = flash.image();
+    store.write(CRED, b"current").unwrap();
+    assert_eq!(
+        authenticated_value(&mut store, CRED).unwrap().as_deref(),
+        Some(&b"current"[..])
+    );
+    *flash.inner.bytes.borrow_mut() = old.clone();
+    flash.arm(&[]);
+    for _ in 0..2 {
+        assert_eq!(
+            authenticated_value(&mut store, CRED),
+            Err(Error::MemoryFatal)
+        );
+        assert_eq!(flash.image(), old);
+        assert!(flash.events().iter().all(|event| event.0 == Io::Read));
+    }
+}
+
+#[test]
+fn warm_reads_do_not_rescan_journals_or_write_flash() {
     let (flash, mut store) = cached_store();
     let layout = crate::authenticated::Layout::new(MAIN.end..MAIN.end + 128 * 1024).unwrap();
     flash.arm(&[]);
@@ -26,28 +50,11 @@ fn cached_authority_rechecks_both_whole_banks_with_selected_last() {
         authenticated_value(&mut store, CRED).unwrap().as_deref(),
         Some(&b"owner"[..])
     );
-    let metadata: Vec<_> = flash
-        .events()
-        .into_iter()
-        .filter(|event| {
-            event.0 == Io::Read && layout.main.iter().any(|range| range.contains(&event.1))
-        })
-        .collect();
-    let starts: Vec<_> = metadata
-        .iter()
-        .filter(|event| layout.main.iter().any(|range| range.start == event.1))
-        .collect();
-    assert_eq!(
-        starts.iter().map(|event| event.1).collect::<Vec<_>>(),
-        [layout.main[1].start, layout.main[0].start]
-    );
-    assert!(starts.iter().all(|event| event.2 == 256));
-    let bytes = metadata.iter().map(|event| event.2).sum::<usize>();
+    assert_eq!(authenticated_value(&mut store, CRED + 1), Ok(None));
     assert!(
-        (2 * 44 * 1024..=2 * (44 * 1024 + <FaultFlash as ReadNorFlash>::READ_SIZE))
-            .contains(&bytes)
+        flash.events().iter().all(|event| event.0 == Io::Read
+            && !layout.main.iter().any(|range| range.contains(&event.1)))
     );
-    assert!(flash.events().iter().all(|event| event.0 == Io::Read));
 }
 
 #[test]
@@ -82,7 +89,7 @@ fn cached_reads_refuse_every_failed_read_without_writing_or_returning_absence() 
 }
 
 #[test]
-fn cached_authority_refuses_damage_in_each_bank_including_the_erased_tail() {
+fn mounted_values_stay_exact_and_mutations_refuse_damaged_journals() {
     let (flash, mut store) = cached_store();
     let layout = crate::authenticated::Layout::new(MAIN.end..MAIN.end + 128 * 1024).unwrap();
     let original = flash.image();
@@ -99,10 +106,12 @@ fn cached_authority_refuses_damage_in_each_bank_including_the_erased_tail() {
                 flash.inner.bytes.borrow_mut()[offset as usize] ^= 1;
                 let damaged = flash.image();
                 flash.arm(&[]);
-                assert_eq!(
-                    authenticated_value(&mut store, fid),
-                    Err(Error::MemoryFatal)
-                );
+                let expected = (fid == CRED).then(|| b"owner".to_vec());
+                assert_eq!(authenticated_value(&mut store, fid), Ok(expected));
+                assert_eq!(flash.image(), damaged);
+                assert!(flash.events().iter().all(|event| event.0 == Io::Read));
+                flash.arm(&[]);
+                assert_eq!(store.write(CRED, b"new"), Err(Error::MemoryFatal));
                 assert_eq!(flash.image(), damaged);
                 assert!(flash.events().iter().all(|event| event.0 == Io::Read));
             }
@@ -120,6 +129,8 @@ fn cached_authority_refuses_selected_damage_during_the_other_bank_check() {
     let original = flash.image();
     flash.arm(&[]);
     assert!(authenticated_value(&mut store, CRED).unwrap().is_some());
+    flash.arm(&[]);
+    assert!(store.for_each_key(&mut |_| {}));
     let skip = flash
         .events()
         .iter()
@@ -154,24 +165,25 @@ fn cached_authority_refuses_selected_damage_during_the_other_bank_check() {
     let changed = flash.image();
     assert_ne!(original, changed);
     *flash.inner.bytes.borrow_mut() = original;
+    assert!(authenticated_value(&mut store, CRED).unwrap().is_some());
     flash.arm(&[]);
     flash.replace_image_before_read(skip, changed.clone());
-    assert_eq!(
-        authenticated_value(&mut store, CRED),
-        Err(Error::MemoryFatal)
-    );
+    assert_eq!(store.write(CRED, b"new"), Err(Error::MemoryFatal));
     assert_eq!(flash.image(), changed);
     assert!(flash.events().iter().all(|event| event.0 == Io::Read));
     key.wipe();
 }
 
 #[test]
-fn cached_reads_repair_damaged_page_metadata_before_reporting_absence() {
+fn mounted_absence_needs_no_payload_metadata_repair() {
     let (flash, mut store) = cached_store();
     let damaged = usize::try_from(MAIN.end).unwrap() - 1;
     flash.inner.bytes.borrow_mut()[damaged] = 0;
     flash.arm(&[]);
     assert_eq!(authenticated_value(&mut store, CRED + 1), Ok(None));
+    assert_eq!(flash.image()[damaged], 0);
+    assert!(flash.events().is_empty());
+    assert!(store.for_each_key(&mut |_| {}));
     assert_eq!(flash.image()[damaged], 0xFF);
     assert!(flash.events().iter().any(|event| event.0 == Io::Erase));
     assert_eq!(
@@ -181,14 +193,15 @@ fn cached_reads_repair_damaged_page_metadata_before_reporting_absence() {
 }
 
 #[test]
-fn cached_reads_refuse_unreadable_page_metadata_even_for_an_absent_owner() {
+fn mounted_absence_is_complete_but_mutations_require_readable_payload_metadata() {
     let (flash, mut store) = cached_store();
     *flash.inner.fail_reads_in.borrow_mut() = Some(MAIN.end - 1..MAIN.end);
     flash.arm(&[]);
-    assert_eq!(
-        authenticated_value(&mut store, CRED + 1),
-        Err(Error::MemoryFatal)
-    );
+    assert_eq!(authenticated_value(&mut store, CRED + 1), Ok(None));
+    assert!(flash.events().is_empty());
+    let before = flash.image();
+    assert_eq!(store.write(CRED, b"new"), Err(Error::MemoryFatal));
+    assert_eq!(flash.image(), before);
     assert!(flash.inner.refused_at().is_some());
     assert!(flash.events().iter().all(|event| event.0 == Io::Read));
 }
@@ -240,10 +253,10 @@ fn cached_fingerprints_describe_verified_scan_bytes_not_a_later_media_image() {
     flash.replace_image_before_read(skip, changed.clone());
     assert!(authenticated_value(&mut fresh, CRED).unwrap().is_some());
     assert_eq!(flash.image(), changed);
-    assert_eq!(
-        authenticated_value(&mut fresh, CRED + 1),
-        Err(Error::MemoryFatal)
-    );
+    assert_eq!(authenticated_value(&mut fresh, CRED + 1), Ok(None));
+    flash.arm(&[]);
+    assert_eq!(fresh.write(CRED, b"new"), Err(Error::MemoryFatal));
+    assert_eq!(flash.image(), changed);
     assert!(flash.events().iter().all(|event| event.0 == Io::Read));
 }
 
@@ -287,4 +300,50 @@ fn a_cached_published_owner_does_not_read_an_unrelated_faulted_body() {
     assert_eq!(store.read(CRED, &mut out), Some(b"owner".len()));
     assert_eq!(&out[..b"owner".len()], b"owner");
     assert!(!store.last_error());
+}
+
+std::thread_local! {
+    static ROOT_BYTE: Cell<u8> = const { Cell::new(0x62) };
+}
+
+fn changing_fused_root(out: &mut [u8; 32]) -> crate::authenticated::RootRead {
+    ROOT_BYTE.with(|byte| out.fill(byte.get()));
+    crate::authenticated::RootRead::Fused
+}
+
+#[test]
+fn warm_absence_refuses_a_changed_but_readable_fused_root() {
+    use crate::authenticated::{Authenticated, KeySource, RootArm};
+    ROOT_BYTE.with(|byte| byte.set(0x62));
+    let flash = FaultFlash::new();
+    let end = MAIN.end + 128 * 1024;
+    flash.inner.bytes.borrow_mut().resize(end as usize, 0xFF);
+    let mut store = Authenticated::new(
+        flash.clone(),
+        MAIN,
+        MAIN.end..end,
+        MainCache::new(
+            ArrayPageStates::new(),
+            ArrayPagePointers::new(),
+            ArrayKeyPointers::new(),
+        ),
+        KeySource::new([0x43; 32], changing_fused_root, true),
+        [0x4B; 16],
+        RootArm::Otp,
+    )
+    .unwrap();
+    store.initialize_blank().unwrap();
+    store.write(CRED, b"owner").unwrap();
+    assert_eq!(authenticated_value(&mut store, CRED + 1), Ok(None));
+    let before = flash.image();
+    ROOT_BYTE.with(|byte| byte.set(0x63));
+    flash.arm(&[]);
+    assert_eq!(
+        authenticated_value(&mut store, CRED + 1),
+        Err(Error::MemoryFatal)
+    );
+    assert_eq!(flash.image(), before);
+    assert!(flash.events().is_empty());
+    ROOT_BYTE.with(|byte| byte.set(0x62));
+    assert_eq!(authenticated_value(&mut store, CRED + 1), Ok(None));
 }

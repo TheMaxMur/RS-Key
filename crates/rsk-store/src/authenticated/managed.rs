@@ -343,6 +343,13 @@ impl<F: NorFlash + MultiwriteNorFlash + Clone, C: CacheImpl<u16>> Storage for Ma
         if import.has_activation()? || self.headers()?.iter().any(Option::is_some) {
             return Err(Error::Blocked);
         }
+        if self
+            .active
+            .as_ref()
+            .is_some_and(|active| active.main.has_authority())
+        {
+            return Err(Error::Blocked);
+        }
         if action == StorageAction::Initialize
             && (!RawBank::new(self.flash.clone(), self.main_range.clone())?.read_erased(0)?
                 || !RawBank::new(self.flash.clone(), self.counter_range.clone())?.read_erased(0)?)

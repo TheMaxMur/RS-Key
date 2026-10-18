@@ -339,3 +339,49 @@ fn staging_refuses_existing_activation_manifest_and_reserved_backup_owners() {
     assert!(import.has_manifest().unwrap());
     assert_eq!(import.stage([0xA6; 16]), Err(Error::Blocked));
 }
+
+#[test]
+#[expect(
+    clippy::unwrap_used,
+    clippy::indexing_slicing,
+    reason = "Fixed page markers and an observed 32-read prefix isolate pre-admission repair."
+)]
+fn frozen_import_directory_never_repairs_media_before_admission() {
+    use crate::tests::Io;
+    let (flash, mut import, _) = prepared_import();
+    block_on(
+        import
+            .main
+            .store_item(import.buffer.expose_mut(), &0xB000, &b"owner".as_slice()),
+    )
+    .unwrap();
+    let mut key = import.source.key(RootArm::PreOtp).unwrap();
+    let mut directory = Directory::<MAX_MAIN_ENTRIES>::new();
+    flash.arm(&[]);
+    import
+        .directory([0x4B; 16], key.expose(), &mut directory)
+        .unwrap();
+    assert!(directory.find(0xB000).is_some());
+    assert!(flash.events().iter().all(|event| event.0 == Io::Read));
+    let mut closed = flash.image();
+    for page in 0..8 {
+        closed[page * 4096] = 0;
+        closed[(page + 1) * 4096 - 1] = 0;
+    }
+    let mut changed = closed.clone();
+    changed[0] = 0xFF;
+    flash.replace_image_before_read(0, closed.clone());
+    block_on(flash.clone().read(0, &mut [])).unwrap();
+    import.main.invalidate_cache();
+    flash.arm(&[]);
+    flash.replace_image_before_read(32, changed);
+    let result = import.directory([0x4B; 16], key.expose(), &mut directory);
+    assert!(
+        flash.events().iter().all(|event| event.0 == Io::Read),
+        "pre-admission directory validation must never program or erase"
+    );
+    assert_eq!(result, Err(Error::MemoryFatal));
+    assert_eq!(flash.image(), closed);
+    assert_eq!(flash.events().len(), 32);
+    key.wipe();
+}

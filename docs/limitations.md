@@ -12,10 +12,18 @@ public serial; it detects accidental corruption but cannot defeat an attacker
 who can forge public-root authority. The page-58 latch closes this arm after
 authority and applet seal migrations finish.
 
-Authentication is not an independent freshness counter. Replaying all relevant
-authority copies can restore older state, including replaying both counter
-banks while leaving KVMAIN unchanged. An old signed import manifest cannot
-override surviving verified newer progress; complete loss or replay of that
+The mounted main-directory floor survives read/write errors and remounts in the
+same backend instance. It refuses a substituted directory or an older observed
+publication. Warm reads use that trusted directory and freshly authenticate only
+the requested payload; unrelated journal damage is checked when rebuilding the
+directory or before mutation. This does not retain freshness across reboot.
+
+Authentication is not an independent freshness counter. After a cold start,
+replaying all main-authority copies can restore older main state. The separate
+counter partition has no mounted RAM floor: replaying both counter banks can
+restore older counters even within one backend instance, while leaving KVMAIN
+unchanged. An old signed import manifest cannot override surviving verified
+newer progress; complete loss or replay of that
 evidence remains outside the guarantee. Arbitrary correlated corruption,
 interruption, lying reads/writes and total media loss can require recovery.
 Automatic import cannot retroactively establish integrity of damaged but
