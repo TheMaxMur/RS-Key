@@ -669,14 +669,14 @@ def test_the_checkout_derives_what_it_is_measured_at():
     }, kinds["model"]
     assert len(kinds["slice"]) >= 8, kinds["slice"]
     # SITES, not files. The seven first-party `.rs` that carry the token bounded
-    # the old derivation at 7 whatever the tree did; 22 of these are what
+    # the old derivation at 7 whatever the tree did; 24 of these are what
     # `docs/unsafe.md` numbers, and the rest are build-script and declaration
     # sites that page keeps apart. Asserted as a floor above what a file-keyed
     # derivation could ever reach, and as a shape: every key names its site.
     assert len(kinds["unsafe"]) >= 22, kinds["unsafe"]
     assert all("#" in k for k in kinds["unsafe"]), kinds["unsafe"]
     steals = [k for k in kinds["unsafe"] if "anypin-steal" in k]
-    assert len(steals) == 8, steals
+    assert len(steals) == 9, steals
 
 
 # --- rule 1: every derived candidate is claimed --------------------------------

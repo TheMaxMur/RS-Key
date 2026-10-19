@@ -109,8 +109,8 @@ a proof about all runs; coverage grows by recording richer sessions.
 
 ## Which image a claim is about
 
-Every statement above says "the firmware", and the firmware is nineteen flake
-packages, six cargo features no package expresses, and six board presets under
+Every statement above says "the firmware", and the firmware is twenty-two flake
+packages, six cargo features no package expresses, and seven board presets under
 both. The [assurance matrix](assurance-matrix.md) is the per-configuration
 disposition — generated from those three sources and the property registry, so a
 new image arrives as a column of declared gaps instead of as silence.

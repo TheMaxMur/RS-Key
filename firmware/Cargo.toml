@@ -173,6 +173,15 @@ strict-config = ["rsk-mgmt/strict-config", "rsk-fido/strict-config", "rsk-otp/st
 # firmware --features display` (the panel is the status indicator, so there is no
 # addressable LED, which also frees GPIO16 for the backlight).
 display = ["rsk-device/display", "dep:rsk-display", "dep:rsk-ui", "dep:rsk-bip39", "dep:rsk-slip39", "dep:mipidsi", "dep:embedded-graphics"]
+# Screen + physical-button build for touchless display boards (e.g. the Waveshare
+# RP2350-GEEK): the panel renders the status indicator and a trusted confirm page
+# naming the pending operation, and a button press (BOOTSEL or PRESENCE_PIN)
+# approves it — no touch pad, so no on-device PIN entry (`uv` unadvertised, CCID
+# pinpad off). Parallel to `display`, sharing only `display_panel`; the touch
+# flow, rsk-display and the backup UI crates are NOT pulled in, so the
+# fips/strong-pin/strict-config UI-layer propagation of `display` does not apply
+# here either. Build with `LED_KIND=none ... --features display-keys`.
+display-keys = ["dep:rsk-ui", "dep:mipidsi", "dep:embedded-graphics"]
 
 [[bin]]
 name = "firmware"

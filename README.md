@@ -55,6 +55,7 @@ Which file to take:
 | 2 MB flash (Seeed XIAO RP2350, Waveshare RP2350-Zero-CM) | `2mb` |
 | 16 MB flash (TenStar RP2350-USB) | `16mb` |
 | Waveshare RP2350-Touch-LCD-2.8 | `display` |
+| Waveshare RP2350-GEEK (screen + one button) | `display-keys` |
 
 The other ten images are behaviour variants (post-quantum algorithms, the FIPS
 profile, `alwaysUv`, PIN hardening). Full table, plus how to verify the cosign
@@ -135,6 +136,22 @@ Any RP2350 board with USB. Developed and tested on the **Waveshare RP2350-One**
 (WS2812 status LED on GPIO16; boards without an LED run fine). A different flash
 size, LED pin, or presence-button GPIO is a one-line build knob. Details:
 [docs/hardware.md](docs/hardware.md).
+
+**Touchless display boards (screen + button, experimental).** The Waveshare
+**RP2350-GEEK** (1.14" 240×135 ST7789, no touch, BOOTSEL button) runs the
+`display-keys` build: the panel shows the ambient status (Ready / Working /
+Starting) and a trusted one-key confirm page naming each pending operation —
+a short press approves, a hold past ~0.8 s declines. There is no on-device PIN
+pad, so PINs stay host-side like a button-only key. It ships as the
+**`display-keys`** image in every release (next to the `display` image); to
+build it yourself: `BOARD=waveshare-geek LED_KIND=none cargo build --release -p
+firmware --features display-keys`. The touchscreen display build
+(`Waveshare RP2350-Touch-LCD-2.8`, "display" image) is the supported screen form.
+
+<p align="center">
+  <img src="docs/images/rp2350-geek.jpg" width="330" alt="The Waveshare RP2350-GEEK: a small RP2350 board with a 1.14-inch 240x135 colour LCD, a USB-C plug, and a single BOOTSEL button"><br>
+  <sub>Waveshare RP2350-GEEK: 240×135 screen, one button, no touch — the <code>display-keys</code> target (photo: Waveshare)</sub>
+</p>
 
 <p align="center">
   <img src="assets/hero-boards.jpg" width="330" alt="Three RS-Key boards on a blueprint background: a bare RP2350 USB stick, the trusted-display variant showing its Home &quot;Ready&quot; screen (USB connected, Device PIN set, 2 passkeys), and a Waveshare RP2350-One"><br>

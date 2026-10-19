@@ -1,0 +1,43 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 RS-Key contributors
+#
+# Waveshare RP2350-GEEK — the touchless display build (`display-keys`).
+# 1.14" ST7789V2 240×135 landscape panel over the same PIO serial link the
+# touch build drives (CLK/MOSI on the board's GP10/11), no touch controller.
+# Backlight on GPIO13 (plain GPIO here — the keys build has no brightness menu).
+# No addressable LED (LED_KIND=none); the panel is the indicator.
+# Presence is the BOOTSEL button.
+
+[usb]
+vidpid = "RSKey"
+
+[led]
+kind = "none"
+
+[presence]
+source = "bootsel"
+
+[flash]
+size_mb = 16
+
+[display]
+# TX-only PIO uses two instructions per bit at a 160 MHz system clock.
+spi_freq_hz = 80_000_000
+# GPIOs for the panel control lines (from the Waveshare example pinout).
+cs = 9
+dc = 8
+rst = 12
+# Backlight: GPIO13. Driven high as a GPIO by the `display-keys` build (no
+# brightness menu); the PWM slice/channel fields keep the board file shape the
+# touch build expects.
+bl_pin = 13
+bl_pwm_slice = 6
+bl_pwm_channel = "B"
+# The GEEK's ST7789V2 init (per the Waveshare demo) runs display inversion on;
+# the scan direction rotates the 135-wide glass into the landscape layout the
+# keys screens are drawn in (the demo's HORIZONTAL value, MY|MX|MV).
+invert_colors = true
+madctl_scan = 112 # 0x70
+# GRAM window offset for the partial 240×135 glass (Waveshare's landscape value).
+win_x = 40
+win_y = 53

@@ -79,6 +79,7 @@ let
     {
       name,
       cargoFlags ? [ ],
+      board ? envOr "BOARD" null, # board file firmware/boards/<name>.toml (pins, display wiring, flash map)
       vidpid ? envOr "VIDPID" null, # VIDPID preset (Yubikey5, Pico, Nitro3, …)
       usbVid ? envOr "USB_VID" null, # 0xHHHH raw VID override
       usbPid ? envOr "USB_PID" null, # 0xHHHH raw PID override
@@ -96,6 +97,7 @@ let
       # Non-null knobs become build-time env vars build.rs reads; each is part
       # of the derivation, so changing one rebuilds (just that crate).
       knobEnv = lib.filterAttrs (_: v: v != null) {
+        BOARD = board;
         VIDPID = vidpid;
         USB_VID = usbVid;
         USB_PID = usbPid;
@@ -307,6 +309,46 @@ in
       cargoFlags = [
         "--features"
         "display"
+      ];
+    };
+    # Touchless screen + button flavor for the Waveshare RP2350-GEEK (and, going
+    # forward, every board of this form): the ST7789 panel is the status
+    # indicator and the trusted confirm page, and the single BOOTSEL button is
+    # the presence source. Ships in the signed release like the touch display —
+    # an adapted board with no published image is usable only by people who
+    # build it themselves. Every newly adapted board gets a package here and a
+    # line in both loops of .github/workflows/release-build.yml.
+    firmware-display-keys = mkFirmware {
+      name = "firmware-display-keys";
+      board = "waveshare-geek";
+      flashSize = "16M";
+      ledKind = "none";
+      cargoFlags = [
+        "--features"
+        "display-keys"
+      ];
+    };
+    # Security-posture variants of the touchless board, standalone like the
+    # default board's strong-pin / always-uv flavors. No pqc pair: the pqc
+    # advertisement is a niche of a niche on an experimental screen form.
+    firmware-display-keys-strong-pin = mkFirmware {
+      name = "firmware-display-keys-strong-pin";
+      board = "waveshare-geek";
+      flashSize = "16M";
+      ledKind = "none";
+      cargoFlags = [
+        "--features"
+        "display-keys,strong-pin"
+      ];
+    };
+    firmware-display-keys-always-uv = mkFirmware {
+      name = "firmware-display-keys-always-uv";
+      board = "waveshare-geek";
+      flashSize = "16M";
+      ledKind = "none";
+      cargoFlags = [
+        "--features"
+        "display-keys,always-uv"
       ];
     };
     # Default (feature-less, RS-Key identity) images for boards whose physical

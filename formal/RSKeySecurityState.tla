@@ -472,7 +472,7 @@ TouchTimeout ==
 \*
 \* NARROWER than a display build in one way, stated because it is the risk
 \* direction: that build compiles ButtonWait out entirely
-\* (firmware/src/presence.rs:99-106) and the panel's own release debounce takes
+\* (firmware/src/presence.rs:107-116) and the panel's own release debounce takes
 \* over the `spent` latch, so the model keeps a defence the display build
 \* implements somewhere else rather than one it does not have.
 \* THE FOURTH SITE OF THE SAME RULE, and it was the one still written as a bare
@@ -1516,7 +1516,7 @@ VolatileCleared ==
     /\ upSpent' = FALSE
 
 \* EVERY boot runs ensure_seed, not just the one at the end of a reset:
-\* firmware/src/main.rs:629 and tools/emu/src/device.rs:507. A cut that stranded
+\* firmware/src/main.rs:670 and tools/emu/src/device.rs:507. A cut that stranded
 \* the device mid-wipe therefore comes back WITH a seed and can hold usable
 \* credentials again. Leaving it out made the model less permissive than the
 \* firmware -- the one direction a safety argument cannot absorb.
