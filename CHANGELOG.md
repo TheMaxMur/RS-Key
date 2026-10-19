@@ -38,6 +38,11 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ## [Unreleased]
 
+- **bcdDevice → 0x0AD7:** Clear both complete command response buffers with
+  aligned volatile word stores and byte edges. The full array extents, cleanup
+  on each command and dead-stack sweep before reply publication are preserved.
+
+
 - **bcdDevice → 0x0AD6:** Use the full wiped scratch for a Main read-tag miss,
   so a larger neighboring value does not force a second lookup and repeated
   authentication. A successful first lookup seeds its read tag immediately.

@@ -783,8 +783,8 @@ impl<'a> Worker<'a> {
             )]
             ex.req[..rl].zeroize();
             ex.req_len = 0;
-            self.ctap.scrub();
-            self.ccid.scrub();
+            self.ctap.scrub_with(crate::sweep::wipe_bytes);
+            self.ccid.scrub_with(crate::sweep::wipe_bytes);
             #[cfg(rsk_trustzone_prototype)]
             if matches!(ex.kind, Kind::Apdu | Kind::Otp) {
                 publish_otp_status(self.ccid.otp_status_record());

@@ -1,5 +1,9 @@
 # FIDO2 / WebAuthn / U2F
 
+Build `0x0AD7` clears both complete command response buffers with aligned
+volatile word stores. Byte edges and remaining words are also cleared; every
+command retains the same full-buffer cleanup and dead-stack sweep.
+
 The shared flash backend verifies programmed bytes and erased sectors before
 accepting a mutation. A refused readback reports a storage error even if the
 new value already landed. Retry from the persistent state rather than assuming

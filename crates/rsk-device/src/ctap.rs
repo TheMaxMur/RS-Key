@@ -159,6 +159,11 @@ impl<'a, S: Storage, R: rsk_sdk::Rng + 'static, VP: rsk_vendor::Platform>
         self.resp.zeroize();
     }
 
+    /// Lend the complete response buffer to the board's volatile SRAM wipe.
+    pub fn scrub_with(&mut self, wipe: impl FnOnce(&mut [u8])) {
+        wipe(&mut self.resp);
+    }
+
     /// Secure-reboot wipe: the response buffer, the vendor dispatcher's chain and
     /// held tail, and the cross-message FIDO auth state — `reset` zeroizes the
     /// PIN/UV token, session key and ephemeral ECDH scalar via their `Drop` impls.

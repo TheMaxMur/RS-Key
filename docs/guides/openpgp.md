@@ -1,5 +1,9 @@
 # OpenPGP card
 
+Build `0x0AD7` clears both complete command response buffers with aligned
+volatile word stores. Byte edges and remaining words are also cleared; every
+command retains the same full-buffer cleanup and dead-stack sweep.
+
 From build `0x0ACF`, GET DATA uses the shared backend's complete authenticated
 main directory in protected RAM. Each requested value is still freshly read and
 authenticated under a freshly derived root. The backend retains confirmed

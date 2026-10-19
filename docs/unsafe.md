@@ -7,14 +7,14 @@ contained. Adding a new `unsafe` requires updating this page. (Safe Rust rules
 out memory-corruption bugs in this code. It is not a security audit; see the
 [threat model](threat-model.md).)
 
-**Runtime sites: 66.** Thirty-one in the ordinary firmware and tools, plus thirty-five in the TrustZone build. Of the ordinary sites: Seventeen in the firmware proper (`main.rs` + `presence.rs`):
+**Runtime sites: 69.** Thirty-four in the ordinary firmware and tools, plus thirty-five in the TrustZone build. Of the ordinary sites: Seventeen in the firmware proper (`main.rs` + `presence.rs`):
 the interrupt-handler pair (2), the `Send` impl, the heap init and its zeroing
 allocator (5), and the eight GPIO-pin `steal`s (the presence button, the LED power-enable rail, the nuisance
 USR LED, the display build's wake button, and — display builds only — the panel's
 CS/DC/RST/TP_RST control lines). Three for the per-core prime sieves; one
 stack limit per core, core0's in `main.rs` too; two for the dead-stack sweep and
 its probe; three in the RSA assembly FFI; two in the standalone flash-wipe tool.
-One reads an uncached flash byte.
+One reads an uncached flash byte. Three align and clear complete response buffers.
 
 ```mermaid
 flowchart TB
@@ -33,6 +33,7 @@ flowchart TB
     subgraph sw["firmware/src/sweep.rs"]
       s1["dead-stack sweep"]
       s2["residue probe (bench builds)"]
+      s3["complete response buffers (×3)"]
     end
     subgraph asm["rsk-rsa"]
       f["modexp / sign_crt / modexp_pub FFI (×3)"]
@@ -461,3 +462,17 @@ address with the existing permissions.
 no MMIO stores, no new grants, and unchanged authority, root and payload checks.
 The byte load has no software deadline and a bus fault is not a flash error.
 TrustZone uses the existing fatal fence; normal builds do not promise the same cleanup.
+
+### 67–69. Full response-buffer wiping — `PLAT-UNSAFE-016`
+
+*Safe alternative:* byte-wise `Zeroize` clears the same arrays but repeats a
+volatile store and loop step for every byte. Word stores require validated
+alignment, exclusive access and exact byte edges.
+
+*Containment:* `firmware/src/sweep.rs::wipe_bytes` lends exclusively borrowed SRAM
+to `align_to_mut::<u32>`. Every bit pattern is valid for either element type;
+the disjoint byte edges and aligned middle cover exactly the original slice.
+Volatile stores clear both byte edges, eight words per full pass and all remaining
+words, followed by a sequentially consistent compiler fence. The worker passes
+both complete response arrays after copying the reply; neither the buffer extent
+nor the existing dead-stack sweep and publication ordering changes.

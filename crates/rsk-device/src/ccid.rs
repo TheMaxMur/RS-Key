@@ -325,6 +325,11 @@ impl<'a, S: Storage, R: rsk_sdk::Rng + 'static, VP: rsk_vendor::Platform>
         self.resp.zeroize();
     }
 
+    /// Lend the complete response buffer to the board's volatile SRAM wipe.
+    pub fn scrub_with(&mut self, wipe: impl FnOnce(&mut [u8])) {
+        wipe(&mut self.resp);
+    }
+
     /// Every applet and held response can carry authorization across a reset.
     /// Revoke them all on USB-wide reset or secure reboot, without a later SELECT.
     pub fn scrub_secrets(&mut self) {

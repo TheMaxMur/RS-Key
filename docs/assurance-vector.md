@@ -234,6 +234,7 @@ Three spellings of "not current", which used to sit on two different pages and i
 | platform | `PLAT-UNSAFE-011` | The small-prime table and the sieve step are placed in `.data.small_pr |
 | platform | `PLAT-UNSAFE-012` | The three `unsafe extern` blocks declare what they name: the RSA assem |
 | platform | `PLAT-UNSAFE-013` | `ZeroingHeap` hands `alloc` and `dealloc` to `LlffHeap` under the call |
+| platform | `PLAT-UNSAFE-016` | The complete response-buffer wipe partitions exclusively borrowed init |
 | platform | `PLAT-CRYPTO-001` | The HMAC-SHA-256 under `pinUvAuthProtocol` is correct as a MAC; the ha |
 | platform | `PLAT-BUILD-002` | `ea-conformance-rpid`'s enterprise-attestation allowlist is a conforma |
 | platform | `PLAT-BUILD-003` | The `display` build implements the one-hold-one-ceremony latch SOMEWHE |

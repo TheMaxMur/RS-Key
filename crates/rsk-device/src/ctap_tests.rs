@@ -296,6 +296,24 @@ fn scrub_wipes_the_response_buffer() {
 }
 
 #[test]
+fn the_board_wipe_receives_the_whole_response_including_its_dirty_tail() {
+    let env = Env::new();
+    let mut ctap = env.ctap();
+    ctap.handle_cbor(1, &GET_INFO, 0);
+    let selected = ctap.disp.current();
+    ctap.resp.fill(0xa5);
+    let mut received = 0;
+    ctap.scrub_with(|bytes| {
+        received = bytes.len();
+        assert!(bytes.iter().all(|&byte| byte == 0xa5));
+        bytes.fill(0);
+    });
+    assert_eq!(received, RESP_CAP);
+    assert!(ctap.resp.iter().all(|&byte| byte == 0));
+    assert_eq!(ctap.disp.current(), selected);
+}
+
+#[test]
 fn a_secure_reboot_drops_the_auth_state_but_not_the_boot_verdict() {
     // The reboot path ends the PIN/UV token, session key and ephemeral scalar on
     // top of the buffer — but a scrub is not a power cycle, so the warm/cold

@@ -772,7 +772,7 @@ LocalPinEnabled == Idle /\ LocalPinGuard
 \* turned away before any compare -- which `LocalPinEnabled` already excludes.
 \*
 \* Modelled as taking effect at once. The hook is consumed by the next CBOR
-\* dispatch (crates/rsk-device/src/ctap.rs:368, crates/rsk-device/src/lib.rs:123-125),
+\* dispatch (crates/rsk-device/src/ctap.rs:373, crates/rsk-device/src/lib.rs:123-125),
 \* not inside gates.rs. Nothing can use the token in between: every command that
 \* reads it is a CBOR command and the flag is spent before the dispatch runs.
 LocalPinWrong ==
