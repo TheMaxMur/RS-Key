@@ -99,7 +99,7 @@ TIERS = [
     ("APDU CORE", "parsing, TLV, status words, the Applet seams", "#2F7E75", ["rsk-sdk"]),
     ("CRYPTO FACADE", "the one crate that names a primitive", "#37877E", ["rsk-crypto"]),
     ("ALGORITHMS", "reached by an allowlist, never by every applet", "#4C9086",
-     ["rsk-rsa", "rsk-ec", "rsk-sha512", "rsk-mldsa"]),
+     ["rsk-rsa", "rsk-ec", "rsk-sha512", "rsk-sha256", "rsk-mldsa"]),
     ("SECRETS", "key-grade bytes that wipe themselves on every exit", "#5E9A92",
      ["rsk-secret"]),
 ]

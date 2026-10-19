@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["firmware", "firmware/trustzone/nonsecure", "rsk-wipe", "crates/rsk-sdk", "crates/rsk-fs", "crates/rsk-usb", "crates/rsk-crypto", "crates/rsk-fido", "crates/rsk-openpgp", "crates/rsk-rsa", "crates/rsk-ec", "crates/rsk-sha512", "crates/rsk-devconf", "crates/rsk-mgmt", "crates/rsk-oath", "crates/rsk-otp", "crates/rsk-piv", "crates/rsk-x509", "crates/rsk-rescue", "crates/rsk-vendor", "crates/rsk-device", "crates/rsk-display", "crates/rsk-store", "crates/rsk-led", "crates/rsk-phy", "crates/rsk-ui", "crates/rsk-bip39", "crates/rsk-slip39", "crates/rsk-mldsa", "crates/rsk-bench", "crates/rsk-secret"]
+members = ["firmware", "firmware/trustzone/nonsecure", "rsk-wipe", "crates/rsk-sdk", "crates/rsk-fs", "crates/rsk-usb", "crates/rsk-crypto", "crates/rsk-fido", "crates/rsk-openpgp", "crates/rsk-rsa", "crates/rsk-ec", "crates/rsk-sha512", "crates/rsk-sha256", "crates/rsk-devconf", "crates/rsk-mgmt", "crates/rsk-oath", "crates/rsk-otp", "crates/rsk-piv", "crates/rsk-x509", "crates/rsk-rescue", "crates/rsk-vendor", "crates/rsk-device", "crates/rsk-display", "crates/rsk-store", "crates/rsk-led", "crates/rsk-phy", "crates/rsk-ui", "crates/rsk-bip39", "crates/rsk-slip39", "crates/rsk-mldsa", "crates/rsk-bench", "crates/rsk-secret"]
 
 default-members = ["firmware", "rsk-wipe", "crates/*"]
 
@@ -51,6 +51,8 @@ rsk-x509 = { path = "crates/rsk-x509" }
 # compression that fits the XIP cache, replacing `sha2`'s ~28 KB unrolled soft
 # backend on the FIDO key-derivation ratchet without changing any credential key.
 rsk-sha512 = { path = "crates/rsk-sha512" }
+# Isolate SHA-256 compression optimization from the applet code working set.
+rsk-sha256 = { path = "crates/rsk-sha256" }
 rsk-devconf = { path = "crates/rsk-devconf" }
 rsk-mgmt = { path = "crates/rsk-mgmt" }
 rsk-oath = { path = "crates/rsk-oath" }
@@ -206,3 +208,7 @@ opt-level = "s"    # embassy/HAL needs some opt even in dev to fit/behave
 [patch.crates-io]
 p384 = { path = "third_party/p384" }
 sequential-storage = { path = "third_party/sequential-storage" }
+
+# Optimize only the eight-round SHA-256 core, keeping applet code compact.
+[profile.release.package.rsk-sha256]
+opt-level = 3

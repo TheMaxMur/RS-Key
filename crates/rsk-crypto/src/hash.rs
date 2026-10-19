@@ -3,7 +3,8 @@
 
 //! SHA-1 / SHA-256 / SHA-384 / SHA-512 helpers.
 
-use sha2::{Digest, Sha256};
+use rsk_sha256::Sha256;
+use sha2::Digest;
 // SHA-384/512 use the Cortex-M33-fast core (byte-identical to sha2::Sha384/512).
 use rsk_sha512::{Sha384, Sha512};
 

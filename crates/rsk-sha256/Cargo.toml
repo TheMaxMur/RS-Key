@@ -1,0 +1,20 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 RS-Key contributors
+
+[package]
+name = "rsk-sha256"
+version = "0.1.0"
+license = "AGPL-3.0-only"
+edition = "2024"
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+sha2 = { workspace = true }
+rsk-secret = { workspace = true }
+
+[dev-dependencies]
+hmac = { workspace = true }
+hkdf = { workspace = true }

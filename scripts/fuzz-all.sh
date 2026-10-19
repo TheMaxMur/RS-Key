@@ -38,7 +38,7 @@ FUZZ_SECONDS="${FUZZ_SECONDS:-120}"
 # firmware-size ratchet: a target count has no build noise. A literal, not
 # `${FUZZ_TARGET_FLOOR:-52}`, because a floor the environment can lower is not a
 # floor. Lower all three copies in the commit that removes a target.
-FUZZ_TARGET_FLOOR=52
+FUZZ_TARGET_FLOOR=54
 
 # FUZZ_CONFIG=flavours builds the shipped flavours' on side — the `flavours`
 # union feature in fuzz/Cargo.toml — instead of the default image's off side.

@@ -2435,3 +2435,6 @@ fn miri_otp_ticket() {
 
 #[path = "miri/credential_cut_tests.rs"]
 mod credential_cuts;
+
+#[path = "miri/sha256_diff_tests.rs"]
+mod sha256_diff;

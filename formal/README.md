@@ -3060,6 +3060,7 @@ evidence columns and validated cross-model support edges below on every gate run
 | `rsk-rsa` | pure | `crates/rsk-rsa/src/kani.rs` | — |
 | `rsk-sdk` | state-partial | `RSKeyAppletSeams` | Dispatcher::current is the seam module's sel. APDU command chaining remains outside RSKeyTransport, which covers CTAPHID framing rather than the SDK's per-applet chain buffer. |
 | `rsk-secret` | pure | `crates/rsk-secret/src/tests.rs` | — |
+| `rsk-sha256` | pure | `crates/rsk-sha256/src/tests.rs`<br>`fuzz/fuzz_targets/sha256_diff.rs` | — |
 | `rsk-sha512` | pure | `fuzz/fuzz_targets/sha512_diff.rs` | — |
 | `rsk-slip39` | pure | `crates/rsk-slip39/src/kani.rs`<br>`crates/rsk-slip39/src/tests.rs` | — |
 | `rsk-store` | state-partial | `RSKeyStore` | the Storage contract it implements — atomic append, an enumeration-completeness flag — is taken as RSKeyStore's backend assumption; the two-partition counter/main ring, is_counter_fid routing, wear and page reclaim, and compact are backend mechanics the model abstracts. Storage v2 authentication, complete-set authority, root migration and attended legacy import are outside this model; authenticated_store and native fault tests exercise those concrete mechanisms. Program/erase readback, a committed mutation followed by an error, and multi-fault recovery are held by real-backend controls rather than that model's pre-commit-refusal arm. |

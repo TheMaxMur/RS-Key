@@ -68,19 +68,14 @@ deny = [
     { crate = "rsk-rescue", wrappers = ["firmware", "rsk-device"], reason = "R2: an applet is composed by a device wiring, never named by another applet" },
     { crate = "rsk-vendor", wrappers = ["firmware", "rsk-device", "rsk-display"], reason = "R2: an applet is composed by a device wiring, never named by another applet" },
 
-    # R3 — the crypto facade. No applet declares one of the four hash/signature
-    # backends below: `rsk-crypto` is the only crate of ours that does, bar two
-    # host-only test oracles. Swapping one then costs the facade and no applet —
-    # `5fbeeb3` moved the whole FIDO ratchet off `sha2` in 10 lines of
-    # rsk-crypto and zero applet files. Not every primitive is here: the
-    # RustCrypto curve crates are R6's accepted deviation, being the domain
-    # vocabulary, and rsk-fido and rsk-rescue do name those directly. sha2's
-    # third-party parents are graph facts rather than policy — those same curve
-    # crates hash internally.
+    # R3 — hash and signature backends stay behind the crypto facade.
+    # Algorithm crates may name digest traits and host test oracles; applets
+    # reach the RustCrypto curve vocabulary through the separate allowlists.
     { crate = "sha2", wrappers = [
         "rsk-crypto",
         "rsk-piv",       # dev-only: the RSA/ECDSA KAT oracle
         "rsk-sha512",    # dev-only: byte-for-byte oracle for the crate it replaces
+        "rsk-sha256",    # digest traits and the independent SHA-256 test oracle
         "bp256",
         "bp384",
         "ed25519-dalek",
@@ -91,6 +86,7 @@ deny = [
     ], reason = "R3: a hash backend is named by the crypto facade, not by an applet" },
     { crate = "sha1", wrappers = ["rsk-crypto"], reason = "R3: a hash backend is named by the crypto facade, not by an applet" },
     { crate = "rsk-sha512", wrappers = ["rsk-crypto"], reason = "R3: a hash backend is named by the crypto facade, not by an applet" },
+    { crate = "rsk-sha256", wrappers = ["rsk-crypto"], reason = "R3: a hash backend is named by the crypto facade, not by an applet" },
     { crate = "rsk-mldsa", wrappers = ["rsk-crypto"], reason = "R3: a signature backend is named by the crypto facade, not by an applet" },
 
     # The asymmetric halves stay a named allowlist rather than a re-export

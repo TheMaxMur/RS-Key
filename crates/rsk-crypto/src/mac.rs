@@ -8,8 +8,8 @@
 
 use hkdf::Hkdf;
 use hmac::{Hmac, Mac};
+use rsk_sha256::Sha256;
 use sha1::Sha1;
-use sha2::Sha256;
 // SHA-512 (HMAC + the FIDO HKDF ratchet) uses the Cortex-M33-fast core; the
 // generic HMAC/HKDF constructions above it are unchanged, so the output stays
 // byte-identical to sha2::Sha512.

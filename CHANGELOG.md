@@ -38,6 +38,11 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ## [Unreleased]
 
+- **bcdDevice → 0x0AD9:** Accelerate the shared storage verifier, FIDO getInfo
+  and OpenPGP reads with an eight-round software SHA-256 core. Full record
+  hashing, MAC inputs, fresh Root checks and rollback floors stay unchanged;
+  chaining state and the working schedule are wiped through `Secret`.
+
 - **bcdDevice → 0x0AD8:** Clear the complete Non-secure gateway reply buffer
   with aligned volatile word stores. Every reply, abandoned session and dropped
   pending future keeps the same full-buffer cleanup before ticket release.

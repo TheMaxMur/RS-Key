@@ -343,7 +343,7 @@ release_image_retires_its_unsigned_image_def() {
 # Same floor, and the same reason, as scripts/fuzz-coverage.sh and
 # scripts/fuzz-all.sh: a `for` over an empty word list runs nothing and exits
 # 0. Lower all three in the commit that removes a target.
-FUZZ_TARGET_FLOOR=52
+FUZZ_TARGET_FLOOR=54
 fuzz_targets_are_alive() {
   local manifest log empty bins dead="" name dict_args
   manifest=$(mktemp)

@@ -14,9 +14,11 @@ workspace = true
 [dependencies]
 sha1 = { workspace = true }
 sha2 = { workspace = true }
-# SHA-512/384 come from rsk-sha512 (fast on the Cortex-M33, byte-identical to
-# sha2); SHA-256/SHA-1 retain RustCrypto's implementations.
+# SHA-256 and SHA-512/384 use the Cortex-M33 cores behind the same digest API;
+# SHA-1 retains RustCrypto's implementation.
 rsk-sha512 = { workspace = true }
+# Byte-identical SHA-256; local core keeps keyed states and schedules in Secret.
+rsk-sha256 = { workspace = true }
 hmac = { workspace = true }
 hkdf = { workspace = true }
 aes = { workspace = true }
@@ -33,8 +35,8 @@ ml-kem = { workspace = true }
 rsk-mldsa = { workspace = true }
 
 [target.'cfg(all(target_arch = "arm", target_os = "none"))'.dependencies]
-# The unrolled SHA-256 compressor evicts the storage verifier from the XIP cache.
-# RustCrypto's rolled backend keeps the same hashes with a smaller working set.
+# Remaining sha2 consumers keep the rolled backend: its unrolled compressor
+# evicts the storage verifier from the XIP cache.
 sha2 = { workspace = true, features = ["force-soft-compact"] }
 
 [features]

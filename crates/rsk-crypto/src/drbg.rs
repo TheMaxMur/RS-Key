@@ -9,7 +9,7 @@
 
 use hmac::{Hmac, Mac};
 use rsk_secret::Secret;
-use sha2::Sha256;
+use rsk_sha256::Sha256;
 
 /// HMAC-SHA256 output / DRBG state size.
 const SEEDLEN: usize = 32;

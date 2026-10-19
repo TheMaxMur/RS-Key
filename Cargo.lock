@@ -2127,6 +2127,7 @@ dependencies = [
  "p256",
  "rsk-mldsa",
  "rsk-secret",
+ "rsk-sha256",
  "rsk-sha512",
  "sha1",
  "sha2 0.10.9",
@@ -2368,6 +2369,16 @@ name = "rsk-secret"
 version = "0.1.0"
 dependencies = [
  "zeroize",
+]
+
+[[package]]
+name = "rsk-sha256"
+version = "0.1.0"
+dependencies = [
+ "hkdf 0.12.4",
+ "hmac 0.12.1",
+ "rsk-secret",
+ "sha2 0.10.9",
 ]
 
 [[package]]
