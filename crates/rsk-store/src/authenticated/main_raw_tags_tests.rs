@@ -4,6 +4,9 @@
 use super::*;
 use crate::authenticated::{KeySource, RootRead, authority::READ_MAC_PROOFS, keys::DERIVATIONS};
 
+#[path = "main_first_read_tests.rs"]
+mod first_read;
+
 std::thread_local! {
     static ROOT: core::cell::Cell<[u8; 32]> = const { core::cell::Cell::new([0x56; 32]) };
     static MODE: core::cell::Cell<RootRead> = const { core::cell::Cell::new(RootRead::Fused) };

@@ -241,6 +241,13 @@ filled, including padding and partially completed failing reads. A fallback drop
 the bounded guard before full-buffer lookup and cleanup. Absence borrows no
 scratch. Fresh root checks and complete value authentication remain required.
 
+From `0x0AD6`, a read-tag miss validates the same checked record geometry, then
+borrows the full scratch under its wipe guard. An uncached map lookup can read
+larger unrelated values before finding the requested FID. This avoids a small
+buffer failure, repeated binding proof and full-buffer retry, and lets the first
+verified value seed its read tag. Tag hits retain the bounded span and the
+existing recovery checks.
+
 Build `0x0AD3` prepares one operation-local HMAC context for the
 full mounted binding and complete payload checks, using the prefix reuse from
 [RFC 2104 section 4](https://www.rfc-editor.org/rfc/rfc2104.html#section-4). The context stays in returned

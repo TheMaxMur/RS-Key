@@ -11,6 +11,9 @@ Existing objects, capacities and persistent layouts are unchanged. Occasional
 mount-time history checkpointing still adds startup work and erases when due.
 
 Build `0x0AD0` also avoids clearing unused storage scratch after warm GET DATA.
+From `0x0AD6`, a mounted read-tag miss uses full wiped scratch and seeds its
+read tag without retrying a small buffer that encountered a larger neighbor.
+Later tag hits keep bounded scratch and freshly authenticate the complete value.
 Every byte a read can fill is still cleared on success and failure; recovery
 retains full-buffer cleanup.
 

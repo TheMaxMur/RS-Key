@@ -66,6 +66,15 @@ impl<F: NorFlash + MultiwriteNorFlash, C: CacheImpl<u16>> Main<F, C> {
             .checked_add(core::mem::size_of::<u16>())
             .and_then(|length| length.checked_next_multiple_of(F::READ_SIZE.max(F::WRITE_SIZE)))
             .ok_or(Error::MemoryFatal)?;
+        if capacity > self.buffer.expose().len() {
+            return Err(Error::MemoryFatal);
+        }
+        // A cold key lookup reads unrelated values before comparing their FIDs.
+        let capacity = if cached.is_some() {
+            capacity
+        } else {
+            self.buffer.expose().len()
+        };
         {
             let mut scratch = WipeGuard::new(
                 self.buffer

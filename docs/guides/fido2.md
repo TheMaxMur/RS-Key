@@ -20,6 +20,10 @@ Build `0x0AD0` further shortens warm reads by clearing only the scratch span tha
 the read can fill, including alignment padding. Every borrowed byte is cleared
 on errors too; recovery retains full-buffer cleanup.
 
+From `0x0AD6`, a read-tag miss uses the full wiped scratch so a larger neighboring
+record does not force a lookup retry. The successful read seeds its tag at once;
+tag hits still use bounded scratch, with the same fresh root and full value proof.
+
 Before reusing the mounted directory for mutation, the backend checks both full
 journal banks, selected bank last, including erased tails. Without that ready
 state, authenticated journal resolution and recovery precede mutation. Errors and
