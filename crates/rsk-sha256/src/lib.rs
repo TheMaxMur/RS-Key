@@ -37,14 +37,67 @@ fn compress(state: &mut [u32; 8], block: &Block<Sha256Core>) {
     for (word, bytes) in w.iter_mut().zip(block.chunks_exact(4)) {
         *word = u32::from_be_bytes(bytes.try_into().expect("SHA-256 word is four bytes"));
     }
-    for i in 16..64 {
-        let x = w[i - 15];
-        let y = w[i - 2];
-        w[i] = w[i - 16]
-            .wrapping_add(x.rotate_right(7) ^ x.rotate_right(18) ^ (x >> 3))
-            .wrapping_add(w[i - 7])
-            .wrapping_add(y.rotate_right(17) ^ y.rotate_right(19) ^ (y >> 10));
+    // Literal indices expose complete initialization to the optimizer.
+    macro_rules! expand {
+        ($i:expr) => {{
+            let x = w[$i - 15];
+            let y = w[$i - 2];
+            w[$i] = w[$i - 16]
+                .wrapping_add(x.rotate_right(7) ^ x.rotate_right(18) ^ (x >> 3))
+                .wrapping_add(w[$i - 7])
+                .wrapping_add(y.rotate_right(17) ^ y.rotate_right(19) ^ (y >> 10));
+        }};
     }
+    expand!(16);
+    expand!(17);
+    expand!(18);
+    expand!(19);
+    expand!(20);
+    expand!(21);
+    expand!(22);
+    expand!(23);
+    expand!(24);
+    expand!(25);
+    expand!(26);
+    expand!(27);
+    expand!(28);
+    expand!(29);
+    expand!(30);
+    expand!(31);
+    expand!(32);
+    expand!(33);
+    expand!(34);
+    expand!(35);
+    expand!(36);
+    expand!(37);
+    expand!(38);
+    expand!(39);
+    expand!(40);
+    expand!(41);
+    expand!(42);
+    expand!(43);
+    expand!(44);
+    expand!(45);
+    expand!(46);
+    expand!(47);
+    expand!(48);
+    expand!(49);
+    expand!(50);
+    expand!(51);
+    expand!(52);
+    expand!(53);
+    expand!(54);
+    expand!(55);
+    expand!(56);
+    expand!(57);
+    expand!(58);
+    expand!(59);
+    expand!(60);
+    expand!(61);
+    expand!(62);
+    expand!(63);
+    // Avoid rematerializing the schedule solely for its final wipe.
+    let w = core::hint::black_box(w);
     let [mut a, mut b, mut c, mut d, mut e, mut f, mut g, mut h] = *state;
     // Rotating the register roles saves the seven state moves in each round.
     macro_rules! round {

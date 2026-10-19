@@ -249,6 +249,12 @@ buffer failure, repeated binding proof and full-buffer retry, and lets the first
 verified value seed its read tag. Tag hits retain the bounded span and the
 existing recovery checks.
 
+TrustZone build `0x0ADC` also unrolls SHA-256 schedule expansion. A placement
+hint avoids rebuilding the expanded schedule solely for its final wipe. The hint
+has no security role: the complete 64-word schedule and chaining state remain
+in `Secret`, and cleanup does not depend on optimization. Full MAC frames, fresh
+Root reads, rollback floors and persistent record formats are unchanged.
+
 TrustZone build `0x0ADB` fully unrolls the software SHA-256 rounds and places
 the unchanged HKDF-SHA256 and HMAC-DRBG helpers in Secure RX SRAM as well.
 The full 64-word schedule and chaining state remain in `Secret`. The complete

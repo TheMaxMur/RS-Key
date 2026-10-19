@@ -38,6 +38,12 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ## [Unreleased]
 
+- **bcdDevice → 0x0ADC:** Reduce shared SHA-256 and authenticated getInfo/OpenPGP
+  read latency by unrolling schedule expansion and avoiding a redundant schedule
+  copy. The complete schedule and chaining state remain wiped through `Secret`;
+  full hashes/MACs, fresh Root reads, rollback floors and cleanup before
+  publication are unchanged. Existing records upgrade without a reset.
+
 - **bcdDevice → 0x0ADB:** Reduce authenticated getInfo and OpenPGP latency with
   fully unrolled software SHA-256 rounds, Secure RX SRAM placement of the
   existing HKDF/DRBG helpers, and a full dead-stack sweep in 32-word groups.
