@@ -1,8 +1,8 @@
 # OpenPGP card
 
-Build `0x0AD9` speeds up reads through the shared storage backend while retaining
-full record verification and rollback protection. Existing keys and records
-remain compatible; the upgrade does not require a reset.
+TrustZone build `0x0ADA` reduces read latency through the shared storage backend
+while retaining full record verification and rollback protection. Existing keys
+and records remain compatible; the upgrade does not require a reset.
 
 Build `0x0AD8` also clears the complete Non-secure gateway reply buffer with
 volatile word stores, including byte edges, on normal completion and abandonment.

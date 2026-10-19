@@ -60,11 +60,12 @@ pub fn configure(out: &Path, memory: &mut String, code_size: u32, flash_size: u3
     memory.push_str(&format!(
         "ASSERT(LOADADDR(.data) + SIZEOF(.data) <= {nsc_start:#010x}, \"Secure image overlaps NSC\")\n",
     ));
+    // Keep the shared verifier instructions off the XIP path.
     memory.push_str(
         "SECTIONS {\n\
          .rsk_exec : ALIGN(32) {\n\
          __rsk_exec_start = .;\n\
-         KEEP(*(.data.bignum_hl .data.bignum_asm .data.sieve_step .data.ram_func))\n\
+         KEEP(*(.text.*rsk_sha256* .text._ZN10rsk_crypto3mac10HmacSha256*)) KEEP(*(.data.bignum_hl .data.bignum_asm .data.sieve_step .data.ram_func))\n\
          . = ALIGN(32); __rsk_exec_end = .;\n\
          } > RAM AT> FLASH\n\
          } INSERT BEFORE .data;\n\

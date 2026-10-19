@@ -249,6 +249,14 @@ buffer failure, repeated binding proof and full-buffer retry, and lets the first
 verified value seed its read tag. Tag hits retain the bounded span and the
 existing recovery checks.
 
+TrustZone build `0x0ADA` executes the unchanged SHA-256 compression/finalization and HMAC template functions
+from the existing Secure RX SRAM region. Trusted Reset copies this code together
+with the existing RAM routines before enabling the read-only executable mapping.
+The region grows by 1824 bytes on the Waveshare 4M test image, reducing the
+core0 stack span by the same amount; data, BSS and Non-secure RAM are unchanged.
+Full SHA-256 input hashing, MAC frames, fresh Root reads and both Secure stack
+sweeps retain their existing contracts. No keyed context or plaintext is cached.
+
 Build `0x0AD3` prepares one operation-local HMAC context for the
 full mounted binding and complete payload checks, using the prefix reuse from
 [RFC 2104 section 4](https://www.rfc-editor.org/rfc/rfc2104.html#section-4). The context stays in returned

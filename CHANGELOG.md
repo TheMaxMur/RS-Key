@@ -38,6 +38,11 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ## [Unreleased]
 
+- **bcdDevice → 0x0ADA:** Run the shared SHA-256 compression/finalization and HMAC template functions
+  from Secure RX SRAM in the TrustZone build to reduce getInfo and OpenPGP
+  read latency. Existing records, full hashes and MACs, fresh Root checks,
+  rollback floors and complete buffer/stack cleanup are unchanged.
+
 - **bcdDevice → 0x0AD9:** Accelerate the shared storage verifier, FIDO getInfo
   and OpenPGP reads with an eight-round software SHA-256 core. Full record
   hashing, MAC inputs, fresh Root checks and rollback floors stay unchanged;
