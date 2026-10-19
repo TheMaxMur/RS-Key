@@ -38,6 +38,11 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ## [Unreleased]
 
+- **bcdDevice → 0x0AD8:** Clear the complete Non-secure gateway reply buffer
+  with aligned volatile word stores. Every reply, abandoned session and dropped
+  pending future keeps the same full-buffer cleanup before ticket release.
+
+
 - **bcdDevice → 0x0AD7:** Clear both complete command response buffers with
   aligned volatile word stores and byte edges. The full array extents, cleanup
   on each command and dead-stack sweep before reply publication are preserved.

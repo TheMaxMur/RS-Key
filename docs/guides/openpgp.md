@@ -1,5 +1,9 @@
 # OpenPGP card
 
+Build `0x0AD8` also clears the complete Non-secure gateway reply buffer with
+volatile word stores, including byte edges, on normal completion and abandonment.
+The guard also clears it when a pending transport future is dropped.
+
 Build `0x0AD7` clears both complete command response buffers with aligned
 volatile word stores. Byte edges and remaining words are also cleared; every
 command retains the same full-buffer cleanup and dead-stack sweep.

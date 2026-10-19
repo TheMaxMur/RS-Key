@@ -565,16 +565,16 @@ covers = [
 [[assumption]]
 id = "PLAT-UNSAFE-016"
 class = "toolchain"
-statement = "The complete response-buffer wipe partitions exclusively borrowed initialized SRAM into disjoint byte edges and aligned u32 words, and volatile stores clear exactly that slice before the worker publishes a reply."
-discharge = "Read firmware/src/sweep.rs::wipe_bytes and both callers in firmware/src/worker.rs: every u32 bit pattern is valid, align_to_mut retains the original extent, and the head, tail, eight-word blocks and word remainder are all cleared. Read the linked ARM stores and publication ordering; crates/rsk-device/src/ctap_tests.rs and crates/rsk-device/src/ccid_tests.rs exercise both whole response arrays including their dirty tails. A source reading and host callback tests alone do not establish the linked stores on every board."
+statement = "The complete response-buffer wipe partitions exclusively borrowed initialized SRAM into disjoint byte edges and aligned u32 words, and volatile stores clear exactly that slice: Secure cleanup precedes worker reply publication, and Non-secure cleanup precedes ticket release."
+discharge = "Read firmware/src/sweep/buffer.rs::wipe_bytes, both callers in firmware/src/worker.rs and the Non-secure ReplyGuard in firmware/trustzone/nonsecure/src/reply.rs: every u32 bit pattern is valid, align_to_mut retains the original extent, and the head, tail, eight-word blocks and word remainder are all cleared. Read the linked ARM stores and publication ordering; crates/rsk-device/src/ctap_tests.rs and crates/rsk-device/src/ccid_tests.rs exercise both whole response arrays including their dirty tails. The Non-secure guard clears the same complete reply span on normal return, abandonment and future Drop before ticket release. The host harness firmware/trustzone/nonsecure/reply-tests.rs exercises alignments, canaries, errors and future destruction. Source readings and host tests alone do not establish the linked stores on every board."
 discharge_owner = "contributor"
 status = "pending"
 failure_direction = "memory-safety: an outward-rounded or aliased word store corrupts adjacent live data; confidentiality: a skipped edge, remainder or response tail retains command bytes"
 refines = ["PLAT-TOOLCHAIN-002"]
 covers = [
-  "unsafe:firmware/src/sweep.rs#block:bytes-align_to_mut-u32",
-  "unsafe:firmware/src/sweep.rs#block:core-ptr-write_volatile-byte",
-  "unsafe:firmware/src/sweep.rs#block:core-ptr-write_volatile-word",
+  "unsafe:firmware/src/sweep/buffer.rs#block:bytes-align_to_mut-u32",
+  "unsafe:firmware/src/sweep/buffer.rs#block:core-ptr-write_volatile-byte",
+  "unsafe:firmware/src/sweep/buffer.rs#block:core-ptr-write_volatile-word",
 ]
 
 [[assumption]]

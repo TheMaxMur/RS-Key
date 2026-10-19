@@ -20,7 +20,10 @@ mod keyboard;
 mod notify;
 #[cfg(feature = "test-hostile-access")]
 mod probe;
+mod reply;
 mod session;
+#[path = "../../../src/sweep/buffer.rs"]
+mod sweep_buffer;
 mod time;
 mod usb;
 
@@ -100,7 +103,7 @@ async fn exchange(kind: u32, cid: u32, data: &[u8], out: &mut [u8]) -> Reply {
     };
     let _pending = session::Pending::new(ticket, kind);
     let mut buffer = [0u8; rsk_usb::ctaphid::CTAP_MAX_MESSAGE + abi::REPLY_HEADER];
-    let mut reply = rsk_secret::WipeGuard::new(&mut buffer);
+    let mut reply = reply::ReplyGuard::new(&mut buffer);
     let len = loop {
         let observed = notify::generation();
         // SAFETY: the whole output slice is valid NS RAM for the gateway to fill.

@@ -30,7 +30,7 @@ flowchart TB
       e["per-core prime sieves (×3)"]
       e2["core1 stack limit (MSPLIM)"]
     end
-    subgraph sw["firmware/src/sweep.rs"]
+    subgraph sw["firmware/src/sweep.rs + sweep/buffer.rs"]
       s1["dead-stack sweep"]
       s2["residue probe (bench builds)"]
       s3["complete response buffers (×3)"]
@@ -469,10 +469,16 @@ TrustZone uses the existing fatal fence; normal builds do not promise the same c
 volatile store and loop step for every byte. Word stores require validated
 alignment, exclusive access and exact byte edges.
 
-*Containment:* `firmware/src/sweep.rs::wipe_bytes` lends exclusively borrowed SRAM
+*Containment:* `firmware/src/sweep/buffer.rs::wipe_bytes` lends exclusively borrowed SRAM
 to `align_to_mut::<u32>`. Every bit pattern is valid for either element type;
 the disjoint byte edges and aligned middle cover exactly the original slice.
 Volatile stores clear both byte edges, eight words per full pass and all remaining
 words, followed by a sequentially consistent compiler fence. The worker passes
 both complete response arrays after copying the reply; neither the buffer extent
 nor the existing dead-stack sweep and publication ordering changes.
+
+The Non-secure gateway uses the same primitive through a borrowed `ReplyGuard`.
+Its full 7612-byte span is cleared on normal completion, abandonment and future
+Drop, before releasing the pending ticket. The host reply-buffer harness covers alignments, byte edges, canaries, errors
+and pending-future destruction. These are three shared source
+sites compiled in both worlds; no new pointer primitive or smaller wipe is added.
