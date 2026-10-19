@@ -358,11 +358,15 @@ fn search(job: &Job) {
 /// keeps USB + keepalives flowing); core1 is parked again by the time this
 /// returns. `None` is the old `RsaStep::Failed`: an unusable size / failed
 /// modexp self-test, or key assembly failure.
+/// As [`run_rsa_search_progress`] with a no-op tick — the entry the button and
+/// touch builds use (the `display-keys` build drives the busy screen through
+/// the progress hook instead, so this wrapper is compiled out there).
+#[cfg(not(feature = "display-keys"))]
 pub fn run_rsa_search(nbits: usize, rng: &mut dyn rsk_sdk::Rng) -> Option<Box<RsaKey>> {
     run_rsa_search_progress(nbits, rng, &mut || {})
 }
 
-/// As [`run_rsa_search`], with an `on_tick` hook invoked once at the top of every
+/// As `run_rsa_search`, with an `on_tick` hook invoked once at the top of every
 /// search iteration. It is a pure observation point (it never touches the keygen,
 /// the core1 mailbox, or `rng`), so the trusted display can spin its "generating"
 /// indicator from it while the search blocks the panel — the only way to animate,

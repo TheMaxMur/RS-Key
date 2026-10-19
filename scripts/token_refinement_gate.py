@@ -588,7 +588,7 @@ def discovered_volatile(
     typed = re.compile(WHOLE_TYPED.format(state=state)) if state else None
     # `mem::replace(st, FidoState::new())` moves the same bits with no `=` in
     # sight. Scoped to the swap primitives naming the type, NOT to the type
-    # anywhere: `RefCell::new(FidoState::new())` at `firmware/src/main.rs:1167`
+    # anywhere: `RefCell::new(FidoState::new())` at `firmware/src/main.rs:1339`
     # BUILDS the one session cell at boot and replaces nothing, and a rule reading
     # `FidoState::new` alone owns it. Measured: this alternative adds 0 sites.
     swapped = re.compile(SWAP.format(state=state)) if state else None

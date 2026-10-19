@@ -107,38 +107,34 @@ fn service_head<D: DrawTarget<Color = Rgb565>>(
     )?;
     let tx = chip.x as i32 + chip.w as i32 + 11;
     let clip = Rect::new(tx as u16, y as u16, PANEL_W - 14 - tx as u16, 38);
-    // The relying party is attacker-chosen text: head-ellipsize (never hard-cut) so the
-    // registrable-domain *suffix* stays on screen, and force the marker when the label
-    // was already clamped, so a padded look-alike id can't hide the real domain behind
-    // the cut on the very screen meant to expose it.
+    // Both untrusted fields draw through the shared consent-line helpers, so the
+    // anti-look-alike rule (suffix kept, marker forced) has one implementation
+    // that the touchless confirm page also uses.
     if account.as_str().is_empty() {
-        text_right_ellipsized(
+        consent_primary(
             t,
-            rp.as_str(),
+            rp,
             EgPoint::new(tx, y + 19),
             Role::Strong,
             theme::TEXT,
             clip,
-            rp.truncated,
         )
     } else {
-        text_right_ellipsized(
+        consent_primary(
             t,
-            rp.as_str(),
+            rp,
             EgPoint::new(tx, y + 12),
             Role::Strong,
             theme::TEXT,
             clip,
-            rp.truncated,
         )?;
-        text_left_ellipsized(
+        consent_secondary(
             t,
-            account.as_str(),
+            account,
             EgPoint::new(tx, y + 28),
             Role::Body,
             theme::GREY,
             clip,
-            account.truncated,
         )
     }
 }

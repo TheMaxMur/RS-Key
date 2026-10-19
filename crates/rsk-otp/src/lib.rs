@@ -1003,6 +1003,70 @@ pub(crate) fn try_read_slot<S: Storage>(
     Ok(seal::try_seal_read(dev, fs, KeyFid::new(fid), buf)?.filter(|&n| n >= CONFIG_SIZE))
 }
 
+/// The kind of one programming slot, as the no-host menu shows it. Derived
+/// from the config's flag bits only — never from its secret bytes, which stay
+/// in the unseal scratch and are zeroized with no copy made.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum SlotKind {
+    /// No readable config (never programmed, or sealed under an arm this
+    /// device can no longer open).
+    Empty,
+    /// A typed Yubico-OTP ticket slot (short/long press).
+    YubicoOtp,
+    /// A static-password typing slot.
+    StaticPassword,
+    /// A challenge-response slot (Yubico or HMAC-SHA1).
+    ChallengeResponse,
+    /// An OATH-HOTP typing slot.
+    OathHotp,
+}
+
+/// One programming slot's public state for the display.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct SlotStatus {
+    pub kind: SlotKind,
+    /// Whether a press gates the slot's output (every typing slot demands
+    /// one; a challenge-response slot only when programmed with the button
+    /// trigger).
+    pub touch: bool,
+}
+
+/// Snapshot the four programming slots' kinds and press requirements — the
+/// read-only counterpart of the command handlers' `read_slot_m`, sharing its
+/// unseal path (device identity, scratch, zeroize). Each slot is decrypted in
+/// turn and only its type flags are reported; the secrets never surface.
+pub fn slot_status<S: Storage>(dev: &Device, fs: &mut Fs<S>) -> [SlotStatus; 4] {
+    let mut out = [SlotStatus {
+        kind: SlotKind::Empty,
+        touch: false,
+    }; 4];
+    let mut buf = [0u8; SLOT_SIZE];
+    for (i, fid) in (EF_OTP_SLOT1..=EF_OTP_SLOT_LAST).enumerate() {
+        if try_read_slot(dev, fs, fid, &mut buf)
+            .ok()
+            .flatten()
+            .is_none()
+        {
+            continue;
+        }
+        let tkt = buf[OFF_TKT_FLAGS];
+        let cfg = buf[OFF_CFG_FLAGS];
+        out[i] = SlotStatus {
+            kind: if is_chal_resp_slot(tkt, cfg) {
+                SlotKind::ChallengeResponse
+            } else if tkt & TKT_OATH_HOTP != 0 {
+                SlotKind::OathHotp
+            } else if cfg & CFG_STATIC_TICKET != 0 {
+                SlotKind::StaticPassword
+            } else {
+                SlotKind::YubicoOtp
+            },
+            touch: slot_needs_touch(tkt, cfg),
+        };
+    }
+    out
+}
+
 /// Boot pass: bring every slot to a seal under the current kbase arm. A blob that
 /// already unseals is left alone; a slot sealed under the pre-OTP (NO-OTP) arm is
 /// recovered and re-sealed under the OTP arm once the fuse key is present; a

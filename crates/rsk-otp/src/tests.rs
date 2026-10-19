@@ -2242,3 +2242,104 @@ fn boot_bump_retries_a_refused_write_and_pins_what_it_cannot_close() {
         "RESIDUAL CLOSED: update docs/threat-model.md's TM-HOST-OTP-REPLAY"
     );
 }
+
+#[test]
+fn slot_status_kind_follows_the_config_flags() {
+    // The no-host menu's read-only slot snapshot: one slot per kind, sealed
+    // the way command programming seals them, then reported by flags alone.
+    let otp_key = [0x55u8; 32];
+    let dev = Device {
+        serial_hash: &SERIAL_HASH,
+        serial_id: &SERIAL,
+        otp_key: Some(&otp_key),
+    };
+    let mut fs = new_fs();
+    let mut rng = CountRng(1);
+
+    // Slot 1: a standard typed Yubico-OTP ticket slot.
+    let yubico = build_config(
+        b"fix",
+        &[1; 6],
+        &[2; 16],
+        &[0; 6],
+        0,
+        TKT_APPEND_CR,
+        CFG_SHORT_TICKET,
+    );
+    // Slot 2: a static-password typing slot.
+    let static_cfg = build_config(
+        b"st",
+        &[3; 6],
+        &[4; 16],
+        &[0; 6],
+        0,
+        TKT_APPEND_CR,
+        CFG_STATIC_TICKET,
+    );
+    // Slot 4: an OATH-HOTP typing slot.
+    let hotp = build_config(
+        b"ho",
+        &[5; 6],
+        &[6; 16],
+        &[0; 6],
+        0,
+        TKT_OATH_HOTP,
+        CFG_OATH_HOTP8,
+    );
+    // Slot 3: a Yubico challenge-response slot (no button trigger).
+    let chal = chalresp_config(&[0xAB; 20], &[0; 6], 0);
+
+    let mut fids = [EF_OTP_SLOT1; 4];
+    for i in 1..4 {
+        fids[i] = fids[i - 1] + 1;
+    }
+    assert!(seal::seal_put(
+        &dev,
+        &mut fs,
+        &mut rng,
+        KeyFid::new(fids[0]),
+        &yubico
+    ));
+    assert!(seal::seal_put(
+        &dev,
+        &mut fs,
+        &mut rng,
+        KeyFid::new(fids[1]),
+        &static_cfg
+    ));
+    assert!(seal::seal_put(
+        &dev,
+        &mut fs,
+        &mut rng,
+        KeyFid::new(fids[2]),
+        &chal
+    ));
+    assert!(seal::seal_put(
+        &dev,
+        &mut fs,
+        &mut rng,
+        KeyFid::new(fids[3]),
+        &hotp
+    ));
+
+    let s = slot_status(&dev, &mut fs);
+    assert_eq!(s[0].kind, SlotKind::YubicoOtp);
+    assert!(s[0].touch, "a typed slot always demands the press");
+    assert_eq!(s[1].kind, SlotKind::StaticPassword);
+    assert_eq!(s[2].kind, SlotKind::ChallengeResponse);
+    assert!(!s[2].touch, "challenge slot without the button trigger");
+    assert_eq!(s[3].kind, SlotKind::OathHotp);
+}
+
+#[test]
+fn slot_status_reports_unprogrammed_slots_as_empty() {
+    let otp_key = [0x55u8; 32];
+    let dev = Device {
+        serial_hash: &SERIAL_HASH,
+        serial_id: &SERIAL,
+        otp_key: Some(&otp_key),
+    };
+    let mut fs = new_fs();
+    let s = slot_status(&dev, &mut fs);
+    assert!(s.iter().all(|x| x.kind == SlotKind::Empty && !x.touch));
+}

@@ -146,6 +146,23 @@ impl rsk_device::Hooks<FlashStorage> for DeviceHooks {
     /// `Some` either way: this board *has* an accelerator, so a failed search is a
     /// failed command, not a fall-through to the single-core path.
     fn rsa_search(&mut self, nbits: usize, rng: &mut dyn rsk_sdk::Rng) -> rsk_device::SearchResult {
-        Some(crate::core1::run_rsa_search(nbits, rng))
+        #[cfg(feature = "display-keys")]
+        {
+            // Keygen holds the thread executor for its whole run, freezing the
+            // ambient status task — so the busy spinner is driven from the
+            // search's own progress tick (see `display_keys::keygen_tick`).
+            crate::display_keys::keygen_enter();
+            let key = crate::core1::run_rsa_search_progress(
+                nbits,
+                rng,
+                &mut crate::display_keys::keygen_tick,
+            );
+            crate::display_keys::keygen_leave();
+            Some(key)
+        }
+        #[cfg(not(feature = "display-keys"))]
+        {
+            Some(crate::core1::run_rsa_search(nbits, rng))
+        }
     }
 }

@@ -77,6 +77,49 @@ pub fn slot_name(slot: u8) -> &'static str {
     }
 }
 
+/// Buffer size [`slot_label`] composes into — the longest label plus slack,
+/// pinned at compile time so a longer name cannot silently overflow a caller's
+/// array.
+pub const SLOT_LABEL_MAX: usize = 16;
+const _: () = {
+    assert!(b"F9 Attestation".len() <= SLOT_LABEL_MAX);
+    assert!(b"9E Card Auth".len() <= SLOT_LABEL_MAX);
+    assert!(b"Retired #20".len() <= SLOT_LABEL_MAX);
+};
+
+/// The compact slot label the consent prompt shows — the key reference plus a
+/// short name: `"9A Auth"`, `"Retired #1"`, `"F9 Attestation"`. The touch
+/// build's PIV detail screens show the same strings (rsk-ui's
+/// `render/applets.rs`); keep the two mappings in step. `buf` holds the
+/// composed label ([`SLOT_LABEL_MAX`] bytes).
+pub fn slot_label(slot: u8, buf: &mut [u8; SLOT_LABEL_MAX]) -> &str {
+    let name: &[u8] = match slot {
+        SLOT_AUTHENTICATION => b"9A Auth",
+        SLOT_SIGNATURE => b"9C Sign",
+        SLOT_KEYMGM => b"9D Key Mgmt",
+        SLOT_CARDAUTH => b"9E Card Auth",
+        SLOT_CARDMGM => b"9B Mgmt",
+        SLOT_ATTESTATION => b"F9 Attestation",
+        s if (SLOT_RETIRED_FIRST..=SLOT_RETIRED_LAST).contains(&s) => {
+            // "Retired #N", numbered from 0x81 — the touch build's numbering.
+            const PRE: &[u8] = b"Retired #";
+            buf[..PRE.len()].copy_from_slice(PRE);
+            let n = s - (SLOT_RETIRED_FIRST - 1);
+            let mut end = PRE.len();
+            if n >= 10 {
+                buf[end] = b'0' + n / 10;
+                end += 1;
+            }
+            buf[end] = b'0' + n % 10;
+            end += 1;
+            return core::str::from_utf8(&buf[..end]).unwrap_or("?");
+        }
+        _ => b"PIV slot",
+    };
+    buf[..name.len()].copy_from_slice(name);
+    core::str::from_utf8(&buf[..name.len()]).unwrap_or("?")
+}
+
 /// A short ASCII label for a PIV algorithm id (`ALGO_*`).
 pub fn algo_name(algo: u8) -> &'static str {
     match algo {

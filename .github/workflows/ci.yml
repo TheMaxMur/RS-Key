@@ -272,6 +272,11 @@ jobs:
           - name: board-abrobot-16m
             args: ""
             env: "BOARD=abrobot-16m"
+          # The GEEK is the touchless screen + button form: its board file plus
+          # the `display-keys` feature (mutually exclusive with `display`).
+          - name: board-waveshare-geek
+            args: "--features display-keys"
+            env: "BOARD=waveshare-geek"
           # The strict admin-write posture (historical default). The permissive
           # default is what every other row builds; smoke-build this so the
           # strict-gated code keeps compiling.

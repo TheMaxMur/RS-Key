@@ -49,7 +49,7 @@ CONSTANTS
     \* authentication open, so the budget can be burned through the door that
     \* does not close.
     BugFailedChangeKeepsStatus,
-    \* crates/rsk-piv/src/auth.rs:113-117 -- the PIN-policy-ALWAYS slot spends
+    \* crates/rsk-piv/src/auth.rs:117-121 -- the PIN-policy-ALWAYS slot spends
     \* its freshness, so one VERIFY authorises one key operation.
     BugPinFreshNotSpent,
     \* The selection clamp removed: `pin_fresh` outlives the `has_pin` status it
@@ -417,7 +417,7 @@ OathRemoveCode ==
 
 \* PIV's 9B mutual authenticate. Its own status, and it authorises the admin
 \* surface only -- never a key operation, which is what `pin_satisfied`
-\* (crates/rsk-piv/src/auth.rs:57-65) tests instead.
+\* (crates/rsk-piv/src/auth.rs:61-69) tests instead.
 PivMgmAuth(ok) ==
     /\ sel = Piv
     /\ held' = [held EXCEPT !["pivMgm"] = ok]
@@ -499,7 +499,7 @@ AdminOp(a) ==
 
 \* A private-key GENERAL AUTHENTICATE at a PIN-policy-ALWAYS slot: `pin_satisfied`
 \* is `has_pin && pin_fresh` there, and the operation SPENDS the freshness
-\* (crates/rsk-piv/src/auth.rs:113-117) so one VERIFY buys one signature. The
+\* (crates/rsk-piv/src/auth.rs:117-121) so one VERIFY buys one signature. The
 \* management-key status opens nothing here -- it is the admin surface's.
 PivKeyOpGuard  == IF BugPinFreshNotSpent THEN held["pivPin"]
                                          ELSE held["pivPin"] /\ fresh

@@ -25,7 +25,7 @@ use embassy_rp::pio::InterruptHandler as PioIrq;
 // from the phy record (PicoForge); a `none` build pulls in none of them. DMA_CH0
 // and the PIO0/DMA IRQs stay bound unconditionally (the type is used by
 // `bind_interrupts!` below — harmless when no backend uses it).
-#[cfg(any(feature = "display", not(led_kind = "none")))]
+#[cfg(any(feature = "display", feature = "display-keys", not(led_kind = "none")))]
 use embassy_rp::pio::Pio;
 #[cfg(not(led_kind = "none"))]
 use embassy_rp::pio_programs::ws2812::{PioWs2812, PioWs2812Program};
@@ -45,10 +45,20 @@ use rsk_usb::ccid::{ATR_RSKEY, ATR_YUBIKEY, Ccid};
 use rsk_usb::ctaphid::{CtapHid, FIDO_REPORT_DESCRIPTOR};
 
 mod core1;
+// The panel transport (PIO display + retained-damage Panel) is shared by the
+// touchscreen `display` build and the button-driven `display-keys` build; what
+// sits above it (the touch flow vs the key flow) differs per feature.
 #[cfg(feature = "display")]
 mod display;
+#[cfg(feature = "display-keys")]
+mod display_keys;
+#[cfg(any(feature = "display", feature = "display-keys"))]
+mod display_panel;
 mod flash_storage;
 mod handler;
+#[cfg(feature = "display-keys")]
+#[cfg_attr(feature = "no-touch", allow(dead_code))]
+mod keys_menu;
 mod led;
 mod otp_kbd;
 mod otp_keys;
@@ -69,10 +79,22 @@ compile_error!(
      and its backlight uses GPIO16); build with `LED_KIND=none ... --features \
      display` — the `firmware-display` nix flavor sets this for you"
 );
+// The two screen builds are mutually exclusive: `display` drives the panel from
+// a touch pad, `display-keys` from a physical button — never both.
+#[cfg(all(feature = "display", feature = "display-keys"))]
+compile_error!(
+    "`display` and `display-keys` are mutually exclusive; pick the build that \
+     matches the board's input"
+);
+#[cfg(all(feature = "display-keys", not(led_kind = "none")))]
+compile_error!(
+    "the `display-keys` build requires LED_KIND=none (the panel replaces the LED); \
+     build with `LED_KIND=none ... --features display-keys`"
+);
 
 use flash_storage::FLASH_SIZE;
 use handler::{FidoRng, Store};
-#[cfg(not(feature = "display"))]
+#[cfg(not(any(feature = "display", feature = "display-keys")))]
 use presence::ButtonPresence;
 use worker::{ClientCcid, ClientCtap, Worker};
 
@@ -170,15 +192,16 @@ const BUILD_LED_PIN: u8 = env_u16(env!("PK_LED_PIN")) as u8;
 const BUILD_LED_POWER_ENABLED: bool = env_u16(env!("PK_LED_POWER_ENABLED")) != 0;
 #[cfg(not(led_kind = "none"))]
 const BUILD_LED_POWER_PIN: u8 = env_u16(env!("PK_LED_POWER_PIN")) as u8;
+#[cfg(not(feature = "display-keys"))]
 const BUILD_PRESENCE_IS_GPIO: bool = env_u16(env!("PK_PRESENCE_IS_GPIO")) != 0;
-#[cfg(not(feature = "display"))]
+#[cfg(not(any(feature = "display", feature = "display-keys")))]
 const BUILD_PRESENCE_PIN: u8 = env_u16(env!("PK_PRESENCE_PIN")) as u8;
-#[cfg(not(feature = "display"))]
+#[cfg(not(any(feature = "display", feature = "display-keys")))]
 const BUILD_PRESENCE_ACTIVE_HIGH: bool = env_u16(env!("PK_PRESENCE_ACTIVE_HIGH")) != 0;
 
 // Active-high polarity only applies to a GPIO presence button (BOOTSEL has a fixed
 // sense); flag a stray `PRESENCE_ACTIVE_HIGH` set without a GPIO `PRESENCE_PIN`.
-#[cfg(not(feature = "display"))]
+#[cfg(not(any(feature = "display", feature = "display-keys")))]
 const _: () = assert!(
     !BUILD_PRESENCE_ACTIVE_HIGH || BUILD_PRESENCE_IS_GPIO,
     "PRESENCE_ACTIVE_HIGH only applies with a GPIO PRESENCE_PIN"
@@ -213,48 +236,62 @@ const _: () = assert!(
     "WAKE_PIN collides with an LCD/touch GPIO (10..=18) owned by the display build"
 );
 // Display GPIOs — defaults for the Waveshare RP2350-Touch-LCD-2.8.
-// Override via BOARD=<name> or individual PK_DISPLAY_* env vars.
-#[cfg(feature = "display")]
+// Override via BOARD=<name> or individual PK_DISPLAY_* env vars. Shared by the
+// `display` (touch) and `display-keys` (button) panel builds; the touch-only
+// knobs below (PWM slice/channel, I2C, wake button) stay `display`-gated.
+#[cfg(any(feature = "display", feature = "display-keys"))]
 const BUILD_DISPLAY_SPI_FREQ_HZ: u32 = env_u32(env!("PK_DISPLAY_SPI_FREQ_HZ"));
-/// The display build's system clock. The panel's PIO program spends two instructions
+/// The display builds' system clock. The panel's PIO program spends two instructions
 /// per serial bit, so `clk_sys` has to be exactly twice `display.spi_freq_hz` for the
 /// divider to be 1 — which is what puts this above the RP2350's rated 150 MHz. The
 /// trade is written down in docs/limitations.md; the const assert below is what stops
-/// a board file from moving one half of it without the other.
-#[cfg(feature = "display")]
+/// a board file from moving one half of it without the other. The GEEK's
+/// `display-keys` panel runs the same 80 MHz/160 MHz pair (boards/waveshare-geek.toml).
+#[cfg(any(feature = "display", feature = "display-keys"))]
 const BUILD_DISPLAY_SYS_CLOCK_HZ: u32 = 160_000_000;
 
-#[cfg(feature = "display")]
+#[cfg(any(feature = "display", feature = "display-keys"))]
 const _: () = assert!(
     BUILD_DISPLAY_SYS_CLOCK_HZ == BUILD_DISPLAY_SPI_FREQ_HZ * 2,
     "display.spi_freq_hz must be exactly half the system clock: the PIO emits one bit \
      per two cycles, and any other ratio needs a divider the transport does not set"
 );
-#[cfg(feature = "display")]
+#[cfg(any(feature = "display", feature = "display-keys"))]
 const BUILD_DISPLAY_CS: u8 = env_u16(env!("PK_DISPLAY_CS")) as u8;
-#[cfg(feature = "display")]
+#[cfg(any(feature = "display", feature = "display-keys"))]
 const BUILD_DISPLAY_DC: u8 = env_u16(env!("PK_DISPLAY_DC")) as u8;
-#[cfg(feature = "display")]
+#[cfg(any(feature = "display", feature = "display-keys"))]
 const BUILD_DISPLAY_RST: u8 = env_u16(env!("PK_DISPLAY_RST")) as u8;
-#[cfg(feature = "display")]
+#[cfg(any(feature = "display", feature = "display-keys"))]
 const BUILD_DISPLAY_BL_PIN: u8 = env_u16(env!("PK_DISPLAY_BL_PIN")) as u8;
 #[cfg(feature = "display")]
 const BUILD_DISPLAY_BL_PWM_SLICE: u8 = env_u16(env!("PK_DISPLAY_BL_PWM_SLICE")) as u8;
 #[cfg(feature = "display")]
 const BUILD_DISPLAY_BL_PWM_CHANNEL: u8 = env_u16(env!("PK_DISPLAY_BL_PWM_CHANNEL")) as u8;
-#[cfg(feature = "display")]
+#[cfg(any(feature = "display", feature = "display-keys"))]
 const BUILD_DISPLAY_TP_RST: u8 = env_u16(env!("PK_DISPLAY_TP_RST")) as u8;
 #[cfg(feature = "display")]
 const BUILD_DISPLAY_I2C_FREQ_HZ: u32 = env_u32(env!("PK_DISPLAY_I2C_FREQ_HZ"));
-#[cfg(feature = "display")]
+#[cfg(any(feature = "display", feature = "display-keys"))]
 pub(crate) const BUILD_DISPLAY_INVERT_COLORS: bool = env_u16(env!("PK_DISPLAY_INVERT_COLORS")) != 0;
-#[cfg(feature = "display")]
+#[cfg(any(feature = "display", feature = "display-keys"))]
 pub(crate) const BUILD_DISPLAY_COLOR_ORDER: u8 = env_u16(env!("PK_DISPLAY_COLOR_ORDER")) as u8;
+/// ST7789 MADCTL scan-direction bits (MY|MX|MV) — 0 for the touch build's
+/// portrait panel; 0x70 for the GEEK's landscape 1.14" module.
+#[cfg(any(feature = "display", feature = "display-keys"))]
+pub(crate) const BUILD_DISPLAY_MADCTL_SCAN: u8 = env_u16(env!("PK_DISPLAY_MADCTL_SCAN")) as u8;
+/// GRAM window offset for partial-glass modules (see `display_panel`).
+#[cfg(any(feature = "display", feature = "display-keys"))]
+pub(crate) const BUILD_DISPLAY_WIN_OFF: (u16, u16) = (
+    env_u16(env!("PK_DISPLAY_WIN_X")),
+    env_u16(env!("PK_DISPLAY_WIN_Y")),
+);
 
 // Display control GPIOs are board-configurable and claimed via AnyPin::steal
 // (CS/DC/RST/TP_RST) or Pwm::new_output_* (BL); PIO owns 10/11 and I2C1 owns 6/7.
-// Reject a pad owned by two drivers at compile time (no runtime guard).
-#[cfg(feature = "display")]
+// Reject a pad owned by two drivers at compile time (no runtime guard). Shared
+// by both panel builds; the wake-button overlap check is touch-build-only.
+#[cfg(any(feature = "display", feature = "display-keys"))]
 const _: () = {
     const DISPLAY_CTLS: &[u8] = &[
         BUILD_DISPLAY_CS,
@@ -296,6 +333,7 @@ const _: () = {
         i += 1;
     }
 
+    #[cfg(feature = "display")]
     if BUILD_WAKE_ENABLED {
         let mut i = 0;
         while i < DISPLAY_CTLS.len() {
@@ -341,7 +379,7 @@ const _: () = assert!(
             BUILD_DISPLAY_BL_PWM_SLICE,
             BUILD_DISPLAY_BL_PWM_CHANNEL
         ),
-        (16, 0, 0) | (17, 0, 1) | (18, 1, 0) | (19, 1, 1) | (20, 2, 0) | (21, 2, 1)
+        (16, 0, 0) | (17, 0, 1) | (18, 1, 0) | (19, 1, 1) | (20, 2, 0) | (21, 2, 1) | (13, 6, 1)
     ),
     "unsupported backlight PWM config (BL_PIN, SLICE, CHANNEL) — \
      see the Pwm::new_output_* match in main.rs for the supported set"
@@ -358,7 +396,7 @@ const BUILD_USR_LED_ACTIVE_HIGH: bool = env_u16(env!("PK_USR_LED_ACTIVE_HIGH")) 
 
 // USR_LED_PIN must own its pad — reject a build that aims it at any pin another
 // driver already claims, each check gated to where that pin exists.
-#[cfg(not(feature = "display"))]
+#[cfg(not(any(feature = "display", feature = "display-keys")))]
 const _: () = assert!(
     !(BUILD_USR_LED_ENABLED && BUILD_PRESENCE_IS_GPIO && BUILD_USR_LED_PIN == BUILD_PRESENCE_PIN),
     "USR_LED_PIN must not equal a GPIO PRESENCE_PIN"
@@ -450,6 +488,8 @@ static PHY_MANUFACTURER: StaticCell<[u8; 64]> = StaticCell::new();
 /// invariant as FS/RNG above — borrows never span `.await`.
 #[cfg(feature = "display")]
 static UI: StaticCell<RefCell<display::Ui>> = StaticCell::new();
+#[cfg(feature = "display-keys")]
+static KEY_UI: StaticCell<display_keys::SharedPanel> = StaticCell::new();
 
 struct SendUsb(UsbDevice<'static, Drv>);
 unsafe impl Send for SendUsb {}
@@ -522,7 +562,7 @@ async fn main(spawner: Spawner) {
     arm_stack_limit();
 
     let mut config = embassy_rp::config::Config::default();
-    #[cfg(feature = "display")]
+    #[cfg(any(feature = "display", feature = "display-keys"))]
     {
         config.clocks = embassy_rp::clocks::ClockConfig::system_freq(BUILD_DISPLAY_SYS_CLOCK_HZ)
             .expect("the display system clock must have valid PLL parameters");
@@ -613,6 +653,10 @@ async fn main(spawner: Spawner) {
     // Boot is the one place the firmware needs the MKEK's value rather than a way
     // to read it, and this block is that place: the read dies at its closing brace,
     // and everything past it carries only `mkek_source`.
+    // The screen builds defer the hardening lap past the MKEK window (see below),
+    // so they record only its gate here.
+    #[cfg(feature = "display-keys")]
+    let lap_needed;
     {
         let mkek = read_fused(mkek_source);
         let dev = Device {
@@ -642,8 +686,15 @@ async fn main(spawner: Spawner) {
         // `put` — latches the marker anyway, and the boot that finally migrates that
         // record finds the lap gated shut for the life of the key. The re-arm costs
         // nothing at this position: it clears the marker the lap below re-latches.
+        // The display-keys build defers the lap to the panel (lap_needed below): the
+        // ~30 s stall shows a working page instead of a black panel.
+        #[cfg(not(feature = "display-keys"))]
         if mkek.is_some() {
             rsk_fs::run_at_rest_lap(&mut fs);
+        }
+        #[cfg(feature = "display-keys")]
+        {
+            lap_needed = mkek.is_some() && !fs.has_data(rsk_fido::consts::EF_HARDENED);
         }
     }
     // PHY carries the boot-default LED brightness + steady (PicoForge's global LED
@@ -714,7 +765,11 @@ async fn main(spawner: Spawner) {
     config.max_power = 100;
     config.max_packet_size_0 = 64;
     // bcdDevice build counter; also surfaced on the trusted-display Firmware screen.
-    let device_release: u16 = 0x09DA;
+    // 0x09DE: the panel helper hands on the `Peri` its steal returns, so the
+    // `display-keys` flavor compiles (refactor, no behaviour change). (0x09DD
+    // is the idle menu, and 0x09DC the helper those pads go through, the
+    // commit this one sits on.)
+    let device_release: u16 = 0x09DE;
     config.device_release = device_release;
 
     let mut builder = Builder::new(
@@ -1102,6 +1157,7 @@ async fn main(spawner: Spawner) {
                 (19, 1, 1) => Pwm::new_output_b(p.PWM_SLICE1, p.PIN_19, cfg),
                 (20, 2, 0) => Pwm::new_output_a(p.PWM_SLICE2, p.PIN_20, cfg),
                 (21, 2, 1) => Pwm::new_output_b(p.PWM_SLICE2, p.PIN_21, cfg),
+                (13, 6, 1) => Pwm::new_output_b(p.PWM_SLICE6, p.PIN_13, cfg),
                 _ => {
                     // Guarded by the const assert below — unreachable at runtime,
                     // kept so the match stays exhaustive over (pin, slice, channel).
@@ -1144,12 +1200,109 @@ async fn main(spawner: Spawner) {
         spawner.spawn(display::status_task(ui).unwrap());
         ui
     };
+
+    // Touchless (`display-keys`) build: the same PIO panel transport, but the
+    // presence source is the BOOTSEL button and the screen shows the status wash
+    // + one-key confirm pages (see `display_keys`). The backlight is driven high
+    // The menu's persisted config (entry delay + screen direction) loads before
+    // the panel below is assembled, so the screen can come up already flipped.
+    #[cfg(feature = "display-keys")]
+    keys_menu::load_menu_conf(&mut fs_ref.borrow_mut());
+    // as a plain GPIO — this build has no brightness menu, so no PWM is wired.
+    #[cfg(feature = "display-keys")]
+    let display_ui: &'static display_keys::SharedPanel = {
+        use embassy_rp::gpio::{Level, Output};
+
+        let Pio {
+            mut common, sm0, ..
+        } = Pio::new(p.PIO0, Irqs);
+        let spi = display_panel::PioDisplayTx::new(
+            &mut common,
+            sm0,
+            p.PIN_10,
+            p.PIN_11,
+            p.DMA_CH0,
+            Irqs,
+            BUILD_DISPLAY_SPI_FREQ_HZ,
+        );
+        // The panel's build-configurable control pads, through one helper: the
+        // `display` build above steals the same CS/DC/RST pads, and two
+        // byte-identical sites are two the registry cannot name apart.
+        fn panel_pad(pin: u8) -> embassy_rp::Peri<'static, embassy_rp::gpio::AnyPin> {
+            // Safety: the pads are proven disjoint from every other driver's pins by
+            // the compile-time asserts above, and LED_KIND=none (required by
+            // `display-keys`) compiles out the LED block sharing PIO0/DMA_CH0.
+            unsafe { embassy_rp::gpio::AnyPin::steal(pin) }
+        }
+        let cs = Output::new(panel_pad(BUILD_DISPLAY_CS), Level::High);
+        let dc = Output::new(panel_pad(BUILD_DISPLAY_DC), Level::Low);
+        let rst = Output::new(panel_pad(BUILD_DISPLAY_RST), Level::High);
+        let bl = Output::new(panel_pad(BUILD_DISPLAY_BL_PIN), Level::High);
+        let mut damage_key_bytes = [0u8; 16];
+        rsk_sdk::Rng::fill(&mut *rng_ref.borrow_mut(), &mut damage_key_bytes);
+        let damage_key = [
+            u64::from_le_bytes(damage_key_bytes[..8].try_into().unwrap()),
+            u64::from_le_bytes(damage_key_bytes[8..].try_into().unwrap()),
+        ];
+        let invert = if BUILD_DISPLAY_INVERT_COLORS {
+            mipidsi::options::ColorInversion::Inverted
+        } else {
+            mipidsi::options::ColorInversion::Normal
+        };
+        let color_order = match BUILD_DISPLAY_COLOR_ORDER {
+            1 => mipidsi::options::ColorOrder::Bgr,
+            _ => mipidsi::options::ColorOrder::Rgb,
+        };
+        let mut panel = display_panel::Panel::new(
+            spi,
+            cs,
+            dc,
+            rst,
+            damage_key,
+            invert,
+            color_order,
+            BUILD_DISPLAY_MADCTL_SCAN,
+            BUILD_DISPLAY_WIN_OFF,
+        );
+        // A persisted 180° screen-direction choice is applied right after the
+        // panel init (the setting's editor applies it live too); the first
+        // painted frame is then already the right way up.
+        if keys_menu::screen_flip() {
+            panel.set_scan_flip(true);
+        }
+        let ui = KEY_UI.init(RefCell::new(display_keys::KeysBoard::new(panel, bl)));
+        // Long-running worker work (RSA keygen) draws the busy spinner through
+        // this handle while it holds the thread executor. `status_task` is
+        // spawned below, once the presence backend it drives exists.
+        display_keys::register_screen(ui);
+        ui
+    };
+    // The hardening lap is a ~30 s stall that a screen build must not hide behind
+    // a black panel: a changed OpenPGP PIN re-arms it (`request_rescrub`), so
+    // users meet it mid-life, not only at provisioning. Paint the boot-check
+    // page (the bare-word layout every status page speaks), run the lap, then
+    // hand the panel back: `status_task` repaints the live status on its first
+    // tick once main yields. The interrupt executor answers USB throughout, so
+    // enumeration is unaffected; applet commands wait behind the lap, as they
+    // would behind any long worker dispatch.
+    #[cfg(feature = "display-keys")]
+    if lap_needed {
+        if let Ok(mut board) = display_ui.try_borrow_mut() {
+            use crate::display_panel::Panel;
+            let panel: &mut Panel = &mut board;
+            let _ = rsk_ui::render_keys_checking(panel);
+        }
+        let mut fsb = fs_ref.borrow_mut();
+        rsk_fs::run_at_rest_lap(&mut fsb);
+        drop(fsb);
+        display_keys::request_repaint();
+    }
     core1::spawn(p.CORE1);
 
     // Standard key: BOOTSEL by default, or a dedicated `PRESENCE_PIN` GPIO button.
     // Display build: the touchscreen is the presence source (a `PRESENCE_PIN` is
     // rejected at compile time — see the `BUILD_PRESENCE_IS_GPIO` assert above).
-    #[cfg(not(feature = "display"))]
+    #[cfg(not(any(feature = "display", feature = "display-keys")))]
     let presence_ref = {
         let presence = if BUILD_PRESENCE_IS_GPIO {
             ButtonPresence::new_gpio(BUILD_PRESENCE_PIN, BUILD_PRESENCE_ACTIVE_HIGH)
@@ -1160,6 +1313,25 @@ async fn main(spawner: Spawner) {
     };
     #[cfg(feature = "display")]
     let presence_ref = PRESENCE.init(RefCell::new(display::TouchPresence::new(display_ui)));
+    #[cfg(feature = "display-keys")]
+    let presence_ref = PRESENCE.init(RefCell::new(display_keys::KeysPresence::new(
+        display_ui,
+        presence::Button::Bootsel(p.BOOTSEL),
+    )));
+    // The ambient task now has everything it needs: the panel, the presence
+    // backend (its button), the shared flash, and the device identity the
+    // no-host menu reads. Spawned after the presence init — the hardening lap
+    // above may still be running, but no task polls until main yields.
+    #[cfg(feature = "display-keys")]
+    {
+        let dev = keys_menu::DeviceKeys {
+            serial_id,
+            serial_hash,
+            mkek_source,
+            release: device_release,
+        };
+        spawner.spawn(display_keys::status_task(display_ui, dev, fs_ref, presence_ref).unwrap());
+    }
     let platform_ref = RESCUE_PLATFORM.init(RefCell::new(rescue_platform::RescuePlatform));
     let hooks_ref = DEVICE_HOOKS.init(RefCell::new(handler::DeviceHooks));
     let (kvm, kvc) = (kvmain_range(), kvcnt_range());

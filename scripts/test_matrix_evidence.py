@@ -211,12 +211,12 @@ def test_the_compile_only_list_still_has_the_subcommands_in_it():
         if (found := matrix_gate.CARGO_SUB.search(command))
     ]
     assert subcommands.count("check") == 0, "a `cargo check` row exists — drive it here"
-    assert subcommands.count("doc") == 8, subcommands.count("doc")
+    assert subcommands.count("doc") == 9, subcommands.count("doc")
 
 
 def test_a_covered_cell_resting_on_a_rustdoc_row_is_refused(tree, capsys):
     """The member that was decorative only because no `rustdoc` row happens to
-    pin a column's features. Eight of them exist in the real tree; pin one and
+    pin a column's features. Nine of them exist in the real tree; pin one and
     the word `covered` rests on rustdoc having accepted the file."""
     swap_evidence(
         tree,

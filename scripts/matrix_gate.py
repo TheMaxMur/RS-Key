@@ -4,7 +4,7 @@
 """Hold the property × build-configuration matrix against the tree it is about.
 
 Every assurance claim this project makes reads as being about "the firmware",
-and the firmware is not one thing. `nix build` produces nineteen named images,
+and the firmware is not one thing. `nix build` produces twenty-two named images,
 `firmware/Cargo.toml` carries features no flake package expresses, and
 `firmware/boards/` is a third axis under both. A property proved on the default
 build is, without a per-configuration disposition, silently asserted about
@@ -180,8 +180,8 @@ ROW_TRANCHES = ("p0-launch", "p0b")
 #: catches only the collapse, never the slide, and losing four boards one at a
 #: time is how an axis quietly stops being an axis. Shrinking one for real is
 #: then a deliberate edit here, in the same diff as the shrink.
-FLOOR_PACKAGES = 19
-FLOOR_BOARDS = 6
+FLOOR_PACKAGES = 22
+FLOOR_BOARDS = 7
 FLOOR_ROWS = 40
 #: A `why` or a settling question shorter than this is a placeholder rather than
 #: prose: `.strip()` alone let `"?"` and `"TODO"` stand as the question that would
@@ -1890,7 +1890,7 @@ def render(root):
         " this page and `scripts/check.sh` diffs it.",
         "",
         "The point of the page is the thing a single-build claim hides: **the firmware"
-        " is not one thing.** Four of the nineteen images remove the physical-consent"
+        " is not one thing.** Four of the twenty-two images remove the physical-consent"
         " gate the authorization properties are about, one swaps the CTAP large-blob"
         " surface with no flake package at all, and the board axis changes the flash"
         " geometry on which a whole KV store once survived a \"successful\" wipe.",
