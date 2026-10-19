@@ -209,6 +209,6 @@ opt-level = "s"    # embassy/HAL needs some opt even in dev to fit/behave
 p384 = { path = "third_party/p384" }
 sequential-storage = { path = "third_party/sequential-storage" }
 
-# Optimize only the eight-round SHA-256 core, keeping applet code compact.
+# Optimize only the software SHA-256 core, keeping applet code compact.
 [profile.release.package.rsk-sha256]
 opt-level = 3

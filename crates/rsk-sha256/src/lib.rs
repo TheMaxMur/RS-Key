@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 RS-Key contributors
 
-//! SHA-256 with eight-round register rotation, retaining RustCrypto's digest API.
+//! SHA-256 with unrolled register rotation, retaining RustCrypto's digest API.
 
 #![cfg_attr(not(test), no_std)]
 
@@ -60,16 +60,70 @@ fn compress(state: &mut [u32; 8], block: &Block<Sha256Core>) {
             $h = t1.wrapping_add(t2);
         }};
     }
-    for i in (0..64).step_by(8) {
-        round!(a, b, c, d, e, f, g, h, i);
-        round!(h, a, b, c, d, e, f, g, i + 1);
-        round!(g, h, a, b, c, d, e, f, i + 2);
-        round!(f, g, h, a, b, c, d, e, i + 3);
-        round!(e, f, g, h, a, b, c, d, i + 4);
-        round!(d, e, f, g, h, a, b, c, i + 5);
-        round!(c, d, e, f, g, h, a, b, i + 6);
-        round!(b, c, d, e, f, g, h, a, i + 7);
-    }
+    round!(a, b, c, d, e, f, g, h, 0);
+    round!(h, a, b, c, d, e, f, g, 1);
+    round!(g, h, a, b, c, d, e, f, 2);
+    round!(f, g, h, a, b, c, d, e, 3);
+    round!(e, f, g, h, a, b, c, d, 4);
+    round!(d, e, f, g, h, a, b, c, 5);
+    round!(c, d, e, f, g, h, a, b, 6);
+    round!(b, c, d, e, f, g, h, a, 7);
+    round!(a, b, c, d, e, f, g, h, 8);
+    round!(h, a, b, c, d, e, f, g, 9);
+    round!(g, h, a, b, c, d, e, f, 10);
+    round!(f, g, h, a, b, c, d, e, 11);
+    round!(e, f, g, h, a, b, c, d, 12);
+    round!(d, e, f, g, h, a, b, c, 13);
+    round!(c, d, e, f, g, h, a, b, 14);
+    round!(b, c, d, e, f, g, h, a, 15);
+    round!(a, b, c, d, e, f, g, h, 16);
+    round!(h, a, b, c, d, e, f, g, 17);
+    round!(g, h, a, b, c, d, e, f, 18);
+    round!(f, g, h, a, b, c, d, e, 19);
+    round!(e, f, g, h, a, b, c, d, 20);
+    round!(d, e, f, g, h, a, b, c, 21);
+    round!(c, d, e, f, g, h, a, b, 22);
+    round!(b, c, d, e, f, g, h, a, 23);
+    round!(a, b, c, d, e, f, g, h, 24);
+    round!(h, a, b, c, d, e, f, g, 25);
+    round!(g, h, a, b, c, d, e, f, 26);
+    round!(f, g, h, a, b, c, d, e, 27);
+    round!(e, f, g, h, a, b, c, d, 28);
+    round!(d, e, f, g, h, a, b, c, 29);
+    round!(c, d, e, f, g, h, a, b, 30);
+    round!(b, c, d, e, f, g, h, a, 31);
+    round!(a, b, c, d, e, f, g, h, 32);
+    round!(h, a, b, c, d, e, f, g, 33);
+    round!(g, h, a, b, c, d, e, f, 34);
+    round!(f, g, h, a, b, c, d, e, 35);
+    round!(e, f, g, h, a, b, c, d, 36);
+    round!(d, e, f, g, h, a, b, c, 37);
+    round!(c, d, e, f, g, h, a, b, 38);
+    round!(b, c, d, e, f, g, h, a, 39);
+    round!(a, b, c, d, e, f, g, h, 40);
+    round!(h, a, b, c, d, e, f, g, 41);
+    round!(g, h, a, b, c, d, e, f, 42);
+    round!(f, g, h, a, b, c, d, e, 43);
+    round!(e, f, g, h, a, b, c, d, 44);
+    round!(d, e, f, g, h, a, b, c, 45);
+    round!(c, d, e, f, g, h, a, b, 46);
+    round!(b, c, d, e, f, g, h, a, 47);
+    round!(a, b, c, d, e, f, g, h, 48);
+    round!(h, a, b, c, d, e, f, g, 49);
+    round!(g, h, a, b, c, d, e, f, 50);
+    round!(f, g, h, a, b, c, d, e, 51);
+    round!(e, f, g, h, a, b, c, d, 52);
+    round!(d, e, f, g, h, a, b, c, 53);
+    round!(c, d, e, f, g, h, a, b, 54);
+    round!(b, c, d, e, f, g, h, a, 55);
+    round!(a, b, c, d, e, f, g, h, 56);
+    round!(h, a, b, c, d, e, f, g, 57);
+    round!(g, h, a, b, c, d, e, f, 58);
+    round!(f, g, h, a, b, c, d, e, 59);
+    round!(e, f, g, h, a, b, c, d, 60);
+    round!(d, e, f, g, h, a, b, c, 61);
+    round!(c, d, e, f, g, h, a, b, 62);
+    round!(b, c, d, e, f, g, h, a, 63);
     for (word, value) in state.iter_mut().zip([a, b, c, d, e, f, g, h]) {
         *word = word.wrapping_add(value);
     }

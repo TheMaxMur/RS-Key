@@ -121,7 +121,7 @@ What holds that now is `deny.toml`: each applet crate is banned except behind th
 | `rsk-crypto` | one wrapper over RustCrypto: hashes, HMAC/HKDF, AES-CBC/CFB/GCM, ChaCha20-Poly1305, PIN KDFs, HMAC-DRBG, ML-DSA-44/-65/-87 (`rsk-mldsa`) / ML-KEM, base64url, CRC |
 | `rsk-mldsa` | stack-optimized ML-DSA (FIPS 204) for all three parameter sets: streams the matrix A on the fly (one polynomial resident, not the full k×l) so even ML-DSA-87 fits the RP2350 stack where the by-value `fips204` crate's -65 overflowed it. `no_std`, no alloc, no `unsafe`; checked byte-for-byte vs NIST ACVP KATs, with Kani proofs over the reductions and rounding |
 | `rsk-sha512` | SHA-512/384 for the Cortex-M33, byte-identical to `sha2` but a compact rolled compression (~0.9 KB) that fits the XIP cache instead of `sha2`'s ~28 KB unrolled body — ~4× faster end-to-end on a FIDO getAssertion, with the identical digest, so `hmac`/`hkdf` compose over it byte-for-byte |
-| `rsk-sha256` | SHA-256 with eight-round register rotation and a separate speed profile for the Cortex-M33; byte-identical digests through the same RustCrypto HMAC/HKDF contracts. Chaining state and the complete working schedule live in `Secret`; returned compiler temporaries remain covered by the Secure stack sweeps. |
+| `rsk-sha256` | SHA-256 with unrolled register rotation and a separate speed profile for the Cortex-M33; byte-identical digests through the same RustCrypto HMAC/HKDF contracts. Chaining state and the complete working schedule live in `Secret`; returned compiler temporaries remain covered by the Secure stack sweeps. |
 | `rsk-secret` | key-grade bytes in a type that wipes itself: `Secret` (no `Copy`, `Clone`, `Debug` or `==`, and zeroized when it drops — on every exit, a `?` included) and `WipeGuard` for a borrowed buffer that outlives the scope. The bottom of the graph, so every crate that holds a secret can name it |
 | `rsk-usb` | the CTAPHID reassembler/framer, CCID state machine and shared transport/worker ABI, transport-agnostic and fully host-testable |
 | `rsk-fido` | FIDO2 (CTAP 2.1) + U2F: credentials, clientPIN (protocols 1+2), credManagement, extensions (hmac-secret, credProtect, credBlob, largeBlobs, minPinLength), enterprise attestation, seed backup + soft-lock vendor commands |
@@ -248,6 +248,14 @@ larger unrelated values before finding the requested FID. This avoids a small
 buffer failure, repeated binding proof and full-buffer retry, and lets the first
 verified value seed its read tag. Tag hits retain the bounded span and the
 existing recovery checks.
+
+TrustZone build `0x0ADB` fully unrolls the software SHA-256 rounds and places
+the unchanged HKDF-SHA256 and HMAC-DRBG helpers in Secure RX SRAM as well.
+The full 64-word schedule and chaining state remain in `Secret`. The complete
+Secure dead-stack sweep uses 32 stores per pass with the same bounds and tail.
+Additional RX code reduces the core0 stack span; data and Non-secure RAM do not
+grow. Full record verification, fresh Root observations, rollback floors,
+DRBG Generate/reseed boundaries and cleanup before publication are unchanged.
 
 TrustZone build `0x0ADA` executes the unchanged SHA-256 compression/finalization and HMAC template functions
 from the existing Secure RX SRAM region. Trusted Reset copies this code together

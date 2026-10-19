@@ -38,6 +38,13 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ## [Unreleased]
 
+- **bcdDevice → 0x0ADB:** Reduce authenticated getInfo and OpenPGP latency with
+  fully unrolled software SHA-256 rounds, Secure RX SRAM placement of the
+  existing HKDF/DRBG helpers, and a full dead-stack sweep in 32-word groups.
+  Complete hashes/MACs, fresh Root reads, rollback floors, DRBG Generate/reseed
+  boundaries and cleanup before publication stay unchanged. Existing records
+  remain compatible without a reset.
+
 - **bcdDevice → 0x0ADA:** Run the shared SHA-256 compression/finalization and HMAC template functions
   from Secure RX SRAM in the TrustZone build to reduce getInfo and OpenPGP
   read latency. Existing records, full hashes and MACs, fresh Root checks,

@@ -272,7 +272,7 @@ ticket (by the worker), every flow the panel runs (through the display's hooks)
 and before a boot whose TRNG seed failed halts, and core1 zeroes its own after
 every prime search: every word from the floor that core's `MSPLIM` holds
 (sections 21–22) up to its stack pointer, both read by the code on that core,
-eight stores a pass. Nothing under the live pointer is a value: the stack grows
+thirty-two stores a pass. Nothing under the live pointer is a value: the stack grows
 down, and what is below belongs to frames that have returned. An interrupt taken
 mid-sweep pushes its frame below the pointer and returns before the loop runs
 again, so no store lands under a live frame; what a handler leaves in the part

@@ -1,6 +1,6 @@
 # OpenPGP card
 
-TrustZone build `0x0ADA` reduces read latency through the shared storage backend
+TrustZone build `0x0ADB` reduces authenticated read and command-cleanup latency
 while retaining full record verification and rollback protection. Existing keys
 and records remain compatible; the upgrade does not require a reset.
 

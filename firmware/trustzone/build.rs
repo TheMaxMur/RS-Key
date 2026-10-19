@@ -65,7 +65,7 @@ pub fn configure(out: &Path, memory: &mut String, code_size: u32, flash_size: u3
         "SECTIONS {\n\
          .rsk_exec : ALIGN(32) {\n\
          __rsk_exec_start = .;\n\
-         KEEP(*(.text.*rsk_sha256* .text._ZN10rsk_crypto3mac10HmacSha256*)) KEEP(*(.data.bignum_hl .data.bignum_asm .data.sieve_step .data.ram_func))\n\
+         KEEP(*(.text.*rsk_sha256* .text._ZN10rsk_crypto3mac10HmacSha256* .text._ZN10rsk_crypto3mac11hkdf_sha256* .text._ZN10rsk_crypto4drbg8HmacDrbg*)) KEEP(*(.data.bignum_hl .data.bignum_asm .data.sieve_step .data.ram_func))\n\
          . = ALIGN(32); __rsk_exec_end = .;\n\
          } > RAM AT> FLASH\n\
          } INSERT BEFORE .data;\n\
