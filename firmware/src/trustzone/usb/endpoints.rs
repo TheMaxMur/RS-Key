@@ -80,7 +80,8 @@ pub(super) fn operate(state: &mut Controller, operation: u32, data: &mut [u8]) -
     if !(allocated || (index == 0 && matches!(action, abi::EP_STALL | abi::EP_STALLED))) {
         return INVALID;
     }
-    let request_waiting = bulk::request_waiting(state);
+    let request_waiting =
+        action == abi::EP_WRITE && data.is_empty() && bulk::request_waiting(state);
     let Some(bus) = state.bus.as_mut() else {
         return INVALID;
     };

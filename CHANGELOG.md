@@ -38,6 +38,11 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ## [Unreleased]
 
+- **bcdDevice → 0x0ADD:** Skip unused zero-length USB packet bookkeeping in
+  TrustZone CCID transfers. Session and epoch checks, complete buffer/stack
+  cleanup, active ZLP retirement and CCID capacity are unchanged. Existing keys
+  and records remain compatible without a reset.
+
 - **bcdDevice → 0x0ADC:** Reduce shared SHA-256 and authenticated getInfo/OpenPGP
   read latency by unrolling schedule expansion and avoiding a redundant schedule
   copy. The complete schedule and chaining state remain wiped through `Secret`;

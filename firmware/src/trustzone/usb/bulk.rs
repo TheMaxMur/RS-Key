@@ -14,6 +14,9 @@ pub(super) fn request_waiting(state: &Controller) -> bool {
 }
 
 pub(super) fn observe(state: &mut Controller) {
+    if state.bulk_zlp == 0 {
+        return;
+    }
     let request = request_waiting(state);
     for index in 1..super::ENDPOINTS {
         let bit = 1 << index;

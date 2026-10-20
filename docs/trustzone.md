@@ -1024,6 +1024,12 @@ buffer safe to modify; an unconsumed packet also restores the previous data
 toggle. Revocation clears the retirement state. CCID capacity and mandatory ZLP
 termination remain unchanged for hosts that consume the complete transfer.
 
+From `0x0ADD`, the bulk observer skips retirement bookkeeping when no ZLP is
+tracked. Endpoint operations inspect waiting OUT requests only for an empty
+write request. Reset/session observers, epoch checks, complete wipes and active ZLP
+retirement retain their existing order. Persistent formats and capacities are
+unchanged.
+
 `tests/100_trustzone_usb_regressions.py --case ccid` uses the existing PIV
 frame-boundary assertions, including the following APDU. `--case bus-reset`
 uses the normal image: it verifies PIV PIN and management authority before a
