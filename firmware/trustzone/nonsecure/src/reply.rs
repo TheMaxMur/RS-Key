@@ -3,7 +3,7 @@
 
 use core::ops::{Deref, DerefMut};
 
-/// The complete NS reply span, cleared before releasing its pending ticket.
+/// A complete initialized NS buffer, cleared on every exit of its borrowing scope.
 pub struct ReplyGuard<'a>(&'a mut [u8]);
 
 impl<'a> ReplyGuard<'a> {

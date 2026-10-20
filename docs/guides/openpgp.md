@@ -1,5 +1,8 @@
 # OpenPGP card
 
+TrustZone build `0x0ADE` reduces latency for the initial GET DATA `6E` response.
+Existing OpenPGP keys and data objects remain compatible; no reset is required.
+
 TrustZone build `0x0ADD` skips unused zero-length USB packet bookkeeping during
 CCID transfers. Session and epoch checks and complete buffer/stack cleanup remain
 unchanged. Existing keys and records upgrade without a reset.

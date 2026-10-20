@@ -38,6 +38,11 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ## [Unreleased]
 
+- **bcdDevice → 0x0ADE:** Use the shared aligned SRAM wipe for the complete
+  64-byte Secure gateway packet and the Non-secure endpoint/control IN packets.
+  Full cleanup on normal and error exits, future cancellation, epoch checks,
+  control abandonment and serialization ordering are retained.
+
 - **bcdDevice → 0x0ADD:** Skip unused zero-length USB packet bookkeeping in
   TrustZone CCID transfers. Session and epoch checks, complete buffer/stack
   cleanup, active ZLP retirement and CCID capacity are unchanged. Existing keys

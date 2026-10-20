@@ -220,7 +220,7 @@ impl driver::EndpointIn for Endpoint {
     async fn write(&mut self, data: &[u8]) -> Result<(), EndpointError> {
         let epoch = tx_epoch(self.transport);
         let mut packet = [0; abi::PACKET_SIZE];
-        let mut packet = rsk_secret::WipeGuard::new(&mut packet);
+        let mut packet = super::reply::ReplyGuard::new(&mut packet);
         let Some(buffer) = packet.get_mut(..data.len()) else {
             return Err(EndpointError::BufferOverflow);
         };
@@ -305,7 +305,7 @@ impl driver::ControlPipe for ControlPipe {
     }
     async fn data_in(&mut self, data: &[u8], first: bool, last: bool) -> Result<(), EndpointError> {
         let mut packet = [0; abi::PACKET_SIZE];
-        let mut packet = rsk_secret::WipeGuard::new(&mut packet);
+        let mut packet = super::reply::ReplyGuard::new(&mut packet);
         let Some(buffer) = packet.get_mut(..data.len()) else {
             return Err(EndpointError::BufferOverflow);
         };

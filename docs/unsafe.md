@@ -477,8 +477,19 @@ words, followed by a sequentially consistent compiler fence. The worker passes
 both complete response arrays after copying the reply; neither the buffer extent
 nor the existing dead-stack sweep and publication ordering changes.
 
-The Non-secure gateway uses the same primitive through a borrowed `ReplyGuard`.
+The Secure USB gateway owns its initialized 64-byte packet in `Secret<Packet64>`.
+Once created, its exhaustive `Zeroize` delegates the complete array to this
+primitive on every exit, including empty and refused operations, before releasing
+serialization.
+No filled packet is moved or returned, and no wipe is narrowed to the data length.
+
+The Non-secure exchange gateway uses the same primitive through a borrowed `ReplyGuard`.
 Its full 7612-byte span is cleared on normal completion, abandonment and future
 Drop, before releasing the pending ticket. The host reply-buffer harness covers alignments, byte edges, canaries, errors
 and pending-future destruction. These are three shared source
 sites compiled in both worlds; no new pointer primitive or smaller wipe is added.
+
+The same borrowed guard clears the complete 64-byte packets in Non-secure
+`EndpointIn::write` and `ControlPipe::data_in` on completion, errors and future
+Drop. Their initialized buffers and guard lifetimes, including the existing
+control abandonment and epoch checks, are unchanged.

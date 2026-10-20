@@ -1030,6 +1030,20 @@ write request. Reset/session observers, epoch checks, complete wipes and active 
 retirement retain their existing order. Persistent formats and capacities are
 unchanged.
 
+From `0x0ADE`, the Secure USB gateway owns its initialized 64-byte packet in
+`Secret<Packet64>` and wipes the complete array before releasing serialization.
+Non-secure endpoint/control IN guards use the same volatile word primitive for
+their complete 64-byte arrays on completion, error and future Drop. Control
+cancellation keeps `CTRL_ABANDON` before the outer packet wipe; the exchange
+reply still wipes before releasing its worker ticket. Fresh Root observation,
+full MAC and payload verification, and rollback checks on backend reads are
+unchanged.
+
+The host packet-caller tests check the actual Non-secure write/control futures
+with mocked SG responses and wake timing, including full cleanup, cancellation,
+epoch capture and control-ticket ordering. These tests do not establish CMSE,
+interrupt behavior or USB timings.
+
 `tests/100_trustzone_usb_regressions.py --case ccid` uses the existing PIV
 frame-boundary assertions, including the following APDU. `--case bus-reset`
 uses the normal image: it verifies PIV PIN and management authority before a

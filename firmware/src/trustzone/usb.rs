@@ -40,6 +40,15 @@ type EndpointOut = usb::Endpoint<'static, USB, Out>;
 pub use crate::usb_fence::disconnect_after_fault;
 use crate::usb_fence::{ENDPOINTS, clear_packets};
 
+struct Packet64([u8; abi::PACKET_SIZE]);
+
+impl zeroize::Zeroize for Packet64 {
+    fn zeroize(&mut self) {
+        let Self(bytes) = self;
+        crate::sweep::wipe_bytes(bytes);
+    }
+}
+
 struct Controller {
     driver: Option<Driver>,
     bus: Option<Bus>,
@@ -372,9 +381,8 @@ pub unsafe extern "C" fn rsk_tz_usb_impl(
         }
     }
     let result = serialized(|| {
-        let mut packet = [0; abi::PACKET_SIZE];
-        let mut packet = rsk_secret::WipeGuard::new(&mut packet);
-        let Some(data) = packet.get_mut(..length) else {
+        let mut packet = rsk_secret::Secret::new(Packet64([0; abi::PACKET_SIZE]));
+        let Some(data) = packet.expose_mut().0.get_mut(..length) else {
             return INVALID;
         };
         if input && length != 0 {

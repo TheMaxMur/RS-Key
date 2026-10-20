@@ -1,5 +1,8 @@
 # FIDO2 / WebAuthn / U2F
 
+TrustZone build `0x0ADE` reduces CCID getInfo continuation latency. Existing
+credentials and records remain compatible; the upgrade does not require a reset.
+
 TrustZone build `0x0ADD` skips unused zero-length USB packet bookkeeping during
 CCID transfers. Session and epoch checks and complete buffer/stack cleanup remain
 unchanged. Existing keys and records upgrade without a reset.
