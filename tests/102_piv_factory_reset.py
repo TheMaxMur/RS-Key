@@ -14,17 +14,14 @@ import json
 from pathlib import Path
 import time
 
+from piv_history import LENGTHS as CHURN_LENGTHS
+
 spec = importlib.util.spec_from_file_location("piv_suite", Path(__file__).with_name("80_piv.py"))
 piv_suite = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(piv_suite)
 
 NEW_PIN = b"654321\xff\xff"
 CHURN_BYTES = 3046
-CHURN_LENGTHS = (
-    1, 2, 3, 4, 5, 7, 8, 15, 16, 17, 31, 32, 33, 63, 64, 65,
-    127, 128, 129, 255, 256, 257, 511, 512, 513, 1023, 1024, 1025,
-    2033, 2048, 2049, 3000, 3045, CHURN_BYTES,
-)
 RETRY_METADATA_TAG = 0x06
 FACTORY_RETRY_COUNTS = bytes((3, 3))
 BLOCKING_STATUSES = (0x63C2, 0x63C1) + (0x6983,) * 6
