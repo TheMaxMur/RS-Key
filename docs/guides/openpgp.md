@@ -1,5 +1,8 @@
 # OpenPGP card
 
+TrustZone build `0x0ADF` further reduces the initial GET DATA `6E` response
+latency. Existing OpenPGP keys and data objects upgrade without a reset.
+
 TrustZone build `0x0ADE` reduces latency for the initial GET DATA `6E` response.
 Existing OpenPGP keys and data objects remain compatible; no reset is required.
 

@@ -62,6 +62,27 @@ pub(super) fn allocate(state: &mut Controller, incoming: bool, data: &[u8]) -> u
     }
 }
 
+pub(super) fn retry_eligible(state: &Controller, operation: u32, data: &[u8]) -> bool {
+    let Ok(address) = u8::try_from((operation >> abi::ADDRESS_SHIFT) & 0xff) else {
+        return false;
+    };
+    let index = EndpointAddress::from(address).index();
+    if index >= ENDPOINTS {
+        return false;
+    }
+    let endpoint_type = state
+        .input
+        .get(index)
+        .and_then(Option::as_ref)
+        .map(|endpoint| endpoint.info().ep_type);
+    rsk_usb::bulk_retry::eligible(
+        operation,
+        data.len(),
+        endpoint_type,
+        (state.bulk_retiring | state.bulk_zlp) & (1 << index) != 0,
+    )
+}
+
 pub(super) fn operate(state: &mut Controller, operation: u32, data: &mut [u8]) -> u32 {
     let Ok(byte) = u8::try_from((operation >> abi::ADDRESS_SHIFT) & 0xff) else {
         return INVALID;

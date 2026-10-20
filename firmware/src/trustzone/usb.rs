@@ -142,10 +142,11 @@ fn read_setup() -> [u8; 8] {
     setup
 }
 
-fn observe_locked(state: &mut Controller) {
+fn observe_locked(state: &mut Controller) -> bool {
     if state.bus.is_none() {
-        return;
+        return false;
     }
+    let mut progress = false;
     let status = rp_pac::USB.sie_status().read();
     let fresh = state.observer.begin(status.bus_reset(), status.suspended());
     // A completed configuration survives suspend; a bus reset always wins.
@@ -154,9 +155,11 @@ fn observe_locked(state: &mut Controller) {
         && state.configuration.acknowledge()
     {
         state.bus_epoch.configure();
+        progress = true;
     }
     if let Some(reason) = fresh {
         revoke(state, reason);
+        progress = true;
     }
     if status.setup_rec() {
         let setup = read_setup();
@@ -164,6 +167,7 @@ fn observe_locked(state: &mut Controller) {
             state.configuration.reset();
             state.setup_seen = true;
             state.setup = setup;
+            progress = true;
             if setup == [0, 9, 0, 0, 0, 0, 0, 0] {
                 revoke(state, Revocation::ConfigurationLoss);
             } else {
@@ -178,6 +182,7 @@ fn observe_locked(state: &mut Controller) {
         let Poll::Ready(event) = once(bus.poll()) else {
             break;
         };
+        progress = true;
         let code = match event {
             Event::PowerDetected => abi::POWER_DETECTED,
             Event::PowerRemoved => {
@@ -216,15 +221,20 @@ fn observe_locked(state: &mut Controller) {
         };
         state.events |= 1 << code;
     }
+    let bulk_before = (state.bulk_zlp, state.bulk_retiring);
     bulk::observe(state);
+    progress |= bulk_before != (state.bulk_zlp, state.bulk_retiring);
     let status = rp_pac::USB.sie_status().read();
     state
         .observer
         .finish(status.bus_reset(), status.suspended());
+    progress
 }
 
 pub fn observe() {
-    with_controller(observe_locked);
+    with_controller(|state| {
+        observe_locked(state);
+    });
 }
 pub fn admitted() -> bool {
     if super::fault::failed() {
@@ -245,9 +255,9 @@ fn outcome(value: Poll<Result<usize, EndpointError>>) -> u32 {
     }
 }
 
-pub fn operate(operation: u32, argument: u32, data: &mut [u8]) -> u32 {
+pub fn operate(operation: u32, argument: u32, data: &mut [u8], progress: &mut bool) -> u32 {
     with_controller(|state| {
-        observe_locked(state);
+        *progress |= observe_locked(state);
         let action = operation & 0xff;
         if action == abi::EPOCH && operation == action && data.is_empty() {
             return state.bus_epoch.current();
@@ -334,12 +344,32 @@ pub fn operate(operation: u32, argument: u32, data: &mut [u8]) -> u32 {
         if operation & !(0xffff | abi::FLAG) != 0 {
             return INVALID;
         }
-        let value = endpoints::operate(state, operation, data);
-        observe_locked(state);
-        if argument != state.bus_epoch.current() {
-            abi::DISABLED
-        } else {
-            value
+        let mut retry = endpoints::retry_eligible(state, operation, data)
+            .then(|| rsk_usb::bulk_retry::Retry::new(rp_pac::TIMER0.timerawl().read()));
+        loop {
+            let value = endpoints::operate(state, operation, data);
+            *progress |= observe_locked(state);
+            if argument != state.bus_epoch.current() {
+                return abi::DISABLED;
+            }
+            let Some(retry) = retry.as_mut() else {
+                return value;
+            };
+            if !endpoints::retry_eligible(state, operation, data)
+                || !retry.next(value, rp_pac::TIMER0.timerawl().read(), *progress)
+            {
+                return value;
+            }
+            *progress |= observe_locked(state);
+            if super::fault::failed() {
+                return INVALID;
+            }
+            if argument != state.bus_epoch.current() || state.bus_epoch.exhausted() {
+                return abi::DISABLED;
+            }
+            if *progress {
+                return value;
+            }
         }
     })
 }
@@ -380,6 +410,7 @@ pub unsafe extern "C" fn rsk_tz_usb_impl(
             return INVALID;
         }
     }
+    let mut progress = false;
     let result = serialized(|| {
         let mut packet = rsk_secret::Secret::new(Packet64([0; abi::PACKET_SIZE]));
         let Some(data) = packet.expose_mut().0.get_mut(..length) else {
@@ -390,7 +421,7 @@ pub unsafe extern "C" fn rsk_tz_usb_impl(
             let source = unsafe { core::slice::from_raw_parts(buffer.cast_const(), length) };
             data.copy_from_slice(source);
         }
-        let result = operate(operation, argument, data);
+        let result = operate(operation, argument, data, &mut progress);
         if output && result <= supplied_length && result != 0 {
             let Ok(count) = usize::try_from(result) else {
                 return INVALID;
@@ -404,11 +435,12 @@ pub unsafe extern "C" fn rsk_tz_usb_impl(
         }
         result
     });
-    if result == 0
-        && matches!(
-            operation & 0xff,
-            abi::EP_ENABLE | abi::EP_STALL | abi::BUS_DISABLE
-        )
+    if progress
+        || (result == 0
+            && matches!(
+                operation & 0xff,
+                abi::EP_ENABLE | abi::EP_STALL | abi::BUS_DISABLE
+            ))
     {
         super::notify_nonsecure();
     }

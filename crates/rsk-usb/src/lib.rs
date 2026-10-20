@@ -5,6 +5,7 @@
 
 //! USB transport layer: CTAPHID (FIDO HID) and the CCID smart-card class.
 
+pub mod bulk_retry;
 pub mod ccid;
 pub mod ctaphid;
 pub mod identity;

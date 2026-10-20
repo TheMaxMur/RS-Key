@@ -1,5 +1,8 @@
 # FIDO2 / WebAuthn / U2F
 
+TrustZone build `0x0ADF` further reduces CCID getInfo continuation latency.
+Existing credentials and records upgrade without a reset.
+
 TrustZone build `0x0ADE` reduces CCID getInfo continuation latency. Existing
 credentials and records remain compatible; the upgrade does not require a reset.
 
