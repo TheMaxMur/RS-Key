@@ -3005,9 +3005,21 @@ section); `authenticated_store` gains 10 seeds over the real v2 backend
 (little-endian budgets, owner and counter banks, 64/MAX payloads, write/remove,
 warm overwrites, post-activation damage). Replay: `power_cut` 820 runs, cov
 7 503; `authenticated_store` 12 runs, cov 1 721; both exit 0 with no artifact.
-`fido_session`/`cross_applet` privileged applet sequences and the v2
-import/activation/rekey/compaction paths remain open, as do the retained
-campaigns and semantic-loss limits.
+
+`cross_applet` gained a privileged OATH record-lifecycle oracle: it records the
+names an acknowledged PUT leaves live, removes them on an acknowledged DELETE,
+and requires an OK CALCULATE to name a live credential. The 97-byte seed
+`rs-key-cross-applet-oath-put-calculate-delete` (SELECT OATH, then PUT /
+CALCULATE / DELETE / CALCULATE via the raw-APDU selector `0x08`) is mirrored in
+the Miri fixture; the seed replay covers 12 seeds and `miri_cross_applet_seeds`
+passes (1 test, 144.93 s). Negative control: making `cmd_delete` answer `9000`
+without deleting makes the target fail on `OATH CALCULATE served a credential
+no acknowledged PUT left live` (exit 77), and the byte-identical restore returns
+to exit 0.
+
+`fido_session`'s token spend/revocation, the OATH SET CODE / VALIDATE HMAC flow,
+and the v2 import/activation/rekey/compaction paths remain open, as do the
+retained campaigns and semantic-loss limits.
 
 #### Byte-granular second recovery cut, 2026-10-21
 

@@ -121,7 +121,7 @@ The latest local completion boundary is:
 | 2 | The original 996-outcome/27-group review and the current eighteen-profile reachability audit, including authenticated storage v2 and direct host/test-util inputs; every measured residual has a finite scoped disposition | MC/DC implementation remains deferred by the decision below; raw residuals, primitive/cryptographic assumptions and excluded evidence scopes are recorded in the [current audit](coverage-current.md) |
 | 3 | Persistent write histories plus the bounded read/erase/program, damaged-record, exhaustion, readback and silent-mutation matrix below, now including the selective `Silent` medium, its store read-back oracle, the correlated `Torn` medium (a torn write and the read that answers it), and the 2026-10-21 silent-write-with-refused-read-back and second-cut-during-recovery compositions; owner replay and selected NOR byte sweeps include interrupted recovery | Longer retained campaigns and semantic record-loss detection beyond the current CRC/legacy formats remain open, as do correlated-fault stories beyond the tested combinations; the bounded matrix does not close the whole phase |
 | 4 | Semantic controls through host, fuzz, Miri and image runners; the 2026-10-11 critical slice below adds independent crypto boundaries and destructor observations; the 2026-10-12/14 whole-core shard closure below dispositions all 10 887 desired occurrences with no pending survivor | Device C/assembly mutation execution and resource/timing equivalence remain separate obligations |
-| 5 | Independent OATH positions, journal histories, 576 OpenPGP and 288 F9 command/state/fault inputs, plus the 11 cross_applet capability-gate and 6 fs_ops stateful seeds of the 2026-10-14 slice below, replayed through the shipped targets under Miri; the 2026-10-21 slice adds 53 `power_cut` seeds for the credential/config/PIV/reset drivers and 10 `authenticated_store` v2 seeds; `scripts/fuzz-union.py` makes the union reproducible and the 2026-10-15 campaigns remeasure it at 23062/36301 (63.53%, `default`) and 22699/36182 (62.74%, `flavours`) | Other privileged command/state/fault combinations (notably token spend/revocation in `fido_session` and applet authentication in `cross_applet`), the v2 import/rekey/compaction paths, and longer retained campaigns |
+| 5 | Independent OATH positions, journal histories, 576 OpenPGP and 288 F9 command/state/fault inputs, plus the 11 cross_applet capability-gate and 6 fs_ops stateful seeds of the 2026-10-14 slice below, replayed through the shipped targets under Miri; the 2026-10-21 slice adds 53 `power_cut` seeds for the credential/config/PIV/reset drivers, 10 `authenticated_store` v2 seeds, and the `cross_applet` OATH record-lifecycle oracle with its 97-byte seed (replayed under Miri); `scripts/fuzz-union.py` makes the union reproducible and the 2026-10-15 campaigns remeasure it at 23062/36301 (63.53%, `default`) and 22699/36182 (62.74%, `flavours`) | Token spend/revocation in `fido_session`, the OATH SET CODE/VALIDATE HMAC flow, the v2 import/rekey/compaction paths, and longer retained campaigns |
 | 6 | Eighteen current host-profile maps with finite source-bound residual reviews, including storage v2; fourteen ordinary release-flavour builds with thirteen image protocol passes; the 2026-10-15 host-tool slice adds argument, transport-failure and machine-readable-output contracts for tools/tui, tools/emu and the Python CLI, reported separately | Display-image execution and device interoperability |
 | 7 | Optimized partitioned images, real presence/CANCEL, resource controls and independently checked crypto | Unoptimized image failure, display execution and silicon-only measurements |
 | 8 | Local runner controls and source-bound reports | Actual CI execution and same-revision release evidence |
@@ -2772,11 +2772,24 @@ regression. Negative control: restoring `Twice` makes the replay test fail at
 MemoryFatal`; restoring the fixed source byte-identically makes it pass. The
 full `rsk-store` crate runs 215 tests.
 
+`cross_applet` now has a privileged OATH record lifecycle with its own oracle:
+the target tracks the names whose PUT it acknowledged and removes them on an
+acknowledged DELETE, then requires a CALCULATE that answers OK to name a live
+credential. The deterministic seed
+`rs-key-cross-applet-oath-put-calculate-delete` (97 bytes: SELECT OATH, then
+PUT / CALCULATE / DELETE / CALCULATE through the raw-APDU selector `0x08`) is
+mirrored in `fuzz/tests/fixtures/cross_applet.rs`; the Miri seed replay now
+covers 12 seeds and passes (1 test, 144.93 s). Negative control: patching
+`cmd_delete` to answer `9000` without removing the record makes the target fail
+on `OATH CALCULATE served a credential no acknowledged PUT left live` (exit 77);
+restoring the byte-identical source returns to exit 0. The two committed seed
+lists replay cleanly through the rebuilt target.
+
 These are bounded controls, not the retained campaigns: the 2026-10-21
 30-minute-per-target runs are retained separately under `target/` with their
-corpus counts and final stats. `fido_session` and `cross_applet` privileged
-applet sequences (token spend/revocation, OATH/PIV authentication followed by a
-protected operation) still need target-side oracles; the v2 import/activation
+corpus counts and final stats. `fido_session`'s token spend/revocation and the
+OATH access-code flow (SET CODE / VALIDATE with its HMAC proof over the card
+challenge) still need their own seeded oracles; the v2 import/activation
 witness, `INITV2`/`IMPORTV2`, `close_pre_otp`, compaction and witness loss remain
 outside this slice, as do legacy semantic-loss limits and Miri replay of the new
 `authenticated_store` seeds (its `initialize_blank` cost is already documented

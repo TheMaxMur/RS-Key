@@ -138,7 +138,8 @@ def test_check_sh_replays_through_the_existing_fuzz_row():
 
 def test_cross_applet_sequences_keep_both_gate_directions_and_the_wipe():
     seeds = {(target, name): data for target, name, data in corpus.records()
-             if name.startswith("rs-key-cross-applet-")}
+             if name.startswith("rs-key-cross-applet-")
+             and name != "rs-key-cross-applet-oath-put-calculate-delete"}
     assert {target for target, _ in seeds} == {"cross_applet"}
     assert len(seeds) == 11
     # Independently encoded: OpenPGP is applet 1 with CAP_OPENPGP 0x0008; its
@@ -223,3 +224,18 @@ def test_authenticated_store_seeds_cover_both_banks_and_recovery():
     assert seeds["authenticated_store", "rs-key-authenticated-store-owner-warm"][6] == 64
     flags = {data[4] for data in seeds.values()}
     assert {0x00, 0x01, 0x02, 0x04, 0x05, 0x09} <= flags
+
+
+def test_cross_applet_oath_lifecycle_keeps_its_acknowledged_state():
+    seeds = {(target, name): data for target, name, data in corpus.records()
+             if name == "rs-key-cross-applet-oath-put-calculate-delete"}
+    assert set(seeds) == {("cross_applet", "rs-key-cross-applet-oath-put-calculate-delete")}
+    data = seeds["cross_applet", "rs-key-cross-applet-oath-put-calculate-delete"]
+    # SELECT OATH (3), then a raw frame: 0x08 selector, length 0x23, APDU.
+    assert len(data) == 97
+    assert data[:3] == bytes([3, 0x08, 0x23])
+    assert data[3:8] == bytes([0x00, 0x01, 0x00, 0x00, 0x1E])
+    assert data[8:15] == bytes([0x71, 4]) + b"seed" + bytes([0x73])
+    # DELETE frame (0x0B bytes) and the final CALCULATE frame (0x15 bytes).
+    assert data[61:65] == bytes([0x08, 0x0B, 0x00, 0x02])
+    assert data[74:78] == bytes([0x08, 0x15, 0x00, 0xA2])

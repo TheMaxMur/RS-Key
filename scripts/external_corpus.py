@@ -279,6 +279,37 @@ def authenticated_store_sequences():
                _le16(op) + _le16(rec) + bytes([flags, fill, warm]))
 
 
+def cross_applet_privileged_sequences():
+    """OATH's acknowledged record lifecycle, driven through raw APDUs.
+
+    SELECT OATH (applet 3) then four frames: PUT, CALCULATE, DELETE, CALCULATE.
+    `0x08` is the raw-APDU selector (0x07 would SELECT FIDO); each frame is one
+    selector byte, one length byte and the APDU. The target records the names an
+    acknowledged PUT leaves live and removes them on an acknowledged DELETE, so
+    an OK CALCULATE for a name outside that set is an authorization bypass or a
+    resurrected record. The final CALCULATE must be refused (`0x6984`).
+    """
+    name = b"seed"
+
+    def tlv(tag, value):
+        return bytes([tag, len(value)]) + value
+
+    def apdu(ins, p1, p2, data):
+        return bytes([0, ins, p1, p2]) + (bytes([len(data)]) + data if data else b"")
+
+    put = apdu(0x01, 0, 0,
+               tlv(0x71, name) + tlv(0x73, bytes([0x11, 6]) + bytes([0xAA]) * 20))
+    calculate = apdu(0xA2, 0, 0x01, tlv(0x71, name) + tlv(0x74, bytes(8)))
+    delete = apdu(0x02, 0, 0, tlv(0x71, name))
+
+    def frame(command):
+        return bytes([0x08, len(command)]) + command
+
+    yield ("cross_applet", "rs-key-cross-applet-oath-put-calculate-delete",
+           bytes([3]) + b"".join(frame(command)
+                                 for command in (put, calculate, delete, calculate)))
+
+
 def records():
     for name, digest in HASHES.items():
         if hashlib.sha256((SOURCE / name).read_bytes()).hexdigest() != digest:
@@ -326,6 +357,7 @@ def records():
     yield from openpgp_cut_sequences()
     yield from oath_mark_sequences()
     yield from cross_applet_sequences()
+    yield from cross_applet_privileged_sequences()
     yield from fs_ops_sequences()
     yield from credential_cut_sequences()
     yield from config_cut_sequences()
