@@ -119,9 +119,9 @@ The latest local completion boundary is:
 |---|---|---|
 | 1 | Calibrated condition measurements, source identity, raw maps and eighteen separate ARM Linux profiles | Native MC/DC is unsupported; the decision below selects scoped independence evidence followed by a compiler-based pilot, with implementation deferred; unemitted and device code need separate evidence |
 | 2 | The original 996-outcome/27-group review and the current eighteen-profile reachability audit, including authenticated storage v2 and direct host/test-util inputs; every measured residual has a finite scoped disposition | MC/DC implementation remains deferred by the decision below; raw residuals, primitive/cryptographic assumptions and excluded evidence scopes are recorded in the [current audit](coverage-current.md) |
-| 3 | Persistent write histories plus the bounded read/erase/program, damaged-record, exhaustion, readback and silent-mutation matrix below, now including the selective `Silent` medium, its store read-back oracle and the correlated `Torn` medium (a torn write and the read that answers it); owner replay and selected NOR byte sweeps include interrupted recovery | Longer retained campaigns and semantic record-loss detection beyond the current CRC/legacy formats remain open, as do correlated-fault stories beyond the torn write; the bounded matrix does not close the whole phase |
+| 3 | Persistent write histories plus the bounded read/erase/program, damaged-record, exhaustion, readback and silent-mutation matrix below, now including the selective `Silent` medium, its store read-back oracle, the correlated `Torn` medium (a torn write and the read that answers it), and the 2026-10-21 silent-write-with-refused-read-back and second-cut-during-recovery compositions; owner replay and selected NOR byte sweeps include interrupted recovery | Longer retained campaigns and semantic record-loss detection beyond the current CRC/legacy formats remain open, as do correlated-fault stories beyond the tested combinations; the bounded matrix does not close the whole phase |
 | 4 | Semantic controls through host, fuzz, Miri and image runners; the 2026-10-11 critical slice below adds independent crypto boundaries and destructor observations; the 2026-10-12/14 whole-core shard closure below dispositions all 10 887 desired occurrences with no pending survivor | Device C/assembly mutation execution and resource/timing equivalence remain separate obligations |
-| 5 | Independent OATH positions, journal histories, 576 OpenPGP and 288 F9 command/state/fault inputs, plus the 11 cross_applet capability-gate and 6 fs_ops stateful seeds of the 2026-10-14 slice below, replayed through the shipped targets under Miri; `scripts/fuzz-union.py` makes the union reproducible and the 2026-10-15 campaigns remeasure it at 23062/36301 (63.53%, `default`) and 22699/36182 (62.74%, `flavours`) | Other privileged command/state/fault combinations and longer retained campaigns |
+| 5 | Independent OATH positions, journal histories, 576 OpenPGP and 288 F9 command/state/fault inputs, plus the 11 cross_applet capability-gate and 6 fs_ops stateful seeds of the 2026-10-14 slice below, replayed through the shipped targets under Miri; the 2026-10-21 slice adds 53 `power_cut` seeds for the credential/config/PIV/reset drivers and 10 `authenticated_store` v2 seeds; `scripts/fuzz-union.py` makes the union reproducible and the 2026-10-15 campaigns remeasure it at 23062/36301 (63.53%, `default`) and 22699/36182 (62.74%, `flavours`) | Other privileged command/state/fault combinations (notably token spend/revocation in `fido_session` and applet authentication in `cross_applet`), the v2 import/rekey/compaction paths, and longer retained campaigns |
 | 6 | Eighteen current host-profile maps with finite source-bound residual reviews, including storage v2; fourteen ordinary release-flavour builds with thirteen image protocol passes; the 2026-10-15 host-tool slice adds argument, transport-failure and machine-readable-output contracts for tools/tui, tools/emu and the Python CLI, reported separately | Display-image execution and device interoperability |
 | 7 | Optimized partitioned images, real presence/CANCEL, resource controls and independently checked crypto | Unoptimized image failure, display execution and silicon-only measurements |
 | 8 | Local runner controls and source-bound reports | Actual CI execution and same-revision release evidence |
@@ -2701,6 +2701,86 @@ This adds one correlated read+write story. It does not close the phase: longer
 retained campaigns and semantic record-loss detection beyond the current CRC/legacy
 and authenticated formats remain open, as do correlated-fault stories beyond the
 torn write.
+
+## Correlated storage faults and negative-space seeds, 2026-10-21
+
+The silent-write medium now carries the read half of the correlation on the same
+armed fid: `SilentMedium::fault_read` / `fault_read_once` refuse a `read`/`size`
+and report it through `last_error`, and `read_faults()` counts what they refused.
+One test arms the drop **and** the read fault for the same fid; the command's
+write is reported applied and not applied, its read-back is refused, and the
+command must still fail rather than answer as absence while the old value stays
+on the medium. Both counters are asserted (`attempts == 1`,
+`read_faults == 1`), so one half cannot hide the other; a provider control pins
+the per-fid, one-shot arming and the `last_error` direction. Negative control:
+forcing `last_error` to `false` makes the combination fail on
+`left: Ok(None), right: Err(MemoryFatal)`.
+
+The power-cut model now treats a read that loses power during `settle` as a
+retry, not as a torn value: `settle` returns `false` before judging when the
+device is dead. A new test cuts the command's write and then either the recovery
+mount walk or the recovery settle read; it asserts **both** cuts fired
+(`cuts == 2`), that the old value and the unrelated neighbour survive, and that
+the device is alive afterwards. Negative control: deleting that guard makes the
+test fail on `torn put: neither the old value nor the new one`.
+
+The `power_cut` target gains deterministic seeds for the four drivers its
+external corpus did not name: credentials (`0x90`, create / replace-at-73 /
+replace-at-0), config (`0xA0`, arm / replace / clear / merge / legacy), PIV
+(`0xB0`, first / recreate / repair / empty-with-damaged-public-key) and reset
+(`0xF0`), each with no-cut, command-cut and recovery-cut budgets (big-endian
+`u16`, `0xFFFF` = no cut); 53 files total. `authenticated_store` gains its first
+external seeds: 10 files over the real v2 backend with little-endian command and
+recovery budgets, owner and counter-bank fids, 64-byte and `MAX_VALUE_BYTES`
+payloads, write and remove, warm overwrites and post-activation damage. Replay
+through the shipped binaries: `power_cut` 820 runs, final cov 7 503, exit 0;
+`authenticated_store` 12 runs, final cov 1 721, exit 0. No artifact was written.
+
+The 30-minute `authenticated_store` campaign then wrote artifact
+`crash-157076ee2e345e6deb1b27e9e22e48a50a4155ad` (5 bytes: command budget
+`0x0104` = 260, recovery budget `0x0001` = 1, owner fid, 64-byte write). Its
+first cut leaves both prepare deltas complete and stops 28 bytes into the
+candidate payload's 64-byte value; its first recovery mount then stops after one
+byte of `discard_reserved`'s deletion header. The next mount must program that
+header a third time. The fuzz `Medium` declared `MultiwriteNorFlash` but was
+constructed with `WriteCountCheck::Twice`, so the third program was refused as
+`NotWritable`; `Main::recover_pending` maps the discard error to `MemoryFatal`,
+making every later read of the owner and the acknowledged neighbour fail.
+`SharedMock` and the board's `SharedFlash` both honour multiwrite, and the store
+is bounded by `MultiwriteNorFlash`; this was a harness-fidelity defect, not a
+production recovery defect. It is not witness loss either: both journals retain
+a complete checkpoint and both prepare deltas, and the acknowledged state is the
+old value. The target now uses `WriteCountCheck::Disabled`, as `kv_durability`
+and the native `SharedMock` do; the mock still enforces that a program only
+clears bits.
+
+The native `FaultFlash` gained `Effect::Shutoff(n)`, a byte countdown across
+program/erase calls that mirrors `MockFlashBase::bytes_until_shutoff`; its
+provider control pins a prefix split across two calls. A regression reproduces
+the artifact's shape from the events (the first cut's last program is the
+candidate value, the recovery cut's first program is the item header eight bytes
+earlier), then asserts the next mount returns the whole old value and the
+neighbour. The fuzz workspace gets `fuzz/tests/authenticated_store_replay.rs`,
+which runs the 5-byte artifact through the shipped `run`; it is
+`cfg(not(miri))` because `run`'s `initialize_blank` costs about 54 minutes per
+seed, so the weekly Miri roster does not grow. Artifact replay exits 0; after the
+fix, a fresh 30-minute campaign over the accumulated corpus runs 17 700
+executions at 9/s (+181 corpus units, final cov 2 312, peak RSS 413 MB) and
+writes no new artifact; the original 5-byte crash input is kept as the
+regression. Negative control: restoring `Twice` makes the replay test fail at
+`authenticated_store.rs:148` with `called Result::unwrap() on an Err value:
+MemoryFatal`; restoring the fixed source byte-identically makes it pass. The
+full `rsk-store` crate runs 215 tests.
+
+These are bounded controls, not the retained campaigns: the 2026-10-21
+30-minute-per-target runs are retained separately under `target/` with their
+corpus counts and final stats. `fido_session` and `cross_applet` privileged
+applet sequences (token spend/revocation, OATH/PIV authentication followed by a
+protected operation) still need target-side oracles; the v2 import/activation
+witness, `INITV2`/`IMPORTV2`, `close_pre_otp`, compaction and witness loss remain
+outside this slice, as do legacy semantic-loss limits and Miri replay of the new
+`authenticated_store` seeds (its `initialize_blank` cost is already documented
+in `miri.rs`).
 
 ## Host-tool workspaces, 2026-10-15
 

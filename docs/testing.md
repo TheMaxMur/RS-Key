@@ -2981,3 +2981,66 @@ This adds one correlated read+write story, the torn write. It does not close Pha
 3: longer retained campaigns and semantic record-loss detection beyond the current
 CRC/legacy and authenticated record formats remain open, as do correlated-fault
 stories beyond the torn write.
+
+### Correlated storage faults, 2026-10-21
+
+`SilentMedium` gained the read half on the same armed fid: `fault_read` and
+`fault_read_once` refuse `read`/`size` and report through `last_error`, with
+`read_faults()` counting them. A test arms both the dropped write and the refused
+read-back for one fid: the write answers `Ok` without landing, the read-back
+fails, and the command must fail while the old value stays on the medium. Both
+halves are proved (`attempts == 1`, `read_faults == 1`), and a provider control
+pins the per-fid one-shot arming. Negative control: forcing `last_error` to
+`false` fails the combination as `Ok(None)` against `Err(MemoryFatal)`.
+
+The power-cut model's `settle` now reboots when a read loses power instead of
+judging a torn value. A test cuts the command's write and then the recovery mount
+walk or the recovery settle read; it asserts both cuts fired, the old value and
+the neighbour survived, and the device is alive. Negative control: deleting the
+guard fails on `torn put: neither the old value nor the new one`.
+
+The `power_cut` corpus gains 53 deterministic seeds for credentials, config, PIV
+and reset (big-endian command/recovery budgets; run/exit later in the campaign
+section); `authenticated_store` gains 10 seeds over the real v2 backend
+(little-endian budgets, owner and counter banks, 64/MAX payloads, write/remove,
+warm overwrites, post-activation damage). Replay: `power_cut` 820 runs, cov
+7 503; `authenticated_store` 12 runs, cov 1 721; both exit 0 with no artifact.
+`fido_session`/`cross_applet` privileged applet sequences and the v2
+import/activation/rekey/compaction paths remain open, as do the retained
+campaigns and semantic-loss limits.
+
+#### Byte-granular second recovery cut, 2026-10-21
+
+The 30-minute `authenticated_store` campaign wrote
+`crash-157076ee2e345e6deb1b27e9e22e48a50a4155ad`: command budget 260 bytes,
+recovery budget 1 byte, owner fid, 64-byte write. The first cut leaves both
+prepare deltas complete and stops 28 bytes into the candidate value. The first
+recovery mount's `discard_reserved` then programs one byte of the deletion
+header; the next mount has to program that header a third time. The target's
+`Medium` declared `MultiwriteNorFlash` but used `WriteCountCheck::Twice`, so the
+third program was refused as `NotWritable` and `Main::recover_pending` mapped
+that discard failure to `MemoryFatal` — every later read of the owner and the
+acknowledged neighbour failed, even though both journals retained a complete
+checkpoint and both prepare deltas. `SharedMock` and the board's `SharedFlash`
+both allow multiwrite, and the store's bound is `MultiwriteNorFlash`; the input
+was a harness-fidelity defect, not witness loss or a production recovery bug.
+The target now uses `WriteCountCheck::Disabled` (as `kv_durability` does), and
+the mock still enforces that a program only clears bits.
+
+`FaultFlash` gained `Effect::Shutoff(n)`, a byte countdown across program/erase
+calls matching `MockFlashBase::bytes_until_shutoff`; a provider control pins a
+prefix split across calls. The native regression
+`a_second_cut_inside_the_recovery_discard_keeps_whole_values_and_neighbors`
+recovers the first cut's last program and the recovery cut's header from the
+event log, asserts the partial-value and partial-header shapes, then requires
+the next mount to return the whole old value and the neighbour.
+`fuzz/tests/authenticated_store_replay.rs` replays the 5-byte artifact through
+the shipped `run` and is `cfg(not(miri))` (its `initialize_blank` costs about
+54 minutes per seed, so the weekly Miri roster does not grow); the replay exits 0
+and a fresh 30-minute campaign runs 17 700 executions at 9/s (+181 corpus
+units, final cov 2 312, peak RSS 413 MB) with no new artifact (the original
+5-byte crash input is retained). Negative control: restoring
+`Twice` fails the replay test at `authenticated_store.rs:148` with
+`called Result::unwrap() on an Err value: MemoryFatal`; restoring the fixed
+source byte-identically passes. The full `rsk-store` crate runs 215 tests. No
+production code changed, so `bcdDevice` and `CHANGELOG.md` are unchanged.

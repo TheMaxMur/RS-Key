@@ -610,6 +610,10 @@ pub mod faults {
         dropped: Rc<Cell<Option<u16>>>,
         once: Rc<Cell<bool>>,
         attempts: Rc<Cell<u32>>,
+        read_fault: Rc<Cell<Option<u16>>>,
+        read_once: Rc<Cell<bool>>,
+        read_faults: Rc<Cell<u32>>,
+        read_err: Rc<Cell<bool>>,
     }
 
     /// The other end of a [`Silent`]: arms the drop, counts it, and reads the
@@ -622,6 +626,9 @@ pub mod faults {
         dropped: Rc<Cell<Option<u16>>>,
         once: Rc<Cell<bool>>,
         attempts: Rc<Cell<u32>>,
+        read_fault: Rc<Cell<Option<u16>>>,
+        read_once: Rc<Cell<bool>>,
+        read_faults: Rc<Cell<u32>>,
     }
 
     impl Silent {
@@ -630,18 +637,29 @@ pub mod faults {
             let dropped = Rc::new(Cell::new(None));
             let once = Rc::new(Cell::new(false));
             let attempts = Rc::new(Cell::new(0));
+            let read_fault = Rc::new(Cell::new(None));
+            let read_once = Rc::new(Cell::new(false));
+            let read_faults = Rc::new(Cell::new(0));
+            let read_err = Rc::new(Cell::new(false));
             (
                 Self {
                     inner: inner.clone(),
                     dropped: dropped.clone(),
                     once: once.clone(),
                     attempts: attempts.clone(),
+                    read_fault: read_fault.clone(),
+                    read_once: read_once.clone(),
+                    read_faults: read_faults.clone(),
+                    read_err,
                 },
                 SilentMedium {
                     inner,
                     dropped,
                     once,
                     attempts,
+                    read_fault,
+                    read_once,
+                    read_faults,
                 },
             )
         }
@@ -656,6 +674,23 @@ pub mod faults {
                 self.dropped.set(None);
             }
             self.attempts.set(self.attempts.get() + 1);
+            true
+        }
+
+        /// Refuse this read iff the read fault is armed for `fid`, spending a
+        /// one-shot arming. The store must surface the failure through
+        /// `last_error`: a `None` alone is "absent", which is the very collapse
+        /// this correlated story exists to separate from a lost record.
+        fn faulty_read(&self, fid: u16) -> bool {
+            if self.read_fault.get() != Some(fid) {
+                self.read_err.set(false);
+                return false;
+            }
+            if self.read_once.get() {
+                self.read_fault.set(None);
+            }
+            self.read_faults.set(self.read_faults.get() + 1);
+            self.read_err.set(true);
             true
         }
     }
@@ -691,10 +726,32 @@ pub mod faults {
             let n = self.inner.borrow_mut().read(fid, &mut buf)?;
             Some(buf[..n.min(buf.len())].to_vec())
         }
+        /// Fail every `read`/`size` of `fid` (`None` clears the fault). With the
+        /// drop armed for the same fid this is the correlated story: the program
+        /// lied and the read-back cannot answer either, so a test can prove both
+        /// halves fired instead of one masking the other.
+        pub fn fault_read(&self, fid: Option<u16>) {
+            self.read_fault.set(fid);
+            self.read_once.set(false);
+        }
+        /// Fail only the NEXT `read`/`size` of `fid`, then recover.
+        pub fn fault_read_once(&self, fid: u16) {
+            self.read_fault.set(Some(fid));
+            self.read_once.set(true);
+        }
+        /// Reads the armed fault refused. A command that never reached its
+        /// read-back leaves this at zero, which is how a test tells the
+        /// combination from a fixture that only injected the write fault.
+        pub fn read_faults(&self) -> u32 {
+            self.read_faults.get()
+        }
     }
 
     impl Storage for Silent {
         fn read(&mut self, fid: u16, buf: &mut [u8]) -> Option<usize> {
+            if self.faulty_read(fid) {
+                return None;
+            }
             self.inner.borrow_mut().read(fid, buf)
         }
         fn write(&mut self, fid: u16, data: &[u8]) -> Result<()> {
@@ -710,10 +767,19 @@ pub mod faults {
             self.inner.borrow_mut().remove(fid)
         }
         fn size(&mut self, fid: u16) -> Option<usize> {
+            if self.faulty_read(fid) {
+                return None;
+            }
             self.inner.borrow_mut().size(fid)
         }
         fn for_each_key(&mut self, f: &mut dyn FnMut(u16)) -> bool {
             self.inner.borrow_mut().for_each_key(f)
+        }
+        /// The last `read`/`size` refused by the fault. Without this, `None`
+        /// would be indistinguishable from absence and the command would treat a
+        /// failure as an absent record — the collapse the read-back exists for.
+        fn last_error(&self) -> bool {
+            self.read_err.get()
         }
     }
 

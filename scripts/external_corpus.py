@@ -173,6 +173,112 @@ def fs_ops_sequences():
     )
 
 
+def _be16(value):
+    return bytes([(value >> 8) & 0xFF, value & 0xFF])
+
+
+def _le16(value):
+    return bytes([value & 0xFF, (value >> 8) & 0xFF])
+
+
+def credential_cut_sequences():
+    """The credential create/replace lifecycle under a cut.
+
+    `0x90` enters the credential driver; byte 1 selects create, replace at a
+    sign counter of 73, or replace at 0. Bytes 2-3 and 4-5 are the command and
+    recovery byte budgets (`0xFFFF` is no cut). The target asserts the resident
+    credential is old-or-new, that a surviving counter never rolls back, and
+    that the neighbour survives; a cut at 0 must not be read as a torn value.
+    """
+    for mode, label in ((0, "create"), (1, "replace"), (2, "replace-zero")):
+        for op, rec, tag in ((0xFFFF, 0xFFFF, "no-cut"),
+                             (0, 0, "cut-first"),
+                             (64, 0, "command-cut"),
+                             (0, 64, "recovery-cut")):
+            yield "power_cut", f"rs-key-power-cut-credential-{label}-{tag}", bytes(
+                [0x90, mode]) + _be16(op) + _be16(rec) + bytes([0])
+
+
+def config_cut_sequences():
+    """The DeviceConfig transitions under a cut.
+
+    `0xA0` enters the config driver; byte 1 selects arm/replace/clear/merge/
+    legacy. The target asserts the persisted record and cached capability mask
+    are old-or-new, the unrelated neighbour and counter survive, and a recovery
+    cut cannot adopt a partially written record.
+    """
+    for change, label in ((0, "arm"), (1, "replace"), (2, "clear"),
+                          (3, "merge"), (4, "legacy")):
+        for op, rec, tag in ((0xFFFF, 0xFFFF, "no-cut"),
+                             (0, 0, "cut-first"),
+                             (64, 0, "command-cut"),
+                             (0, 64, "recovery-cut")):
+            yield "power_cut", f"rs-key-power-cut-config-{label}-{tag}", bytes(
+                [0xA0, change]) + _be16(op) + _be16(rec) + bytes([0])
+
+
+def piv_cut_sequences():
+    """F9 attestation provisioning under a cut.
+
+    `0xB0 | mode` enters the PIV driver; mode 0-3 is first/recreate/repair/
+    empty, bit 2 damages the public-key record. The target asserts the F9 key/
+    certificate and the unrelated record are old-or-new and that the PIN/PUK
+    gates are unchanged.
+    """
+    for mode, bit, label in ((0, 0, "first"), (1, 0, "recreate"),
+                             (2, 0, "repair"), (3, 4, "empty-pubkey")):
+        for op, rec, tag in ((0xFFFF, 0xFFFF, "no-cut"),
+                             (0, 0, "cut-first"),
+                             (64, 0, "command-cut"),
+                             (0, 64, "recovery-cut")):
+            yield "power_cut", f"rs-key-power-cut-piv-{label}-{tag}", bytes(
+                [0xB0 | mode | bit, 7]) + _be16(op) + _be16(rec) + bytes([0])
+
+
+def reset_cut_sequences():
+    """The device-wide reset under a cut.
+
+    `0xF0` enters `reset_probe`; bytes 1-3 are the big-endian byte budget
+    (byte 1's low nibble is the top), and byte 4 bit 0 loads the keydev before
+    the reset. The target asserts the PIN gate, always-uv gate and backup seal
+    hold for every surviving credential, and that a loaded keydev is gone.
+    """
+    for hi, mid, lo, keydev, tag in ((0x0F, 0xFF, 0xFF, 0, "no-cut"),
+                                     (0x00, 0x00, 0x00, 0, "cut-first"),
+                                     (0x00, 0x00, 0x10, 0, "cut-16"),
+                                     (0x00, 0x00, 0x10, 1, "cut-16-keydev"),
+                                     (0x00, 0x10, 0x00, 0, "cut-4096")):
+        yield "power_cut", f"rs-key-power-cut-reset-{tag}", bytes(
+            [0xF0, hi, mid, lo, keydev])
+
+
+def authenticated_store_sequences():
+    """The real v2 backend across a write/remove and its recovery mount.
+
+    Bytes 0-1 and 2-3 are little-endian byte budgets for the command and the
+    recovery mount (`0xFFFF` is no cut); byte 4 bit 0 selects the counter bank,
+    bit 1 a MAX_VALUE payload, bit 2 remove instead of write, bit 3
+    post-activation damage; byte 5 is the fill byte; byte 6 warms the log with
+    0-191 overwrites. Every seed asserts old-or-new on the target fid, the
+    acknowledged neighbour, and that damaged bytes are never adopted.
+    """
+    seeds = (
+        ("owner-write", 0x00, 0xFFFF, 0xFFFF, 0xA7, 0),
+        ("counter-write", 0x01, 0xFFFF, 0xFFFF, 0x5C, 0),
+        ("owner-max-write", 0x02, 0xFFFF, 0xFFFF, 0x24, 0),
+        ("owner-delete", 0x04, 0xFFFF, 0xFFFF, 0xA7, 0),
+        ("counter-delete", 0x05, 0xFFFF, 0xFFFF, 0x5C, 0),
+        ("owner-cut", 0x00, 64, 0, 0xA7, 0),
+        ("owner-recovery-cut", 0x00, 0, 64, 0xA7, 0),
+        ("counter-cut", 0x01, 0, 0, 0x5C, 0),
+        ("owner-warm", 0x00, 0xFFFF, 0xFFFF, 0xA7, 64),
+        ("counter-damage", 0x09, 0xFFFF, 0xFFFF, 0x5C, 0),
+    )
+    for label, flags, op, rec, fill, warm in seeds:
+        yield ("authenticated_store", f"rs-key-authenticated-store-{label}",
+               _le16(op) + _le16(rec) + bytes([flags, fill, warm]))
+
+
 def records():
     for name, digest in HASHES.items():
         if hashlib.sha256((SOURCE / name).read_bytes()).hexdigest() != digest:
@@ -221,6 +327,11 @@ def records():
     yield from oath_mark_sequences()
     yield from cross_applet_sequences()
     yield from fs_ops_sequences()
+    yield from credential_cut_sequences()
+    yield from config_cut_sequences()
+    yield from piv_cut_sequences()
+    yield from reset_cut_sequences()
+    yield from authenticated_store_sequences()
 
 
 def prepare(destination):

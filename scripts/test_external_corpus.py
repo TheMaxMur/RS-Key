@@ -175,3 +175,51 @@ def test_fs_ops_sequences_build_state_before_the_contracts():
     boundary = seeds["fs_ops", "rs-key-fs-ops-meta-nomemory-boundary"]
     assert boundary[:8] == bytes([3, 255, 11, 255, 19, 255, 27, 255])
     assert boundary[-2:] == bytes([28, 7])
+
+
+def test_power_cut_negative_space_seeds_keep_their_budgets_and_modes():
+    seeds = {(target, name): data for target, name, data in corpus.records()
+             if name.startswith(("rs-key-power-cut-credential-",
+                                 "rs-key-power-cut-config-",
+                                 "rs-key-power-cut-piv-",
+                                 "rs-key-power-cut-reset-"))}
+    assert {target for target, _ in seeds} == {"power_cut"}
+    assert len(seeds) == 53
+    assert sum("credential-" in name for _, name in seeds) == 12
+    assert sum("config-" in name for _, name in seeds) == 20
+    assert sum("piv-" in name for _, name in seeds) == 16
+    assert sum("reset-" in name for _, name in seeds) == 5
+    # Big-endian budgets: 0xFFFF is no cut; 64 is the command byte budget.
+    assert seeds["power_cut", "rs-key-power-cut-credential-create-no-cut"] == bytes(
+        [0x90, 0, 0xFF, 0xFF, 0xFF, 0xFF, 0])
+    assert seeds["power_cut", "rs-key-power-cut-credential-replace-command-cut"] == (
+        bytes([0x90, 1, 0x00, 0x40, 0x00, 0x00, 0]))
+    # Config change is data[1] % 5; legacy is the fourth transition.
+    assert seeds["power_cut", "rs-key-power-cut-config-legacy-no-cut"] == bytes(
+        [0xA0, 4, 0xFF, 0xFF, 0xFF, 0xFF, 0])
+    # PIV mode is data[0] & 3, bit 2 damages the public key: 0xB0|3|4 = 0xB7.
+    assert seeds["power_cut", "rs-key-power-cut-piv-empty-pubkey-command-cut"] == (
+        bytes([0xB7, 7, 0x00, 0x40, 0x00, 0x00, 0]))
+    # Reset budget is big-endian with its top nibble in byte 1.
+    assert seeds["power_cut", "rs-key-power-cut-reset-no-cut"] == bytes(
+        [0xF0, 0x0F, 0xFF, 0xFF, 0])
+    assert seeds["power_cut", "rs-key-power-cut-reset-cut-16-keydev"] == bytes(
+        [0xF0, 0x00, 0x00, 0x10, 1])
+
+
+def test_authenticated_store_seeds_cover_both_banks_and_recovery():
+    seeds = {(target, name): data for target, name, data in corpus.records()
+             if name.startswith("rs-key-authenticated-store-")}
+    assert {target for target, _ in seeds} == {"authenticated_store"}
+    assert len(seeds) == 10
+    # Little-endian budgets: 0xFFFF is no cut, 64 is the command budget.
+    assert seeds["authenticated_store", "rs-key-authenticated-store-owner-write"] == (
+        bytes([0xFF, 0xFF, 0xFF, 0xFF, 0x00, 0xA7, 0]))
+    assert seeds["authenticated_store", "rs-key-authenticated-store-owner-cut"] == (
+        bytes([0x40, 0x00, 0x00, 0x00, 0x00, 0xA7, 0]))
+    # Flags: bit 0 counter bank, bit 2 remove, bit 3 post-activation damage.
+    assert seeds["authenticated_store", "rs-key-authenticated-store-counter-damage"] == (
+        bytes([0xFF, 0xFF, 0xFF, 0xFF, 0x09, 0x5C, 0]))
+    assert seeds["authenticated_store", "rs-key-authenticated-store-owner-warm"][6] == 64
+    flags = {data[4] for data in seeds.values()}
+    assert {0x00, 0x01, 0x02, 0x04, 0x05, 0x09} <= flags

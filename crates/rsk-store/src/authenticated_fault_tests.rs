@@ -1004,3 +1004,155 @@ fn authority_rollover_and_its_interrupted_recovery_preserve_whole_values() {
         }
     }
 }
+
+/// The fuzz artifact `crash-157076ee…` shape: a 260-byte command write leaves
+/// both prepare intents and part of the candidate, then a recovery cut stops
+/// after one byte of the candidate's deletion marker. With a medium that honours
+/// `MultiwriteNorFlash` the next mount must finish discarding the candidate and
+/// keep the acknowledged old value and the neighbour.
+#[test]
+fn a_second_cut_inside_the_recovery_discard_keeps_whole_values_and_neighbors() {
+    const OLD: [u8; 64] = [0x35; 64];
+    const NEW: [u8; 64] = [0xA7; 64];
+    let baseline = FaultFlash::new();
+    let mut store = mount_authenticated(&baseline);
+    store.initialize_blank().unwrap();
+    store.write(CRED, &OLD).unwrap();
+    store.write(0xB000, b"acknowledged neighbor").unwrap();
+    let saved = baseline.image();
+
+    let flash = FaultFlash::new();
+    *flash.inner.bytes.borrow_mut() = saved;
+    flash.arm(&[Rule {
+        io: Io::Program,
+        skip: 0,
+        effect: Effect::Shutoff(260),
+        latched: true,
+    }]);
+    assert_eq!(
+        mount_authenticated(&flash).write(CRED, &NEW),
+        Err(Error::MemoryFatal)
+    );
+    assert!(flash.hits()[0] > 0, "first cut never fired");
+    let value = flash
+        .events()
+        .iter()
+        .rev()
+        .find(|(io, _, _)| *io == Io::Program)
+        .copied()
+        .unwrap();
+    let header = value.1 - 8;
+    flash.clear();
+    let interrupted = flash.image();
+    assert_eq!(
+        interrupted.get(value.1 as usize + 2..value.1 as usize + 28),
+        Some(&NEW[..26]),
+        "the first cut did not land inside the candidate value"
+    );
+    assert_eq!(interrupted.get(value.1 as usize + 28), Some(&0xFF));
+
+    *flash.inner.bytes.borrow_mut() = interrupted;
+    flash.arm(&[Rule {
+        io: Io::Program,
+        skip: 0,
+        effect: Effect::Shutoff(1),
+        latched: true,
+    }]);
+    assert_eq!(
+        authenticated_value(&mut mount_authenticated(&flash), CRED),
+        Err(Error::MemoryFatal)
+    );
+    assert!(flash.hits()[0] > 0, "recovery cut never fired");
+    assert_eq!(
+        flash
+            .events()
+            .iter()
+            .find(|(io, _, _)| *io == Io::Program)
+            .map(|event| event.1),
+        Some(header),
+        "the recovery cut did not stop inside the candidate's item header"
+    );
+    assert_eq!(flash.image().get(header as usize), Some(&0x00));
+    flash.clear();
+
+    let mut reboot = mount_authenticated(&flash);
+    assert_eq!(
+        authenticated_value(&mut reboot, CRED).unwrap().as_deref(),
+        Some(&OLD[..])
+    );
+    assert_eq!(
+        authenticated_value(&mut reboot, 0xB000).unwrap().as_deref(),
+        Some(&b"acknowledged neighbor"[..])
+    );
+}
+
+/// The second cut as a REFUSAL, not the coarse `KeepTail` partial used above:
+/// the recovery mount's first program/erase fails outright. The next mount must
+/// still serve the whole old or new value and the acknowledged neighbour.
+#[test]
+fn a_refused_recovery_write_keeps_whole_values_and_neighbors() {
+    const OLD: &[u8] = b"old authenticated owner";
+    const NEW: &[u8] = b"new authenticated owner";
+    for fid in [CRED] {
+        let baseline = FaultFlash::new();
+        let mut store = mount_authenticated(&baseline);
+        store.initialize_blank().unwrap();
+        store.write(fid, OLD).unwrap();
+        store.write(0xB000, b"neighbor").unwrap();
+        let saved = baseline.image();
+        baseline.arm(&[]);
+        store.write(fid, NEW).unwrap();
+        let programs = baseline
+            .events()
+            .iter()
+            .filter(|event| event.0 == Io::Program)
+            .count();
+        for first in 0..programs {
+            let flash = FaultFlash::new();
+            *flash.inner.bytes.borrow_mut() = saved.clone();
+            flash.arm(&[Rule {
+                io: Io::Program,
+                skip: first,
+                effect: Effect::KeepTail,
+                latched: true,
+            }]);
+            let _write = mount_authenticated(&flash).write(fid, NEW);
+            assert!(flash.hits()[0] > 0, "first cut {first} never fired");
+            flash.clear();
+            let interrupted = flash.image();
+            flash.arm(&[]);
+            let expected = authenticated_value(&mut mount_authenticated(&flash), fid).unwrap();
+            let recovery = flash.events();
+            for io in [Io::Program, Io::Erase] {
+                let count = recovery.iter().filter(|event| event.0 == io).count();
+                for second in 0..count {
+                    *flash.inner.bytes.borrow_mut() = interrupted.clone();
+                    flash.arm(&[Rule {
+                        io,
+                        skip: second,
+                        effect: Effect::Refuse,
+                        latched: true,
+                    }]);
+                    let _recovery = authenticated_value(&mut mount_authenticated(&flash), fid);
+                    assert!(
+                        flash.hits()[0] > 0,
+                        "fid {fid:04X} cut {first}, recovery {io:?} {second} never fired"
+                    );
+                    flash.clear();
+                    let mut reboot = mount_authenticated(&flash);
+                    let current = authenticated_value(&mut reboot, fid).unwrap_or_else(|error| {
+                        panic!(
+                            "fid {fid:04X} cut {first}, refused recovery {io:?} {second}: {error:?}"
+                        )
+                    });
+                    assert_eq!(current, expected);
+                    assert!(current.as_deref() == Some(OLD) || current.as_deref() == Some(NEW));
+                    assert_eq!(
+                        authenticated_value(&mut reboot, 0xB000).unwrap().as_deref(),
+                        Some(&b"neighbor"[..])
+                    );
+                }
+            }
+        }
+    }
+}

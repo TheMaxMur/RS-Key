@@ -32,6 +32,31 @@ fn verified_driver_preserves_capacity_and_makes_bounded_readback_progress() {
     );
 }
 
+/// The byte countdown spans program calls, as `MockFlashBase`'s does: the
+/// first call may finish, the next applies only the budget's remainder.
+#[test]
+fn byte_shutoff_applies_a_prefix_across_program_calls() {
+    let flash = FaultFlash::new();
+    flash.arm(&[Rule {
+        io: Io::Program,
+        skip: 0,
+        effect: Effect::Shutoff(5),
+        latched: true,
+    }]);
+    assert_eq!(block_on(flash.clone().write(0, &[0x0F; 4])), Ok(()));
+    assert_eq!(&flash.inner.bytes.borrow()[..4], &[0x0F; 4]);
+    assert_eq!(
+        block_on(flash.clone().write(4, &[0x0F; 4])),
+        Err(FlashFault)
+    );
+    assert_eq!(&flash.inner.bytes.borrow()[4..5], &[0x0F]);
+    assert_eq!(&flash.inner.bytes.borrow()[5..8], &[0xFF; 3]);
+    assert_eq!(flash.hits(), [2]);
+    flash.clear();
+    assert_eq!(block_on(flash.clone().write(8, &[0x0F; 4])), Ok(()));
+    assert_eq!(&flash.inner.bytes.borrow()[8..12], &[0x0F; 4]);
+}
+
 #[path = "nor_damage_capacity_tests.rs"]
 mod damage_capacity;
 

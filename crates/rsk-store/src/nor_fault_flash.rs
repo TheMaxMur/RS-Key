@@ -14,6 +14,9 @@ pub enum Effect {
     Refuse,
     Drop,
     KeepTail,
+    /// Apply only this many bytes of an operation, then fail. The countdown
+    /// spans operations, like `MockFlashBase::bytes_until_shutoff`.
+    Shutoff(usize),
 }
 #[derive(Clone, Copy, Debug)]
 pub struct Rule {
@@ -27,6 +30,7 @@ struct Armed {
     rule: Rule,
     remaining: usize,
     hits: usize,
+    budget: usize,
 }
 struct ReadImage {
     remaining: usize,
@@ -58,6 +62,10 @@ impl FaultFlash {
                     remaining: rule.skip,
                     rule,
                     hits: 0,
+                    budget: match rule.effect {
+                        Effect::Shutoff(bytes) => bytes,
+                        _ => 0,
+                    },
                 }
             })
             .collect();
@@ -93,7 +101,15 @@ impl FaultFlash {
                 continue;
             }
             armed.hits += 1;
-            result = Some(armed.rule.effect);
+            if matches!(armed.rule.effect, Effect::Shutoff(_)) {
+                let applied = armed.budget.min(len);
+                armed.budget -= applied;
+                if applied < len {
+                    result = Some(Effect::Shutoff(applied));
+                }
+            } else {
+                result = Some(armed.rule.effect);
+            }
         }
         result
     }
@@ -138,6 +154,23 @@ impl NorFlash for FaultFlash {
                     )
                     .await
             }
+            Some(Effect::Shutoff(applied)) => {
+                let start = offset as usize;
+                let Some(prefix) = bytes.get(..applied) else {
+                    return Err(FlashFault);
+                };
+                let mut image = self.inner.bytes.borrow_mut();
+                let Some(target) = image.get_mut(start..start + applied) else {
+                    return Err(FlashFault);
+                };
+                for (cell, &byte) in target.iter_mut().zip(prefix) {
+                    *cell &= byte;
+                }
+                self.inner
+                    .written
+                    .set(self.inner.written.get() + applied as u64);
+                Err(FlashFault)
+            }
             None => self.inner.write(offset, bytes).await,
         }
     }
@@ -149,6 +182,12 @@ impl NorFlash for FaultFlash {
                 self.inner.bytes.borrow_mut()[from as usize..(to as usize).saturating_sub(WORD)]
                     .fill(0xFF);
                 Ok(())
+            }
+            Some(Effect::Shutoff(applied)) => {
+                let start = from as usize;
+                let end = start.saturating_add(applied).min(to as usize);
+                self.inner.bytes.borrow_mut()[start..end].fill(0xFF);
+                Err(FlashFault)
             }
             None => self.inner.erase(from, to).await,
         }
