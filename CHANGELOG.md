@@ -38,6 +38,13 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ## [Unreleased]
 
+- Extend the storage-fault doubles and stateful fuzz seeds: `Silent`'s refused
+  read-back, a second cut during recovery, the credential/config/PIV/reset and
+  authenticated-store seeds, and the cross-applet OATH record-lifecycle oracle.
+  Behaviour is unchanged; the build counter advances because the test-util code
+  lives in `crates/rsk-fs/src/storage.rs`, which is shipped code.
+  bcdDevice `0x0AA7` → `0x0AA8`.
+
 - Complete the bounded USB oracle requirement matrix for confirmed profiles:
   command-specific grammar, field/length/numeric/string boundaries, populated
   private references, authorization/cursor lifetimes, native CCID/USB faults,
