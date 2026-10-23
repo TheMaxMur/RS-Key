@@ -38,6 +38,11 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ## [Unreleased]
 
+- **bcdDevice → 0x0AF7; TUI → 0.3.18:** Update `ctutils` to 0.4.5 in all
+  four Rust workspaces to address RUSTSEC-2026-0385: compiler optimization of
+  constant-time mask generation and 128-bit comparisons on 32-bit targets.
+  Existing keys and persistent records remain compatible without a reset.
+
 - **bcdDevice → 0x0ADF:** Reduce TrustZone CCID continuation and initial OpenPGP
   response latency with a bounded retry of busy Bulk IN writes. Each retry keeps
   the USB lifecycle, fault and epoch checks; full packet cleanup completes before

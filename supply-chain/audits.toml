@@ -1,4 +1,18 @@
 
 # cargo-vet audits file
 
-[audits]
+[[audits.ctutils]]
+who = "OpenAI Codex (automated delta source review, 2026-10-23)"
+criteria = "safe-to-deploy"
+delta = "0.4.2 -> 0.4.5"
+notes = """
+Reviewed the published package delta and relevant base Choice/CtOption/predication
+context. The 0.4.5 crate SHA-256 is
+38d28fb6aa7dd680b3ffd1a3e64e115c177bdba63c0ae7f9cd48129ff05c4fa0.
+The delta addresses RUSTSEC-2026-0385 and adds integer primitives and Thumb-1
+hardening without new runtime dependencies, unsafe code, or a build script.
+This is an AI source delta review, not a full-crate or human audit or a proof
+of constant-time code generation for every target/compiler. The existing
+0.4.2 exemption remains an explicit unaudited base; no safety claim is made
+for deploying that vulnerable version. Integration/target checks are separate.
+"""
