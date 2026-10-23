@@ -38,6 +38,13 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ## [Unreleased]
 
+- **bcdDevice → 0x0AFF:** Reuse HMAC key pads within each authenticated
+  counter-bank scan and keep the public SHA-256 initial vector in Secure
+  read-only SRAM. Every record, sequence and erased tail is still checked.
+  HMAC pads are reused only within a scan; existing Secret drops and Secure
+  stack sweeps still cover keyed state. Storage formats and replica recovery
+  remain unchanged.
+
 - **bcdDevice → 0x0AF7; TUI → 0.3.18:** Update `ctutils` to 0.4.5 in all
   four Rust workspaces to address RUSTSEC-2026-0385: compiler optimization of
   constant-time mask generation and 128-bit comparisons on 32-bit targets.

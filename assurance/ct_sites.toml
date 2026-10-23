@@ -161,6 +161,10 @@ symbol = "rsk_store::authenticated::counter_bank::CounterBank<F>::write_snapshot
 surface = "storage v2 counter checkpoint publication and full-set digest validation"
 
 [[caller]]
+symbol = "rsk_store::authenticated::counter_bank::scan::scan"
+surface = "storage v2 counter scan engine complete-directory digest verification"
+
+[[caller]]
 symbol = "rsk_store::authenticated::counters::Counters<F>::resolve"
 surface = "storage v2 replicated counter authority agreement and recovery"
 
