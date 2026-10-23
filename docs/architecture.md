@@ -220,6 +220,10 @@ Counter values and their authority are committed together and mirrored before
 success. Invalid occupied suffixes retain authenticated progress as a minimum
 generation; an older replica cannot silently replace that progress.
 
+From `0x0B05`, TrustZone places shared memory-copy and clearing helpers beside
+the verifier in read-only Secure SRAM. Their instruction bodies are unchanged;
+startup copies them before use under the existing executable-memory policy.
+
 From build `0x0ACF`, Main keeps its complete authenticated version directory
 in protected RAM. A warm read freshly checks the root, verifies its binding to
 the mounted directory, and authenticates the complete requested payload against

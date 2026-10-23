@@ -60,7 +60,7 @@ pub fn configure(out: &Path, memory: &mut String, code_size: u32, flash_size: u3
     memory.push_str(&format!(
         "ASSERT(LOADADDR(.data) + SIZEOF(.data) <= {nsc_start:#010x}, \"Secure image overlaps NSC\")\n",
     ));
-    // Keep the shared verifier instructions off the XIP path.
+    // Keep the shared verifier and its memory helpers off the XIP path.
     memory.push_str(
         "SECTIONS {\n\
          .rsk_exec : ALIGN(32) {\n\
@@ -69,11 +69,15 @@ pub fn configure(out: &Path, memory: &mut String, code_size: u32, flash_size: u3
          KEEP(*(.rodata._ZN10rsk_sha2567INITIAL17h????????????????E))\n\
          __rsk_sha256_initial_end = .;\n\
          KEEP(*(.text.*rsk_sha256* .text._ZN10rsk_crypto3mac10HmacSha256* .text._ZN10rsk_crypto3mac11hkdf_sha256* .text._ZN10rsk_crypto4drbg8HmacDrbg*)) KEEP(*(.data.bignum_hl .data.bignum_asm .data.sieve_step .data.ram_func))\n\
+         __rsk_memory_start = .;\n\
+         KEEP(*(.text.__aeabi_mem* .text.memcpy .text.memmove .text.memset .text.*compiler_builtins3mem6memcpy .text.*compiler_builtins3mem7memmove))\n\
+         __rsk_memory_end = .;\n\
          . = ALIGN(32); __rsk_exec_end = .;\n\
          } > RAM AT> FLASH\n\
          } INSERT BEFORE .data;\n\
          SECTIONS { .rsk_init_anchor (NOLOAD) : { __sdata = ADDR(.rsk_exec); __sidata = LOADADDR(.rsk_exec); } > RAM } INSERT AFTER .uninit;\n\
          ASSERT(__rsk_sha256_initial_end - __rsk_sha256_initial_start == 32, \"SHA-256 initial vector is not 32 bytes\")\n\
+         ASSERT(__rsk_memory_end > __rsk_memory_start, \"Memory helpers are missing from Secure SRAM\")\n\
          ASSERT(LOADADDR(.data) - LOADADDR(.rsk_exec) == ADDR(.data) - ADDR(.rsk_exec), \"RAM initialization is not contiguous\")\n",
     );
     let object = out.join("gateway.o");

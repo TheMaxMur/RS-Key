@@ -38,6 +38,10 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ## [Unreleased]
 
+- **bcdDevice → 0x0B05:** Keep shared memory-copy and clearing helpers in
+  read-only Secure SRAM alongside the TrustZone verifier. Persistent formats,
+  authentication checks and secret wiping remain unchanged.
+
 - **bcdDevice → 0x0AFF:** Reuse HMAC key pads within each authenticated
   counter-bank scan and keep the public SHA-256 initial vector in Secure
   read-only SRAM. Every record, sequence and erased tail is still checked.

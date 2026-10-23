@@ -1444,3 +1444,47 @@ survivors from the develop integration. The repeated set has 65 caught,
 three unviable and one equivalent mutation: at equal lengths, Torn's `>` to
 `>=` replacement only appends an empty suffix. These are test/model/tooling
 changes; firmware behavior and bcdDevice are unchanged.
+
+
+## Shared memory helpers in Secure SRAM
+
+Build `0x0B05` moves the existing copy, move and clearing helpers into the
+read-only executable Secure SRAM region. Reset copies them before their first
+call. The Waveshare RP2350-One 4 MiB image uses 4,000 more bytes for executable
+code; its core0 stack remains 141,184 bytes. Image execution of ML-DSA-87
+create/sign used at most 94,360 bytes, leaving 46,824 bytes in that run.
+Data, BSS, Non-secure RAM, authentication, rollback checks and wiping are unchanged.
+
+A physical AFF/B05/AFF comparison retained 51 paired calls per key and operation,
+with balanced device order and a fixed schedule of delays outside each timer.
+All 11,340 calls, including warmups, passed their response or crypto checks.
+Representative API medians on the same test keys were:
+
+| Operation | RS-Key AFF before / B05 / AFF after (ms) | YubiKey with B05 (ms) |
+|---|---|---|
+| CCID getInfo | 10.624 / 10.055 / 10.502 | 9.517 |
+| OpenPGP application data | 8.252 / 7.548 / 8.037 | 4.830 |
+| PIV P-384 ECDH | 110.417 / 110.348 / 110.938 | 137.264 |
+| OpenPGP P-521 authentication | 911.277 / 904.652 / 911.893 | 225.750 |
+
+An earlier screen showed a 0.313 ms P-384 ECDH increase; this single, prospectively
+scheduled confirmation did not reproduce it. B05 was faster than both AFF phases
+for that operation, including after comparison with the contemporaneous YubiKey.
+None of the 73 command/substep metrics had a wholly positive bracket confidence
+interval. HID getInfo's 0.083 ms increase remained uncertain; PIV metadata was
+slower than the final AFF phase while both keys also sped up between AFF phases.
+These are measurements of this cohort, not universal equivalence bounds or proof
+that the complete measured difference comes from firmware.
+
+The linker refuses an empty memory-helper placement. Its negative control ran
+through the unchanged `TrustZone image` row of `scripts/check.sh`, with other
+rows skipped in an external scratch wrapper. Exit codes were captured directly:
+
+| Placement mutation | ASSERT removed | ASSERT present |
+|---|---|---|
+| Replace the helper selector with a nonexistent input section | 0 | 101: `Memory helpers are missing from Secure SRAM` |
+
+The original source was restored after both cases. This check establishes an
+empty-section guard, not a guarantee that every future helper matches the selector;
+the exact image review separately checked all 16 emitted helper bodies and their
+startup ordering.
