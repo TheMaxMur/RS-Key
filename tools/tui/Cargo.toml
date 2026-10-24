@@ -2,7 +2,7 @@
 # table below detaches it from the parent so it builds for the host, not thumbv8m).
 [package]
 name = "rsk-tui"
-version = "0.3.18"
+version = "0.3.19"
 license = "AGPL-3.0-only"
 edition = "2024"
 description = "rs-key device dashboard — a self-contained ratatui cockpit"
@@ -20,7 +20,7 @@ ciborium = "0.2"  # CTAP2 CBOR encode/decode
 
 # Native seed backup: the MSE channel (P-256 ECDH -> HKDF -> ChaCha20-Poly1305),
 # the clientPIN protocol-two token (ECDH + HKDF + AES-CBC + HMAC), and BIP-39.
-p256 = { version = "0.13", features = ["ecdh"] }
+p256 = { version = "0.14", default-features = false, features = ["ecdh", "ecdsa", "getrandom", "precomputed-tables", "std"] }
 sha2 = "0.10"
 hkdf = "0.12"
 hmac = "0.12"

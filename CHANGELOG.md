@@ -38,6 +38,13 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ## [Unreleased]
 
+- **bcdDevice → 0x0B0F:** Update `crypto-bigint` from 0.7.5 to 0.7.6
+  across the firmware, emulator, TUI and fuzz lockfiles. This addresses
+  RUSTSEC-2026-0387, including secret-dependent branches in arithmetic intended
+  to be constant-time. TUI 0.3.19 uses P-256 0.14 for its ECDH and identity
+  verification paths, removing its remaining vulnerable 0.5.5 dependency.
+  No advisory exception is added.
+
 - **bcdDevice → 0x0B05:** Keep shared memory-copy and clearing helpers in
   read-only Secure SRAM alongside the TrustZone verifier. Persistent formats,
   authentication checks and secret wiping remain unchanged.

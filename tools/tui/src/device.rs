@@ -24,8 +24,13 @@ use hkdf::Hkdf;
 use hmac::{Hmac, Mac};
 use p256::ecdsa::signature::Verifier;
 use p256::ecdsa::{Signature, VerifyingKey};
-use p256::elliptic_curve::sec1::{FromEncodedPoint, ToEncodedPoint};
-use p256::{EncodedPoint, PublicKey, SecretKey};
+use p256::elliptic_curve::sec1::{FromSec1Point, ToSec1Point};
+use p256::elliptic_curve::{
+    Generate,
+    common::getrandom::SysRng,
+    rand_core::{CryptoRng, UnwrapErr},
+};
+use p256::{PublicKey, Sec1Point, SecretKey};
 use pcsc::{Context, Protocols, Scope, ShareMode};
 use rand_core::{OsRng, RngCore};
 use sha2::{Digest, Sha256};
@@ -436,9 +441,19 @@ fn as_u32(v: &Value) -> Option<u32> {
 // crypto primitives (HW-verified — do not alter the algorithm)
 // ===========================================================================
 
+fn generate_ecdh_key(rng: &mut impl CryptoRng) -> SecretKey {
+    loop {
+        let key = SecretKey::generate_from_rng(rng);
+        // ScalarValue generation admits zero; ECDH private keys must not.
+        if !bool::from(key.as_scalar_value().is_zero()) {
+            return key;
+        }
+    }
+}
+
 fn ecdh_pub() -> (SecretKey, [u8; 32], [u8; 32]) {
-    let sk = SecretKey::random(&mut OsRng);
-    let ep = sk.public_key().to_encoded_point(false);
+    let sk = generate_ecdh_key(&mut UnwrapErr(SysRng));
+    let ep = sk.public_key().to_sec1_point(false);
     let (mut x, mut y) = ([0u8; 32], [0u8; 32]);
     x.copy_from_slice(ep.x().unwrap());
     y.copy_from_slice(ep.y().unwrap());
@@ -446,8 +461,8 @@ fn ecdh_pub() -> (SecretKey, [u8; 32], [u8; 32]) {
 }
 
 fn ecdh_raw(sk: &SecretKey, px: &[u8; 32], py: &[u8; 32]) -> Option<[u8; 32]> {
-    let ep = EncodedPoint::from_affine_coordinates(px.into(), py.into(), false);
-    let peer = Option::<PublicKey>::from(PublicKey::from_encoded_point(&ep))?;
+    let ep = Sec1Point::from_affine_coordinates(px.into(), py.into(), false);
+    let peer = Option::<PublicKey>::from(PublicKey::from_sec1_point(&ep))?;
     let shared = p256::ecdh::diffie_hellman(sk.to_nonzero_scalar(), peer.as_affine());
     let mut z = [0u8; 32];
     z.copy_from_slice(shared.raw_secret_bytes());
@@ -1764,3 +1779,7 @@ impl DeviceProvider for MockProvider {
 #[cfg(test)]
 #[path = "device_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "device_crypto_tests.rs"]
+mod crypto_tests;
