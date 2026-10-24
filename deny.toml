@@ -33,6 +33,16 @@ private = { ignore = true }
 crate = "p384@0.14.0"
 allow = ["AGPL-3.0-only", "Apache-2.0", "MIT"]
 
+# Local P-256 borrow propagation is AGPL; upstream remains Apache-2.0 OR MIT.
+[[licenses.exceptions]]
+crate = "p256@0.14.0"
+allow = ["AGPL-3.0-only", "Apache-2.0", "MIT"]
+
+# Local UInt borrow propagation is AGPL; upstream remains Apache-2.0 OR MIT.
+[[licenses.exceptions]]
+crate = "crypto-bigint@0.7.6"
+allow = ["AGPL-3.0-only", "Apache-2.0", "MIT"]
+
 [bans]
 multiple-versions = "warn"
 

@@ -47,3 +47,7 @@ rsk-slip39 = { path = "../../crates/rsk-slip39" }
 serde_json = "1"
 
 [workspace]
+
+[patch.crates-io]
+crypto-bigint = { path = "../../third_party/crypto-bigint" }
+p256 = { path = "../../third_party/p256" }

@@ -17,7 +17,6 @@
 use rsk_secret::Secret;
 use zeroize::Zeroize;
 
-use p256::ecdsa::signature::hazmat::PrehashSigner;
 use p256::elliptic_curve::sec1::{FromSec1Point, ModulusSize, Sec1Point, Tag, ToSec1Point};
 use p256::elliptic_curve::{AffinePoint, CurveArithmetic, FieldBytesSize, PublicKey};
 
@@ -273,17 +272,7 @@ impl PrivKey {
                 let sig = crate::sign_k256(nz.expose(), prehash).ok_or(EcError::Failed)?;
                 Ok(put(sig.to_bytes().as_slice(), out))
             }
-            PrivKey::P521(s) => {
-                // 0.14's p521 has a deterministic RFC 6979 signer (its `sha512` feature),
-                // so no random nonce / rand_core adapter is needed here. (FIDO's comb path
-                // instead signs P-521 with a random TRNG nonce -- both are safe.)
-                let k = p521::ecdsa::SigningKey::from_bytes(&p521::FieldBytes::from(*s))
-                    .map_err(|_| EcError::Failed)?;
-                let sig: p521::ecdsa::Signature =
-                    k.sign_prehash(prehash).map_err(|_| EcError::Failed)?;
-                let b = sig.to_bytes();
-                Ok(put(&b[..], out))
-            }
+            PrivKey::P521(s) => sign_p521(s, prehash, out),
             PrivKey::Bp256(s) => sign_bp256(s, prehash, out),
             PrivKey::Bp384(s) => sign_bp384(s, prehash, out),
             PrivKey::Ed25519(seed) => {
@@ -429,6 +418,24 @@ where
     Option::from(PublicKey::<C>::from_sec1_point(&ep)).ok_or(EcError::RejectedPoint)
 }
 
+// Keep the P-521 signing workspace out of the other curves' dispatch frame.
+#[inline(never)]
+fn sign_p521(s: &[u8; 66], prehash: &[u8], out: &mut [u8]) -> Result<usize, EcError> {
+    let d = Secret::new({
+        let key = p521::SecretKey::from_bytes(&p521::FieldBytes::from(*s))
+            .map_err(|_| EcError::Failed)?;
+        key.to_nonzero_scalar()
+    });
+    let sig = ecdsa::hazmat::sign_prehashed_rfc6979::<
+        p521::NistP521,
+        <p521::NistP521 as ecdsa::DigestAlgorithm>::Digest,
+    >(d.expose(), prehash, &[])
+    .0;
+    let b = sig.to_bytes();
+    out[..b.len()].copy_from_slice(b.as_slice());
+    Ok(b.len())
+}
+
 /// P-256 ECDH: peer point parsed as a SEC1 uncompressed point, shared secret =
 /// the affine x-coordinate.
 fn ecdh_p256(scalar: &[u8; 32], peer_point: &[u8], out: &mut [u8]) -> Result<usize, EcError> {
@@ -481,26 +488,38 @@ fn ecdh_k256(scalar: &[u8; 32], peer_point: &[u8], out: &mut [u8]) -> Result<usi
 // signing is deterministic RFC 6979 (bp `sha256`/`sha384` feature) like P-256/P-384.
 
 /// brainpoolP256r1 ECDSA — raw `r ‖ s` (64 bytes).
+#[inline(never)]
 fn sign_bp256(s: &[u8; 32], prehash: &[u8], out: &mut [u8]) -> Result<usize, EcError> {
-    use ecdsa::signature::hazmat::PrehashSigner;
-    let k =
-        ecdsa::SigningKey::<bp256::BrainpoolP256r1>::from_bytes(&bp256::r1::FieldBytes::from(*s))
+    let d = Secret::new({
+        let key = bp256::r1::SecretKey::from_bytes(&bp256::r1::FieldBytes::from(*s))
             .map_err(|_| EcError::Failed)?;
-    let sig: bp256::r1::ecdsa::Signature = k.sign_prehash(prehash).map_err(|_| EcError::Failed)?;
+        key.to_nonzero_scalar()
+    });
+    let sig = ecdsa::hazmat::sign_prehashed_rfc6979::<
+        bp256::BrainpoolP256r1,
+        <bp256::BrainpoolP256r1 as ecdsa::DigestAlgorithm>::Digest,
+    >(d.expose(), prehash, &[])
+    .0;
     let b = sig.to_bytes();
-    out[..b.len()].copy_from_slice(&b);
+    out[..b.len()].copy_from_slice(b.as_slice());
     Ok(b.len())
 }
 
 /// brainpoolP384r1 ECDSA — raw `r ‖ s` (96 bytes).
+#[inline(never)]
 fn sign_bp384(s: &[u8; 48], prehash: &[u8], out: &mut [u8]) -> Result<usize, EcError> {
-    use ecdsa::signature::hazmat::PrehashSigner;
-    let k =
-        ecdsa::SigningKey::<bp384::BrainpoolP384r1>::from_bytes(&bp384::r1::FieldBytes::from(*s))
+    let d = Secret::new({
+        let key = bp384::r1::SecretKey::from_bytes(&bp384::r1::FieldBytes::from(*s))
             .map_err(|_| EcError::Failed)?;
-    let sig: bp384::r1::ecdsa::Signature = k.sign_prehash(prehash).map_err(|_| EcError::Failed)?;
+        key.to_nonzero_scalar()
+    });
+    let sig = ecdsa::hazmat::sign_prehashed_rfc6979::<
+        bp384::BrainpoolP384r1,
+        <bp384::BrainpoolP384r1 as ecdsa::DigestAlgorithm>::Digest,
+    >(d.expose(), prehash, &[])
+    .0;
     let b = sig.to_bytes();
-    out[..b.len()].copy_from_slice(&b);
+    out[..b.len()].copy_from_slice(b.as_slice());
     Ok(b.len())
 }
 
@@ -584,3 +603,15 @@ mod bp_kat;
 #[cfg(test)]
 #[path = "key_wycheproof_tests.rs"]
 mod wycheproof_tests;
+
+#[cfg(test)]
+#[path = "key_p521_tests.rs"]
+mod p521_tests;
+
+#[cfg(test)]
+#[path = "key_bp384_tests.rs"]
+mod bp384_tests;
+
+#[cfg(test)]
+#[path = "key_bp256_tests.rs"]
+mod bp256_tests;

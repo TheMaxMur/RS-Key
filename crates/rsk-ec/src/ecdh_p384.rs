@@ -72,7 +72,8 @@ impl Jacobian {
         let alpha = (self.x - delta) * (self.x + delta);
         let alpha = alpha.double() + alpha;
         let x = alpha.square() - beta.double().double().double();
-        let z = (self.y + self.z).square() - gamma - delta;
+        // The 32-bit backend squares by multiplication; 2YZ saves two field additions.
+        let z = (self.y * self.z).double();
         let y = alpha * (beta.double().double() - x) - gamma.square().double().double().double();
         self.x = x;
         self.y = y;
@@ -92,7 +93,7 @@ impl Jacobian {
         let v = self.x * i;
         let x = r.square() - j - v.double();
         let y = r * (v - x) - (self.y * j).double();
-        let z = (self.z + h).square() - zz - hh;
+        let z = (self.z * h).double();
         let mut sum = Secret::new(Self { x, y, z });
         let doubled = Secret::new(Self::from_affine(twice));
         let base = Secret::new(Self::from_affine(point));

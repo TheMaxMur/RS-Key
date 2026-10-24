@@ -1,0 +1,65 @@
+//! secp256r1 scalar arithmetic benchmarks
+
+#![allow(missing_docs, clippy::unwrap_used, reason = "benchmark")]
+
+use core::hint::black_box;
+use criterion::{
+    BenchmarkGroup, Criterion, criterion_group, criterion_main, measurement::Measurement,
+};
+use hex_literal::hex;
+use p256::{Scalar, elliptic_curve::PrimeField};
+
+fn test_scalar_x() -> Scalar {
+    Scalar::from_repr(
+        hex!("519b423d715f8b581f4fa8ee59f4771a5b44c8130b4e3eacca54a56dda72b464").into(),
+    )
+    .unwrap()
+}
+
+fn test_scalar_y() -> Scalar {
+    Scalar::from_repr(
+        hex!("0f56db78ca460b055c500064824bed999a25aaf48ebb519ac201537b85479813").into(),
+    )
+    .unwrap()
+}
+
+fn bench_scalar_sub<M: Measurement>(group: &mut BenchmarkGroup<'_, M>) {
+    let x = test_scalar_x();
+    let y = test_scalar_y();
+    group.bench_function("sub", |b| b.iter(|| x - y));
+}
+
+fn bench_scalar_add<M: Measurement>(group: &mut BenchmarkGroup<'_, M>) {
+    let x = test_scalar_x();
+    let y = test_scalar_y();
+    group.bench_function("add", |b| b.iter(|| x + y));
+}
+
+fn bench_scalar_mul<M: Measurement>(group: &mut BenchmarkGroup<'_, M>) {
+    let x = test_scalar_x();
+    let y = test_scalar_y();
+    group.bench_function("mul", |b| b.iter(|| black_box(x) * black_box(y)));
+}
+
+fn bench_scalar_negate<M: Measurement>(group: &mut BenchmarkGroup<'_, M>) {
+    let x = test_scalar_x();
+    group.bench_function("negate", |b| b.iter(|| -x));
+}
+
+fn bench_scalar_invert<M: Measurement>(group: &mut BenchmarkGroup<'_, M>) {
+    let x = test_scalar_x();
+    group.bench_function("invert", |b| b.iter(|| x.invert()));
+}
+
+fn bench_scalar(c: &mut Criterion) {
+    let mut group = c.benchmark_group("scalar operations");
+    bench_scalar_sub(&mut group);
+    bench_scalar_add(&mut group);
+    bench_scalar_mul(&mut group);
+    bench_scalar_negate(&mut group);
+    bench_scalar_invert(&mut group);
+    group.finish();
+}
+
+criterion_group!(benches, bench_scalar);
+criterion_main!(benches);

@@ -16,6 +16,15 @@ unrelated kinds live here:
   `p384/` plus `p384.patch` specialize 32-bit P-384 field products with a
   constant-time CIOS kernel; the same three workspaces resolve that fork.
   The patch records its origin, unchanged surfaces and host/ARM verification.
+  `p256/` plus `p256.patch` remove repeated borrow-mask conversions from the
+  32-bit field backend and inline its correction, retaining ctutils barriers.
+  Field squaring specializes the upstream symmetric product for eight words
+  with constant cross-term indices and unchanged reduction.
+  All four workspaces, including the TUI, resolve this fork; the patch records
+  its provenance.
+  `crypto-bigint/` plus `crypto-bigint.patch` propagate the protected borrow
+  across P-521's 17-word integers on 32-bit targets without intermediate masks.
+  Other widths keep the upstream word loop. All four workspaces use this fork of 0.7.6; its security fixes and ctutils primitives are retained.
 - **The image emulator** — `picoem/`, the two host libraries and pinned A4
   ROM used by `tools/emu`. Origin, local isolation changes and checks are
   recorded in [TrustZone](../docs/trustzone.md#emulator-source-and-isolation-checks).

@@ -485,5 +485,7 @@ bench = false
 # kv_durability fuzz targets exercise the exact KV code the firmware ships (see the
 # root Cargo.toml [patch] note + third_party/sequential-storage.patch).
 [patch.crates-io]
+crypto-bigint = { path = "../third_party/crypto-bigint" }
+p256 = { path = "../third_party/p256" }
 p384 = { path = "../third_party/p384" }
 sequential-storage = { path = "../third_party/sequential-storage" }

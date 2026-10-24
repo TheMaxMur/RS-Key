@@ -220,6 +220,12 @@ gpg read back):
 | ECC (encrypt) | **Cv25519** (X25519), NIST **P-256 / P-384 / P-521**, **secp256k1**, **brainpoolP256r1 / P384r1** | ECDH; the DEC slot only |
 | RSA | **2048 / 3072 / 4096**, plus **1024** | exponent fixed at 65537 (what gpg imports) |
 
+From build `0x0B23`, P-521 and Brainpool P-256/P-384 signing and authentication skip the unused public-key
+derivation before signing. RFC6979 nonce generation, raw signature encoding,
+PIN and touch requirements remain unchanged; existing keys need no migration.
+P-384 signing also omits the unused nonce-generator update after success; ECDH
+uses equivalent coordinate formulas with fewer field additions.
+
 Changing a slot's algorithm after a key exists invalidates that slot's old
 private/public key pair. Re-select the intended attribute before generating or
 importing the replacement; writing the same attribute leaves the key intact.

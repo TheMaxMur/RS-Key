@@ -38,6 +38,22 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ## [Unreleased]
 
+- **bcdDevice → 0x0B23:** Avoid deriving an unused public key on each
+  OpenPGP P-521 or Brainpool P-256/P-384 signature. The deterministic RFC6979 signer, scalar validation,
+  signature encoding and secret cleanup retain their existing contracts.
+  P-384 signing omits the RFC6979 state update after an accepted nonce; rejected
+  candidates still follow the same retry sequence. P-384 ECDH uses equivalent
+  bilinear Z-coordinate formulas to reduce field additions.
+  TrustZone places repeated AES-GCM blocks, EC selection and field arithmetic,
+  RSA integer operations, heap cleanup, record verification and single-message
+  SHA-256 in
+  read-only Secure SRAM. P-256 carries the protected borrow between words
+  without intermediate mask conversions and keeps the correction inline.
+  P-521's 17-word integer subtraction on 32-bit targets also carries the
+  protected borrow directly; other integer widths keep the upstream word loop. P-256 field squaring uses a symmetric product
+  kernel with fixed eight-word cross terms and the same Montgomery reduction.
+  Authentication checks are unchanged.
+
 - **bcdDevice → 0x0B0F:** Update `crypto-bigint` from 0.7.5 to 0.7.6
   across the firmware, emulator, TUI and fuzz lockfiles. This addresses
   RUSTSEC-2026-0387, including secret-dependent branches in arithmetic intended

@@ -39,6 +39,7 @@ mod curve;
 mod ecdh_p384;
 mod error;
 mod key;
+mod nonce_p384;
 mod rng;
 
 pub use comb_p384::comb_mul_p384;
@@ -176,26 +177,17 @@ pub fn sign_p256(d: &p256::Scalar, prehash: &[u8]) -> Option<p256::ecdsa::Signat
 /// the fixed-base [`comb_mul_p384`] — byte-identical to `p384::ecdsa::SigningKey::
 /// sign_prehash`.
 pub fn sign_p384(d: &p384::Scalar, prehash: &[u8]) -> Option<p384::ecdsa::Signature> {
-    use p384::NistP384;
-    use p384::elliptic_curve::Curve;
     use p384::elliptic_curve::PrimeField;
     use p384::elliptic_curve::bigint::U384;
     use p384::elliptic_curve::ops::Reduce;
     use p384::elliptic_curve::point::AffineCoordinates;
 
     let fb = to_field::<48>(prehash);
-    let order = NistP384::ORDER;
-    let mut kgen = rfc6979::KGenerator::<<NistP384 as ecdsa::DigestAlgorithm>::Digest, U384>::new(
-        &d.to_repr(),
-        &fb,
-        &[],
-        &order,
-    );
-    let mut kb = p384::FieldBytes::default();
-    kgen.fill_next_k(&mut kb);
+    let mut kb = rsk_secret::Secret::<[u8; 48]>::zeroed();
+    nonce_p384::fill_nonce(d, &fb, kb.expose_mut());
     #[cfg(test)]
-    tests::override_nonce(&mut kb);
-    let k = Option::<p384::Scalar>::from(p384::Scalar::from_repr(kb))?;
+    tests::override_nonce(kb.expose_mut());
+    let k = Option::<p384::Scalar>::from(p384::Scalar::from_repr((*kb.expose()).into()))?;
     let k_inv = Option::<p384::Scalar>::from(k.invert())?;
     let reduce = |b: &[u8]| <p384::Scalar as Reduce<U384>>::reduce(&U384::from_be_slice(b));
     let z = reduce(&fb);

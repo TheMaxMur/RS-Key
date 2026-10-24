@@ -206,6 +206,8 @@ opt-level = "s"    # embassy/HAL needs some opt even in dev to fit/behave
 # P-384 keeps its existing RustCrypto types and validation; only 32-bit field
 # products use the local CIOS kernel (provenance: third_party/p384.patch).
 [patch.crates-io]
+crypto-bigint = { path = "third_party/crypto-bigint" }
+p256 = { path = "third_party/p256" }
 p384 = { path = "third_party/p384" }
 sequential-storage = { path = "third_party/sequential-storage" }
 
