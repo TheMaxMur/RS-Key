@@ -316,6 +316,12 @@ impl PowerCutModel {
             None => return true,
             Some(Pending::Put(fid, new)) => {
                 let got = self.read_value(fs, *fid);
+                // A read that lost the power is not a torn value: reboot and ask
+                // again. Judging the failed read would blame the write for the
+                // medium's second fault.
+                if dev.dead() {
+                    return false;
+                }
                 let old = self.val.get(fid).cloned();
                 assert!(
                     put_landed(old.as_deref(), new, got.as_deref()),
@@ -326,6 +332,9 @@ impl PowerCutModel {
             Some(Pending::Delete(fid)) => {
                 let got_value = self.read_value(fs, *fid);
                 let got_meta = self.read_meta(fs, *fid);
+                if dev.dead() {
+                    return false;
+                }
                 let old_value = self.val.get(fid).cloned();
                 let old_meta = self.meta.get(fid).cloned();
                 assert!(
@@ -342,6 +351,9 @@ impl PowerCutModel {
             }
             Some(Pending::MetaAdd(fid, new, fits)) => {
                 let got = self.read_meta(fs, *fid);
+                if dev.dead() {
+                    return false;
+                }
                 let old = self.meta.get(fid).cloned();
                 assert!(
                     meta_add_landed(old.as_deref(), new, *fits, got.as_deref()),
@@ -351,6 +363,9 @@ impl PowerCutModel {
             }
             Some(Pending::MetaDelete(fid)) => {
                 let got = self.read_meta(fs, *fid);
+                if dev.dead() {
+                    return false;
+                }
                 let old = self.meta.get(fid).cloned();
                 assert!(
                     meta_delete_landed(old.as_deref(), got.as_deref()),

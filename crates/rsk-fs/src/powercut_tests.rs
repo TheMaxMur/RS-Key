@@ -528,3 +528,38 @@ fn the_power_cut_model_recovers_when_reads_or_mount_walks_lose_power() {
         assert_eq!(&record, b"policy");
     }
 }
+
+/// A cut inside the command and a second cut inside its recovery. The first
+/// must not hide the second: the recovery's read or mount walk fails, the loop
+/// reboots, and the settled state is still the old value with the neighbour
+/// intact. Both cuts are counted, so a fixture that only injected one cannot
+/// pass as the combination.
+#[test]
+fn a_second_cut_inside_recovery_does_not_hide_the_first() {
+    for refuse_walk in [false, true] {
+        let mut dev = RamDevice::new(Tear::Before);
+        let mut fs = dev.mount();
+        let mut model = PowerCutModel::new(&FIDS, META_MAX);
+        model.step(&mut dev, &mut fs, Op::Put(A, b"old".to_vec()));
+        model.step(&mut dev, &mut fs, Op::Put(B, b"neighbour".to_vec()));
+        dev.arm(0); // the command's write is cut
+        if refuse_walk {
+            dev.medium.walk_cut.set(Some(0)); // the recovery mount walk is cut
+        } else {
+            dev.medium.read_cut.set(Some(A)); // the recovery settle read is cut
+        }
+        model.step(&mut dev, &mut fs, Op::Put(A, b"new".to_vec()));
+        assert_eq!(
+            dev.medium.cuts.get(),
+            2,
+            "both the command cut and the recovery cut must fire (walk={refuse_walk})"
+        );
+        assert!(!dev.dead());
+        let mut a = [0; 3];
+        assert_eq!(fs.read(A, &mut a), Some(3));
+        assert_eq!(&a, b"old");
+        let mut b = [0; 9];
+        assert_eq!(fs.read(B, &mut b), Some(9));
+        assert_eq!(&b, b"neighbour");
+    }
+}

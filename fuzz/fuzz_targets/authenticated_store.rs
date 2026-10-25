@@ -101,8 +101,15 @@ fn budget(data: &[u8], offset: usize) -> Option<u32> {
 }
 
 pub fn run(data: &[u8]) {
+    // MultiwriteNorFlash permits repeated programs that only clear bits. v2's
+    // recovery rewrites a torn item header a third time; `Twice` refused it and
+    // turned a recoverable second cut into a permanent MemoryFatal.
     let medium = Medium {
-        flash: Rc::new(RefCell::new(Flash::new(WriteCountCheck::Twice, None, true))),
+        flash: Rc::new(RefCell::new(Flash::new(
+            WriteCountCheck::Disabled,
+            None,
+            true,
+        ))),
         dead: Rc::new(Cell::new(false)),
     };
     let mut store = mount(&medium);

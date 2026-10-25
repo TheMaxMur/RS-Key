@@ -193,6 +193,64 @@ fn a_silent_first_write_is_not_a_stored_record() {
     assert_eq!(rebooted.read(KEY_DEV, &mut out), None);
 }
 
+/// The correlated case: the program is reported applied and was not, AND the
+/// read-back is refused. Both halves must fire; a refused read must fail the
+/// command rather than answer as absence, and the old value must survive.
+#[test]
+fn a_silent_program_with_a_refused_read_back_reports_both_faults() {
+    let (backend, medium) = Silent::new();
+    let mut fs = Fs::new(backend);
+    assert_eq!(persist_and_confirm(&mut fs, KEY_DEV, b"old"), Ok(()));
+    medium.arm_once(KEY_DEV);
+    assert_eq!(
+        fs.put(KEY_DEV, b"new"),
+        Ok(()),
+        "the write lied about landing"
+    );
+    medium.fault_read_once(KEY_DEV);
+    let mut back = [0u8; 4];
+    assert_eq!(
+        fs.try_read(KEY_DEV, &mut back),
+        Err(Error::MemoryFatal),
+        "a refused read-back answered as absence or as the old value"
+    );
+    assert_eq!(medium.attempts(), 1, "the write half never fired");
+    assert_eq!(medium.read_faults(), 1, "the read half never fired");
+    assert_eq!(
+        medium.value(KEY_DEV).as_deref(),
+        Some(b"old".as_slice()),
+        "the medium applied a write the drop should have swallowed"
+    );
+    // Both armings were one-shot: a healthy retry writes and confirms.
+    assert_eq!(persist_and_confirm(&mut fs, KEY_DEV, b"new"), Ok(()));
+}
+
+/// The read fault's own contract, so the combination test cannot fail for a
+/// wrong reason: it is per-fid, one-shot and reports through `last_error`.
+#[test]
+fn the_silent_read_fault_is_per_fid_one_shot_and_reports_last_error() {
+    let (mut backend, medium) = Silent::new();
+    backend.write(KEY_DEV, b"mine").unwrap();
+    backend.write(KEY_DEV + 2, b"other").unwrap();
+    let mut buf = [0u8; 8];
+    medium.fault_read_once(KEY_DEV);
+    assert_eq!(backend.read(KEY_DEV, &mut buf), None);
+    assert!(
+        backend.last_error(),
+        "a refused read must not look like an absent record"
+    );
+    assert_eq!(medium.read_faults(), 1);
+    assert_eq!(backend.read(KEY_DEV, &mut buf), Some(4));
+    assert!(!backend.last_error());
+    assert_eq!(
+        medium.read_faults(),
+        1,
+        "a healthy read is not a refused one"
+    );
+    assert_eq!(backend.read(KEY_DEV + 2, &mut buf), Some(5));
+    assert!(!backend.last_error());
+}
+
 /// The double's own contract, so a test driving it cannot fail for the wrong
 /// reason: the drop is per-fid, counts only what it swallowed, recovers, and a
 /// `remove` tombstone is a mutation it can swallow too.

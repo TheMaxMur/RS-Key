@@ -38,6 +38,10 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ## [Unreleased]
 
+- **bcdDevice → 0x0B46:** Consolidate the accepted TrustZone firmware and
+  correlated storage-fault test support on develop. The build identity advances;
+  device behavior, persistent formats and authentication remain unchanged.
+
 - **bcdDevice → 0x0B45:** Size the TrustZone CCID reply scratch buffer for
   the existing CCID response limit, avoiding FIDO-sized initialization and
   cleanup on APDU exchanges. Maximum responses, session checks and complete
@@ -389,6 +393,13 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   Processing CTAPHID_CANCEL and two-phase CCID ABORT discard the old response;
   USB reset/disconnect clear applet authorization before accepting new work,
   preserving the per-boot FIDO PIN failure budget. bcdDevice `0x0AA4` → `0x0AA5`.
+
+- Extend the storage-fault doubles and stateful fuzz seeds: `Silent`'s refused
+  read-back, a second cut during recovery, the credential/config/PIV/reset and
+  authenticated-store seeds, and the cross-applet OATH record-lifecycle oracle.
+  Behaviour is unchanged; the build counter advances because the test-util code
+  lives in `crates/rsk-fs/src/storage.rs`, which is shipped code.
+  bcdDevice `0x0AA7` → `0x0AA8`.
 
 - Complete the bounded USB oracle requirement matrix for confirmed profiles:
   command-specific grammar, field/length/numeric/string boundaries, populated
