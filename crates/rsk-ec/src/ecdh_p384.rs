@@ -72,7 +72,7 @@ impl Jacobian {
         let alpha = (self.x - delta) * (self.x + delta);
         let alpha = alpha.double() + alpha;
         let x = alpha.square() - beta.double().double().double();
-        // The 32-bit backend squares by multiplication; 2YZ saves two field additions.
+        // The bilinear Z-coordinate formula avoids the expanded cross term.
         let z = (self.y * self.z).double();
         let y = alpha * (beta.double().double() - x) - gamma.square().double().double().double();
         self.x = x;

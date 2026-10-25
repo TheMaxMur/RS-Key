@@ -9,11 +9,11 @@ import time
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import padding, rsa
 
-from image_operations import CDH, DI_SHA256, MESSAGE, apdu, tlv, value
+from image_operations import CDH, CONTROL_ADDRESS as CONTROL_ADDRESS_HEX, DI_SHA256, MESSAGE, apdu, tlv, value
 
 SRAM_BASE = 0x20000000
 SRAM_LEN = 520 * 1024
-CONTROL_ADDRESS = 0x20081000
+CONTROL_ADDRESS = int(CONTROL_ADDRESS_HEX, 16)
 COUNTERS = {"JOBS": 4, "C1_TRIES": 4, "C0_TRIES": 4, "BUSY": 1, "JOB_PENDING": 1}
 WIND_DOWN_TIMEOUT = 30
 WIND_DOWN_HOST_TIMEOUT = 1800
@@ -64,6 +64,7 @@ def clean(dev, modulus):
 def control(dev, key):
     numbers = key.private_numbers()
     prime = numbers.p.to_bytes(key.key_size // 16, "big")
+    assert len(prime) <= 256, "RSA residue control exceeds unallocated SRAM prefix"
     dev.inspect(f"plant {CONTROL_ADDRESS:x} {prime.hex()}")
     try:
         try:

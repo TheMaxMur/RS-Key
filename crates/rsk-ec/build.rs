@@ -1,16 +1,19 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 RS-Key contributors
 
-//! Generates fixed-base tables; P-384 uses four centered signed comb groups.
-//! `T[i] = Σ_{j ∈ set-bits(i)} 2^{j·D}·G`, with an identity sentinel at zero.
+//! Generates fixed-base tables; P-384 and P-521 use centered signed comb groups.
+//! P-256/secp256k1 use `T[i] = Σ_{j ∈ set-bits(i)} 2^{j·D}·G`, with identity at zero.
 //! Differential tests compare the comb with generator multiplication.
 
 use std::env;
 use std::fs;
 use std::path::Path;
 
+mod build_p521;
 #[path = "src/comb_p384_params.rs"]
 mod comb_p384_params;
+#[path = "src/comb_p521_params.rs"]
+mod comb_p521_params;
 
 const W: usize = 4;
 
@@ -122,10 +125,12 @@ fn gen_signed_p384() {
 }
 
 fn main() {
-    gen_comb!(p521, 131, 66, "GEN_COMB", "gen_comb_p521.rs"); // ceil(521/4) = 131
+    build_p521::generate();
     gen_comb!(p256, 64, 32, "GEN_COMB_P256", "gen_comb_p256.rs"); // ceil(256/4) = 64
     gen_signed_p384();
     gen_comb!(k256, 64, 32, "GEN_COMB_K256", "gen_comb_k256.rs"); // ceil(256/4) = 64
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed=src/comb_p384_params.rs");
+    println!("cargo:rerun-if-changed=src/comb_p521_params.rs");
+    println!("cargo:rerun-if-changed=build_p521.rs");
 }

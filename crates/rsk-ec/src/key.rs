@@ -426,11 +426,7 @@ fn sign_p521(s: &[u8; 66], prehash: &[u8], out: &mut [u8]) -> Result<usize, EcEr
             .map_err(|_| EcError::Failed)?;
         key.to_nonzero_scalar()
     });
-    let sig = ecdsa::hazmat::sign_prehashed_rfc6979::<
-        p521::NistP521,
-        <p521::NistP521 as ecdsa::DigestAlgorithm>::Digest,
-    >(d.expose(), prehash, &[])
-    .0;
+    let sig = crate::sign_p521_deterministic::sign(d.expose(), prehash);
     let b = sig.to_bytes();
     out[..b.len()].copy_from_slice(b.as_slice());
     Ok(b.len())
@@ -462,14 +458,19 @@ fn ecdh_p384(scalar: &[u8; 48], peer_point: &[u8], out: &mut [u8]) -> Result<usi
 }
 
 /// P-521 ECDH — 66-byte shared x-coordinate.
+// Keep its multiplication workspace out of the other curves' dispatch frame.
+#[inline(never)]
 fn ecdh_p521(scalar: &[u8; 66], peer_point: &[u8], out: &mut [u8]) -> Result<usize, EcError> {
     let sk = p521::SecretKey::from_bytes(&p521::FieldBytes::from(*scalar))
         .map_err(|_| EcError::Failed)?;
     let peer = sec1_peer::<p521::NistP521>(peer_point)?;
-    let shared = p521::ecdh::diffie_hellman(sk.to_nonzero_scalar(), peer.as_affine());
-    let z = shared.raw_secret_bytes();
-    out[..z.len()].copy_from_slice(z.as_slice());
-    Ok(z.len())
+    let d = Secret::new(sk.to_nonzero_scalar());
+    let shared = crate::ecdh_p521::mul(&peer, d.expose())?;
+    let z = Secret::new(p521::elliptic_curve::point::AffineCoordinates::x(
+        shared.expose(),
+    ));
+    out[..z.expose().len()].copy_from_slice(z.expose().as_slice());
+    Ok(z.expose().len())
 }
 
 /// secp256k1 ECDH — 32-byte shared x-coordinate.

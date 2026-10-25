@@ -298,8 +298,8 @@ def residue(dev):
     time.sleep(0.05)
     assert_no_residue(dev)
     planted = KEY[:16]
-    # SRAM9 is outside the firmware linker RAM, without touching live frames.
-    address = "20081000"
+    # The SRAM8 prefix is outside both data and executable linker sections.
+    address = image_operations.CONTROL_ADDRESS
     dev.inspect(f"plant {address} {planted.hex()}")
     try:
         try:

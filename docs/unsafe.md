@@ -7,7 +7,7 @@ contained. Adding a new `unsafe` requires updating this page. (Safe Rust rules
 out memory-corruption bugs in this code. It is not a security audit; see the
 [threat model](threat-model.md).)
 
-**Runtime sites: 69.** Thirty-four in the ordinary firmware and tools, plus thirty-five in the TrustZone build. Of the ordinary sites: Seventeen in the firmware proper (`main.rs` + `presence.rs`):
+**Runtime sites: 70.** Thirty-four in the ordinary firmware and tools, plus thirty-six in the TrustZone build. Of the ordinary sites: Seventeen in the firmware proper (`main.rs` + `presence.rs`):
 the interrupt-handler pair (2), the `Send` impl, the heap init and its zeroing
 allocator (5), and the eight GPIO-pin `steal`s (the presence button, the LED power-enable rail, the nuisance
 USR LED, the display build's wake button, and — display builds only — the panel's
@@ -493,3 +493,15 @@ The same borrowed guard clears the complete 64-byte packets in Non-secure
 `EndpointIn::write` and `ControlPipe::data_in` on completion, errors and future
 Drop. Their initialized buffers and guard lifetimes, including the existing
 control abandonment and epoch checks, are unchanged.
+
+### 70. Scratch SRAM code initialization — `PLAT-TZ-009`
+
+`firmware/src/trustzone/mod.rs::initialize_scratch_code` copies one linker-bounded
+flash section into disjoint SRAM8/9 before the executor, core1 or Non-secure code
+starts. The section includes zero padding through the end of SRAM; no old RAM
+bytes become executable. DSB/ISB precede execution. Both cores subsequently map
+the complete section read-only executable, including during flash operations.
+*Safe alternative:* the discontiguous linker destination is not owned by a Rust
+value or covered by the ordinary runtime data-copy range.
+*Containment:* one startup call, linker size and overlap assertions, no mutable
+alias after initialization, and no change to shared RAM or existing capacities.

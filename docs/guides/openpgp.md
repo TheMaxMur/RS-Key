@@ -1,5 +1,10 @@
 # OpenPGP card
 
+Build `0x0B44` accelerates P-521 signatures, authentication and ECDH using
+constant-time point arithmetic and Secure SRAM field routines. P-384 uses a
+specialized field square on 32-bit targets. Existing keys need no migration;
+peer validation, deterministic signatures, PIN checks and cleanup are retained.
+
 TrustZone build `0x0ADF` further reduces the initial GET DATA `6E` response
 latency. Existing OpenPGP keys and data objects upgrade without a reset.
 

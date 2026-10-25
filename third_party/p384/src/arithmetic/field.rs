@@ -114,7 +114,9 @@ impl FieldElement {
     pub const fn square(&self) -> Self {
         #[cfg(target_pointer_width = "32")]
         {
-            self.multiply(self)
+            Self(primefield::MontyFieldElement::from_montgomery_words(
+                montgomery32::square(self.0.to_montgomery_words()),
+            ))
         }
         #[cfg(not(target_pointer_width = "32"))]
         {

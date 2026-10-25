@@ -103,3 +103,57 @@ fn p384_u32_preserves_the_high_carry_before_subtraction() {
     let last = MODULUS.wrapping_sub(&U384::ONE);
     product(last, last);
 }
+
+#[test]
+fn p384_u32_squares_match_independent_host_word_arithmetic() {
+    use super::p384_montgomery32::square;
+
+    let check = |value: U384| {
+        let mut bytes = [0; 48];
+        for (bytes, word) in bytes
+            .as_chunks_mut::<4>()
+            .0
+            .iter_mut()
+            .zip(square(words(value)))
+        {
+            *bytes = word.to_le_bytes();
+        }
+        let actual = U384::from_le_bytes(bytes.into());
+        let expected = Monty::from_montgomery(value).square();
+        assert_eq!(
+            actual,
+            *expected.as_montgomery(),
+            "incorrect Montgomery square"
+        );
+        assert!(actual < MODULUS, "non-canonical Montgomery square");
+    };
+    for value in [
+        U384::ZERO,
+        U384::ONE,
+        U384::from(2u32),
+        MODULUS.wrapping_sub(&U384::ONE),
+    ] {
+        check(value);
+    }
+    for bit in 0..384 {
+        let value = U384::ONE.shl_vartime(bit);
+        check(value);
+        check(value.wrapping_sub(&U384::ONE));
+        check(MODULUS.wrapping_sub(&value));
+    }
+    let mut state = 0x1ec9_a540_38d6_72bfu64;
+    for _ in 0..1024 {
+        let mut bytes = [0; 48];
+        for chunk in bytes.as_chunks_mut::<8>().0 {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            *chunk = state.to_le_bytes();
+        }
+        let mut value = U384::from_le_bytes(bytes.into());
+        if value >= MODULUS {
+            value = value.wrapping_sub(&MODULUS);
+        }
+        check(value);
+    }
+}

@@ -5,6 +5,7 @@
 
 pub const SRAM_START: u32 = 0x2000_0000;
 pub const SRAM_END: u32 = 0x2008_2000;
+pub const MAIN_SRAM_END: u32 = 0x2008_0000;
 pub const FLASH_STACK_BYTES: u32 = 4096;
 const ALIGNMENT: u32 = 32;
 
@@ -26,22 +27,37 @@ pub struct Region {
 pub struct RamCode {
     start: u32,
     end: u32,
+    scratch_start: u32,
 }
 
 impl RamCode {
-    pub fn new(start: u32, end: u32) -> Option<Self> {
+    pub fn new(start: u32, end: u32, scratch_start: u32) -> Option<Self> {
         if start <= SRAM_START
-            || end >= SRAM_END
+            || end >= MAIN_SRAM_END
             || start >= end
             || !start.is_multiple_of(ALIGNMENT)
             || !end.is_multiple_of(ALIGNMENT)
+            || !(MAIN_SRAM_END..SRAM_END).contains(&scratch_start)
+            || !scratch_start.is_multiple_of(ALIGNMENT)
         {
             return None;
         }
-        Some(Self { start, end })
+        Some(Self {
+            start,
+            end,
+            scratch_start,
+        })
     }
 
-    pub fn regions(self) -> [Region; 3] {
+    fn scratch_region(self) -> Region {
+        Region {
+            start: self.scratch_start,
+            end: SRAM_END,
+            permission: Permission::Code,
+        }
+    }
+
+    pub fn regions(self) -> [Region; 4] {
         [
             Region {
                 start: SRAM_START,
@@ -55,16 +71,17 @@ impl RamCode {
             },
             Region {
                 start: self.end,
-                end: SRAM_END,
+                end: self.scratch_start,
                 permission: Permission::Data,
             },
+            self.scratch_region(),
         ]
     }
 
-    pub fn flash_stack_regions(self, stack: u32) -> Option<[Region; 5]> {
+    pub fn flash_stack_regions(self, stack: u32) -> Option<[Region; 6]> {
         let start = stack.checked_sub(FLASH_STACK_BYTES)? & !(ALIGNMENT - 1);
         let end = stack.checked_add(ALIGNMENT - 1)? & !(ALIGNMENT - 1);
-        if start <= SRAM_START || end >= SRAM_END || start >= end {
+        if start <= SRAM_START || end >= MAIN_SRAM_END || start >= end {
             return None;
         }
         let code = Region {
@@ -93,9 +110,10 @@ impl RamCode {
                 code,
                 Region {
                     start: self.end,
-                    end: SRAM_END,
+                    end: self.scratch_start,
                     permission: Permission::Data,
                 },
+                self.scratch_region(),
             ])
         } else if start > self.end {
             Some([
@@ -113,9 +131,10 @@ impl RamCode {
                 flash,
                 Region {
                     start: end,
-                    end: SRAM_END,
+                    end: self.scratch_start,
                     permission: Permission::Data,
                 },
+                self.scratch_region(),
             ])
         } else {
             None

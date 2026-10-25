@@ -31,7 +31,8 @@ MGM_KEY = bytes(range(1, 9)) * 3
 P256_OID = bytes.fromhex("2a8648ce3d030107")
 ED25519_OID = bytes.fromhex("2b06010401da470f01")
 DI_SHA256 = bytes.fromhex("3031300d060960864801650304020105000420")
-CONTROL_ADDRESS = "20081000"
+# Unallocated SRAM8 prefix; TrustZone scratch code starts after these 256 bytes.
+CONTROL_ADDRESS = "20080000"
 SERIAL = b"RSKEMU\x00\x01"
 EC_ALGORITHMS = {-7: (ec.SECP256R1(), hashes.SHA256()),
                  -35: (ec.SECP384R1(), hashes.SHA384()),

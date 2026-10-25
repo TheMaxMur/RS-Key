@@ -91,6 +91,8 @@ existing KV layout.
 | KV main/counters | `0x10280000..0x103fffff` | S |
 | S SRAM | `0x20000000..0x2006ffff` | S |
 | NS SRAM | `0x20070000..0x2007ffff` | NS |
+| Scratch SRAM data | `0x20080000..0x200800ff` | S, unallocated |
+| Scratch SRAM code | `0x20080100..0x20081fff` | S, read-only executable |
 
 Boot RAM and other SRAM/XIP aliases are not additional shared buffers. Their
 access policy must preserve the underlying region's owner.
@@ -270,6 +272,8 @@ does not undo a key or counter write that has already committed.
 | KV main / counters | Existing `10280000..103FFFFF` | 1536 KiB |
 | Secure SRAM | `20000000..2006FFFF` | 448 KiB |
 | Non-secure SRAM | `20070000..2007FFFF` | 64 KiB |
+| Unallocated Secure scratch | `20080000..200800FF` | 256 bytes |
+| Secure scratch code | `20080100..20081FFF` | 7936 bytes |
 
 With `RSK_TZ_GATEWAY_PROBES=1`, Non-secure boot probes invalid gateway pointers
 before attaching USB, including a span crossing into Secure memory. It links without a global allocator;
@@ -732,11 +736,19 @@ Both cores configure Secure MPU permissions. SRAM data is execute-never; RSA
 C/assembly, the small-prime sieve and Embassy RAM functions occupy an aligned,
 read-only executable linker section. Its load image and ordinary data must be
 contiguous; linker assertions and the runtime copy symbols enforce that.
+P-521 field multiplication and squaring occupy a separate read-only executable
+section in SRAM8/9. Before tasks or core1 start, Secure startup copies its complete
+flash image, including zero padding, and executes DSB/ISB. Both MPU configurations
+retain this second code region, including the temporary flash stack window;
+the latter uses all eight regions. The first 256 bytes of SRAM8 stay unallocated
+and execute-never for emulator residue positive controls. No existing stack, heap
+or buffer capacity is reduced. BOOTSEL may reuse SRAM8/9; every reset reloads code.
+
 The NS MPU permits NS flash, its data, TIMER1 and its banked PPB only. NS can
 reprogram its own MPU, while SAU and the bus grants still protect S resources.
 The validated host planner covers SRAM with disjoint regions and refuses bad
 linker or stack bounds; its symbolic proof reaches stack windows on both sides
-of the immutable code island.
+of the main code island while preserving both immutable code regions.
 
 The pinned HAL copies the trusted boot2 XIP-restoration code from boot RAM onto
 the Secure stack for flash operations. Its actual instruction fetch faulted when
@@ -1488,3 +1500,58 @@ The original source was restored after both cases. This check establishes an
 empty-section guard, not a guarantee that every future helper matches the selector;
 the exact image review separately checked all 16 emitted helper bodies and their
 startup ordering.
+
+## P-521 arithmetic and scratch SRAM
+
+Build `0x0B44` uses a signed comb for P-521 base-point products and Jacobian
+formulas for agreement. Its field products run from the separate Secure SRAM8/9
+code region. The exact image used 7,370 bytes of code and 566 bytes of zero
+padding there. Its core0 stack capacity was 120,160 bytes; ML-DSA-87 signing
+used 94,360 bytes in image execution, leaving 25,800 bytes.
+
+A physical B23/B44/B23 comparison retained 51 paired calls per key and operation,
+with balanced device order and fixed delays outside the timers. All 11,340
+calls, including warmups, passed their response or crypto checks. API medians:
+
+| Operation | RS-Key B23 before / B44 / B23 after (ms) | YubiKey with B44 (ms) |
+|---|---|---|
+| OpenPGP P-521 authentication | 446.493 / 107.213 / 446.424 | 226.337 |
+| OpenPGP P-521 ECDH | 437.045 / 179.932 / 436.974 | 218.834 |
+| PIV P-384 signing | 53.243 / 57.835 / 53.235 | 141.417 |
+| PIV P-384 ECDH | 111.839 / 126.918 / 111.879 | 137.447 |
+| CCID getInfo | 10.079 / 9.802 / 9.920 | 9.619 |
+| OpenPGP application data | 7.655 / 7.627 / 7.573 | 5.040 |
+
+P-384 became slower than B23 but remained faster than YubiKey; this tradeoff was
+accepted. The results do not establish parity for all commands. OpenPGP's
+signature counter read remained about 75 ms versus 1.57 ms on YubiKey; its raw
+increase was 0.24 ms and was positive against both baseline phases, while the
+interval for the contemporaneous device-ratio change crossed zero. The version
+read also increased against both baselines (0.14 ms), with an uncertain relative
+change. These rows remain in the comparison.
+
+Host tests, exact-image signatures and shared-secret comparisons, and emitted
+ARM review cover the arithmetic. Five deliberately broken P-384 square kernels
+failed the independent Montgomery oracle: missing cross-term doubling,
+diagonals, propagated carry, canonical correction or final high-word selection.
+Restoring the source passed again. The image refused malformed P-384 peers with
+the same status words as B23 and completed valid operations afterwards.
+
+The scratch placement controls ran through the unchanged `TrustZone image` row
+of `scripts/check.sh`, with other rows skipped by an external wrapper:
+
+| Deliberate placement defect | ASSERT present | ASSERT removed |
+|---|---|---|
+| Remove both P-521 field selectors | 101: missing field code | 0 |
+| Grow the actual payload by 576 bytes, to 7,946 bytes | 101: payload overflow and location counter error | 101: location counter error |
+
+The size ASSERT is redundant with the linker's section bounds in this test;
+its removal is not an independently detected defect. The nonempty ASSERT checks
+the combined payload; emitted-image review separately checked both field bodies.
+The restored original passed the same row, and all source hashes matched again.
+
+Four exact-image MPU probes refused Secure writes and Non-secure reads of the
+scratch code while allowing the corresponding data-region controls. All 7,936
+initial code/padding bytes matched the load image. These emulator probes do not
+prove the silicon assumptions or all core1 and temporary flash-window behavior;
+`PLAT-TZ-009` remains pending.

@@ -132,7 +132,7 @@ fn p521_comb_matches_mul_by_generator() {
     use p521::elliptic_curve::group::Group;
     use p521::elliptic_curve::sec1::ToSec1Point;
 
-    // Scalars exercising each 131-bit comb block, its boundaries, and a spread.
+    // Keep the original sparse regression scalars alongside a dense scalar.
     let mut reprs: std::vec::Vec<[u8; 66]> = std::vec::Vec::new();
     reprs.push([0u8; 66]); // 0 → identity
     let mut one = [0u8; 66];
@@ -141,7 +141,7 @@ fn p521_comb_matches_mul_by_generator() {
     for bitpos in [131usize, 262, 393, 520] {
         let mut r = [0u8; 66];
         r[65 - bitpos / 8] = 1 << (bitpos % 8);
-        reprs.push(r); // 2^bitpos → a comb base point / block boundary
+        reprs.push(r);
     }
     let mut spread = [0u8; 66];
     for (b, byte) in spread.iter_mut().enumerate() {

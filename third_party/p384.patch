@@ -24,6 +24,10 @@
 # without a high carry. Exact ARM image tests independently check OpenSSL points,
 # signatures, ECDH results and invalid-peer refusal.
 #
+# Square uses 66 cross terms and 12 diagonal terms, followed by fixed-count
+# Montgomery reduction; the high carry is retained through final subtraction.
+# Every loop and address depends only on the public limb position.
+#
 --- a/Cargo.toml
 +++ b/Cargo.toml
 @@ -42,7 +42,7 @@
@@ -37,7 +41,7 @@
  
 --- a/src/arithmetic/field.rs
 +++ b/src/arithmetic/field.rs
-@@ -49,11 +49,95 @@
+@@ -49,11 +49,97 @@
      doc: "Element in the finite field modulo `p = 2^{384} − 2^{128} − 2^{96} + 2^{32} − 1`."
  }
  
@@ -110,7 +114,9 @@
 +    pub const fn square(&self) -> Self {
 +        #[cfg(target_pointer_width = "32")]
 +        {
-+            self.multiply(self)
++            Self(primefield::MontyFieldElement::from_montgomery_words(
++                montgomery32::square(self.0.to_montgomery_words()),
++            ))
 +        }
 +        #[cfg(not(target_pointer_width = "32"))]
 +        {
@@ -137,9 +143,9 @@
  }
  
  #[cfg(p384_backend = "fiat")]
---- a/src/arithmetic/montgomery32.rs
+--- /dev/null
 +++ b/src/arithmetic/montgomery32.rs
-@@ -0,0 +1,89 @@
+@@ -0,0 +1,185 @@
 +// SPDX-License-Identifier: AGPL-3.0-only
 +// Copyright (C) 2026 RS-Key contributors
 +
@@ -229,7 +235,103 @@
 +    }
 +    out
 +}
---- a/LICENSE-AGPL
++
++// Symmetry leaves 66 cross products and 12 diagonal products.
++pub(super) const fn square(x: [u32; 12]) -> [u32; 12] {
++    let mut product = [0u32; 24];
++    macro_rules! cross_row {
++        ($i:literal; $($j:literal),+) => {{
++            let mut carry = 0u64;
++            $(
++                let sum = x[$i] as u64 * x[$j] as u64
++                    + product[$i + $j] as u64 + carry;
++                product[$i + $j] = sum as u32;
++                carry = sum >> 32;
++            )+
++            product[2 * $i] = carry as u32;
++        }};
++    }
++    cross_row!(1; 0);
++    cross_row!(2; 0, 1);
++    cross_row!(3; 0, 1, 2);
++    cross_row!(4; 0, 1, 2, 3);
++    cross_row!(5; 0, 1, 2, 3, 4);
++    cross_row!(6; 0, 1, 2, 3, 4, 5);
++    cross_row!(7; 0, 1, 2, 3, 4, 5, 6);
++    cross_row!(8; 0, 1, 2, 3, 4, 5, 6, 7);
++    cross_row!(9; 0, 1, 2, 3, 4, 5, 6, 7, 8);
++    cross_row!(10; 0, 1, 2, 3, 4, 5, 6, 7, 8, 9);
++    cross_row!(11; 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10);
++
++    let mut carry = 0u32;
++    let mut i = 0;
++    while i < 23 {
++        let next = product[i] >> 31;
++        product[i] = (product[i] << 1) | carry;
++        carry = next;
++        i += 1;
++    }
++    product[23] = carry;
++    let mut carry = 0u64;
++    let mut i = 0;
++    while i < 12 {
++        let sum = x[i] as u64 * x[i] as u64 + product[2 * i] as u64 + carry;
++        product[2 * i] = sum as u32;
++        let sum = product[2 * i + 1] as u64 + (sum >> 32);
++        product[2 * i + 1] = sum as u32;
++        carry = sum >> 32;
++        i += 1;
++    }
++
++    // The previous high carry belongs to the next iteration's top word.
++    // Each reduction MAC fits u64; x²<p² leaves the result below 2p.
++    let mut meta = 0u64;
++    let mut i = 0;
++    while i < 12 {
++        let u = product[i] as u64;
++        let mut carry = u;
++        macro_rules! reduction {
++            ($j:literal) => {{
++                let sum = u * MODULUS[$j] as u64 + product[i + $j] as u64 + carry;
++                product[i + $j] = sum as u32;
++                carry = sum >> 32;
++            }};
++        }
++        reduction!(1);
++        reduction!(2);
++        reduction!(3);
++        reduction!(4);
++        reduction!(5);
++        reduction!(6);
++        reduction!(7);
++        reduction!(8);
++        reduction!(9);
++        reduction!(10);
++        reduction!(11);
++        let top = product[i + 12] as u64 + carry + meta;
++        product[i + 12] = top as u32;
++        meta = top >> 32;
++        i += 1;
++    }
++    let mut reduced = [0u32; 12];
++    let mut borrow = 0u64;
++    let mut i = 0;
++    while i < 12 {
++        let difference = (product[i + 12] as u64).wrapping_sub(MODULUS[i] as u64 + borrow);
++        reduced[i] = difference as u32;
++        borrow = difference >> 63;
++        i += 1;
++    }
++    let mask = 0u32.wrapping_sub(meta as u32 | (borrow as u32 ^ 1));
++    let mut out = [0u32; 12];
++    let mut i = 0;
++    while i < 12 {
++        out[i] = product[i + 12] ^ ((product[i + 12] ^ reduced[i]) & mask);
++        i += 1;
++    }
++    out
++}
+--- /dev/null
 +++ b/LICENSE-AGPL
 @@ -0,0 +1,661 @@
 +                    GNU AFFERO GENERAL PUBLIC LICENSE

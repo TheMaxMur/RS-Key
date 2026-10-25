@@ -16,6 +16,8 @@ pub fn configure(out: &Path, memory: &mut String, code_size: u32, flash_size: u3
     const FLASH_BASE: u32 = 0x1000_0000;
     const NS_BYTES: u32 = 64 * 1024;
     const NSC_BYTES: u32 = 4096;
+    const SCRATCH_START: u32 = 0x2008_0100;
+    const SCRATCH_END: u32 = 0x2008_2000;
     let ns_start = FLASH_BASE + code_size - NS_BYTES;
     let ns_end = ns_start + NS_BYTES;
     let nsc_start = ns_start - NSC_BYTES;
@@ -41,6 +43,10 @@ pub fn configure(out: &Path, memory: &mut String, code_size: u32, flash_size: u3
             &format!("    NSFLASH : ORIGIN = {ns_start:#010x}, LENGTH = 64K\n    KVMAIN :"),
         );
     memory.replace_range(begin..=end, &block);
+    memory.push_str(&format!(
+        "\nMEMORY {{ SCRATCH : ORIGIN = {SCRATCH_START:#010x}, LENGTH = {} }}\n",
+        SCRATCH_END - SCRATCH_START
+    ));
     let ns_memory = env::var("RSK_TZ_NS_MEMORY").expect("RSK_TZ_NS_MEMORY");
     std::fs::write(&ns_memory, format!(
         "/* SPDX-License-Identifier: AGPL-3.0-only */\n/* Copyright (C) 2026 RS-Key contributors */\nMEMORY {{\n FLASH : ORIGIN = {ns_start:#010x}, LENGTH = 64K\n RAM : ORIGIN = 0x20070000, LENGTH = 64K\n}}\n"
@@ -104,6 +110,22 @@ pub fn configure(out: &Path, memory: &mut String, code_size: u32, flash_size: u3
          ASSERT(__rsk_sha256_initial_end - __rsk_sha256_initial_start == 32, \"SHA-256 initial vector is not 32 bytes\")\n\
          ASSERT(__rsk_memory_end > __rsk_memory_start, \"Memory helpers are missing from Secure SRAM\")\n\
          ASSERT(LOADADDR(.data) - LOADADDR(.rsk_exec) == ADDR(.data) - ADDR(.rsk_exec), \"RAM initialization is not contiguous\")\n",
+    );
+    // The first 256 bytes remain outside code for SRAM residue positive controls.
+    memory.push_str(
+        "SECTIONS {\n\
+         .rsk_scratch_exec : ALIGN(32) {\n\
+         __rsk_scratch_exec_start = .;\n\
+         KEEP(*(.text._ZN4p52110arithmetic5field10field_impl19fiat_p521_carry_mul17h????????????????E*))\n\
+         KEEP(*(.text._ZN4p52110arithmetic5field10field_impl22fiat_p521_carry_square17h????????????????E*))\n\
+         __rsk_scratch_payload_end = .;\n\
+         . = ORIGIN(SCRATCH) + LENGTH(SCRATCH);\n\
+         __rsk_scratch_exec_end = .;\n\
+         } > SCRATCH AT> FLASH = 0\n\
+         __rsk_scratch_exec_load = LOADADDR(.rsk_scratch_exec);\n\
+         } INSERT BEFORE .rsk_exec;\n\
+         ASSERT(__rsk_scratch_payload_end > __rsk_scratch_exec_start, \"P-521 field code is missing from scratch SRAM\")\n\
+         ASSERT(__rsk_scratch_payload_end <= __rsk_scratch_exec_end, \"P-521 field code exceeds scratch SRAM\")\n",
     );
     let object = out.join("gateway.o");
     run(Command::new("arm-none-eabi-gcc")

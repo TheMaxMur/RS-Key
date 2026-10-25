@@ -1690,6 +1690,20 @@ failure_direction = "confidentiality and isolation: an interrupted lock can dead
 covers = ["unsafe:firmware/src/trustzone/fault.rs#attr:no_mangle-pub-extern-fn-rsk_tz_fault_stop", "unsafe:firmware/src/trustzone/fault.rs#fn:hardfault-_frame-cortex_m_rt-exceptionframe-halt"]
 
 [[assumption]]
+id = "PLAT-TZ-009"
+class = "toolchain"
+statement = "firmware/src/trustzone/mod.rs initializes the disjoint SRAM8/9 code destination once from its linker-bounded flash image, including zero padding, before tasks, core1 or Non-secure entry. DSB/ISB precede use; both cores retain the complete interval read-only executable during normal execution and temporary flash-stack windows, without a writable execution alias. BOOTSEL ownership of its overlapping erase bitmap is terminal for the old firmware; firmware startup reloads the complete code image before it can execute again."
+discharge = "Review firmware/src/trustzone/mod.rs with firmware/trustzone/build.rs, firmware/src/trustzone/mpu.rs and firmware/src/core1.rs: disjoint load/destination ranges, full 7936-byte copy at 0x20080100, first 256 scratch bytes left data/XN, both-core startup ordering, SAU/ACCESSCTRL/alias permissions and six/eight MPU-region plans. Check the RP2350 SRAM execution map and BootROM usb_virtual_disk.c erase bitmap at 0x20081c00..0x20082000, including reset and BOOTSEL handover. Inspect the exact ELF load bytes and startup copy, then exercise both-core crypto/flash operations, denied writes and reset/reload behavior. Host planner tests and symbolic proofs cover their models only; they do not discharge silicon, BootROM ownership or compiler behavior."
+discharge_owner = "contributor"
+status = "pending"
+failure_direction = "memory-safety and isolation: an incomplete or overlapping initialization, stale BootROM bytes, concurrent scratch writer or writable alias can corrupt executable code; missing RX retention during a flash window can fault execution or expose unintended permissions"
+covers = [
+  "unsafe:firmware/src/trustzone/mod.rs#block:core-ptr-copy_nonoverlapping-core-ptr-addr_of",
+  "unsafe:firmware/src/trustzone/mod.rs#extern:static-__rsk_scratch_exec_start-u8-static-__rsk_scratch_exec_end-u8",
+]
+depends_on = ["PLAT-TZ-001", "PLAT-TZ-006"]
+
+[[assumption]]
 id = "PLAT-UNSAFE-015"
 class = "memory"
 statement = "The RP2350 translated uncached XIP window at 0x14000000 supplies initialized flash bytes under the existing Secure CPU permissions. The byte and pair helpers retain the SharedFlash owner and check every offset against the configured chip before either volatile u8 load; the compile-time chip limit also keeps alias addition in range."

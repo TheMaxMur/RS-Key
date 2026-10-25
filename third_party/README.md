@@ -14,7 +14,8 @@ unrelated kinds live here:
   different KV store from the firmware. The patch file's own header is the
   record of what each change is and why the fork stays inside `src/map.rs` and `src/lib.rs`.
   `p384/` plus `p384.patch` specialize 32-bit P-384 field products with a
-  constant-time CIOS kernel; the same three workspaces resolve that fork.
+  constant-time CIOS product and symmetric square kernels; the same three
+  workspaces resolve that fork.
   The patch records its origin, unchanged surfaces and host/ARM verification.
   `p256/` plus `p256.patch` remove repeated borrow-mask conversions from the
   32-bit field backend and inline its correction, retaining ctutils barriers.

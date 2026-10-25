@@ -38,6 +38,16 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ## [Unreleased]
 
+- **bcdDevice → 0x0B44:** Use four signed comb groups for P-521 public-key
+  derivation and nonce commitments, including deterministic OpenPGP signatures
+  and authentication. P-521 agreement uses constant-time Jacobian formulas;
+  TrustZone executes the existing field products from read-only Secure SRAM8/9.
+  P-384 field squaring on 32-bit targets computes symmetric cross products once,
+  with fixed operation counts and the same canonical Montgomery result.
+  Scalar and peer-point validation, RFC6979 retries, authentication, rollback
+  checks and complete secret cleanup retain their existing contracts. Existing
+  keys need no migration; stack, heap and buffer capacities are retained.
+
 - **bcdDevice → 0x0B23:** Avoid deriving an unused public key on each
   OpenPGP P-521 or Brainpool P-256/P-384 signature. The deterministic RFC6979 signer, scalar validation,
   signature encoding and secret cleanup retain their existing contracts.

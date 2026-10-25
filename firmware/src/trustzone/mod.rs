@@ -80,7 +80,30 @@ async fn boot() {
     spawner.spawn(crate::main(spawner).unwrap());
 }
 
+fn initialize_scratch_code() {
+    unsafe extern "C" {
+        static __rsk_scratch_exec_start: u8;
+        static __rsk_scratch_exec_end: u8;
+        static __rsk_scratch_exec_load: u8;
+    }
+    let start = core::ptr::addr_of!(__rsk_scratch_exec_start);
+    let end = core::ptr::addr_of!(__rsk_scratch_exec_end) as usize;
+    let length = end.checked_sub(start as usize).unwrap();
+    // SAFETY: the linker bounds disjoint flash/RAM sections including zero padding.
+    // Startup calls this once, before tasks, core1, NS or any scratch-code caller.
+    unsafe {
+        core::ptr::copy_nonoverlapping(
+            core::ptr::addr_of!(__rsk_scratch_exec_load),
+            start.cast_mut(),
+            length,
+        );
+    }
+    cortex_m::asm::dsb();
+    cortex_m::asm::isb();
+}
+
 pub fn start() {
+    initialize_scratch_code();
     interrupt::SWI_IRQ_4.disable();
     interrupt::SWI_IRQ_4.unpend();
     interrupt::DMA_IRQ_0.set_priority(Priority::P1);

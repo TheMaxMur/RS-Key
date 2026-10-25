@@ -4,6 +4,7 @@
 unsafe extern "C" {
     static __rsk_exec_start: u8;
     static __rsk_exec_end: u8;
+    static __rsk_scratch_exec_start: u8;
 }
 
 const SECURE_MPU: usize = 0xe000_ed90;
@@ -18,6 +19,7 @@ static CORE0_CONFIGURED: core::sync::atomic::AtomicBool =
     core::sync::atomic::AtomicBool::new(false);
 
 fn configure(base: usize, regions: &[(u32, u32, u32, u32)], control: u32) {
+    assert!(regions.len() <= 8);
     // SAFETY: each core configures its own MPU while still in Secure startup, before NS entry.
     unsafe {
         let register = base as *mut u32;
@@ -51,6 +53,7 @@ fn ram_code() -> RamCode {
     RamCode::new(
         core::ptr::addr_of!(__rsk_exec_start) as u32,
         core::ptr::addr_of!(__rsk_exec_end) as u32,
+        core::ptr::addr_of!(__rsk_scratch_exec_start) as u32,
     )
     .unwrap()
 }
@@ -65,7 +68,7 @@ fn ram_region(region: Region) -> (u32, u32, u32, u32) {
 }
 
 pub fn secure() {
-    let [before, code, after] = ram_code().regions().map(ram_region);
+    let [before, code, after, scratch] = ram_code().regions().map(ram_region);
     configure(
         SECURE_MPU,
         &[
@@ -79,6 +82,7 @@ pub fn secure() {
             before,
             code,
             after,
+            scratch,
         ],
         ENABLE_BACKGROUND,
     );
@@ -106,7 +110,7 @@ pub fn with_flash_code<T>(operation: impl FnOnce() -> T) -> T {
         return operation();
     }
     cortex_m::interrupt::free(|_| {
-        let [a, b, c, d, e] = ram_code()
+        let [a, b, c, d, e, scratch] = ram_code()
             .flash_stack_regions(cortex_m::register::msp::read())
             .unwrap()
             .map(ram_region);
@@ -125,6 +129,7 @@ pub fn with_flash_code<T>(operation: impl FnOnce() -> T) -> T {
                 c,
                 d,
                 e,
+                scratch,
             ],
             ENABLE_BACKGROUND,
         );
