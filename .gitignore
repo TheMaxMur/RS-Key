@@ -19,6 +19,9 @@ secure_boot_*.pem
 *.pem
 # ykman's own test fixtures: keys and certificates Yubico publishes for its suite.
 !/third_party/ykman-tests/tests/files/**/*.pem
+# P-256 upstream public PKCS#8 test vectors, matching the tracked DER fixtures.
+!/third_party/p256/tests/examples/pkcs8-private-key.pem
+!/third_party/p256/tests/examples/pkcs8-public-key.pem
 /tools/tui/target/
 /tools/emu/target/
 # `rsk-emu --store <path>` writes a flash image, and that image holds the device
