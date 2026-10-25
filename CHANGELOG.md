@@ -38,6 +38,10 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ## [Unreleased]
 
+- Correct the cross-applet fuzz oracle's OATH authorization and credential
+  lifecycle model, including code removal, command chaining and DELETE's BER
+  fields. Production authorization and persistent formats are unchanged.
+
 - **bcdDevice → 0x0B46:** Consolidate the accepted TrustZone firmware and
   correlated storage-fault test support on develop. The build identity advances;
   device behavior, persistent formats and authentication remain unchanged.

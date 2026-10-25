@@ -63,6 +63,9 @@ use rsk_sdk::{Apdu, Sw};
 mod apdu_frame;
 use apdu_frame::next_frame;
 
+mod cross_applet_oath;
+use cross_applet_oath::OathOracle;
+
 const SERIAL_ID: [u8; 8] = [0x12, 0x34, 0x56, 0x78, 1, 2, 3, 4];
 const SERIAL_HASH: [u8; 32] = [0x22; 32];
 const KV_TOTAL: u32 = 64 * 1024;
@@ -112,16 +115,6 @@ const OP_REFRESH: u8 = 0xF3;
 const OP_FACTORY_WIPE: u8 = 0xF4;
 const OP_OTP_HID: u8 = 0xF5;
 const OP_SET_CAPS: u8 = 0xF6;
-
-/// YKOATH command bytes the raw-APDU path can reach; the applet keeps them
-/// private, so the oracle names the wire values it observes.
-const OATH_PUT: u8 = 0x01;
-const OATH_DELETE: u8 = 0x02;
-const OATH_SET_CODE: u8 = 0x03;
-const OATH_CALCULATE: u8 = 0xA2;
-const OATH_VALIDATE: u8 = 0xA3;
-/// OATH is applet 3 in [`APPLETS`].
-const OATH_INDEX: usize = 3;
 
 /// The board underneath the wiring. Every [`Hooks`] method stays at its default,
 /// which is what a build with none of that hardware does — and `rsa_search`'s
@@ -264,17 +257,7 @@ pub(crate) fn exercise(data: &[u8]) {
         OPENPGP_MFR,
     );
 
-    // OATH's access-code gate, tracked from the raw-APDU stream: a code set by
-    // SET CODE protects PUT/DELETE/CALCULATE until a VALIDATE succeeds; a
-    // reset_card drops the session but not the code.
-    let mut selected: Option<usize> = None;
-    let mut oath_code_set = false;
-    let mut oath_validated = false;
-    // OATH credentials whose PUT was acknowledged and whose DELETE was not.
-    // A CALCULATE that answers OK for a name outside this set means the applet
-    // served a record no acknowledged write left live, or resurrected a deleted
-    // one; names are raw TLVs, not display strings.
-    let mut oath_live: Vec<Vec<u8>> = Vec::new();
+    let mut oath = OathOracle::default();
 
     let mut i = 0;
     while i < data.len() {
@@ -289,7 +272,11 @@ pub(crate) fn exercise(data: &[u8]) {
                 sel[4] = aid.len() as u8;
                 sel[5..5 + aid.len()].copy_from_slice(aid);
                 let enabled = ccid.caps_enabled(cap);
-                let sw = status(ccid.handle_apdu(&sel[..5 + aid.len()], 0));
+                let enabled_applets = APPLETS.map(|(_, cap)| ccid.caps_enabled(cap));
+                let raw = &sel[..5 + aid.len()];
+                let res = ccid.handle_apdu(raw, 0);
+                let sw = status(res);
+                oath.observe(raw, res, enabled_applets);
                 // No applet's own `select` answers FILE_NOT_FOUND, so this is
                 // exactly the gate: `ykman config usb --disable X` really removes
                 // X, and the three ungated applets can never be removed at all.
@@ -298,7 +285,6 @@ pub(crate) fn exercise(data: &[u8]) {
                     !enabled,
                     "applet {op} (cap {cap:#06x}) answered {sw:?} while enabled={enabled}"
                 );
-                selected = (sw == Sw::OK).then_some(op as usize);
             }
             OP_CTAP_MGMT => {
                 let cmd = byte(data, &mut i);
@@ -316,8 +302,7 @@ pub(crate) fn exercise(data: &[u8]) {
             }
             OP_RESET_CARD => {
                 ccid.reset_card();
-                selected = None;
-                oath_validated = false;
+                oath.reset_card();
                 for p2 in PIN_REFS {
                     // Nothing is selected, so the pad must not be painted for any
                     // reference — audit run-36, where the check ran on the VERIFY
@@ -325,7 +310,10 @@ pub(crate) fn exercise(data: &[u8]) {
                     assert!(!ccid.pin_ref_ready(p2), "pin pad armed for {p2:#04x}");
                 }
             }
-            OP_RESET_CHAINING => ccid.reset_chaining(),
+            OP_RESET_CHAINING => {
+                ccid.reset_chaining();
+                oath.clear_chaining();
+            }
             OP_REFRESH => {
                 let mask = ccid.refresh_enabled();
                 assert_eq!(
@@ -355,9 +343,7 @@ pub(crate) fn exercise(data: &[u8]) {
                     );
                     // The OATH access code is a gate, not a credential; the
                     // device-wide wipe removes it with the rest of the applets.
-                    oath_code_set = false;
-                    oath_validated = false;
-                    selected = None;
+                    oath.factory_wipe();
                 }
             }
             OP_OTP_HID => {
@@ -412,57 +398,9 @@ pub(crate) fn exercise(data: &[u8]) {
                 if matches!(Apdu::parse(raw), Ok(p) if p.ins == INS_GENERATE) {
                     continue;
                 }
+                let enabled = APPLETS.map(|(_, cap)| ccid.caps_enabled(cap));
                 let res = ccid.handle_apdu(raw, 0);
-                // OATH's access-code gate, observed from the wire: once SET CODE
-                // succeeds, PUT/DELETE/CALCULATE must not answer OK until a
-                // VALIDATE succeeds. A served success here is an authorization
-                // bypass, and reset_card drops the session without clearing the
-                // code, so the gate must re-arm after a reselect.
-                if selected == Some(OATH_INDEX)
-                    && let Ok(p) = Apdu::parse(raw)
-                {
-                    let sw = status(res);
-                    match p.ins {
-                        OATH_SET_CODE if sw == Sw::OK => {
-                            oath_code_set = true;
-                            oath_validated = false;
-                        }
-                        OATH_VALIDATE => oath_validated = sw == Sw::OK,
-                        OATH_PUT | OATH_DELETE | OATH_CALCULATE
-                            if oath_code_set && !oath_validated =>
-                        {
-                            assert_ne!(
-                                sw,
-                                Sw::OK,
-                                "OATH {:#04x} was served without a validated code",
-                                p.ins
-                            );
-                        }
-                        _ => {}
-                    }
-                    // The OATH record lifecycle: a CALCULATE that succeeds
-                    // proves the named credential is live, so some PUT must
-                    // have been acknowledged for it and no acknowledged
-                    // DELETE can have removed it.
-                    let name = p.data.get(..p.nc).and_then(|d| tlv_in(d, 0x71));
-                    match (p.ins, sw, name) {
-                        (OATH_PUT, Sw::OK, Some(name)) => {
-                            if !oath_live.iter().any(|held| held.as_slice() == name) {
-                                oath_live.push(name.to_vec());
-                            }
-                        }
-                        (OATH_DELETE, Sw::OK, Some(name)) => {
-                            oath_live.retain(|held| held.as_slice() != name);
-                        }
-                        (OATH_CALCULATE, Sw::OK, Some(name)) => {
-                            assert!(
-                                oath_live.iter().any(|held| held.as_slice() == name),
-                                "OATH CALCULATE served a credential no acknowledged PUT left live"
-                            );
-                        }
-                        _ => {}
-                    }
-                }
+                oath.observe(raw, res, enabled);
                 // An unserved class is answered with nothing, as by a YubiKey 5.8.0;
                 // a GET RESPONSE under one still collects a tail that is owed.
                 match Apdu::parse(raw) {
@@ -477,23 +415,6 @@ pub(crate) fn exercise(data: &[u8]) {
             }
         }
     }
-}
-
-/// First value for `tag` in a short-form TLV list, or `None`. The OATH applet's
-/// own parser is private; this names only the tag the oracle tracks.
-fn tlv_in(data: &[u8], tag: u8) -> Option<&[u8]> {
-    let mut i = 0;
-    while let Some(&found) = data.get(i) {
-        let n = *data.get(i + 1)? as usize;
-        let start = i.checked_add(2)?;
-        let end = start.checked_add(n)?;
-        let value = data.get(start..end)?;
-        if found == tag {
-            return Some(value);
-        }
-        i = end;
-    }
-    None
 }
 
 #[cfg(not(test))]
