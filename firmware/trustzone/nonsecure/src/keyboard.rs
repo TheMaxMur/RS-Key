@@ -82,7 +82,9 @@ pub async fn commands() {
         data.copy_from_slice(payload.expose());
         let mut buffer = [0u8; 128];
         let mut response = rsk_secret::WipeGuard::new(&mut buffer);
-        let reply = exchange(abi::OTP, 0, request.expose(), &mut response).await;
+        let reply =
+            exchange::<{ super::FIDO_REPLY_BYTES }>(abi::OTP, 0, request.expose(), &mut response)
+                .await;
         if let Some((status, body)) = response
             .get(..reply.len)
             .and_then(|b| b.split_first_chunk::<REPORT_SIZE>())

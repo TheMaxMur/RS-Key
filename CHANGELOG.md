@@ -38,6 +38,11 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ## [Unreleased]
 
+- **bcdDevice → 0x0B45:** Size the TrustZone CCID reply scratch buffer for
+  the existing CCID response limit, avoiding FIDO-sized initialization and
+  cleanup on APDU exchanges. Maximum responses, session checks and complete
+  buffer cleanup remain unchanged.
+
 - **bcdDevice → 0x0B44:** Use four signed comb groups for P-521 public-key
   derivation and nonce commitments, including deterministic OpenPGP signatures
   and authentication. P-521 agreement uses constant-time Jacobian formulas;

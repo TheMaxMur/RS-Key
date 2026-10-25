@@ -72,6 +72,10 @@ unsafe extern "C" {
 }
 
 static LOCK: Mutex<CriticalSectionRawMutex, ()> = Mutex::new(());
+const FIDO_REPLY_BYTES: usize = rsk_usb::ctaphid::CTAP_MAX_MESSAGE + abi::REPLY_HEADER;
+const CCID_REPLY_BYTES: usize =
+    rsk_usb::ccid::MAX_CCID_MSG - rsk_usb::ccid::HEADER + abi::REPLY_HEADER;
+
 struct Reply {
     len: usize,
     vendor_ok: bool,
@@ -84,7 +88,12 @@ struct Reply {
     clippy::unwrap_used,
     reason = "rsk-usb bounds host slices; checked SG sentinel/length replies are Secure ABI invariants"
 )]
-async fn exchange(kind: u32, cid: u32, data: &[u8], out: &mut [u8]) -> Reply {
+async fn exchange<const REPLY_BYTES: usize>(
+    kind: u32,
+    cid: u32,
+    data: &[u8],
+    out: &mut [u8],
+) -> Reply {
     let _lock = LOCK.lock().await;
     let epoch = session::epoch();
     let length = u32::try_from(data.len()).unwrap();
@@ -102,7 +111,7 @@ async fn exchange(kind: u32, cid: u32, data: &[u8], out: &mut [u8]) -> Reply {
         notify::wait(observed).await;
     };
     let _pending = session::Pending::new(ticket, kind);
-    let mut buffer = [0u8; rsk_usb::ctaphid::CTAP_MAX_MESSAGE + abi::REPLY_HEADER];
+    let mut buffer = [0u8; REPLY_BYTES];
     let mut reply = reply::ReplyGuard::new(&mut buffer);
     let len = loop {
         let observed = notify::generation();
@@ -170,10 +179,14 @@ impl MsgHandler for CtapClient {
         session::control(abi::DESELECT_MSG, 0);
     }
     async fn handle_cbor(&mut self, cid: u32, data: &[u8], out: &mut [u8]) -> usize {
-        exchange(abi::CBOR, cid, data, out).await.len
+        exchange::<FIDO_REPLY_BYTES>(abi::CBOR, cid, data, out)
+            .await
+            .len
     }
     async fn handle_msg(&mut self, cid: u32, data: &[u8], out: &mut [u8]) -> usize {
-        exchange(abi::MSG, cid, data, out).await.len
+        exchange::<FIDO_REPLY_BYTES>(abi::MSG, cid, data, out)
+            .await
+            .len
     }
     async fn handle_vendor(
         &mut self,
@@ -186,7 +199,8 @@ impl MsgHandler for CtapClient {
         if cmd == diagnostics::COMMAND {
             return diagnostics::reply(data, out);
         }
-        let r = exchange(abi::VENDOR | (u32::from(cmd) << 8), 0, data, out).await;
+        let r =
+            exchange::<FIDO_REPLY_BYTES>(abi::VENDOR | (u32::from(cmd) << 8), 0, data, out).await;
         r.vendor_ok.then_some(r.len)
     }
     fn can_wink(&self) -> bool {
@@ -215,13 +229,15 @@ impl ApduHandler for CcidClient {
         session::acknowledge_abort(sequence)
     }
     async fn handle_apdu(&mut self, data: &[u8], out: &mut [u8]) -> usize {
-        exchange(abi::APDU, 0, data, out).await.len
+        exchange::<CCID_REPLY_BYTES>(abi::APDU, 0, data, out)
+            .await
+            .len
     }
     async fn reset_card(&mut self) {
-        exchange(abi::RESET_CARD, 0, &[], &mut []).await;
+        exchange::<{ abi::REPLY_HEADER }>(abi::RESET_CARD, 0, &[], &mut []).await;
     }
     async fn handle_secure(&mut self, data: &[u8], out: &mut [u8]) -> SecureResult {
-        let r = exchange(abi::SECURE_PIN, 0, data, out).await;
+        let r = exchange::<CCID_REPLY_BYTES>(abi::SECURE_PIN, 0, data, out).await;
         SecureResult {
             len: r.len,
             status: r.status,

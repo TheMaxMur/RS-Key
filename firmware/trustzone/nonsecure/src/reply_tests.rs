@@ -6,7 +6,7 @@ use super::*;
 #[test]
 fn all_alignments_lengths_and_byte_edges_preserve_canaries() {
     for offset in 0..16 {
-        for length in (0..80).chain([7609, 7612]) {
+        for length in (0..80).chain([3062, 3065, 7609, 7612]) {
             let mut bytes = vec![0xa5; offset + length + 16];
             {
                 let mut guard = ReplyGuard::new(&mut bytes[offset..offset + length]);
@@ -28,9 +28,11 @@ fn early_error(bytes: &mut [u8]) -> Result<(), ()> {
 }
 #[test]
 fn early_error_clears_the_full_reply() {
-    let mut bytes = [0xa5; 7612];
-    assert_eq!(early_error(&mut bytes), Err(()));
-    assert!(bytes.iter().all(|&x| x == 0));
+    for length in [3, 3065, 7612] {
+        let mut bytes = vec![0xa5; length];
+        assert_eq!(early_error(&mut bytes), Err(()));
+        assert!(bytes.iter().all(|&x| x == 0));
+    }
 }
 #[test]
 fn dropping_pending_future_clears_the_full_reply() {
@@ -38,15 +40,17 @@ fn dropping_pending_future_clears_the_full_reply() {
         future::Future,
         task::{Context, Poll, Waker},
     };
-    let mut bytes = [0xa5; 7612];
-    {
-        let mut pending = Box::pin(async {
-            let mut guard = ReplyGuard::new(&mut bytes);
-            guard.fill(0x5a);
-            core::future::pending::<()>().await;
-        });
-        let mut context = Context::from_waker(Waker::noop());
-        assert!(matches!(pending.as_mut().poll(&mut context), Poll::Pending));
+    for length in [3, 3065, 7612] {
+        let mut bytes = vec![0xa5; length];
+        {
+            let mut pending = Box::pin(async {
+                let mut guard = ReplyGuard::new(&mut bytes);
+                guard.fill(0x5a);
+                core::future::pending::<()>().await;
+            });
+            let mut context = Context::from_waker(Waker::noop());
+            assert!(matches!(pending.as_mut().poll(&mut context), Poll::Pending));
+        }
+        assert!(bytes.iter().all(|&x| x == 0));
     }
-    assert!(bytes.iter().all(|&x| x == 0));
 }

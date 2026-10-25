@@ -1,5 +1,9 @@
 # OpenPGP card
 
+Build `0x0B45` sizes the TrustZone CCID reply scratch buffer to the existing
+CCID response limit, reducing initialization and cleanup work on each APDU.
+Maximum response sizes and complete buffer cleanup are unchanged.
+
 Build `0x0B44` accelerates P-521 signatures, authentication and ECDH using
 constant-time point arithmetic and Secure SRAM field routines. P-384 uses a
 specialized field square on 32-bit targets. Existing keys need no migration;

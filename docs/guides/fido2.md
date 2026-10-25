@@ -1,5 +1,9 @@
 # FIDO2 / WebAuthn / U2F
 
+Build `0x0B45` sizes the TrustZone CCID reply scratch buffer to the existing
+CCID response limit, reducing initialization and cleanup work on each APDU.
+Maximum response sizes and complete buffer cleanup are unchanged.
+
 TrustZone build `0x0ADF` further reduces CCID getInfo continuation latency.
 Existing credentials and records upgrade without a reset.
 
