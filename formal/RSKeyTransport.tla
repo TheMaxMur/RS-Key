@@ -5,11 +5,11 @@
 (*                                                                           *)
 (* THE CTAPHID FRAME REASSEMBLER as a state machine: the channel, sequence   *)
 (* and length checks a multi-frame message must pass before its payload is   *)
-(* dispatched (crates/rsk-usb/src/ctaphid.rs:441-519, `Reassembler::feed`).  *)
+(* dispatched (crates/rsk-usb/src/ctaphid.rs:453-531, `Reassembler::feed`).  *)
 (* Not the USB endpoints, not the async transport loop, not the applets the  *)
 (* message reaches -- only the pure RX core that decides which 64-byte frames *)
 (* belong to which in-flight transaction (the `in_tx` field,                 *)
-(* crates/rsk-usb/src/ctaphid.rs:366).                                       *)
+(* crates/rsk-usb/src/ctaphid.rs:378).                                       *)
 (*                                                                           *)
 (* WHY MODEL IT, given the reassembler is already unit-tested and fuzzed.    *)
 (* Every one of those exercises a SINGLE `feed` call, or a fuzzer's random    *)
@@ -38,17 +38,17 @@
 (* WHAT IS ABSTRACTED. A frame carries a CHUNK, not 57/59 payload bytes: the  *)
 (* three properties do not look at byte contents, only at which channel a     *)
 (* chunk came from, whether it arrived in order, and how many the buffer      *)
-(* holds. `CTAPHID_INIT` always resyncs (crates/rsk-usb/src/ctaphid.rs:460,   *)
+(* holds. `CTAPHID_INIT` always resyncs (crates/rsk-usb/src/ctaphid.rs:472,   *)
 (* an init-type frame that IS CTAPHID_INIT falls through to start fresh), so  *)
 (* `Init` is enabled in every state and a mid-transaction takeover is a       *)
 (* takeover, not a splice -- B's fresh buffer holds B's chunks. The bounded   *)
 (* IN-endpoint write that fixed the runtime interface wedge (0x075D,          *)
 (* TX_TIMEOUT_MS) is a LIVENESS property, and NO liveness proof is claimed    *)
 (* from this module or from any other CTAPHID evidence. It lives on           *)
-(* `write_frames` (crates/rsk-usb/src/ctaphid.rs:928-940), where two host     *)
+(* `write_frames` (crates/rsk-usb/src/ctaphid.rs:1087-1099), where two host     *)
 (* regressions pin the abandon and the drain                                  *)
-(* (crates/rsk-usb/src/ctaphid_tests.rs:478,500) -- over `write_frames`, not  *)
-(* over the async `run` loop (crates/rsk-usb/src/ctaphid.rs:639), which       *)
+(* (crates/rsk-usb/src/ctaphid_tests.rs:479,501) -- over `write_frames`, not  *)
+(* over the async `run` loop (crates/rsk-usb/src/ctaphid.rs:657), which       *)
 (* neither of them enters. No mutation record stands behind either: the       *)
 (* co-refutation roster excludes liveness switches by design                  *)
 (* (scripts/comutate.py). Stated, not smuggled.                               *)
@@ -63,19 +63,19 @@ CONSTANTS
     \* -- the record and its price are in formal/gen-configs.sh, at emit_trans.
     Channels,
     Cap,   \* the message buffer's capacity in chunks (>= 2); CTAP_MAX_MESSAGE
-    \* crates/rsk-usb/src/ctaphid.rs:491-493 -- a continuation whose channel is
+    \* crates/rsk-usb/src/ctaphid.rs:503-505 -- a continuation whose channel is
     \* not the in-progress transaction's is CHANNEL_BUSY, and the owning
     \* channel's transaction is left intact. Removing the check appends the
     \* stranger's chunk to the owner's message: one host application's bytes
     \* spliced into another's.
     BugContIgnoresChannel,
-    \* crates/rsk-usb/src/ctaphid.rs:495-498 -- a continuation whose seq is not
+    \* crates/rsk-usb/src/ctaphid.rs:507-510 -- a continuation whose seq is not
     \* the expected next aborts the transaction (INVALID_SEQ). Removing the
     \* check appends an out-of-order frame, assembling a message the host never
     \* sent in that order and dispatching it as authentic.
     BugContIgnoresSeq,
-    \* crates/rsk-usb/src/ctaphid.rs:472-474 -- an INIT declaring more than
-    \* CTAP_MAX_MESSAGE (the buffer's size, crates/rsk-usb/src/ctaphid.rs:220)
+    \* crates/rsk-usb/src/ctaphid.rs:484-486 -- an INIT declaring more than
+    \* CTAP_MAX_MESSAGE (the buffer's size, crates/rsk-usb/src/ctaphid.rs:222)
     \* is INVALID_LEN and starts nothing. Removing the check lets the declared
     \* length exceed the buffer, and the chunks that fill it index past `msg` --
     \* memory corruption in a no_std image.

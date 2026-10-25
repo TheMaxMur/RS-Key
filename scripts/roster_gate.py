@@ -15,9 +15,9 @@ lines of text, misdiagnosing ordinary edits on the way. That is how a guard
 comes to be deleted.
 
 There is no roster now. Every one of those rows says
-`--workspace --exclude firmware --exclude rsk-wipe`, which is the same set by
-construction: those two are the only `[workspace] members` outside `crates/`,
-and the only two that are thumbv8m-only. Measured equivalent to the roster it
+`--workspace --exclude firmware --exclude firmware-ns --exclude rsk-wipe`, which is the same set by
+construction: those three are the only `[workspace] members` outside `crates/`,
+and the only three that are thumbv8m-only. Measured equivalent to the roster it
 replaces on all four verbs — identical `cargo test` binaries, byte-identical
 `llvm-cov` totals (85.02 % line), rc 0 from clippy, and the same 24 `rsk_*`
 directories out of rustdoc.
@@ -30,7 +30,7 @@ to run less than it says while staying green:
 * a crate under `crates/` is not a member, so `--workspace` cannot see it. The
   same seam as before, and now the only place a crate hides from every row at
   once;
-* an exclude is dropped, a third is added, or its operand is generated so no
+* an exclude is dropped, another is added, or its operand is generated so no
   reader can resolve it. The third exclude is the rotted roster in modern
   spelling: nothing fails, the row just measures less. Held over the whole
   checkout rather than a list of files, because the ninth copy was invisible to
@@ -79,10 +79,10 @@ FLAKE = pathlib.Path("nix/checks.nix")
 SELF = pathlib.Path(__file__).resolve().relative_to(ROOT)
 TESTS = SELF.with_name(f"test_{SELF.stem}.py")
 
-#: The whole of what a host row may skip, and why it is exactly two: they are
-#: the only `[workspace] members` outside `crates/`, and both are thumbv8m-only.
+#: The whole of what a host row may skip, and why it is exactly three: they are
+#: the only `[workspace] members` outside `crates/`, and all are thumbv8m-only.
 #: Checked against the manifest below, so this cannot be the next stale list.
-EXCLUDED = frozenset({"firmware", "rsk-wipe"})
+EXCLUDED = frozenset({"firmware", "firmware-ns", "rsk-wipe"})
 
 
 def shell(text):

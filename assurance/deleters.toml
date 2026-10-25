@@ -580,7 +580,7 @@ why = "and its second. Both slots' valid bits come off flash in the response tha
 
 [[site]]
 file = "crates/rsk-piv/src/files.rs"
-line = 684
+line = 697
 call = "let gone = fs.force_delete_halves(fid);"
 verb = "force_delete_halves"
 answer = "read"
@@ -591,7 +591,7 @@ why = "the site this audit was about: PIV key fids carry EF_META heads, so the r
 
 [[site]]
 file = "crates/rsk-piv/src/files.rs"
-line = 507
+line = 520
 call = "fs.force_delete(EF_ATTESTATION_CERT)"
 verb = "force_delete"
 answer = "read"

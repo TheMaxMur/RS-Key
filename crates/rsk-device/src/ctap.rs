@@ -26,7 +26,7 @@ const RESP_CAP: usize = rsk_usb::ctaphid::CTAP_MAX_MESSAGE;
 // largeBlobs ceiling) is derived from the same literal and rides on this too.
 // `cfg(not(kani))` for the reason its sibling in `rsk-usb` carries: this is about
 // the SHIPPED width, and `CTAP_MAX_MESSAGE` deliberately shrinks to two
-// continuation frames under Kani (ctaphid.rs:228), where CBMC runs out of memory
+// continuation frames under Kani (ctaphid.rs:230), where CBMC runs out of memory
 // at the real one. Unguarded it does not fail a proof — it stops `rsk-device`
 // COMPILING, so every harness in the crate goes with it.
 #[cfg(not(kani))]
@@ -159,6 +159,11 @@ impl<'a, S: Storage, R: rsk_sdk::Rng + 'static, VP: rsk_vendor::Platform>
         self.resp.zeroize();
     }
 
+    /// Lend the complete response buffer to the board's volatile SRAM wipe.
+    pub fn scrub_with(&mut self, wipe: impl FnOnce(&mut [u8])) {
+        wipe(&mut self.resp);
+    }
+
     /// Secure-reboot wipe: the response buffer, the vendor dispatcher's chain and
     /// held tail, and the cross-message FIDO auth state — `reset` zeroizes the
     /// PIN/UV token, session key and ephemeral ECDH scalar via their `Drop` impls.
@@ -189,6 +194,14 @@ impl<'a, S: Storage, R: rsk_sdk::Rng + 'static, VP: rsk_vendor::Platform>
         )]
         resp.zeroize();
         fido_state.borrow_mut().reset();
+    }
+
+    /// A transport reset drops authorization without granting a new per-boot PIN budget.
+    #[cfg(any(feature = "trustzone", test))]
+    pub fn reset_transport_session(&mut self) {
+        let lock = self.fido_state.borrow().pin_lock();
+        self.scrub_secrets();
+        self.fido_state.borrow_mut().restore_pin_lock(lock);
     }
 }
 

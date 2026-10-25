@@ -24,8 +24,8 @@ use core::future::Future;
 use embassy_futures::select::{Either, Either3, select, select3};
 use embassy_time::{Instant, Timer};
 use embassy_usb::class::hid::{HidReader, HidWriter};
-use embassy_usb::driver::Driver;
-use rsk_secret::WipeGuard;
+use embassy_usb::driver::{Driver, EndpointError};
+use rsk_secret::{Secret, WipeGuard};
 
 pub const HID_RPT_SIZE: usize = 64;
 const INIT_DATA: usize = HID_RPT_SIZE - 7; // 57
@@ -69,6 +69,8 @@ pub const STATUS_UPNEEDED: u8 = 0x02;
 // Stream a KEEPALIVE this often while the worker runs a long synchronous op
 // (slow P-521, flash GC) — well under any host CTAP timeout.
 pub const KEEPALIVE_MS: u64 = 100;
+/// CTAP 2.1 §11.2.9.1.5: cancellation answers the original CBOR request.
+pub const CTAP_KEEPALIVE_CANCEL: u8 = 0x2d;
 
 /// Which keepalive status to stream while a request is in flight, or `None` to
 /// stay silent. U2F (MSG) is fast apart from the touch wait, and U2FHID hosts —
@@ -260,6 +262,16 @@ pub const FIDO_REPORT_DESCRIPTOR: &[u8] = &[
 /// task stays responsive and streams keepalives while slow crypto/flash runs.
 #[allow(async_fn_in_trait)] // crate-internal, single-threaded executor — no Send bound needed
 pub trait MsgHandler {
+    /// A new epoch invalidates in-flight replies when the USB session changes.
+    fn session_epoch() -> u32 {
+        0
+    }
+    /// Bind endpoint writes to the response epoch, including every continuation.
+    fn bind_response_epoch(_epoch: u32) {}
+    /// The handler can discard a copied compute request before its reply is sent.
+    fn cancel_processing() -> bool {
+        false
+    }
     /// Handle a U2F (ISO-7816) command APDU, writing the response APDU (body +
     /// SW1 SW2) into `out`; returns its length. `cid` is the channel it arrived on:
     /// the MSG applet selection is cross-message state, and U2F has no SELECT of
@@ -609,6 +621,9 @@ pub struct CtapHid<'d, D: Driver<'d>, H: MsgHandler> {
     cids: CidAllocator,
     /// The current `CTAPHID_LOCK` holder, if any.
     lock: ChannelLock,
+    pending_frame: Option<u32>,
+    pending_bytes: Secret<[u8; HID_RPT_SIZE]>,
+    session_epoch: u32,
 }
 
 impl<'d, D: Driver<'d>, H: MsgHandler> CtapHid<'d, D, H> {
@@ -625,6 +640,9 @@ impl<'d, D: Driver<'d>, H: MsgHandler> CtapHid<'d, D, H> {
             handler,
             asm: Reassembler::new(),
             scratch: [0; CTAP_MAX_MESSAGE],
+            pending_frame: None,
+            pending_bytes: Secret::zeroed(),
+            session_epoch: H::session_epoch(),
             up_pending,
             request_cancel,
             cids: CidAllocator::new(),
@@ -639,6 +657,18 @@ impl<'d, D: Driver<'d>, H: MsgHandler> CtapHid<'d, D, H> {
     pub async fn run(&mut self) -> ! {
         let mut frame = [0u8; HID_RPT_SIZE];
         loop {
+            self.reset_if_new_session();
+            if let Some(epoch) = self.pending_frame.take() {
+                let mut pending = Secret::<[u8; HID_RPT_SIZE]>::zeroed();
+                pending
+                    .expose_mut()
+                    .copy_from_slice(self.pending_bytes.expose());
+                self.pending_bytes.wipe();
+                if epoch == H::session_epoch() {
+                    self.on_frame(pending.expose()).await;
+                }
+                continue;
+            }
             if self.asm.in_progress() {
                 match select(
                     self.reader.read(&mut frame),
@@ -649,10 +679,19 @@ impl<'d, D: Driver<'d>, H: MsgHandler> CtapHid<'d, D, H> {
                     Either::First(Ok(n)) if n == HID_RPT_SIZE => self.on_frame(&frame).await,
                     Either::First(_) => {}
                     Either::Second(_) => {
+                        if self.session_epoch != H::session_epoch() {
+                            continue;
+                        }
                         let cid = self.asm.current_cid();
                         self.asm.abort();
-                        write_message(&mut self.writer, cid, CTAPHID_ERROR, &[ERR_MSG_TIMEOUT])
-                            .await;
+                        write_message::<D, H>(
+                            &mut self.writer,
+                            cid,
+                            CTAPHID_ERROR,
+                            &[ERR_MSG_TIMEOUT],
+                            self.session_epoch,
+                        )
+                        .await;
                     }
                 }
             } else {
@@ -667,6 +706,19 @@ impl<'d, D: Driver<'d>, H: MsgHandler> CtapHid<'d, D, H> {
         }
     }
 
+    fn reset_if_new_session(&mut self) {
+        let epoch = H::session_epoch();
+        if epoch != self.session_epoch {
+            self.asm.scrub();
+            self.lock = ChannelLock::default();
+            if self.pending_frame != Some(epoch) {
+                self.pending_frame = None;
+                self.pending_bytes.wipe();
+            }
+            self.session_epoch = epoch;
+        }
+    }
+
     // Refines `RSKeyTransport!NoCrossChannelSplice` — SEC-TRANS-001.
     // Refines `RSKeyTransport!NoSequenceGap` — SEC-TRANS-002.
     // Refines `RSKeyTransport!NoBufferOverrun` — SEC-TRANS-003.
@@ -674,15 +726,30 @@ impl<'d, D: Driver<'d>, H: MsgHandler> CtapHid<'d, D, H> {
     // nowhere else IN THE IMAGE. The emulator has its own, `serve`
     // (`tools/emu/src/hid.rs:52-87`), and it is what `tests/*.py` run against.
     async fn on_frame(&mut self, f: &[u8; HID_RPT_SIZE]) {
+        self.reset_if_new_session();
         match self.asm.feed(f) {
             Outcome::None => {}
             Outcome::Error(cid, code) => {
-                write_message(&mut self.writer, cid, CTAPHID_ERROR, &[code]).await;
+                write_message::<D, H>(
+                    &mut self.writer,
+                    cid,
+                    CTAPHID_ERROR,
+                    &[code],
+                    self.session_epoch,
+                )
+                .await;
             }
             Outcome::Message(cid, cmd)
                 if self.lock.refuses(cid, cmd, Instant::now().as_millis()) =>
             {
-                write_message(&mut self.writer, cid, CTAPHID_ERROR, &[ERR_CHANNEL_BUSY]).await;
+                write_message::<D, H>(
+                    &mut self.writer,
+                    cid,
+                    CTAPHID_ERROR,
+                    &[ERR_CHANNEL_BUSY],
+                    self.session_epoch,
+                )
+                .await;
             }
             Outcome::Message(cid, cmd) => self.dispatch(cid, cmd).await,
         }
@@ -719,43 +786,84 @@ impl<'d, D: Driver<'d>, H: MsgHandler> CtapHid<'d, D, H> {
                 resp[14] = VERSION_MINOR;
                 resp[15] = VERSION_BUILD;
                 resp[16] = init_capabilities(self.handler.can_wink());
-                write_message(&mut self.writer, cid, CTAPHID_INIT, &resp).await;
+                write_message::<D, H>(
+                    &mut self.writer,
+                    cid,
+                    CTAPHID_INIT,
+                    &resp,
+                    self.session_epoch,
+                )
+                .await;
             }
             CTAPHID_PING | CTAPHID_SYNC => {
-                write_message(&mut self.writer, cid, cmd, self.asm.message()).await;
+                write_message::<D, H>(
+                    &mut self.writer,
+                    cid,
+                    cmd,
+                    self.asm.message(),
+                    self.session_epoch,
+                )
+                .await;
             }
             CTAPHID_WINK => {
                 let (rsp, body) = perform_wink(&mut self.handler);
-                write_message(&mut self.writer, cid, rsp, body).await;
+                write_message::<D, H>(&mut self.writer, cid, rsp, body, self.session_epoch).await;
             }
             CTAPHID_LOCK => {
                 // §11.2.9.2.2: BCNT 1, a lock time of 0..10 seconds, 0 releasing it.
                 match self.asm.message() {
                     [secs] if *secs <= LOCK_MAX_SECONDS => {
                         self.lock.arm(cid, *secs, Instant::now().as_millis());
-                        write_message(&mut self.writer, cid, CTAPHID_LOCK, &[]).await;
+                        write_message::<D, H>(
+                            &mut self.writer,
+                            cid,
+                            CTAPHID_LOCK,
+                            &[],
+                            self.session_epoch,
+                        )
+                        .await;
                     }
                     [_] => {
-                        write_message(&mut self.writer, cid, CTAPHID_ERROR, &[ERR_INVALID_PAR])
-                            .await;
+                        write_message::<D, H>(
+                            &mut self.writer,
+                            cid,
+                            CTAPHID_ERROR,
+                            &[ERR_INVALID_PAR],
+                            self.session_epoch,
+                        )
+                        .await;
                     }
                     _ => {
-                        write_message(&mut self.writer, cid, CTAPHID_ERROR, &[ERR_INVALID_LEN])
-                            .await;
+                        write_message::<D, H>(
+                            &mut self.writer,
+                            cid,
+                            CTAPHID_ERROR,
+                            &[ERR_INVALID_LEN],
+                            self.session_epoch,
+                        )
+                        .await;
                     }
                 }
             }
             CTAPHID_VERSION => {
-                write_message(
+                write_message::<D, H>(
                     &mut self.writer,
                     cid,
                     CTAPHID_VERSION,
                     &[VERSION_MAJOR, VERSION_MINOR, VERSION_BUILD, 0],
+                    self.session_epoch,
                 )
                 .await;
             }
             CTAPHID_UUID => {
-                write_message(&mut self.writer, cid, CTAPHID_UUID, &DEVICE_UUID).await;
+                write_message::<D, H>(
+                    &mut self.writer,
+                    cid,
+                    CTAPHID_UUID,
+                    &DEVICE_UUID,
+                    self.session_epoch,
+                )
+                .await;
             }
             CTAPHID_CANCEL => {
                 // A CANCEL is never acknowledged (CTAPHID spec). With no
@@ -770,7 +878,14 @@ impl<'d, D: Driver<'d>, H: MsgHandler> CtapHid<'d, D, H> {
             CTAPHID_CBOR => {
                 // A CBOR message must carry at least the command byte.
                 if self.asm.message().is_empty() {
-                    write_message(&mut self.writer, cid, CTAPHID_ERROR, &[ERR_INVALID_LEN]).await;
+                    write_message::<D, H>(
+                        &mut self.writer,
+                        cid,
+                        CTAPHID_ERROR,
+                        &[ERR_INVALID_LEN],
+                        self.session_epoch,
+                    )
+                    .await;
                 } else {
                     self.run_with_keepalive(cid, Call::Cbor).await;
                 }
@@ -779,7 +894,14 @@ impl<'d, D: Driver<'d>, H: MsgHandler> CtapHid<'d, D, H> {
                 self.run_with_keepalive(cid, Call::Vendor(cmd)).await;
             }
             _ => {
-                write_message(&mut self.writer, cid, CTAPHID_ERROR, &[ERR_INVALID_CMD]).await;
+                write_message::<D, H>(
+                    &mut self.writer,
+                    cid,
+                    CTAPHID_ERROR,
+                    &[ERR_INVALID_CMD],
+                    self.session_epoch,
+                )
+                .await;
             }
         }
     }
@@ -801,6 +923,8 @@ impl<'d, D: Driver<'d>, H: MsgHandler> CtapHid<'d, D, H> {
             scratch,
             up_pending,
             request_cancel,
+            pending_frame,
+            pending_bytes,
             ..
         } = self;
         let up_pending = *up_pending;
@@ -809,8 +933,11 @@ impl<'d, D: Driver<'d>, H: MsgHandler> CtapHid<'d, D, H> {
         // Frames read while the worker runs are inspected only for CTAPHID_CANCEL,
         // never reassembled (the message buffer is in use), so a scratch buffer
         // disjoint from `asm` is enough.
-        let mut watch = [0u8; HID_RPT_SIZE];
+        let mut watch = Secret::<[u8; HID_RPT_SIZE]>::zeroed();
         let is_cbor = matches!(call, Call::Cbor);
+        let epoch = H::session_epoch();
+        let monitor = is_cbor && H::cancel_processing();
+        let mut cancelled = false;
         let n = {
             let mut fut = core::pin::pin!(async {
                 match call {
@@ -824,34 +951,45 @@ impl<'d, D: Driver<'d>, H: MsgHandler> CtapHid<'d, D, H> {
                 }
             });
             loop {
-                // Only watch the reader for CTAPHID_CANCEL while a touch is
-                // pending. That is the only window the platform sends CANCEL, and
-                // the only time it is not pipelining the next request. Reading
-                // frames during fast/crypto processing would consume — and then
-                // drop — a pipelined next command (e.g. the rapid getPinToken loop
-                // in conformance ClientPin-GetRetries), wedging the transport. So
-                // off the touch wait we race only the worker and the keepalive,
-                // exactly like before the CANCEL support was added.
-                if up_pending() {
-                    match select3(
-                        fut.as_mut(),
-                        Timer::after_millis(KEEPALIVE_MS),
-                        reader.read(&mut watch),
-                    )
+                // One deferred frame preserves pipelining while compute cancellation watches OUT.
+                if pending_frame.is_none()
+                    && epoch == H::session_epoch()
+                    && (up_pending() || monitor)
+                {
+                    match select3(fut.as_mut(), Timer::after_millis(KEEPALIVE_MS), async {
+                        reader.ready().await;
+                        reader.read(watch.expose_mut()).await
+                    })
                     .await
                     {
                         Either3::First(n) => break n,
                         Either3::Second(_) => {
-                            if let Some(status) = keepalive_status(is_cbor, up_pending()) {
-                                write_message(writer, cid, CTAPHID_KEEPALIVE, &[status]).await;
+                            if epoch == H::session_epoch()
+                                && let Some(status) = keepalive_status(is_cbor, up_pending())
+                            {
+                                write_message::<D, H>(
+                                    writer,
+                                    cid,
+                                    CTAPHID_KEEPALIVE,
+                                    &[status],
+                                    epoch,
+                                )
+                                .await;
                             }
                         }
                         // A CTAPHID_CANCEL on the active channel aborts the worker's
                         // touch wait; the command then returns KEEPALIVE_CANCEL
                         // itself. Any other mid-flight frame is ignored.
                         Either3::Third(read) => {
-                            if matches!(read, Ok(k) if is_cancel_frame(&watch, k, cid)) {
+                            if matches!(read, Ok(k) if is_cancel_frame(watch.expose(), k, cid)) {
                                 request_cancel();
+                                cancelled |= monitor;
+                            } else if matches!(read, Ok(k) if k == HID_RPT_SIZE)
+                                && watch.expose()[4] != CTAPHID_CANCEL
+                                && monitor
+                            {
+                                pending_bytes.expose_mut().copy_from_slice(watch.expose());
+                                *pending_frame = Some(H::session_epoch());
                             }
                         }
                     }
@@ -859,26 +997,47 @@ impl<'d, D: Driver<'d>, H: MsgHandler> CtapHid<'d, D, H> {
                     match select(fut.as_mut(), Timer::after_millis(KEEPALIVE_MS)).await {
                         Either::First(n) => break n,
                         Either::Second(_) => {
-                            if let Some(status) = keepalive_status(is_cbor, up_pending()) {
-                                write_message(writer, cid, CTAPHID_KEEPALIVE, &[status]).await;
+                            if epoch == H::session_epoch()
+                                && let Some(status) = keepalive_status(is_cbor, up_pending())
+                            {
+                                write_message::<D, H>(
+                                    writer,
+                                    cid,
+                                    CTAPHID_KEEPALIVE,
+                                    &[status],
+                                    epoch,
+                                )
+                                .await;
                             }
                         }
                     }
                 }
             }
         };
+        if epoch != H::session_epoch() {
+            let _response = WipeGuard::new(scratch);
+            asm.scrub();
+            return;
+        }
         let cmd = match call {
             Call::Cbor => CTAPHID_CBOR,
             Call::Msg => CTAPHID_MSG,
             Call::Vendor(cmd) => cmd,
         };
         match n {
+            _ if cancelled => {
+                let _response = WipeGuard::new(scratch);
+                write_message::<D, H>(writer, cid, CTAPHID_CBOR, &[CTAP_KEEPALIVE_CANCEL], epoch)
+                    .await;
+            }
             Some(n) => {
                 // Request and response both carried secrets (PINs, tokens, key blobs).
                 let resp = WipeGuard::new(scratch.get_mut(..n).unwrap_or_default());
-                write_message(writer, cid, cmd, &resp).await;
+                write_message::<D, H>(writer, cid, cmd, &resp, epoch).await;
             }
-            None => write_message(writer, cid, CTAPHID_ERROR, &[ERR_INVALID_CMD]).await,
+            None => {
+                write_message::<D, H>(writer, cid, CTAPHID_ERROR, &[ERR_INVALID_CMD], epoch).await
+            }
         }
         asm.scrub();
     }
@@ -902,14 +1061,14 @@ enum Call {
 /// write instead of blocking the transport task forever.
 #[allow(async_fn_in_trait)] // crate-internal, single-threaded executor — no Send bound needed
 trait FrameSink {
-    async fn write_frame(&mut self, frame: &[u8; HID_RPT_SIZE]);
+    async fn write_frame(&mut self, frame: &[u8; HID_RPT_SIZE]) -> Result<(), EndpointError>;
 }
 
 impl<'d, D: Driver<'d>> FrameSink for HidWriter<'d, D, HID_RPT_SIZE> {
-    async fn write_frame(&mut self, frame: &[u8; HID_RPT_SIZE]) {
+    async fn write_frame(&mut self, frame: &[u8; HID_RPT_SIZE]) -> Result<(), EndpointError> {
         // A write error (endpoint disabled / reset) ends the response the same as
         // a timeout: there is nothing more to send for this transaction.
-        let _ = self.write(frame).await;
+        self.write(frame).await
     }
 }
 
@@ -933,20 +1092,22 @@ where
 {
     for frame in TxFrames::new(cid, cmd, data) {
         match select(sink.write_frame(&frame), timeout()).await {
-            Either::First(_) => {}
-            Either::Second(_) => return, // host stopped draining IN — abandon response
+            Either::First(Ok(())) => {}
+            Either::First(Err(_)) | Either::Second(_) => return, // host stopped draining IN — abandon response
         }
     }
 }
 
 /// [`write_frames`] with the production timeout: bound every frame to
 /// [`TX_TIMEOUT_MS`] of host-drain time.
-async fn write_message<'d, D: Driver<'d>>(
+async fn write_message<'d, D: Driver<'d>, H: MsgHandler>(
     writer: &mut HidWriter<'d, D, HID_RPT_SIZE>,
     cid: u32,
     cmd: u8,
     data: &[u8],
+    epoch: u32,
 ) {
+    H::bind_response_epoch(epoch);
     write_frames(writer, cid, cmd, data, || {
         Timer::after_millis(TX_TIMEOUT_MS)
     })

@@ -25,8 +25,15 @@ const MAX_LINE: u64 = 4096;
 #[derive(Debug, PartialEq, Eq)]
 pub enum Command {
     Status,
+    Where,
     Begin,
     End,
+    TransportBegin,
+    TransportEnd,
+    UsbReset,
+    UsbDisconnect,
+    UsbConnect,
+    UsbControl([u8; 8]),
     Scan(Vec<u8>),
     Read { address: u32, length: u32 },
     Plant { address: u32, bytes: Vec<u8> },
@@ -40,8 +47,18 @@ pub fn parse(line: &str) -> Result<Command, String> {
     let number = |s: &str| s.parse::<u64>().map_err(|_| "invalid unsigned count");
     match args.as_slice() {
         ["status"] => Ok(Command::Status),
+        ["where"] => Ok(Command::Where),
         ["begin"] => Ok(Command::Begin),
         ["end"] => Ok(Command::End),
+        ["transport-begin"] => Ok(Command::TransportBegin),
+        ["transport-end"] => Ok(Command::TransportEnd),
+        ["usb-reset"] => Ok(Command::UsbReset),
+        ["usb-disconnect"] => Ok(Command::UsbDisconnect),
+        ["usb-connect"] => Ok(Command::UsbConnect),
+        ["usb-control", hex] => {
+            let setup = pattern(hex)?.try_into().map_err(|_| "SETUP needs 8 bytes")?;
+            Ok(Command::UsbControl(setup))
+        }
         ["scan", hex] => Ok(Command::Scan(pattern(hex)?)),
         ["read", addr, n] => {
             let address = u32::from_str_radix(addr.trim_start_matches("0x"), 16)
@@ -69,7 +86,7 @@ pub fn parse(line: &str) -> Result<Command, String> {
         ["cut-cycles", n] => Ok(Command::CutCycles(number(n)?)),
         ["cut-program", n] => Ok(Command::CutProgram(number(n)?)),
         ["cut-program-cycles", n] => Ok(Command::CutProgramCycles(number(n)?)),
-        _ => Err("expected status, begin, end, scan HEX, read ADDRESS N, plant ADDRESS HEX, cut-cycles N, cut-program N or cut-program-cycles N".into()),
+        _ => Err("expected status, where, begin, end, transport-begin, transport-end, usb-reset, usb-disconnect, usb-connect, usb-control SETUP_HEX, scan HEX, read ADDRESS N, plant ADDRESS HEX, cut-cycles N, cut-program N or cut-program-cycles N".into()),
     }
 }
 
@@ -127,7 +144,34 @@ pub struct Stack {
     pub min_sp: u32,
 }
 
+pub struct Stacks {
+    pub secure: [Stack; 2],
+    pub nonsecure: Option<Stack>,
+}
+
 impl Stack {
+    pub fn checked(
+        low: u32,
+        top: u32,
+        sp: u32,
+        symbol_low: u32,
+        name: &str,
+    ) -> Result<Self, String> {
+        if !(SRAM_BASE..SRAM_BASE + SRAM_LEN).contains(&low)
+            || low < symbol_low
+            || top > SRAM_BASE + SRAM_LEN
+            || !(low..=top).contains(&sp)
+        {
+            return Err(format!("{name} is outside its ELF stack: {sp:#x}"));
+        }
+        Ok(Self {
+            low,
+            top,
+            initial_sp: sp,
+            min_sp: sp,
+        })
+    }
+
     pub fn sample(&mut self, sp: u32) {
         self.min_sp = self.min_sp.min(sp);
     }

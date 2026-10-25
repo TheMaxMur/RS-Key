@@ -15,7 +15,8 @@ build = "build.rs"
 # PIV GENERAL AUTHENTICATE, OpenPGP PSO:CDS. `k·G` (ECDSA nonce commitment) and
 # `d·G` (public-key derivation) both run through a width-4 comb — several× faster
 # than the crate's generic `mul_by_generator` on the in-order Cortex-M33, and
-# bit-identical to it (KAT-checked). ECDH stays on the crate (variable base).
+# bit-identical to it (KAT-checked). P-384 and P-521 ECDH use Jacobian mixed
+# addition; the other variable-base curves keep their upstream multiplier.
 [lints]
 workspace = true
 

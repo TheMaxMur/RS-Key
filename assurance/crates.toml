@@ -29,6 +29,10 @@
 class = "embedded-binary"
 reason = "no_std binary: boot, worker sequencing, board halves of Hooks/Platform. The boot path's cross-boot state — the EF_HARDENED lap and scratch-word lock carry — is RSKeyBootHardening (M7), precisely because this crate has no host tests; the FIDO state it builds is reconstructed host-side in rsk-device (ctap.rs:82-93). Worker scheduling and USB bring-up remain implementation mechanics, with transport state owned by RSKeyTransport."
 
+[crate.firmware-ns]
+class = "embedded-binary"
+reason = "TrustZone Non-secure classes, packet framing and TIMER1; no worker or applet state is instantiated here. Protocol state is host-tested in rsk-usb; full ELF crypto, lifecycle, presence and hostile-access checks are tests/95 through tests/99. Hardware attribution and complete exception/FP fidelity remain separate platform obligations."
+
 [crate.rsk-wipe]
 class = "out-of-scope"
 reason = "flash-erase utility, runs once in a maintainer's hands; not part of the runtime security argument."
@@ -144,6 +148,11 @@ note = "functional division spec + the sieve, proved."
 class = "pure"
 evidence = ["crates/rsk-ec/src/tests.rs", "crates/rsk-ec/src/key_tests.rs", "crates/rsk-ec/src/key_x25519_tests.rs", "crates/rsk-ec/src/key_bp_kat.rs", "crates/rsk-ec/src/curve_tests.rs", "crates/rsk-ec/src/pubdo_tests.rs"]
 note = "the crate is the comb signers AND, since the key type came down out of rsk-openpgp, the PrivKey/Curve both card applets seal plus the 7F49 public-key DO. Still pure — no flash, no status word, no session. Zero Kani proofs and NOT a gap: every operation is checked against an independent reference rather than a model — byte-identical differential vs p256/p384/k256/p521 for the comb, OpenSSL 3.6 vectors for brainpool, RFC 7748 for X25519, and a re-parse of the DO for the wrapper. The one thing no differential can catch is a renumbered curve tag, because both sides would move together: curve_tests.rs writes the eight persisted bytes out one by one instead."
+
+[crate.rsk-sha256]
+class = "pure"
+evidence = ["crates/rsk-sha256/src/tests.rs", "fuzz/fuzz_targets/sha256_diff.rs"]
+note = "independent SHA-256, HMAC and HKDF differentials against sha2/hmac/hkdf; streaming, clone, reset and long-input boundaries. Zero Kani proofs; this is functional differential evidence, not a state-machine or silicon timing proof."
 
 [crate.rsk-sha512]
 class = "pure"

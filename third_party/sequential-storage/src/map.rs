@@ -299,18 +299,47 @@ impl<S: NorFlash, C: CacheImpl<K>, K: Key> MapStorage<K, S, C> {
 
     /// Whether page metadata describes an interrupted erase or migration.
     pub async fn needs_repair(&mut self) -> Result<bool, Error<S::Error>> {
+        let mut markers = [0; 2 * MAX_WORD_SIZE];
+        self.inner.flash.read(self.inner.flash_range.start, &mut markers[..S::READ_SIZE])
+            .await.map_err(|value| Error::Storage {
+                value,
+                #[cfg(feature = "_test")]
+                backtrace: std::backtrace::Backtrace::capture(),
+            })?;
+        let mut start_marked = crate::marker_marked(&markers[..S::READ_SIZE]);
         for page in self.inner.get_pages(0) {
-            match self.inner.get_page_state(page).await {
-                Err(Error::Corrupted { .. }) => return Ok(true),
-                Ok(PageState::PartialOpen) => {
+            let last = page + 1 == self.inner.page_count().get();
+            let address = calculate_page_end_address::<S>(self.flash_range(), page) - S::READ_SIZE as u32;
+            let count = if last { S::READ_SIZE } else { 2 * S::READ_SIZE };
+            self.inner.flash.read(address, &mut markers[..count]).await.map_err(|value| Error::Storage {
+                value,
+                #[cfg(feature = "_test")]
+                backtrace: std::backtrace::Backtrace::capture(),
+            })?;
+            let end_marked = crate::marker_marked(&markers[..S::READ_SIZE]);
+            match (start_marked, end_marked) {
+                (false, true) => return Ok(true),
+                (true, false) => {
                     match self.inner.get_page_state(self.inner.next_page(page)).await {
                         Ok(state) if state.is_open() => {},
                         Ok(_) | Err(Error::Corrupted { .. }) => return Ok(true),
                         Err(error) => return Err(error),
                     }
+                    // A successor sampled by lookahead must still be fresh when visited.
+                    if !last {
+                        let next = calculate_page_address::<S>(self.flash_range(), page + 1);
+                        self.inner.flash.read(next, &mut markers[S::READ_SIZE..2 * S::READ_SIZE])
+                            .await.map_err(|value| Error::Storage {
+                                value,
+                                #[cfg(feature = "_test")]
+                                backtrace: std::backtrace::Backtrace::capture(),
+                            })?;
+                    }
                 }
-                Ok(_) => {},
-                Err(error) => return Err(error),
+                _ => {},
+            }
+            if !last {
+                start_marked = crate::marker_marked(&markers[S::READ_SIZE..2 * S::READ_SIZE]);
             }
         }
         Ok(false)
@@ -1166,67 +1195,78 @@ impl<S: NorFlash, C: CacheImpl<K>, K: Key> MapStorage<K, S, C> {
         &mut self,
         data_buffer: &mut [u8],
     ) -> Result<MapItemIter<'_, K, S, C>, Error<S::Error>> {
-        // Get the first page index.
-        // The first page used by the map is the next page of the `PartialOpen` page or the last `Closed` page
         let first_page = run_with_auto_repair!(
-            function = {
-                match self
-                    .inner
-                    .find_first_page(0, PageState::PartialOpen)
-                    .await?
-                {
-                    Some(last_used_page) => {
-                        // The next page of the `PartialOpen` page is the first page
-                        Ok(self.inner.next_page(last_used_page))
-                    }
-                    None => {
-                        // In the event that all pages are still open or the last used page was just closed, we search for the first open page.
-                        // If the page one before that is closed, then that's the last used page.
-                        if let Some(first_open_page) =
-                            self.inner.find_first_page(0, PageState::Open).await?
-                        {
-                            let previous_page = self.inner.previous_page(first_open_page);
-                            if self
-                                .inner
-                                .get_page_state_cached(previous_page)
-                                .await?
-                                .is_closed()
-                            {
-                                // The previous page is closed, so the first_open_page is what we want
-                                Ok(first_open_page)
-                            } else {
-                                // The page before the open page is not closed, so it must be open.
-                                // This means that all pages are open and that we don't have any items yet.
-                                self.inner.cache.unmark_dirty();
-                                Ok(0)
-                            }
-                        } else {
-                            // There are no open pages, so everything must be closed.
-                            // Something is up and this should never happen.
-                            // To recover, we will just erase all the flash.
-                            Err(Error::Corrupted {
-                                #[cfg(feature = "_test")]
-                                backtrace: std::backtrace::Backtrace::capture(),
-                            })
-                        }
-                    }
-                }
-            },
+            function = self.first_item_page().await?.ok_or_else(|| Error::Corrupted {
+                #[cfg(feature = "_test")]
+                backtrace: std::backtrace::Backtrace::capture(),
+            }),
             repair = self.try_repair(data_buffer).await?
         )?;
+        Ok(self.items_from(first_page))
+    }
 
+    /// Walk stored items without permitting flash repair or reclamation.
+    pub async fn fetch_all_items_unrepaired(
+        &mut self,
+    ) -> Result<MapItemIter<'_, K, S, C>, Error<S::Error>> {
+        let first_page = self.first_item_page().await?.ok_or_else(|| Error::Corrupted {
+            #[cfg(feature = "_test")]
+            backtrace: std::backtrace::Backtrace::capture(),
+        })?;
+        Ok(self.items_from(first_page))
+    }
+
+    async fn first_item_page(&mut self) -> Result<Option<usize>, Error<S::Error>> {
+        match self
+            .inner
+            .find_first_page(0, PageState::PartialOpen)
+            .await?
+        {
+            Some(last_used_page) => {
+                // The next page of the `PartialOpen` page is the first page
+                Ok(Some(self.inner.next_page(last_used_page)))
+            }
+            None => {
+                // In the event that all pages are still open or the last used page was just closed, we search for the first open page.
+                // If the page one before that is closed, then that's the last used page.
+                if let Some(first_open_page) =
+                    self.inner.find_first_page(0, PageState::Open).await?
+                {
+                    let previous_page = self.inner.previous_page(first_open_page);
+                    if self
+                        .inner
+                        .get_page_state_cached(previous_page)
+                        .await?
+                        .is_closed()
+                    {
+                        // The previous page is closed, so the first_open_page is what we want
+                        Ok(Some(first_open_page))
+                    } else {
+                        // The page before the open page is not closed, so it must be open.
+                        // This means that all pages are open and that we don't have any items yet.
+                        self.inner.cache.unmark_dirty();
+                        Ok(Some(0))
+                    }
+                } else {
+                    Ok(None)
+                }
+            }
+        }
+    }
+
+    fn items_from(&mut self, first_page: usize) -> MapItemIter<'_, K, S, C> {
         let start_address =
             calculate_page_address::<S>(self.flash_range(), first_page) + S::WORD_SIZE as u32;
         let end_address =
             calculate_page_end_address::<S>(self.flash_range(), first_page) - S::WORD_SIZE as u32;
 
-        Ok(MapItemIter {
+        MapItemIter {
             storage: self,
             first_page,
             current_page_index: first_page,
             current_iter: ItemIter::new(start_address, end_address),
             _key: PhantomData,
-        })
+        }
     }
 
     async fn migrate_items(

@@ -38,12 +38,22 @@ fn slot_idx(pk: KeyFid) -> usize {
 
 /// The origin to report for the key in slot `pk`.
 pub fn of<S: Storage>(fs: &mut Fs<S>, pk: KeyFid) -> u8 {
+    read_all(fs)
+        .get(slot_idx(pk))
+        .copied()
+        .unwrap_or(ORIGIN_IMPORTED)
+}
+
+pub(crate) fn read_all<S: Storage>(fs: &mut Fs<S>) -> [u8; KEY_SLOTS] {
     let mut rec = [0u8; KEY_SLOTS];
-    let idx = slot_idx(pk);
-    match fs.read(EF_KEY_ORIGIN, &mut rec) {
-        Some(n) if idx < n.min(rec.len()) && rec[idx] == ORIGIN_GENERATED => ORIGIN_GENERATED,
-        _ => ORIGIN_IMPORTED,
+    let count = fs.read(EF_KEY_ORIGIN, &mut rec).unwrap_or(0);
+    let mut origins = [ORIGIN_IMPORTED; KEY_SLOTS];
+    for (origin, byte) in origins.iter_mut().zip(rec.iter()).take(count) {
+        if *byte == ORIGIN_GENERATED {
+            *origin = ORIGIN_GENERATED;
+        }
     }
+    origins
 }
 
 /// Record `origin` for slot `pk`, leaving the other slots as they were.

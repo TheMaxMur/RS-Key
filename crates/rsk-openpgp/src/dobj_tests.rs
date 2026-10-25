@@ -430,3 +430,113 @@ fn advertised_algorithms_refuse_an_unknown_file_even_for_a_valid_attribute() {
 
 #[path = "dobj_encoding_tests.rs"]
 mod encoding;
+
+#[path = "dobj_read_tests.rs"]
+mod reads;
+
+struct OriginReads {
+    inner: RamStorage,
+    reads: std::rc::Rc<std::cell::Cell<usize>>,
+    fail: std::rc::Rc<std::cell::Cell<bool>>,
+    last_error: bool,
+}
+
+impl Storage for OriginReads {
+    fn read(&mut self, fid: u16, out: &mut [u8]) -> Option<usize> {
+        self.last_error = false;
+        if fid == EF_KEY_ORIGIN {
+            self.reads.set(self.reads.get() + 1);
+            if self.fail.get() {
+                self.last_error = true;
+                out.fill(crate::origin::ORIGIN_GENERATED);
+                return None;
+            }
+        }
+        self.inner.read(fid, out)
+    }
+    fn last_error(&self) -> bool {
+        self.last_error
+    }
+    fn write(&mut self, fid: u16, data: &[u8]) -> rsk_sdk::error::Result<()> {
+        self.inner.write(fid, data)
+    }
+    fn remove(&mut self, fid: u16) -> rsk_sdk::error::Result<()> {
+        self.inner.remove(fid)
+    }
+    fn size(&mut self, fid: u16) -> Option<usize> {
+        self.last_error = false;
+        self.inner.size(fid)
+    }
+    fn for_each_key(&mut self, f: &mut dyn FnMut(u16)) -> bool {
+        self.inner.for_each_key(f)
+    }
+}
+
+#[test]
+fn key_information_reads_each_origin_record_once_and_refreshes_each_response() {
+    use crate::origin::{ORIGIN_GENERATED as GENERATED, ORIGIN_IMPORTED as IMPORTED};
+    for present in 0..8 {
+        let reads = std::rc::Rc::new(std::cell::Cell::new(0));
+        let fail = std::rc::Rc::new(std::cell::Cell::new(false));
+        let mut store = Fs::new(OriginReads {
+            inner: RamStorage::new(),
+            reads: reads.clone(),
+            fail: fail.clone(),
+            last_error: false,
+        });
+        store.scan();
+        for (index, key) in [EF_PK_SIG, EF_PK_DEC, EF_PK_AUT].into_iter().enumerate() {
+            if present & (1 << index) != 0 {
+                store.put(key.get(), b"present").unwrap();
+            }
+        }
+        store.put(EF_PK_ATT.get(), b"present").unwrap();
+        let aid = full_aid(&[1, 2, 3, 4], OPGP_MFR_UNMANAGED);
+        for record in [
+            None,
+            Some(&[][..]),
+            Some(&[GENERATED][..]),
+            Some(&[IMPORTED, GENERATED][..]),
+            Some(&[GENERATED, IMPORTED, GENERATED][..]),
+            Some(&[0x00, 0xff, 0x03][..]),
+        ] {
+            fail.set(false);
+            if let Some(record) = record {
+                store.put(EF_KEY_ORIGIN, record).unwrap();
+            } else {
+                store.delete(EF_KEY_ORIGIN).unwrap();
+            }
+            for fault in [false, true] {
+                fail.set(fault);
+                for tag in [EF_KEY_INFO, EF_APP_DATA] {
+                    reads.set(0);
+                    let mut output = [0xa5; 512];
+                    let n = DoWriter::new(&mut output, &mut store, &aid).build(tag);
+                    let mut expected = [1, 0, 2, 0, 3, 0, KEY_REF_ATT, GENERATED];
+                    for index in 0..KEY_SLOTS {
+                        if present & (1 << index) != 0 {
+                            expected[index * 2 + 1] = if !fault
+                                && record.and_then(|r| r.get(index)) == Some(&GENERATED)
+                            {
+                                GENERATED
+                            } else {
+                                IMPORTED
+                            };
+                        }
+                    }
+                    if tag == EF_KEY_INFO {
+                        assert_eq!(&output[..n], expected);
+                    } else {
+                        let tagged = [&[0xde, 8][..], &expected].concat();
+                        assert!(output[..n].windows(tagged.len()).any(|w| w == tagged));
+                    }
+                    assert_eq!(
+                        reads.get(),
+                        usize::from(present != 0 && record.is_some()),
+                        "present={present}, record={record:?}, fault={fault}, tag={tag:04x}"
+                    );
+                }
+            }
+        }
+    }
+}

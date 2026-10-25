@@ -5,10 +5,14 @@
 
 //! USB transport layer: CTAPHID (FIDO HID) and the CCID smart-card class.
 
+pub mod bulk_retry;
 pub mod ccid;
 pub mod ctaphid;
+pub mod identity;
 pub mod kbd;
 pub mod secure_pin;
+pub mod usb_abi;
+pub mod worker_abi;
 
 /// Abandon an IN-endpoint response when the host stops draining it for this
 /// long — an unbounded write blocks the transport task and wedges the whole

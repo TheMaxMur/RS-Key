@@ -325,10 +325,13 @@ impl<'a, S: Storage, R: rsk_sdk::Rng + 'static, VP: rsk_vendor::Platform>
         self.resp.zeroize();
     }
 
-    /// Secure-reboot wipe of the smart-card side: every applet drops its session as
-    /// it does on a deselect (OpenPGP's session keys, PIV's witness, OATH's
-    /// validation), the dispatcher its chain and held tail, and the response buffer
-    /// its last answer. No SELECT follows a reboot to re-lock what this misses.
+    /// Lend the complete response buffer to the board's volatile SRAM wipe.
+    pub fn scrub_with(&mut self, wipe: impl FnOnce(&mut [u8])) {
+        wipe(&mut self.resp);
+    }
+
+    /// Every applet and held response can carry authorization across a reset.
+    /// Revoke them all on USB-wide reset or secure reboot, without a later SELECT.
     pub fn scrub_secrets(&mut self) {
         use zeroize::Zeroize;
         // Every field is named, so a new applet or buffer does not compile until its
@@ -360,7 +363,7 @@ impl<'a, S: Storage, R: rsk_sdk::Rng + 'static, VP: rsk_vendor::Platform>
         disp.clear_chaining();
         #[expect(
             clippy::disallowed_methods,
-            reason = "the response buffer outlives every dispatch; the secure reboot wipes it with every session"
+            reason = "the response buffer outlives dispatches; transport reset or secure reboot wipes it with every session"
         )]
         resp.zeroize();
     }
@@ -413,6 +416,11 @@ impl<'a, S: Storage, R: rsk_sdk::Rng + 'static, VP: rsk_vendor::Platform>
         ];
         let mut fsb = self.fs.borrow_mut();
         self.disp.reset_card(&mut applets, &mut *fsb);
+    }
+
+    /// USB-wide revocation cannot trust which applet the transport selected.
+    pub fn reset_transport_session(&mut self) {
+        self.scrub_secrets();
     }
 
     /// Dispatch one CCID APDU synchronously, returning the response APDU (body +

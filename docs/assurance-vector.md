@@ -128,6 +128,7 @@ The same 40 P0-family rows, counted the other way round: per column rather than 
 | Column | Kind | Published | Placed | Unplaced |
 |---|---|---|---:|---:|
 | `firmware` | package | yes | 41 | 0 |
+| `firmware-trustzone` | package | no | 0 | 41 |
 | `firmware-no-touch` | package | no | 7 | 34 |
 | `firmware-fips` | package | yes | 3 | 38 |
 | `firmware-pqc` | package | yes | 3 | 38 |
@@ -214,7 +215,7 @@ Three spellings of "not current", which used to sit on two different pages and i
 | platform | `PLAT-FLASH-001` | The silicon's program/erase tear behaviour under a real supply cut is  |
 | platform | `PLAT-OTP-001` | OTP read permissions, lock state and the chaffing layout behave as the |
 | platform | `PLAT-INPUT-001` | A PC/SC reader's `FEATURE_VERIFY_PIN_DIRECT` layer carries the PIN to  |
-| platform | `PLAT-TOOL-001` | A green `tools/emu` run is a protocol result, not a device result: the |
+| platform | `PLAT-TOOL-001` | A green emulator run covers its selected backend and adapter. The appl |
 | platform | `PLAT-TOOL-002` | `tools/emu` implements the same authorization gates as the firmware, s |
 | platform | `PLAT-TOOL-003` | Kani/CBMC is sound for the arithmetic its harnesses bound, and the sol |
 | platform | `PLAT-TOOL-004` | TLC is sound for the finite configurations it checks, and the verdict  |
@@ -233,6 +234,7 @@ Three spellings of "not current", which used to sit on two different pages and i
 | platform | `PLAT-UNSAFE-011` | The small-prime table and the sieve step are placed in `.data.small_pr |
 | platform | `PLAT-UNSAFE-012` | The three `unsafe extern` blocks declare what they name: the RSA assem |
 | platform | `PLAT-UNSAFE-013` | `ZeroingHeap` hands `alloc` and `dealloc` to `LlffHeap` under the call |
+| platform | `PLAT-UNSAFE-016` | The complete response-buffer wipe partitions exclusively borrowed init |
 | platform | `PLAT-CRYPTO-001` | The HMAC-SHA-256 under `pinUvAuthProtocol` is correct as a MAC; the ha |
 | platform | `PLAT-BUILD-002` | `ea-conformance-rpid`'s enterprise-attestation allowlist is a conforma |
 | platform | `PLAT-BUILD-003` | The `display` build implements the one-hold-one-ceremony latch SOMEWHE |
@@ -288,6 +290,16 @@ Three spellings of "not current", which used to sit on two different pages and i
 | platform | `PLAT-STORE-002` | The backend's enumeration-completeness flag is honest: `for_each_key`  |
 | platform | `PLAT-STORE-003` | GIVEN a medium that tears the way PLAT-FLASH-001 asserts, a reboot rec |
 | platform | `PLAT-STORE-004` | `is_counter_fid` is a correct routing table over every FID the firmwar |
+| platform | `PLAT-TZ-001` | Secure startup is the sole writer of SAU, ITNS, AIRCR, VTOR_NS and the |
+| platform | `PLAT-TZ-002` | firmware/src/usb_fence.rs shares the same controller detach and DPRAM  |
+| platform | `PLAT-TZ-003` | The GCC CMSE veneers validate complete bounded NS RAM spans before the |
+| platform | `PLAT-TZ-004` | The NS critical section runs only on core0 and restores its own saved  |
+| platform | `PLAT-TZ-005` | NS gateway calls pass numeric selectors, tickets and bounded buffers;  |
+| platform | `PLAT-TZ-006` | Secure startup configures each core MPU with validated non-overlapping |
+| platform | `PLAT-TZ-007` | The disposable hostile NS image may disable its own MPU and intentiona |
+| platform | `PLAT-TZ-008` | A fatal Secure exception/panic latches all gateways closed before touc |
+| platform | `PLAT-TZ-009` | firmware/src/trustzone/mod.rs initializes the disjoint SRAM8/9 code de |
+| platform | `PLAT-UNSAFE-015` | The RP2350 translated uncached XIP window at 0x14000000 supplies initi |
 
 ## Review packet
 

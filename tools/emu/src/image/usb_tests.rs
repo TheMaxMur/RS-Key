@@ -16,6 +16,22 @@ fn arm(u: &mut UsbCore, off: usize, v: u32) {
 }
 
 #[test]
+fn disconnect_stops_packets_and_reset_clears_suspend_and_resume_latches() {
+    let mut u = attached();
+    u.host_connection(false, 1);
+    assert!(!u.attached());
+    assert_eq!(u.host_setup(0, [0; 8], 1), Handshake::Timeout);
+    assert_ne!(u.reg_read(SIE_STATUS, 0) & ST_SUSPENDED, 0);
+    u.host_connection(true, 2);
+    assert!(u.attached());
+    assert_ne!(u.reg_read(SIE_STATUS, 0) & ST_RESUME, 0);
+    u.host_bus_reset(3);
+    assert_eq!(u.reg_read(SIE_STATUS, 0) & (ST_SUSPENDED | ST_RESUME), 0);
+    assert_ne!(u.reg_read(SIE_STATUS, 0) & ST_BUS_RESET, 0);
+    assert!(u.attached());
+}
+
+#[test]
 fn setup_lands_in_dpram_raises_setup_req_and_disarms_stall() {
     let mut u = attached();
     u.reg_write(INTE, IN_SETUP_REQ, 0, 0);
@@ -220,4 +236,33 @@ fn ints_is_intr_or_intf_masked_by_inte() {
     assert_eq!(u.ints(), IN_BUS_RESET | IN_TRANS_COMPLETE);
     u.reg_write(SIE_STATUS, ST_BUS_RESET, 0, 0);
     assert_eq!(u.ints(), IN_TRANS_COMPLETE);
+}
+
+#[test]
+fn a_fatal_fence_requires_detach_irq_mask_both_buffers_and_zero_payload() {
+    let mut usb = attached();
+    assert!(!usb.fatal_fenced());
+    usb.reg_write(SIE_CTRL, 0, 0, 0);
+    assert!(usb.fatal_fenced());
+    usb.inte = 1;
+    assert!(!usb.fatal_fenced());
+    usb.inte = 0;
+    for ep in 0..16 {
+        for input in [true, false] {
+            for shift in [0, 16] {
+                let offset = UsbCore::buf_ctrl_off(ep, input);
+                usb.wr32(offset, BC_AVAILABLE << shift);
+                assert!(!usb.fatal_fenced());
+                usb.wr32(offset, 0);
+                assert!(usb.fatal_fenced());
+            }
+        }
+    }
+    usb.dpram[0x100] = 0xa5;
+    assert!(!usb.fatal_fenced());
+    usb.dpram[0x100] = 0;
+    usb.dpram[0xfff] = 0xa5;
+    assert!(!usb.fatal_fenced());
+    usb.dpram[0xfff] = 0;
+    assert!(usb.fatal_fenced());
 }

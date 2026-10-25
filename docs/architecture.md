@@ -4,6 +4,11 @@ How the firmware is put together, for contributors and the curious. For what
 the design does and does not defend against, see the
 [threat model](threat-model.md).
 
+The ordinary firmware architecture is described below. The experimental split
+keeps the worker and applets Secure and moves transports to Non-secure. Its
+[TrustZone boundary](trustzone.md) records resource ownership and the chosen
+Secure USB lifecycle observer; the implementation is in place, with physical validation still required.
+
 ## The big picture
 
 A composite USB device with three interfaces, eight smart-card applets and
@@ -55,6 +60,10 @@ Three details make that work:
   on the vendor applet reads the engine's counters and flags; a shipped image
   answers `6D00` — they time the prime search).
 
+Quad-read configuration has a separate interrupt-masked SRAM park handshake.
+It changes QMI before core1 starts or after core1 acknowledges that park, and
+skips the change while core1 is busy. The probe restores the old mode on mismatch.
+
 Outside keygen, core1 parks in WFE, and embassy-rp brackets every flash
 erase/program with `pause_core1()`. That buys less than it looks. The flash
 routine is RAM-resident — `write_flash_inner` carries a `.data` link section
@@ -96,7 +105,7 @@ The workspace splits along a strict dependency gradient: the `firmware` binary
 is thin glue over the applet crates, which build on a handful of host-tested
 platform libraries. The per-crate detail is in the table. The shape is:
 
-![Crate dependency layers: 30 crates in 10 tiers, from the 2 flashable binaries at the top, down through the 8 applets, to the 1 secrets crate at the bottom. All 127 in-workspace dependencies point strictly downward, and applet-to-applet edges number 0.](images/crate-graph.svg)
+![Crate dependency layers: 32 crates in 10 tiers, from the 3 device binaries at the top, down through the 8 applets, to the 1 secrets crate at the bottom. All 133 in-workspace dependencies point strictly downward, and applet-to-applet edges number 0.](images/crate-graph.svg)
 
 **No applet names another applet — the count is zero, in code and in the manifests.** This page used to name three cross-edges (`piv→openpgp`, `openpgp→rsa`, `piv→rsa`), only the first of which was one applet reaching sideways; the manifests carried **six** — `fido→mgmt`, `fido→rescue`, `openpgp→mgmt`, `piv→mgmt`, `piv→openpgp`, `otp→mgmt`. The machinery under each moved *down* instead: the phy record into `rsk-phy`, the DeviceInfo record into `rsk-devconf`, RSA into `rsk-rsa`, and the EC key type both card applets seal (`PrivKey` over `Curve`, the `[curve_id] ‖ scalar` blob) into `rsk-ec`. Six `rsk_<applet>::` mentions do survive across the applet tier, every one inside a comment where one applet explains its ordering by pointing at a sibling — a cross-reference, not a dependency.
 
@@ -104,15 +113,17 @@ What holds that now is `deny.toml`: each applet crate is banned except behind th
 
 | Crate | Contents |
 |---|---|
-| `firmware` | the only crate that touches the HAL: board bring-up, USB descriptors, executors, the worker, OTP fuse access, LED, BOOTSEL touch |
+| `firmware` | Secure board glue and the ordinary firmware: board bring-up, USB descriptors, executors, the worker, OTP fuse access, LED, BOOTSEL touch |
+| `firmware-ns` | TrustZone Non-secure USB classes, transport framing and TIMER1; Secure owns the controller, worker and applets |
 | `rsk-wipe` | the second flashable image: a RAM-only flash erase for clean-slate testing — wipes all of flash, leaves a `NUKE` eyecatcher, reboots to BOOTSEL. Runs from SRAM because erasing the sectors a flash-resident image executes from would crash on return |
 | `rsk-sdk` | APDU parsing (cases 1–4, short + extended), BER-TLV, status words, the `Applet` trait + dispatcher, and the seams a board hands every applet: `Rng`, `UserPresence`/`Presence` |
 | `rsk-fs` | the flash filesystem: 16-bit file ids over two `sequential-storage` KV partitions (main + high-churn counters), ACLs, metadata records |
 | `rsk-crypto` | one wrapper over RustCrypto: hashes, HMAC/HKDF, AES-CBC/CFB/GCM, ChaCha20-Poly1305, PIN KDFs, HMAC-DRBG, ML-DSA-44/-65/-87 (`rsk-mldsa`) / ML-KEM, base64url, CRC |
 | `rsk-mldsa` | stack-optimized ML-DSA (FIPS 204) for all three parameter sets: streams the matrix A on the fly (one polynomial resident, not the full k×l) so even ML-DSA-87 fits the RP2350 stack where the by-value `fips204` crate's -65 overflowed it. `no_std`, no alloc, no `unsafe`; checked byte-for-byte vs NIST ACVP KATs, with Kani proofs over the reductions and rounding |
 | `rsk-sha512` | SHA-512/384 for the Cortex-M33, byte-identical to `sha2` but a compact rolled compression (~0.9 KB) that fits the XIP cache instead of `sha2`'s ~28 KB unrolled body — ~4× faster end-to-end on a FIDO getAssertion, with the identical digest, so `hmac`/`hkdf` compose over it byte-for-byte |
+| `rsk-sha256` | SHA-256 with unrolled register rotation and a separate speed profile for the Cortex-M33; byte-identical digests through the same RustCrypto HMAC/HKDF contracts. Chaining state and the complete working schedule live in `Secret`; returned compiler temporaries remain covered by the Secure stack sweeps. |
 | `rsk-secret` | key-grade bytes in a type that wipes itself: `Secret` (no `Copy`, `Clone`, `Debug` or `==`, and zeroized when it drops — on every exit, a `?` included) and `WipeGuard` for a borrowed buffer that outlives the scope. The bottom of the graph, so every crate that holds a secret can name it |
-| `rsk-usb` | the CTAPHID reassembler/framer and the CCID state machine, transport-agnostic and fully host-testable |
+| `rsk-usb` | the CTAPHID reassembler/framer, CCID state machine and shared transport/worker ABI, transport-agnostic and fully host-testable |
 | `rsk-fido` | FIDO2 (CTAP 2.1) + U2F: credentials, clientPIN (protocols 1+2), credManagement, extensions (hmac-secret, credProtect, credBlob, largeBlobs, minPinLength), enterprise attestation, seed backup + soft-lock vendor commands |
 | `rsk-openpgp` | OpenPGP card 3.4: DO model, PW1/RC/PW3, import/generate, PSO, AES PSO, certs, Yubico's key attestation (`ATTEST`, DO `FC`) — EC + RSA-2048/3072/4096 |
 | `rsk-piv` | PIV: 24 key slots + F9 attestation, management-key auth, generate/import/sign/ECDH, on-card X.509 through `rsk-x509` |
@@ -135,7 +146,7 @@ What holds that now is `deny.toml`: each applet crate is banned except behind th
 | `rsk-ui` | the trusted-display UI model (operation prompts, untrusted relying-party-string sanitizing, Allow/Deny button geometry) plus its compact retained scene and 8-row rasterizer; compiled only into the `display` build |
 | `rsk-display` | the trusted display's *flow* — which screen is shown when, the PIN pad, the browse modals, the Approve/Deny wait — over a panel and a touch controller it takes as type parameters, so the firmware drives an ST7789 with semantic damage + two-band DMA and the emulator replays the same retained scene into a window; `display` build only |
 
-Everything except the two binaries is hardware-agnostic and runs the full
+Everything except the three device binaries is hardware-agnostic and runs the full
 test suite on the host ([testing.md](testing.md)).
 
 ## Flash layout
@@ -157,6 +168,14 @@ shipped image: the USB bootloader is denied read and write over
 linker symbols rather than restated, so it follows `FLASH_SIZE`/`KVMAIN` on its
 own ([build.md](build.md#the-partition-table)). What it is and is not worth:
 [threat-model.md](threat-model.md#flash-snapshot-rollback-the-pin-counter-reset).
+
+The board owns the SHA-256 peripheral behind a private `RefCell`. It hashes
+public journal bytes before mutations of a mounted directory, including a fresh
+erased-tail check. Initial journal authentication and root-key HMACs use the
+software crypto path; an engine failure refuses the operation. Bulk `SharedFlash`
+reads use the existing Secure Core0 XIP FIFO access, without DMA or additional
+bus-master permissions. The host-tested driver bounds the transfer, drains stale
+FIFO words and checks final count, flash-relative address and empty FIFO.
 
 Key sealing at rest: `kbase = HKDF(serial_hash, otp_master_key)` keys
 AES-CBC for the FIDO seed (tagged formats: plain vs OTP-rooted generation)
@@ -200,6 +219,88 @@ finishes a complete candidate or cancels its reserved span before allowing GC.
 Counter values and their authority are committed together and mirrored before
 success. Invalid occupied suffixes retain authenticated progress as a minimum
 generation; an older replica cannot silently replace that progress.
+
+From `0x0B05`, TrustZone places shared memory-copy and clearing helpers beside
+the verifier in read-only Secure SRAM. Their instruction bodies are unchanged;
+startup copies them before use under the existing executable-memory policy.
+
+From build `0x0ACF`, Main keeps its complete authenticated version directory
+in protected RAM. A warm read freshly checks the root, verifies its binding to
+the mounted directory, and authenticates the complete requested payload against
+its expected entry. The complete directory also authorizes absence. Neither root
+keys nor payload plaintext are cached. Before reusing a mounted directory for
+mutation, full physical-journal fingerprints are checked. Otherwise authenticated
+journal resolution and recovery precede mutation.
+A separate mounted authority tracks the exact epoch, root arm, sequence and
+directory digest through Prepare, Commit, Abort and rekey. Errors and remounts
+clear acceleration hints but retain this floor; the first verified publication
+closes its predecessor before a later replica write can fail. Ready is cleared
+before any directory change. Unrelated journal or payload-map damage need not
+interrupt a warm read of known correct data; recovery and mutations check that
+media before consuming it. The cold-start rollback limitation still applies.
+
+From `0x0AD0`, a ready read lends the map only the requested record's aligned
+scratch span, under a wipe guard. Cold reads and mutation paths clear the whole
+scratch before reusing a mount; warm reads wipe everything the map could have
+filled, including padding and partially completed failing reads. A fallback drops
+the bounded guard before full-buffer lookup and cleanup. Absence borrows no
+scratch. Fresh root checks and complete value authentication remain required.
+
+From `0x0AD6`, a read-tag miss validates the same checked record geometry, then
+borrows the full scratch under its wipe guard. An uncached map lookup can read
+larger unrelated values before finding the requested FID. This avoids a small
+buffer failure, repeated binding proof and full-buffer retry, and lets the first
+verified value seed its read tag. Tag hits retain the bounded span and the
+existing recovery checks.
+
+TrustZone build `0x0ADC` also unrolls SHA-256 schedule expansion. A placement
+hint avoids rebuilding the expanded schedule solely for its final wipe. The hint
+has no security role: the complete 64-word schedule and chaining state remain
+in `Secret`, and cleanup does not depend on optimization. Full MAC frames, fresh
+Root reads, rollback floors and persistent record formats are unchanged.
+
+TrustZone build `0x0ADB` fully unrolls the software SHA-256 rounds and places
+the unchanged HKDF-SHA256 and HMAC-DRBG helpers in Secure RX SRAM as well.
+The full 64-word schedule and chaining state remain in `Secret`. The complete
+Secure dead-stack sweep uses 32 stores per pass with the same bounds and tail.
+Additional RX code reduces the core0 stack span; data and Non-secure RAM do not
+grow. Full record verification, fresh Root observations, rollback floors,
+DRBG Generate/reseed boundaries and cleanup before publication are unchanged.
+
+TrustZone build `0x0ADA` executes the unchanged SHA-256 compression/finalization and HMAC template functions
+from the existing Secure RX SRAM region. Trusted Reset copies this code together
+with the existing RAM routines before enabling the read-only executable mapping.
+The region grows by 1824 bytes on the Waveshare 4M test image, reducing the
+core0 stack span by the same amount; data, BSS and Non-secure RAM are unchanged.
+Full SHA-256 input hashing, MAC frames, fresh Root reads and both Secure stack
+sweeps retain their existing contracts. No keyed context or plaintext is cached.
+
+Build `0x0AD3` prepares one operation-local HMAC context for the
+full mounted binding and complete payload checks, using the prefix reuse from
+[RFC 2104 section 4](https://www.rfc-editor.org/rfc/rfc2104.html#section-4). The context stays in returned
+stack frames covered by the Secure sweep; no keyed state is retained for a
+later backend read, which derives its root afresh. Authentication frames and
+persistent records are unchanged.
+
+From `0x0AD5`, Main can retain 32 read tags and one mounted-binding tag, with
+their exact public metadata, in protected RAM. Every admitted backend read still
+reads OTP and applies the original arm and latch rules. A miss derives the persisted
+key and verifies the full binding and record MACs before seeding a tag from that
+same OTP observation. A hit instead verifies a full 32-byte root-key HMAC:
+`RSKV2RM1 || serial_hash || bound[100]` for absence, or
+`RSKV2RD1 || serial_hash || bound[100] || entry[32] || SHA256(value)` for a value.
+The bound contains the canonical snapshot and its full mounted-binding tag.
+Every payload byte is hashed before any requested prefix is returned; a miss
+reuses the digest already verified by the record MAC. Root bytes are wiped
+before map I/O. No root, derived key, plaintext or keyed state survives a read
+in Main or KeySource; returned crypto frames remain covered by the Secure sweep.
+
+CRC or missing-map recovery first verifies the original observation's mounted
+tag, then freshly reads and derives the root again. The existing full binding
+proof checks this second observation before recovery reads payloads. A cached
+payload-tag mismatch refuses immediately. Main clears the read tags with its
+other hints before mutation and on read errors, retaining the authority floor.
+These tags have no persistent representation and do not change journal or record formats.
 
 Boot mounts authority before scanning or provisioning applets. Wholly blank
 media and readable legacy stores are initialized or imported automatically.

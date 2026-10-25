@@ -1,10 +1,79 @@
 # FIDO2 / WebAuthn / U2F
 
+Build `0x0B45` sizes the TrustZone CCID reply scratch buffer to the existing
+CCID response limit, reducing initialization and cleanup work on each APDU.
+Maximum response sizes and complete buffer cleanup are unchanged.
+
+TrustZone build `0x0ADF` further reduces CCID getInfo continuation latency.
+Existing credentials and records upgrade without a reset.
+
+TrustZone build `0x0ADE` reduces CCID getInfo continuation latency. Existing
+credentials and records remain compatible; the upgrade does not require a reset.
+
+TrustZone build `0x0ADD` skips unused zero-length USB packet bookkeeping during
+CCID transfers. Session and epoch checks and complete buffer/stack cleanup remain
+unchanged. Existing keys and records upgrade without a reset.
+
+TrustZone build `0x0ADC` further reduces authenticated read latency
+while retaining full record verification and rollback protection. Existing keys
+and records remain compatible; the upgrade does not require a reset.
+
+Build `0x0AD8` also clears the complete Non-secure gateway reply buffer with
+volatile word stores, including byte edges, on normal completion and abandonment.
+The guard also clears it when a pending transport future is dropped.
+
+Build `0x0AD7` clears both complete command response buffers with aligned
+volatile word stores. Byte edges and remaining words are also cleared; every
+command retains the same full-buffer cleanup and dead-stack sweep.
+
 The shared flash backend verifies programmed bytes and erased sectors before
 accepting a mutation. A refused readback reports a storage error even if the
 new value already landed. Retry from the persistent state rather than assuming
 rollback; the firmware rebuilds its inventory and reports no spare capacity
 until an incomplete scan can finish. Record formats are unchanged.
+
+From build `0x0ACF`, repeated `getInfo` requests use the complete authenticated
+main directory held in protected RAM. Each backend read freshly checks the root
+and authenticates the full requested value against its expected version. Absence
+comes from that complete directory. Root keys and plaintext values are not cached.
+
+Build `0x0AD5` retains only metadata and full 32-byte read tags after the original
+checks succeed. Warm tag hits verify them with a freshly read root, avoiding
+repeated HKDF, mounted-binding and record MAC work. The tag binds the mounted
+version and complete requested value, even when the caller requests only its length.
+
+Build `0x0AD0` further shortens warm reads by clearing only the scratch span that
+the read can fill, including alignment padding. Every borrowed byte is cleared
+on errors too; recovery retains full-buffer cleanup.
+
+From `0x0AD6`, a read-tag miss uses the full wiped scratch so a larger neighboring
+record does not force a lookup retry. The successful read seeds its tag at once;
+tag hits still use bounded scratch, with the same fresh root and full value proof.
+
+Before reusing the mounted directory for mutation, the backend checks both full
+journal banks, selected bank last, including erased tails. Without that ready
+state, authenticated journal resolution and recovery precede mutation. Errors and
+remounts retain the mounted version floor, so replaying an older valid snapshot
+cannot turn a retry into old data or false absence. Damage to unrelated journal
+bytes or payload-map metadata can remain unnoticed by a warm read that uses only
+known correct data; it is checked when recovery or mutation consumes that media.
+The [cold-start rollback limitation](../limitations.md#cryptography) is unchanged.
+
+Mount can checkpoint obsolete main-journal history when it releases at least half
+a bank. This authenticates the payloads before erasing and retains files,
+generations, formats and capacities. Maintenance adds startup work and erases
+when due. Hardware SHA-256 accelerates public-journal checks; the initial scan
+and root-key HMACs use software crypto. Shared flash reads retain bounded FIFO,
+address, mode and final-progress checks, including direct erased-tail checks.
+Allowlisted Puya chips use Quad continuous reads at the existing clock rate;
+unknown chips keep the ROM mode, and a failed probe restores the old mode.
+
+TrustZone FIDO uses a 1 ms HID interval. Both encrypted getInfo members share
+one freshly loaded persistent token per command, with separate keys and IVs;
+a seed-read failure still leaves the credential-store member available.
+Secure progress interrupts wake the USB transports; the backup poll runs every
+16 ms to reduce interruptions of backend work. A missed notification can add
+up to 15 ms per wait compared with the earlier 1 ms fallback.
 
 Empty PIN/seed/lock records are damaged state, not a fresh device. Firmware
 preserves them and refuses the affected operation instead of installing a new
@@ -178,6 +247,10 @@ getInfo advertises these COSE algorithms. A relying party picks one in its
 
 RS-Key selects the **first** supported algorithm a site offers, so put your
 preferred curve first in the list.
+
+Build `0x0ACA` uses compact software SHA-2 rounds for the ECDSA dependency
+paths on Cortex-M33. This reduces ES384 signing latency while preserving
+deterministic nonces, signatures and credential keys.
 
 The curve-explicit COSE ids (`-9` ESP256, `-19` Ed25519, `-51` ESP384, `-52`
 ESP512) are accepted too, and a credential comes back stamped with **the id the

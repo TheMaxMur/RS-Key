@@ -7,6 +7,9 @@ use sequential_storage::map::MapConfig;
 
 const KEY: [u8; 32] = [0x35; 32];
 const EPOCH: [u8; 16] = [0x4B; 16];
+
+#[path = "main_raw_tags_tests.rs"]
+mod raw_tags;
 type UncachedMap = Cache<Uncached, Uncached, Uncached, u16>;
 
 fn main() -> Main<impl MultiwriteNorFlash + Clone, UncachedMap> {
@@ -33,6 +36,158 @@ fn main_on<F: MultiwriteNorFlash + Clone>(flash: F) -> Main<F, UncachedMap> {
         EPOCH,
         RootArm::PreOtp,
     )
+}
+
+#[test]
+fn cached_reads_bind_the_current_root_and_invalidate_before_mutations_or_configuration() {
+    let mut main = main();
+    main.initialize(&KEY, 0, &Directory::new()).unwrap();
+    main.write(&KEY, 0xB000, Some(b"owner")).unwrap();
+    assert_eq!(main.read(&KEY, 0xB000, &mut []), Ok(Some(5)));
+    assert!(main.read_cache.is_some());
+    assert_eq!(
+        main.read(&[0x36; 32], 0xB001, &mut []),
+        Err(Error::MemoryFatal)
+    );
+    assert!(main.read_cache.is_none());
+    assert_eq!(main.read(&KEY, 0xB000, &mut []), Ok(Some(5)));
+    main.write(&KEY, 0xB000, Some(b"new")).unwrap();
+    assert!(main.read_cache.is_none());
+    assert_eq!(main.read(&KEY, 0xB000, &mut []), Ok(Some(3)));
+    main.configure(EPOCH, RootArm::PreOtp);
+    assert!(main.read_cache.is_none());
+    assert_eq!(main.read(&KEY, 0xB000, &mut []), Ok(Some(3)));
+}
+
+#[test]
+fn warm_reads_use_the_mounted_directory_with_either_selected_bank() {
+    let flash = crate::tests::fault_flash_for_authenticated_tests();
+    let mut main = main_on(flash.clone());
+    main.initialize(&KEY, 0, &Directory::new()).unwrap();
+    main.write(&KEY, 0xB000, Some(b"owner")).unwrap();
+    let checkpoint = main.checkpoint(&KEY, 1).unwrap();
+    main.journals[1]
+        .write_snapshot(checkpoint, &KEY, &main.directory)
+        .unwrap();
+    assert_eq!(main.read(&KEY, 0xB000, &mut []), Ok(Some(5)));
+    let cached = main.read_cache.unwrap();
+    assert_ne!(cached.ends[0], cached.ends[1]);
+    assert_ne!(cached.fingerprints[0], cached.fingerprints[1]);
+    let layout =
+        super::super::Layout::new(32768..32768 + super::super::storage::AUTHORITY_BYTES).unwrap();
+    let original = flash.image();
+    // Resolution currently selects bank zero when synchronized; keep both
+    // physical mappings covered without relying on identical replica bytes.
+    for source in [0, 1] {
+        for fid in [0xB000, 0xB001] {
+            main.read_cache.as_mut().unwrap().source = source;
+            flash.arm(&[]);
+            let mut out = [0xa5; 5];
+            let expected = (fid == 0xB000).then_some(5);
+            assert_eq!(main.read(&KEY, fid, &mut out), Ok(expected));
+            assert_eq!(
+                out,
+                if expected.is_some() {
+                    *b"owner"
+                } else {
+                    [0xa5; 5]
+                }
+            );
+            let starts: Vec<_> = flash
+                .events()
+                .into_iter()
+                .filter(|event| {
+                    event.0 == crate::tests::Io::Read
+                        && layout.main.iter().any(|range| range.start == event.1)
+                })
+                .map(|event| event.1)
+                .collect();
+            assert!(starts.is_empty());
+            assert!(
+                flash
+                    .events()
+                    .iter()
+                    .all(|event| event.0 == crate::tests::Io::Read)
+            );
+            assert_eq!(flash.image(), original);
+        }
+    }
+    for source in [0, 1] {
+        assert_eq!(main.read(&KEY, 0xB000, &mut []), Ok(Some(5)));
+        main.read_cache.as_mut().unwrap().source = source;
+        flash.arm(&[]);
+        main.for_each_key(&KEY, |_| {}).unwrap();
+        let starts: Vec<_> = flash
+            .events()
+            .into_iter()
+            .filter(|event| {
+                event.0 == crate::tests::Io::Read
+                    && layout.main.iter().any(|range| range.start == event.1)
+            })
+            .map(|event| event.1)
+            .collect();
+        assert_eq!(
+            starts.get(..2).unwrap(),
+            &[
+                layout.main.get(1 - source).unwrap().start,
+                layout.main.get(source).unwrap().start,
+            ]
+        );
+        assert!(
+            flash
+                .events()
+                .iter()
+                .all(|event| event.0 == crate::tests::Io::Read)
+        );
+    }
+    assert_eq!(main.read(&KEY, 0xB000, &mut []), Ok(Some(5)));
+    main.read_cache.as_mut().unwrap().source = 2;
+    flash.arm(&[]);
+    assert_eq!(main.read(&KEY, 0xB001, &mut []), Err(Error::MemoryFatal));
+    assert!(main.read_cache.is_none());
+    assert!(flash.events().is_empty());
+    assert_eq!(flash.image(), original);
+}
+
+#[test]
+fn cached_fingerprints_bind_partition_capacity_and_root_even_for_identical_bytes() {
+    let flash = crate::tests::flash_for_authenticated_tests();
+    let make = |partition, range| {
+        Journal::new(
+            super::super::RawBank::new(flash.clone(), range).unwrap(),
+            partition,
+        )
+    };
+    let mut main = make(Partition::Main, 0..4096);
+    let fingerprint = main.fingerprint(&KEY, 0).unwrap();
+    assert_ne!(
+        fingerprint,
+        make(Partition::Counter, 0..4096)
+            .fingerprint(&KEY, 0)
+            .unwrap()
+    );
+    assert_ne!(
+        fingerprint,
+        make(Partition::Main, 0..8192).fingerprint(&KEY, 0).unwrap()
+    );
+    assert_ne!(fingerprint, main.fingerprint(&[0x36; 32], 0).unwrap());
+}
+
+#[test]
+fn cached_reads_do_not_accept_a_crc_valid_but_unauthenticated_payload() {
+    let mut main = main();
+    main.initialize(&KEY, 0, &Directory::new()).unwrap();
+    main.write(&KEY, 0xB000, Some(b"owner")).unwrap();
+    assert_eq!(main.read(&KEY, 0xB000, &mut []), Ok(Some(5)));
+    assert!(main.read_cache.is_some());
+    block_on(
+        main.map
+            .store_item(main.buffer.expose_mut(), &0xB000, &b"forged".as_slice()),
+    )
+    .unwrap();
+    let mut out = [0; 6];
+    assert_eq!(main.read(&KEY, 0xB000, &mut out), Ok(Some(5)));
+    assert_eq!(&out[..5], b"owner");
 }
 
 #[test]
@@ -225,6 +380,7 @@ fn an_older_dirty_intent_does_not_prevent_aborting_a_newer_incomplete_candidate(
             &KEY,
         )
         .unwrap();
+    let mut main = main_on(flash);
     assert_eq!(main.read(&KEY, 0xB000, &mut [0; 3]), Ok(None));
     assert_eq!(main.read(&KEY, 0xB001, &mut [0; 3]), Ok(None));
     let recovered = main.journals[0]
@@ -401,3 +557,78 @@ fn the_directory_ceiling_refuses_a_new_fid_and_still_allows_replacement() {
     assert_eq!(main.read(&KEY, BASE, &mut value), Ok(Some(11)));
     assert_eq!(&value, b"replacement");
 }
+
+#[test]
+fn accelerated_cache_rejects_backend_errors_mismatches_wrong_roots_and_each_read_fault() {
+    use crate::tests::{Effect, FaultFlash, Io, Rule};
+    fn digest(
+        flash: &mut FaultFlash,
+        range: core::ops::Range<u32>,
+        end: u32,
+        prefix: &[u8],
+    ) -> Result<[u8; 32]> {
+        super::super::RawBank::new(flash.clone(), range)?.digest(end, prefix)
+    }
+    fn refused(_: &mut FaultFlash, _: core::ops::Range<u32>, _: u32, _: &[u8]) -> Result<[u8; 32]> {
+        Err(Error::MemoryFatal)
+    }
+    fn changed(_: &mut FaultFlash, _: core::ops::Range<u32>, _: u32, _: &[u8]) -> Result<[u8; 32]> {
+        Ok([0; 32])
+    }
+    let flash = crate::tests::fault_flash_for_authenticated_tests();
+    let mut main = main_on(flash.clone());
+    main.initialize(&KEY, 0, &Directory::new()).unwrap();
+    main.write(&KEY, 0xB000, Some(b"owner")).unwrap();
+    for callback in [refused as super::super::BankDigest<FaultFlash>, changed] {
+        main.set_digest(callback);
+        assert!(main.read_cache.is_none());
+        assert_eq!(main.read(&KEY, 0xB000, &mut []), Ok(Some(5)));
+        let before = flash.image();
+        flash.arm(&[]);
+        assert_eq!(
+            main.write(&KEY, 0xB000, Some(b"new")),
+            Err(Error::MemoryFatal)
+        );
+        assert!(main.read_cache.is_none());
+        assert_eq!(flash.image(), before);
+        assert!(flash.events().iter().all(|event| event.0 == Io::Read));
+        assert!(main.buffer.expose().iter().all(|&byte| byte == 0));
+    }
+    main.set_digest(digest);
+    assert_eq!(main.read(&KEY, 0xB000, &mut []), Ok(Some(5)));
+    assert_eq!(
+        main.read(&[0x36; 32], 0xB000, &mut []),
+        Err(Error::MemoryFatal)
+    );
+    assert_eq!(main.read(&KEY, 0xB000, &mut []), Ok(Some(5)));
+    flash.arm(&[]);
+    assert_eq!(main.read(&KEY, 0xB000, &mut []), Ok(Some(5)));
+    let reads = flash.events().len();
+    assert!(reads > 0 && flash.events().iter().all(|event| event.0 == Io::Read));
+    for skip in 0..reads {
+        flash.arm(&[Rule {
+            io: Io::Read,
+            skip,
+            effect: Effect::Refuse,
+            latched: true,
+        }]);
+        let mut out = [0xA5; 5];
+        assert_eq!(
+            main.read(&KEY, 0xB000, &mut out),
+            Err(Error::MemoryFatal),
+            "read {skip}"
+        );
+        assert_eq!(out, [0xA5; 5]);
+        assert!(main.read_cache.is_none());
+        assert!(main.buffer.expose().iter().all(|&byte| byte == 0));
+        flash.clear();
+        assert_eq!(main.read(&KEY, 0xB000, &mut []), Ok(Some(5)));
+    }
+}
+
+#[expect(
+    clippy::indexing_slicing,
+    reason = "Captured replica traces and fixed bank arrays select precise post-publication faults."
+)]
+#[path = "main_authority_tests.rs"]
+mod authority;

@@ -245,3 +245,94 @@ statement = "The C half of rsa-armv7, compiled straight into the image by crates
 id = "unit:crates/rsk-rsa/csrc/bignum_asm.S"
 provider = "arm-none-eabi-as"
 statement = "The hand-written Armv7-M assembly, preprocessed by gcc and assembled by as. Seven START_GLOBAL_FUNC symbols, none of them declared by any Rust extern block — the C above is their only caller. It is linked into .data so it executes from SRAM."
+
+[[boundary]]
+id = "export:firmware/src/trustzone/mod.rs:rsk_tz_readable_impl"
+provider = "arm-none-eabi-gcc"
+statement = "The CMSE C wrapper calls the Rust TT-based, designated-NS-RAM span check before creating a request slice."
+
+[[boundary]]
+id = "export:firmware/src/trustzone/mod.rs:rsk_tz_writable_impl"
+provider = "arm-none-eabi-gcc"
+statement = "The CMSE C wrapper calls the Rust TT-based, designated-NS-RAM output check before exporting bytes."
+
+[[boundary]]
+id = "export:firmware/src/worker.rs:rsk_tz_submit_impl"
+provider = "arm-none-eabi-gcc"
+statement = "The CMSE request entry calls this bounded-copy implementation; the C compiler produces the entry and register cleanup."
+
+[[boundary]]
+id = "export:firmware/src/worker.rs:rsk_tz_poll_impl"
+provider = "arm-none-eabi-gcc"
+statement = "The CMSE reply entry calls the ticket-checked, Secure-serialized export implementation."
+
+[[boundary]]
+id = "export:firmware/src/worker.rs:rsk_tz_control_impl"
+provider = "arm-none-eabi-gcc"
+statement = "The CMSE control entry passes numeric actions and tickets; it carries no Rust object or callback."
+
+[[boundary]]
+id = "export:firmware/src/trustzone/usb.rs:rsk_tz_usb_impl"
+provider = "arm-none-eabi-gcc"
+statement = "The CMSE USB entry delegates to bounded copied packets and S-owned endpoint/control state; MMIO and IRQ policy remain Secure."
+
+[[boundary]]
+id = "export:firmware/trustzone/nonsecure/src/main.rs:SWI_IRQ_1"
+provider = "rustc"
+statement = "cortex-m-rt produces the Non-secure vector table that calls the NS transport executor handler."
+
+[[boundary]]
+id = "export:firmware/trustzone/nonsecure/src/notify.rs:SWI_IRQ_4"
+provider = "rustc"
+statement = "cortex-m-rt produces the NS progress-notification vector; Secure startup attributes the IRQ to NS and the handler changes only NS-local waiters."
+
+[[boundary]]
+id = "export:firmware/trustzone/nonsecure/src/time.rs:TIMER1_IRQ_0"
+provider = "rustc"
+statement = "cortex-m-rt produces the NS timer vector; Secure startup controls its attribution and peripheral grant."
+
+[[boundary]]
+id = "import:firmware/trustzone/nonsecure/src/main.rs:rsk_tz_submit"
+provider = "arm-none-eabi-gcc"
+statement = "The imported SG request symbol is emitted by the Secure CMSE build and linked through its checked import library."
+
+[[boundary]]
+id = "import:firmware/trustzone/nonsecure/src/main.rs:rsk_tz_poll"
+provider = "arm-none-eabi-gcc"
+statement = "The SG reply symbol comes from the Secure CMSE image, whose import library is compared after NS embedding."
+
+[[boundary]]
+id = "import:firmware/trustzone/nonsecure/src/main.rs:rsk_tz_control"
+provider = "arm-none-eabi-gcc"
+statement = "The SG numeric-control symbol comes from the Secure CMSE image, with no pointer or callback argument."
+
+[[boundary]]
+id = "import:firmware/trustzone/nonsecure/src/usb.rs:rsk_tz_usb"
+provider = "arm-none-eabi-gcc"
+statement = "The SG USB symbol comes from the Secure CMSE image; NS has packet operations, not controller/DPRAM references."
+
+[[boundary]]
+id = "import:firmware/src/trustzone/mpu.rs:__rsk_exec_start"
+provider = "rust-lld"
+statement = "The TrustZone linker section defines the aligned immutable RAM-code bounds used by Secure MPU on both cores."
+
+[[boundary]]
+id = "import:firmware/src/trustzone/mpu.rs:__rsk_exec_end"
+provider = "rust-lld"
+statement = "The TrustZone linker section defines the aligned immutable RAM-code bounds used by Secure MPU on both cores."
+
+[[boundary]]
+id = "export:firmware/trustzone/nonsecure/src/probe.rs:RSK_NS_PROBE_PROGRESS"
+provider = "rustc"
+statement = "The disposable hostile NS image exposes only its own progress marker, so a denied access can be distinguished from an unrelated startup fault."
+
+
+[[boundary]]
+id = "import:firmware/src/trustzone/mod.rs:rsk_tz_enter_ns"
+provider = "arm-none-eabi-gcc"
+statement = "firmware/src/trustzone/gateway.c. Startup-only BXNS entry, after validated NS vectors and banked masks. Clears shared GPRs, all FP registers and status; never returns."
+
+[[boundary]]
+id = "export:firmware/src/trustzone/fault.rs:rsk_tz_fault_stop"
+provider = "rustc"
+statement = "Terminal Secure fault range, entered after the fatal latch and raw USB cleanup. Image instrumentation waits for it rather than stopping before HardFault/panic cleanup."

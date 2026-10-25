@@ -56,8 +56,8 @@ embedded-graphics = { version = "0.8", default-features = false }
 minicbor = { version = "2.2", default-features = false }
 # The piv_apdu seed runs the AES-192 management-key auth dance host-side.
 aes = { version = "0.8", default-features = false }
-# sha512_diff's differential reference — the exact `sha2` version rsk-sha512 is
-# byte-identical to; the shared digest 0.10 makes the `Digest` traits unify.
+# Independent references for sha256_diff and sha512_diff; digest 0.10 keeps
+# their streaming APIs compatible with the facade's software hash cores.
 sha2 = { version = "0.10", default-features = false }
 # openpgp_key_load reconstructs an RSA key from attacker MPIs and checks n == p*q
 # against a plain BigUint multiply — the same bignum rsk-rsa is arithmetic over.
@@ -430,6 +430,13 @@ doc = false
 bench = false
 
 [[bin]]
+name = "sha256_diff"
+path = "fuzz_targets/sha256_diff.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
 name = "sha512_diff"
 path = "fuzz_targets/sha512_diff.rs"
 test = false
@@ -478,4 +485,7 @@ bench = false
 # kv_durability fuzz targets exercise the exact KV code the firmware ships (see the
 # root Cargo.toml [patch] note + third_party/sequential-storage.patch).
 [patch.crates-io]
+crypto-bigint = { path = "../third_party/crypto-bigint" }
+p256 = { path = "../third_party/p256" }
+p384 = { path = "../third_party/p384" }
 sequential-storage = { path = "../third_party/sequential-storage" }

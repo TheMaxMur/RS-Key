@@ -2683,7 +2683,7 @@ def render(root, registered=None, dated=None):
     out += [
         "",
         f"`supports` is in the table above, on {sum(1 for _, e in rows if e.get('supports'))}"
-        f" of {len(rows)} rows. A property it names is CONDITIONAL on that row"
+        f" of {len(rows)} assumptions. A property it names is CONDITIONAL on that row"
         " while the row is pending; nothing here upgrades a property's evidence.",
         "",
         "## What this page may not be read as",

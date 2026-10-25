@@ -190,8 +190,8 @@ impl<F: NorFlash + MultiwriteNorFlash + Clone> Import<F> {
             partition: Partition::Main,
             epoch,
         };
-        let mut iterator = block_on(self.main.fetch_all_items(self.buffer.expose_mut()))
-            .map_err(|_| Error::MemoryFatal)?;
+        let mut iterator =
+            block_on(self.main.fetch_all_items_unrepaired()).map_err(|_| Error::MemoryFatal)?;
         while let Some((fid, value)) = block_on(iterator.next::<&[u8]>(self.buffer.expose_mut()))
             .map_err(|_| Error::MemoryFatal)?
         {
@@ -325,6 +325,18 @@ impl<F: NorFlash + MultiwriteNorFlash + Clone> Import<F> {
         {
             return Err(Error::MemoryFatal);
         }
+        let activation = activation_bytes(manifest.epoch)?;
+        let activation_entry =
+            Entry::live(main_identity, key.expose(), ACTIVATION_FID, 0, &activation)?;
+        let digest = authenticated.main.directory.digest_replacing(
+            main_identity,
+            key.expose(),
+            0,
+            activation_entry,
+        )?;
+        authenticated
+            .main
+            .admit_import(key.expose(), manifest.epoch, manifest.arm, digest)?;
         let ready = self.has_activation()?;
         if !ready {
             self.counter_view()?;
@@ -391,7 +403,6 @@ impl<F: NorFlash + MultiwriteNorFlash + Clone> Import<F> {
         {
             return Err(Error::MemoryFatal);
         }
-        let activation = activation_bytes(manifest.epoch)?;
         if ready {
             let stored = block_on(
                 self.main
@@ -410,13 +421,7 @@ impl<F: NorFlash + MultiwriteNorFlash + Clone> Import<F> {
             ))
             .map_err(|_| Error::NoMemory)?;
         }
-        authenticated.main.directory.apply(Entry::live(
-            main_identity,
-            key.expose(),
-            ACTIVATION_FID,
-            0,
-            &activation,
-        )?)?;
+        authenticated.main.directory.apply(activation_entry)?;
         key.wipe();
         authenticated.initialize_import(&counters, |entry, out| {
             let index = rsk_fs::counter::COUNTER_FIDS

@@ -79,6 +79,8 @@ let
     {
       name,
       cargoFlags ? [ ],
+      trustzone ? false,
+      board ? envOr "BOARD" null,
       vidpid ? envOr "VIDPID" null, # VIDPID preset (Yubikey5, Pico, Nitro3, …)
       usbVid ? envOr "USB_VID" null, # 0xHHHH raw VID override
       usbPid ? envOr "USB_PID" null, # 0xHHHH raw PID override
@@ -96,6 +98,7 @@ let
       # Non-null knobs become build-time env vars build.rs reads; each is part
       # of the derivation, so changing one rebuilds (just that crate).
       knobEnv = lib.filterAttrs (_: v: v != null) {
+        BOARD = board;
         VIDPID = vidpid;
         USB_VID = usbVid;
         USB_PID = usbPid;
@@ -110,6 +113,7 @@ let
         FAKE_DEVK = fakeDevk;
       };
     in
+    assert !trustzone || cargoFlags == [ ];
     pkgs.stdenv.mkDerivation (
       {
         pname = name;
@@ -151,10 +155,21 @@ let
           # drop the link args. The target key must stay UNQUOTED so it lands
           # on the same nested TOML key the repo config uses — a quoted
           # "thumbv8m.main-none-eabihf" is a different key and merges nothing.
-          cargo build --release --offline --frozen \
-            -p firmware --target ${target} \
-            --config "target.${target}.rustflags=[\"--remap-path-prefix=$NIX_BUILD_TOP=/build\",\"--remap-path-prefix=${toolchain}=/toolchain\"]" \
-            ${lib.escapeShellArgs cargoFlags}
+          ${
+            if trustzone then
+              ''
+                export CARGO_NET_OFFLINE=true
+                export RSK_TZ_CARGO_CONFIG="target.${target}.rustflags=[\"--remap-path-prefix=$NIX_BUILD_TOP=/build\",\"--remap-path-prefix=${toolchain}=/toolchain\"]"
+                bash firmware/trustzone/build.sh
+              ''
+            else
+              ''
+                cargo build --release --offline --frozen \
+                  -p firmware --target ${target} \
+                  --config "target.${target}.rustflags=[\"--remap-path-prefix=$NIX_BUILD_TOP=/build\",\"--remap-path-prefix=${toolchain}=/toolchain\"]" \
+                  ${lib.escapeShellArgs cargoFlags}
+              ''
+          }
           runHook postBuild
         '';
         installPhase = ''
@@ -166,7 +181,12 @@ let
           # handed. Signing after this covers the table (a byte flipped in it
           # fails hash *and* signature), which is what turns the fence from
           # friction into something an attacker can not reflash around.
-          bash scripts/pt.sh "target/${target}/release/firmware" "$out/${name}.elf"
+          ${
+            if trustzone then
+              ''cp "target/trustzone/combined.elf" "$out/${name}.elf"''
+            else
+              ''bash scripts/pt.sh "target/${target}/release/firmware" "$out/${name}.elf"''
+          }
           picotool uf2 convert "$out/${name}.elf" -t elf "$out/${name}.uf2"
           runHook postInstall
         '';
@@ -188,6 +208,10 @@ in
   packages = {
     default = mkFirmware { name = "firmware"; };
     firmware = mkFirmware { name = "firmware"; };
+    firmware-trustzone = mkFirmware {
+      name = "firmware-trustzone";
+      trustzone = true;
+    };
     firmware-no-touch = mkFirmware {
       name = "firmware-no-touch";
       cargoFlags = [

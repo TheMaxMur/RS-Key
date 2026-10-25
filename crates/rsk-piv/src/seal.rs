@@ -114,11 +114,20 @@ pub fn seal_read<S: Storage, const N: usize>(
     fid: KeyFid,
     out: &mut Secret<[u8; N]>,
 ) -> Result<usize, Sw> {
-    let out = out.expose_mut();
     let mut blob = Secret::<[u8; MAX_BLOB]>::zeroed();
     let n = fs
         .read_key(fid, blob.expose_mut())
         .ok_or(Sw::REFERENCE_NOT_FOUND)?;
+    unseal_blob(dev, &mut blob, n, out)
+}
+
+pub(crate) fn unseal_blob<const N: usize>(
+    dev: &Device,
+    blob: &mut Secret<[u8; MAX_BLOB]>,
+    n: usize,
+    out: &mut Secret<[u8; N]>,
+) -> Result<usize, Sw> {
+    let out = out.expose_mut();
     if !(NONCE_LEN + TAG_LEN..=MAX_BLOB).contains(&n) {
         return Err(Sw::MEMORY_FAILURE);
     }
@@ -253,11 +262,36 @@ pub fn store_ec_key<S: Storage>(
 pub fn load_ec_key<S: Storage>(dev: &Device, fs: &mut Fs<S>, fid: KeyFid) -> Result<PrivKey, Sw> {
     let mut plain = Secret::<[u8; 1 + 66]>::zeroed();
     let n = seal_read(dev, fs, fid, &mut plain)?;
-    let plain = plain.expose();
+    ec_key(plain.expose(), n)
+}
+
+/// A failed or malformed read is never authority to generate a replacement key.
+pub(crate) fn try_load_ec_key<S: Storage>(
+    dev: &Device,
+    fs: &mut Fs<S>,
+    fid: KeyFid,
+) -> Result<Option<PrivKey>, Sw> {
+    let mut blob = Secret::<[u8; MAX_BLOB]>::zeroed();
+    let Some(n) = fs
+        .try_read_key(fid, blob.expose_mut())
+        .map_err(|_| Sw::MEMORY_FAILURE)?
+    else {
+        return Ok(None);
+    };
+    let mut plain = Secret::<[u8; 1 + 66]>::zeroed();
+    let n = unseal_blob(dev, &mut blob, n, &mut plain)?;
+    ec_key(plain.expose(), n).map(Some)
+}
+
+fn ec_key(plain: &[u8], n: usize) -> Result<PrivKey, Sw> {
     if n < 2 {
         return Err(Sw::MEMORY_FAILURE);
     }
-    let curve = curve_from_id(plain[0]).ok_or(Sw::MEMORY_FAILURE)?;
+    let curve = plain
+        .first()
+        .copied()
+        .and_then(curve_from_id)
+        .ok_or(Sw::MEMORY_FAILURE)?;
     let scalar = plain.get(1..n).ok_or(Sw::MEMORY_FAILURE)?;
     PrivKey::from_scalar(curve, scalar).ok_or(Sw::MEMORY_FAILURE)
 }

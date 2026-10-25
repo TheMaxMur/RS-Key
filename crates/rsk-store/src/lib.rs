@@ -35,6 +35,9 @@ mod flash_buf;
 pub use flash_buf::FlashBuf;
 
 pub mod authenticated;
+pub mod flash_quad;
+pub mod flash_stream;
+pub mod xip_pause;
 
 /// Scratch for one map op; must fit the largest stored key+value.
 const KV_BUF: usize = 4080;
@@ -266,3 +269,7 @@ fn for_each_in<F: NorFlash + MultiwriteNorFlash, C: CacheImpl<u16>>(
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+#[path = "page_probe_tests.rs"]
+mod page_probe_tests;

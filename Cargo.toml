@@ -1,12 +1,14 @@
 [workspace]
 resolver = "2"
-members = ["firmware", "rsk-wipe", "crates/rsk-sdk", "crates/rsk-fs", "crates/rsk-usb", "crates/rsk-crypto", "crates/rsk-fido", "crates/rsk-openpgp", "crates/rsk-rsa", "crates/rsk-ec", "crates/rsk-sha512", "crates/rsk-devconf", "crates/rsk-mgmt", "crates/rsk-oath", "crates/rsk-otp", "crates/rsk-piv", "crates/rsk-x509", "crates/rsk-rescue", "crates/rsk-vendor", "crates/rsk-device", "crates/rsk-display", "crates/rsk-store", "crates/rsk-led", "crates/rsk-phy", "crates/rsk-ui", "crates/rsk-bip39", "crates/rsk-slip39", "crates/rsk-mldsa", "crates/rsk-bench", "crates/rsk-secret"]
+members = ["firmware", "firmware/trustzone/nonsecure", "rsk-wipe", "crates/rsk-sdk", "crates/rsk-fs", "crates/rsk-usb", "crates/rsk-crypto", "crates/rsk-fido", "crates/rsk-openpgp", "crates/rsk-rsa", "crates/rsk-ec", "crates/rsk-sha512", "crates/rsk-sha256", "crates/rsk-devconf", "crates/rsk-mgmt", "crates/rsk-oath", "crates/rsk-otp", "crates/rsk-piv", "crates/rsk-x509", "crates/rsk-rescue", "crates/rsk-vendor", "crates/rsk-device", "crates/rsk-display", "crates/rsk-store", "crates/rsk-led", "crates/rsk-phy", "crates/rsk-ui", "crates/rsk-bip39", "crates/rsk-slip39", "crates/rsk-mldsa", "crates/rsk-bench", "crates/rsk-secret"]
+
+default-members = ["firmware", "rsk-wipe", "crates/*"]
 
 # One lint policy for every member, each opting in with `[lints] workspace = true`.
 # Kani proofs and cargo-llvm-cov instrumentation use explicit cfg names.
 [workspace.lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ["cfg(kani)", "cfg(coverage)"] }
-# Lifted only at the roots of `firmware`, `rsk-wipe` and `rsk-rsa` (docs/unsafe.md).
+# Lifted only at the roots of `firmware`, `firmware-ns`, `rsk-wipe` and `rsk-rsa` (docs/unsafe.md).
 unsafe_code = "deny"
 
 [workspace.lints.clippy]
@@ -49,6 +51,8 @@ rsk-x509 = { path = "crates/rsk-x509" }
 # compression that fits the XIP cache, replacing `sha2`'s ~28 KB unrolled soft
 # backend on the FIDO key-derivation ratchet without changing any credential key.
 rsk-sha512 = { path = "crates/rsk-sha512" }
+# Isolate SHA-256 compression optimization from the applet code working set.
+rsk-sha256 = { path = "crates/rsk-sha256" }
 rsk-devconf = { path = "crates/rsk-devconf" }
 rsk-mgmt = { path = "crates/rsk-mgmt" }
 rsk-oath = { path = "crates/rsk-oath" }
@@ -199,5 +203,14 @@ opt-level = "s"    # embassy/HAL needs some opt even in dev to fit/behave
 # rollback. This is the flash KV store that holds every sealed secret, so the
 # fork is deliberately kept that narrow — one file, and the patch says which
 # functions; upstream tracks the idea in tweedegolf/sequential-storage#105.
+# P-384 keeps its existing RustCrypto types and validation; only 32-bit field
+# products use the local CIOS kernel (provenance: third_party/p384.patch).
 [patch.crates-io]
+crypto-bigint = { path = "third_party/crypto-bigint" }
+p256 = { path = "third_party/p256" }
+p384 = { path = "third_party/p384" }
 sequential-storage = { path = "third_party/sequential-storage" }
+
+# Optimize only the software SHA-256 core, keeping applet code compact.
+[profile.release.package.rsk-sha256]
+opt-level = 3

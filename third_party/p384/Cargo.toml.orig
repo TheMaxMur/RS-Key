@@ -1,0 +1,125 @@
+[package]
+name = "p384"
+version = "0.14.0"
+description = """
+Pure Rust implementation of the NIST P-384 (a.k.a. secp384r1) elliptic curve
+as defined in SP 800-186 with support for ECDH, ECDSA signing/verification,
+and general purpose curve arithmetic support.
+"""
+authors = ["RustCrypto Developers", "Frank Denis <github@pureftpd.org>"]
+license = "Apache-2.0 OR MIT"
+documentation = "https://docs.rs/p384"
+homepage = "https://github.com/RustCrypto/elliptic-curves/tree/master/p384"
+repository = "https://github.com/RustCrypto/elliptic-curves"
+readme = "README.md"
+categories = ["cryptography", "no-std"]
+keywords = ["crypto", "ecc", "nist", "secp384r1"]
+edition = "2024"
+rust-version = "1.85"
+
+[dependencies]
+elliptic-curve = { version = "0.14.1", default-features = false, features = ["sec1"] }
+
+# optional dependencies
+ecdsa-core = { version = "0.17", package = "ecdsa", optional = true, default-features = false, features = ["der"] }
+hash2curve = { version = "0.14", optional = true }
+hex-literal = { version = "1", optional = true }
+primefield = { version = "0.14", optional = true }
+primeorder = { version = "0.14", optional = true }
+serdect = { version = "0.4", optional = true, default-features = false }
+sha2 = { version = "0.11", optional = true, default-features = false }
+
+[target.'cfg(p384_backend = "fiat")'.dependencies]
+fiat-crypto = { version = "0.3", default-features = false }
+
+[dev-dependencies]
+criterion = "0.7"
+ecdsa-core = { version = "0.17", package = "ecdsa", default-features = false, features = ["dev"] }
+hex-literal = "1"
+primeorder = { version = "0.14", features = ["dev"] }
+proptest = "1.11"
+
+[features]
+default = ["arithmetic", "ecdsa", "pem", "precomputed-tables", "std"]
+alloc = ["ecdsa-core?/alloc", "elliptic-curve/alloc", "primeorder?/alloc"]
+std = ["alloc", "ecdsa-core?/std", "elliptic-curve/std", "getrandom", "primeorder?/std"]
+
+arithmetic = [
+    "dep:primefield",
+    "dep:primeorder",
+    "elliptic-curve/arithmetic",
+    "elliptic-curve/digest"
+]
+digest = ["ecdsa-core/digest"]
+ecdh = ["arithmetic", "elliptic-curve/ecdh"]
+ecdsa = ["arithmetic", "ecdsa-core/algorithm", "sha384"]
+hash2curve = ["arithmetic", "dep:hash2curve", "primeorder/hash2curve"]
+getrandom = ["ecdsa-core?/getrandom", "elliptic-curve/getrandom"]
+group-digest = ["hash2curve", "sha2"]
+oprf = ["group-digest"]
+pem = ["elliptic-curve/pem", "ecdsa-core/pem", "pkcs8"]
+pkcs8 = ["ecdsa-core/pkcs8", "elliptic-curve/pkcs8"]
+precomputed-tables = ["arithmetic", "primeorder/basepoint-table"]
+serde = ["ecdsa-core?/serde", "elliptic-curve/serde", "primeorder?/serde", "serdect"]
+sha384 = ["digest", "sha2"]
+test-vectors = ["hex-literal"]
+
+[[bench]]
+name = "field"
+harness = false
+
+[[bench]]
+name = "scalar"
+harness = false
+
+# NOTE: these are the only lints we explicitly want to configure for p256
+[lints.rust.unexpected_cfgs]
+level = "warn"
+check-cfg = [
+    'cfg(p384_backend, values("bigint", "fiat"))', # default: "bigint"
+    'cfg(cpubits, values("16", "32", "64"))'
+]
+
+# NOTE: can't use `lints.workspace` because we override `lints.rust.unexpected_cfgs`
+[lints.rust]
+missing_copy_implementations = "warn"
+missing_debug_implementations = "warn"
+missing_docs = "warn"
+trivial_casts = "warn"
+trivial_numeric_casts = "warn"
+unused_lifetimes = "warn"
+unused_qualifications = "warn"
+
+# NOTE: can't use `lints.workspace` because we override `lints.rust.unexpected_cfgs`
+[lints.clippy]
+borrow_as_ptr = "warn"
+cast_lossless = "warn"
+cast_possible_truncation = "warn"
+cast_possible_wrap = "warn"
+cast_precision_loss = "warn"
+cast_sign_loss = "warn"
+checked_conversions = "warn"
+from_iter_instead_of_collect = "warn"
+implicit_saturating_sub = "warn"
+manual_assert = "warn"
+map_unwrap_or = "warn"
+missing_errors_doc = "warn"
+missing_panics_doc = "warn"
+mod_module_files = "warn"
+must_use_candidate = "warn"
+needless_range_loop = "allow"
+ptr_as_ptr = "warn"
+redundant_closure_for_method_calls = "warn"
+ref_as_ptr = "warn"
+return_self_not_must_use = "warn"
+semicolon_if_nothing_returned = "warn"
+trivially_copy_pass_by_ref = "warn"
+std_instead_of_alloc = "warn"
+std_instead_of_core = "warn"
+undocumented_unsafe_blocks = "warn"
+unnecessary_safety_comment = "warn"
+unwrap_in_result = "warn"
+unwrap_used = "warn"
+
+[package.metadata.docs.rs]
+all-features = true

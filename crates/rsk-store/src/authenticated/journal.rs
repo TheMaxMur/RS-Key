@@ -2,11 +2,14 @@
 // Copyright (C) 2026 RS-Key contributors
 
 use embedded_storage_async::nor_flash::{MultiwriteNorFlash, NorFlash};
-use rsk_crypto::{ct_eq, sha256};
+use rsk_crypto::hash::Sha256State;
+use rsk_crypto::{ct_eq, hmac_sha256, sha256};
 use rsk_sdk::error::{Error, Result};
 
 use super::{CHECKPOINT_BYTES, Checkpoint, DELTA_BYTES, Delta, Directory, ENTRY_BYTES, Entry};
 use super::{Partition, RawBank, TransactionState};
+
+const RAW_DOMAIN: &[u8; 8] = b"RSKV2RAW";
 
 /// Invalid bytes never become an authoritative older complete prefix.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -24,6 +27,7 @@ pub struct JournalScan {
     pub state: Option<TransactionState>,
     pub lower_bound: Option<u64>,
     pub next: u32,
+    pub(crate) fingerprint: Option<[u8; 32]>,
 }
 
 /// A main-directory snapshot followed by a linked intent/publication journal.
@@ -47,6 +51,52 @@ impl<F: NorFlash + MultiwriteNorFlash> Journal<F> {
         Ok(bytes)
     }
 
+    fn fingerprint_state(&self) -> Sha256State {
+        let mut state = Sha256State::new();
+        state.update(RAW_DOMAIN);
+        state.update(&[self.partition.code()]);
+        state.update(&self.capacity().to_le_bytes());
+        state
+    }
+
+    fn seal_fingerprint(key: &[u8; 32], mut state: Sha256State, end: u32) -> [u8; 32] {
+        state.update(&end.to_le_bytes());
+        hmac_sha256(key, &state.finish())
+    }
+
+    pub(super) fn set_digest(&mut self, digest: super::BankDigest<F>) {
+        self.bank.digest = Some(digest);
+    }
+
+    pub(super) fn fingerprint(&mut self, key: &[u8; 32], end: u32) -> Result<[u8; 32]> {
+        let mut prefix = [0; RAW_DOMAIN.len() + 1 + core::mem::size_of::<u32>()];
+        prefix
+            .get_mut(..RAW_DOMAIN.len())
+            .ok_or(Error::MemoryFatal)?
+            .copy_from_slice(RAW_DOMAIN);
+        *prefix.get_mut(RAW_DOMAIN.len()).ok_or(Error::MemoryFatal)? = self.partition.code();
+        prefix
+            .get_mut(RAW_DOMAIN.len() + 1..)
+            .ok_or(Error::MemoryFatal)?
+            .copy_from_slice(&self.capacity().to_le_bytes());
+        Ok(hmac_sha256(key, &self.bank.digest(end, &prefix)?))
+    }
+
+    fn finish_scan(
+        &mut self,
+        key: &[u8; 32],
+        state: Sha256State,
+        mut scan: JournalScan,
+        at: u32,
+    ) -> Result<JournalScan> {
+        if !self.bank.read_erased(at)? {
+            return Ok(scan);
+        }
+        scan.status = JournalStatus::Complete;
+        scan.fingerprint = Some(Self::seal_fingerprint(key, state, at));
+        Ok(scan)
+    }
+
     pub fn scan<const N: usize>(
         &mut self,
         key: &[u8; 32],
@@ -54,12 +104,15 @@ impl<F: NorFlash + MultiwriteNorFlash> Journal<F> {
     ) -> Result<JournalScan> {
         directory.clear();
         let header = self.read_header()?;
+        let mut fingerprint = self.fingerprint_state();
+        fingerprint.update(&header);
         let mut scan = JournalScan {
             status: JournalStatus::Dirty,
             checkpoint: None,
             state: None,
             lower_bound: None,
             next: 0,
+            fingerprint: None,
         };
         if header.iter().all(|&byte| byte == 0xFF) {
             if self.bank.read_erased(0)? {
@@ -88,6 +141,7 @@ impl<F: NorFlash + MultiwriteNorFlash> Journal<F> {
         for _ in 0..count {
             let mut bytes = [0; ENTRY_BYTES];
             self.bank.read(at, &mut bytes)?;
+            fingerprint.update(&bytes);
             let Ok(entry) = Entry::decode(&bytes) else {
                 return Ok(scan);
             };
@@ -100,7 +154,7 @@ impl<F: NorFlash + MultiwriteNorFlash> Journal<F> {
                 .checked_add(u32::try_from(ENTRY_BYTES).map_err(|_| Error::MemoryFatal)?)
                 .ok_or(Error::MemoryFatal)?;
         }
-        if !ct_eq(
+        if !checkpoint_digest_matches(
             &directory.digest(checkpoint.identity, key, checkpoint.sequence)?,
             &checkpoint.digest,
         ) {
@@ -113,22 +167,17 @@ impl<F: NorFlash + MultiwriteNorFlash> Journal<F> {
             if self.bank.capacity() - at
                 < u32::try_from(DELTA_BYTES).map_err(|_| Error::MemoryFatal)?
             {
-                if self.bank.read_erased(at)? {
-                    scan.status = JournalStatus::Complete;
-                }
-                return Ok(scan);
+                return self.finish_scan(key, fingerprint, scan, at);
             }
             let mut bytes = [0; DELTA_BYTES];
             self.bank.read(at, &mut bytes)?;
             if bytes.iter().all(|&byte| byte == 0xFF) {
-                if self.bank.read_erased(at)? {
-                    scan.status = JournalStatus::Complete;
-                }
-                return Ok(scan);
+                return self.finish_scan(key, fingerprint, scan, at);
             }
             let Ok(published) = state.apply(&bytes, key) else {
                 return Ok(scan);
             };
+            fingerprint.update(&bytes);
             if let Some(entry) = published
                 && directory.apply(entry).is_err()
             {
@@ -141,8 +190,7 @@ impl<F: NorFlash + MultiwriteNorFlash> Journal<F> {
             scan.lower_bound = Some(state.sequence());
             scan.next = at;
         }
-        scan.status = JournalStatus::Complete;
-        Ok(scan)
+        self.finish_scan(key, fingerprint, scan, at)
     }
 
     pub fn write_snapshot<const N: usize>(
@@ -203,6 +251,7 @@ impl<F: NorFlash + MultiwriteNorFlash> Journal<F> {
             )),
             lower_bound: Some(checkpoint.sequence),
             next: at,
+            fingerprint: None,
         })
     }
 
@@ -223,4 +272,10 @@ impl<F: NorFlash + MultiwriteNorFlash> Journal<F> {
             .program(next + 96, bytes.get(96..112).ok_or(Error::MemoryFatal)?)?;
         Ok(())
     }
+}
+
+// Keep public replay bounds outside this separately audited comparison surface.
+#[inline(never)]
+fn checkpoint_digest_matches(left: &[u8; 32], right: &[u8; 32]) -> bool {
+    ct_eq(left, right)
 }

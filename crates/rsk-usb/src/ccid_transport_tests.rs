@@ -18,11 +18,13 @@ use embassy_usb::driver::EndpointType;
 
 #[derive(Default)]
 struct Handler {
+    reply_delay_ms: Option<u64>,
     requests: Vec<Vec<u8>>,
     resets: usize,
     reply_len: Option<usize>,
     pad_error: u8,
     wait_for_wtx: Option<Trace>,
+    change_epoch: bool,
 }
 
 impl Handler {
@@ -46,13 +48,48 @@ impl Handler {
         }
         out.fill(0xA5);
         out[..2].copy_from_slice(&[0x90, 0x00]);
+        if self.change_epoch {
+            EPOCH.with(|epoch| epoch.set(epoch.get() + 1));
+        }
         self.reply_len.unwrap_or(2)
     }
 }
 
 impl ApduHandler for Handler {
+    fn session_epoch() -> u32 {
+        EPOCH.with(std::cell::Cell::get)
+    }
+
+    fn abort_pending() -> bool {
+        ABORT_SEQ.with(|seq| seq.get().is_some())
+    }
+
+    fn acknowledge_abort(sequence: u8) -> Option<bool> {
+        ABORT_SEQ.with(|seq| {
+            seq.get().map(|armed| {
+                if armed == sequence {
+                    seq.set(None);
+                    true
+                } else {
+                    false
+                }
+            })
+        })
+    }
+
     async fn handle_apdu(&mut self, data: &[u8], out: &mut [u8]) -> usize {
+        if let Some(delay) = self.reply_delay_ms {
+            Timer::after_millis(delay).await;
+        }
         self.reply(data, out).await
+    }
+
+    fn abort_requested(_: u8) -> bool {
+        ABORT_PULSE.with(|pulse| pulse.replace(false))
+            || ABORT_AT.with(|at| {
+                at.get()
+                    .is_some_and(|at| embassy_time::Instant::now().as_millis() >= at)
+            })
     }
 
     async fn handle_secure(&mut self, data: &[u8], out: &mut [u8]) -> SecureResult {
@@ -84,6 +121,19 @@ fn with_ccid(
     reads: impl IntoIterator<Item = Read>,
     test: impl FnOnce(&mut Ccid<'_, TestDriver, Handler>, &Trace),
 ) -> [u8; 256] {
+    with_ccid_handler(Handler::default(), pin_support, reads, test)
+}
+
+fn with_ccid_handler<H: ApduHandler>(
+    handler: H,
+    pin_support: u8,
+    reads: impl IntoIterator<Item = Read>,
+    test: impl FnOnce(&mut Ccid<'_, TestDriver, H>, &Trace),
+) -> [u8; 256] {
+    ABORT_AT.with(|at| at.set(None));
+    ABORT_PULSE.with(|pulse| pulse.set(false));
+    ABORT_SEQ.with(|seq| seq.set(None));
+    EPOCH.with(|epoch| epoch.set(0));
     let trace = Trace::default();
     trace.borrow_mut().reads.extend(reads);
     let mut config = [0; 256];
@@ -98,11 +148,189 @@ fn with_ccid(
         &mut msos,
         &mut control,
     );
-    let mut ccid = Ccid::new(&mut builder, Handler::default(), ATR_RSKEY, pin_support);
+    for _ in 0..2 {
+        builder.function(0xff, 0, 0).interface();
+    }
+    let mut ccid = Ccid::new(&mut builder, handler, ATR_RSKEY, pin_support);
+    assert_eq!(ccid.interface_number(), 2);
     test(&mut ccid, &trace);
     drop(ccid);
     drop(builder);
     config
+}
+
+#[test]
+fn a_legacy_handler_never_aborts_or_acknowledges_an_unarmed_abort() {
+    struct Legacy;
+    impl ApduHandler for Legacy {
+        async fn handle_apdu(&mut self, _: &[u8], out: &mut [u8]) -> usize {
+            out[..2].copy_from_slice(&[0x90, 0]);
+            2
+        }
+    }
+    with_ccid_handler(
+        Legacy,
+        0,
+        [
+            message(CCID_POWER_ON, 1, &[]),
+            message(CCID_ABORT, 2, &[]),
+            message(CCID_XFR_BLOCK, 3, &[0, 0xa4, 4, 0]),
+        ]
+        .map(Read::Packet),
+        |ccid, trace| {
+            drain_ready(ccid.run());
+            let packets = bulk_packets(trace);
+            assert_eq!(packets.len(), 2);
+            assert_eq!(&packets[0][HEADER..], ATR_RSKEY);
+            assert_eq!(
+                packets[1],
+                [0x80, 2, 0, 0, 0, 0, 3, STATUS_ACTIVE, 0, 0, 0x90, 0]
+            );
+        },
+    );
+}
+
+std::thread_local! {
+    static ABORT_AT: std::cell::Cell<Option<u64>> = const { std::cell::Cell::new(None) };
+    static ABORT_PULSE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    static ABORT_SEQ: std::cell::Cell<Option<u8>> = const { std::cell::Cell::new(None) };
+    static EPOCH: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+}
+
+#[test]
+fn an_abort_observed_before_completion_stays_latched_for_apdu_and_secure() {
+    for secure in [false, true] {
+        with_ccid(1, [], |ccid, trace| {
+            ccid.rx[6] = 7;
+            ccid.rx[HEADER..HEADER + 4].fill(0xa5);
+            ABORT_PULSE.with(|pulse| pulse.set(true));
+            if secure {
+                complete(ccid.run_secure(HEADER, HEADER + 4));
+            } else {
+                complete(ccid.run_xfr(HEADER, HEADER + 4));
+            }
+            assert_eq!(
+                bulk_packets(trace),
+                [[
+                    0x80,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    7,
+                    STATUS_INACTIVE | STATUS_FAILED,
+                    CMD_ABORTED,
+                    0
+                ]]
+            );
+            assert!(ccid.tx[HEADER..].iter().all(|&byte| byte == 0));
+        });
+    }
+}
+
+#[test]
+fn the_abort_handshake_refuses_other_commands_and_keeps_the_slot_status() {
+    for status in [STATUS_ACTIVE, STATUS_INACTIVE] {
+        with_ccid(
+            0,
+            [
+                message(CCID_XFR_BLOCK, 1, &[0, 0xa4, 4, 0]),
+                message(CCID_ABORT, 2, &[]),
+                message(CCID_ABORT, 3, &[]),
+                message(CCID_XFR_BLOCK, 4, &[0, 0xa4, 4, 0]),
+            ]
+            .map(Read::Packet),
+            |ccid, trace| {
+                ccid.status = status;
+                ABORT_SEQ.with(|seq| seq.set(Some(3)));
+                drain_ready(ccid.run());
+                let packets = bulk_packets(trace);
+                assert_eq!(
+                    packets[0],
+                    [
+                        0x80,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                        1,
+                        status | STATUS_FAILED,
+                        CMD_ABORTED,
+                        0
+                    ]
+                );
+                assert_eq!(
+                    packets[1],
+                    [
+                        0x81,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                        2,
+                        status | STATUS_FAILED,
+                        ERR_BAD_SEQUENCE,
+                        0
+                    ]
+                );
+                assert_eq!(packets[2], [0x81, 0, 0, 0, 0, 0, 3, status, 0, 0]);
+                assert_eq!(packets[3], [0x80, 2, 0, 0, 0, 0, 4, status, 0, 0, 0x90, 0]);
+                assert_eq!(ccid.handler.requests.len(), 1);
+            },
+        );
+    }
+}
+
+#[test]
+fn a_new_session_suppresses_the_old_apdu_and_secure_replies_and_wipes_the_buffers() {
+    for secure in [false, true] {
+        with_ccid(1, [], |ccid, trace| {
+            ccid.status = STATUS_ACTIVE;
+            ccid.rx[HEADER..HEADER + 4].fill(0xa5);
+            ccid.handler.change_epoch = true;
+            if secure {
+                complete(ccid.run_secure(HEADER, HEADER + 4));
+            } else {
+                complete(ccid.run_xfr(HEADER, HEADER + 4));
+            }
+            assert!(bulk_packets(trace).is_empty());
+            assert_eq!(ccid.status, STATUS_INACTIVE);
+            assert!(ccid.tx.iter().all(|&byte| byte == 0));
+            assert!(ccid.rx[HEADER..HEADER + 4].iter().all(|&byte| byte == 0));
+        });
+    }
+}
+
+#[test]
+fn abort_after_the_last_wtx_suppresses_a_reply_ready_before_the_next_timer() {
+    with_ccid(
+        0,
+        [Read::Packet(message(
+            CCID_XFR_BLOCK,
+            7,
+            &[0, 0x87, 7, 0x9c],
+        ))],
+        |ccid, trace| {
+            ccid.handler.reply_delay_ms = Some(WTX_INTERVAL_MS + 60);
+            ABORT_AT.with(|at| {
+                at.set(Some(
+                    embassy_time::Instant::now().as_millis() + WTX_INTERVAL_MS + 30,
+                ))
+            });
+            let _ = block_on(select(ccid.run(), Timer::after_millis(2 * WTX_INTERVAL_MS)));
+            let packets = bulk_packets(trace);
+            let final_reply = packets.last().unwrap();
+            assert_eq!(final_reply.len(), HEADER);
+            assert_eq!(
+                final_reply[7..10],
+                [STATUS_INACTIVE | STATUS_FAILED, CMD_ABORTED, 0]
+            );
+            assert!(ccid.tx[HEADER..].iter().all(|&byte| byte == 0));
+        },
+    );
 }
 
 fn bulk_packets(trace: &Trace) -> Vec<Vec<u8>> {
@@ -179,6 +407,53 @@ fn a_bus_reset_discards_the_partial_message_before_the_next_header() {
             assert_eq!(&ccid.rx[..next.len()], next);
         },
     );
+}
+
+#[test]
+fn an_epoch_change_during_a_read_discards_the_prefix_and_slot_authorization() {
+    let old = message(CCID_XFR_BLOCK, 1, &[0xa5; 100]);
+    let next = message(CCID_XFR_BLOCK, 9, &[0x5a; 54]);
+    with_ccid(0, [Read::Packet(old[..64].to_vec())], |ccid, trace| {
+        ccid.status = STATUS_ACTIVE;
+        {
+            let mut read = core::pin::pin!(ccid.read_message());
+            let mut cx = core::task::Context::from_waker(core::task::Waker::noop());
+            assert!(core::future::Future::poll(read.as_mut(), &mut cx).is_pending());
+            EPOCH.with(|epoch| epoch.set(1));
+            trace
+                .borrow_mut()
+                .reads
+                .push_back(Read::Packet(next.clone()));
+            assert_eq!(
+                core::future::Future::poll(read.as_mut(), &mut cx),
+                Poll::Ready(Some(next.len()))
+            );
+        }
+        assert_eq!(&ccid.rx[..next.len()], next);
+        assert!(ccid.rx[next.len()..].iter().all(|&byte| byte == 0));
+        assert_eq!(ccid.status, STATUS_INACTIVE);
+    });
+}
+
+#[test]
+fn a_reset_during_reading_never_sends_the_old_framing_error_to_the_new_session() {
+    let mut bad = message(CCID_XFR_BLOCK, 1, &[]);
+    bad[1..5].copy_from_slice(&(MAX_CCID_MSG as u32).to_le_bytes());
+    with_ccid(0, [], |ccid, trace| {
+        let mut run = core::pin::pin!(ccid.run());
+        let mut cx = core::task::Context::from_waker(core::task::Waker::noop());
+        assert!(core::future::Future::poll(run.as_mut(), &mut cx).is_pending());
+        EPOCH.with(|epoch| epoch.set(1));
+        trace
+            .borrow_mut()
+            .reads
+            .extend([bad, message(CCID_POWER_ON, 9, &[])].map(Read::Packet));
+        assert!(core::future::Future::poll(run.as_mut(), &mut cx).is_pending());
+        let packets = bulk_packets(trace);
+        assert_eq!(packets.len(), 1);
+        assert_eq!(packets[0][6], 9);
+        assert_eq!(&packets[0][HEADER..], ATR_RSKEY);
+    });
 }
 
 #[test]

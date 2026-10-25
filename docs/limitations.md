@@ -12,10 +12,18 @@ public serial; it detects accidental corruption but cannot defeat an attacker
 who can forge public-root authority. The page-58 latch closes this arm after
 authority and applet seal migrations finish.
 
-Authentication is not an independent freshness counter. Replaying all relevant
-authority copies can restore older state, including replaying both counter
-banks while leaving KVMAIN unchanged. An old signed import manifest cannot
-override surviving verified newer progress; complete loss or replay of that
+The mounted main-directory floor survives read/write errors and remounts in the
+same backend instance. It refuses a substituted directory or an older observed
+publication. Warm reads use that trusted directory and freshly authenticate only
+the requested payload; unrelated journal damage is checked when rebuilding the
+directory or before mutation. This does not retain freshness across reboot.
+
+Authentication is not an independent freshness counter. After a cold start,
+replaying all main-authority copies can restore older main state. The separate
+counter partition has no mounted RAM floor: replaying both counter banks can
+restore older counters even within one backend instance, while leaving KVMAIN
+unchanged. An old signed import manifest cannot override surviving verified
+newer progress; complete loss or replay of that
 evidence remains outside the guarantee. Arbitrary correlated corruption,
 interruption, lying reads/writes and total media loss can require recovery.
 Automatic import cannot retroactively establish integrity of damaged but
@@ -270,12 +278,14 @@ Other workloads and the physical flash's endurance need separate measurements.
   and tested on external-flash RP2350 boards, so RP2354 is a recommendation here,
   not a configuration the project has validated. *Status: never on an
   external-flash board; decap-class effort on RP2354.*
-- **No TrustZone-M secure/non-secure split.** Considered and rejected: the
-  embassy ecosystem has no TrustZone support, so it would mean hand-rolling
-  SAU/IDAU configuration, NSC veneers and dual images (the project's
-  single biggest item) to defend mainly against parser memory corruption,
-  which safe Rust plus fuzzing already address. Physical attacks are
-  orthogonal to TrustZone. *Status: revisit only with ecosystem support.*
+- **The ordinary build has no TrustZone-M split.** An experimental dual
+  image runs USB/transports Non-secure and the worker/applets Secure. Its
+  [boundary contract](trustzone.md) assigns production resource owners and
+  requires a Secure USB hardware observer: the current Non-secure reset
+  callback cannot establish revocation against compromised NS. Peripheral/DMA
+  enforcement, hostile-NS tests and production integration remain unfinished.
+  TrustZone adds no physical fault-injection defense. *Status: experimental;
+  the production boundary is a design decision, not an implemented guarantee.*
 - **Anti-rollback is opt-in and coarse**: `picotool seal --rollback`
   plus the `ROLLBACK_REQUIRED` fuse ([anti-rollback.md](anti-rollback.md)). The
   OTP thermometer has 48 steps for the board's life, so the rollback floor is

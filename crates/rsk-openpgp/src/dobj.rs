@@ -234,12 +234,36 @@ impl<'a, S: Storage> DoWriter<'a, S> {
         }
     }
 
-    fn read_flash(&mut self, fid: u16) {
+    fn read_flash(&mut self, fid: u16) -> usize {
         let cap = self.out.get_mut(self.pos..).unwrap_or_default();
-        if let Some(n) = self.fs.read(fid, cap) {
-            self.failed |= n > cap.len();
-            self.pos += n;
+        match self.fs.try_read(fid, cap) {
+            Ok(Some(n)) => {
+                self.failed |= n > cap.len();
+                self.pos += n;
+                n
+            }
+            Ok(None) => 0,
+            Err(_) => {
+                self.failed = true;
+                0
+            }
         }
+    }
+
+    fn emit_flash(&mut self, fid: u16, tagged: bool) -> usize {
+        let lp = if tagged {
+            if fid >= 0x0100 {
+                self.push((fid >> 8) as u8);
+            }
+            Some(self.open((fid & 0xff) as u8))
+        } else {
+            None
+        };
+        let len = self.read_flash(fid);
+        if let Some(lp) = lp {
+            self.close(lp);
+        }
+        len
     }
 
     /// Top-level builder for a GET DATA tag: `[1, fid]` with `mode == 1`.
@@ -264,6 +288,9 @@ impl<'a, S: Storage> DoWriter<'a, S> {
             match source(fid) {
                 DoSource::Func(f) => len += self.emit_func(f, fid, mode),
                 DoSource::None | DoSource::Internal => {}
+                DoSource::Flash if mode == 1 => {
+                    len += self.emit_flash(fid, count > 1 && self.pos > 0);
+                }
                 src => {
                     let data_len = match src {
                         DoSource::Rom(c) => c.len(),
@@ -287,7 +314,6 @@ impl<'a, S: Storage> DoWriter<'a, S> {
                                 let a = *self.full_aid;
                                 self.extend(&a);
                             }
-                            DoSource::Flash => self.read_flash(fid),
                             _ => {}
                         }
                     }
@@ -415,9 +441,7 @@ impl<'a, S: Storage> DoWriter<'a, S> {
             let end = self.pos + size;
             if let Some(window) = self.out.get_mut(self.pos..end) {
                 window.fill(0);
-                if self.fs.has_data(f) {
-                    let _ = self.fs.read(f, window);
-                }
+                let _ = self.fs.read(f, window);
             } else {
                 self.failed = true;
             }
@@ -454,14 +478,22 @@ impl<'a, S: Storage> DoWriter<'a, S> {
         // byte — 00 not present, 01 generated on card, 02 imported. ykman >= 5.2
         // keys its parse on these refs, so they must be the spec values, not
         // 0-indexed.
-        for (key_ref, fid) in [
+        let mut origins = None;
+        for (slot, (key_ref, fid)) in [
             (KEY_REF_SIG, EF_PK_SIG),
             (KEY_REF_DEC, EF_PK_DEC),
             (KEY_REF_AUT, EF_PK_AUT),
-        ] {
+        ]
+        .into_iter()
+        .enumerate()
+        {
             self.push(key_ref);
             let status = if self.fs.has_key(fid) {
-                crate::origin::of(self.fs, fid)
+                origins
+                    .get_or_insert_with(|| crate::origin::read_all(self.fs))
+                    .get(slot)
+                    .copied()
+                    .unwrap_or(crate::origin::ORIGIN_IMPORTED)
             } else {
                 0x00
             };
@@ -484,9 +516,7 @@ impl<'a, S: Storage> DoWriter<'a, S> {
             self.push((EF_PW_STATUS & 0xff) as u8);
             self.push(7);
         }
-        if self.fs.has_data(EF_PW_PRIV) {
-            self.read_flash(EF_PW_PRIV);
-        }
+        self.read_flash(EF_PW_PRIV);
         self.pos - init
     }
 
@@ -541,19 +571,24 @@ impl<'a, S: Storage> DoWriter<'a, S> {
             // with the tag+length 73 lists them by, as the default arm's `emit_algo`
             // does. GET DATA no longer serves them alone (a YubiKey 5.8.0 says 6B00).
             let priv_fid = algo_tag_to_priv(fid);
-            if !self.fs.has_data(priv_fid) {
+            let start = self.pos;
+            self.push((fid & 0xff) as u8);
+            let lp = self.pos;
+            self.push(0);
+            let at = self.pos;
+            let len = self.read_flash(priv_fid);
+            if len == 0 {
+                self.pos = start;
                 self.emit_algo(ATTR_RSA2K, fid)
             } else {
-                let len = self.fs.size(priv_fid).unwrap_or(0);
-                self.push((fid & 0xff) as u8);
                 #[expect(
                     clippy::cast_possible_truncation,
                     reason = "PUT DATA stores no attribute near 255 bytes; a longer one, from \
                               corrupt flash, has always kept its low byte here"
                 )]
-                self.push(len as u8);
-                let at = self.pos;
-                self.read_flash(priv_fid);
+                if let Some(byte) = self.out.get_mut(lp) {
+                    *byte = len as u8;
+                }
                 // An older build stored the e length it was sent.
                 if let Some(stored) = self.out.get_mut(at..self.pos)
                     && let Some(attr) = canonical_algo(stored)

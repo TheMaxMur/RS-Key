@@ -435,3 +435,9 @@ fn counter_bank_does_not_skip_a_corrupted_delta_or_a_hidden_data_first_append() 
     assert_eq!(dirty.status, JournalStatus::Dirty);
     assert_eq!(dirty.sequence, Some(0));
 }
+
+#[path = "counter_scan_tests.rs"]
+mod counter_scan;
+
+#[path = "counter_scan_mac_tests.rs"]
+mod counter_scan_mac;

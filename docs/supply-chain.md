@@ -65,6 +65,17 @@ Root inputs of `flake.lock` deliberately outside this TCB:
 
 | Boundary | Kind | Derived from | Foreign side produced by |
 |---|---|---|---|
+| `rsk_tz_fault_stop` | export | `firmware/src/trustzone/fault.rs, #[unsafe(no_mangle symbol, unconditional` | `rustc` |
+| `rsk_tz_readable_impl` | export | `firmware/src/trustzone/mod.rs, #[unsafe(no_mangle symbol, unconditional` | `arm-none-eabi-gcc` |
+| `rsk_tz_writable_impl` | export | `firmware/src/trustzone/mod.rs, #[unsafe(no_mangle symbol, unconditional` | `arm-none-eabi-gcc` |
+| `rsk_tz_usb_impl` | export | `firmware/src/trustzone/usb.rs, #[unsafe(no_mangle symbol, unconditional` | `arm-none-eabi-gcc` |
+| `rsk_tz_control_impl` | export | `firmware/src/worker.rs, #[unsafe(no_mangle symbol, #[cfg(rsk_trustzone_prototype)]` | `arm-none-eabi-gcc` |
+| `rsk_tz_poll_impl` | export | `firmware/src/worker.rs, #[unsafe(no_mangle symbol, #[cfg(rsk_trustzone_prototype)]` | `arm-none-eabi-gcc` |
+| `rsk_tz_submit_impl` | export | `firmware/src/worker.rs, #[unsafe(no_mangle symbol, #[cfg(rsk_trustzone_prototype)]` | `arm-none-eabi-gcc` |
+| `SWI_IRQ_1` | export | `firmware/trustzone/nonsecure/src/main.rs, #[unsafe(no_mangle symbol, unconditional` | `rustc` |
+| `SWI_IRQ_4` | export | `firmware/trustzone/nonsecure/src/notify.rs, #[unsafe(no_mangle symbol, unconditional` | `rustc` |
+| `RSK_NS_PROBE_PROGRESS` | export | `firmware/trustzone/nonsecure/src/probe.rs, #[unsafe(no_mangle symbol, unconditional` | `rustc` |
+| `TIMER1_IRQ_0` | export | `firmware/trustzone/nonsecure/src/time.rs, #[unsafe(no_mangle symbol, unconditional` | `rustc` |
 | `bignum_modexp_private_exponent` | import | `crates/rsk-rsa/src/lib.rs, extern "C", #[cfg(target_os = "none")]` | `arm-none-eabi-gcc` |
 | `bignum_modexp_public_exponent` | import | `crates/rsk-rsa/src/lib.rs, extern "C", #[cfg(target_os = "none")]` | `arm-none-eabi-gcc` |
 | `rsa_private_exp_crt` | import | `crates/rsk-rsa/src/lib.rs, extern "C", #[cfg(target_os = "none")]` | `arm-none-eabi-gcc` |
@@ -73,6 +84,13 @@ Root inputs of `flake.lock` deliberately outside this TCB:
 | `__kvmain_end` | import | `firmware/src/main.rs, extern "C", unconditional` | `rust-lld` |
 | `__kvmain_start` | import | `firmware/src/main.rs, extern "C", unconditional` | `rust-lld` |
 | `_stack_end` | import | `firmware/src/main.rs, extern "C", unconditional` | `flip-link` |
+| `rsk_tz_enter_ns` | import | `firmware/src/trustzone/mod.rs, extern "C", unconditional` | `arm-none-eabi-gcc` |
+| `__rsk_exec_end` | import | `firmware/src/trustzone/mpu.rs, extern "C", unconditional` | `rust-lld` |
+| `__rsk_exec_start` | import | `firmware/src/trustzone/mpu.rs, extern "C", unconditional` | `rust-lld` |
+| `rsk_tz_control` | import | `firmware/trustzone/nonsecure/src/main.rs, extern "C", unconditional` | `arm-none-eabi-gcc` |
+| `rsk_tz_poll` | import | `firmware/trustzone/nonsecure/src/main.rs, extern "C", unconditional` | `arm-none-eabi-gcc` |
+| `rsk_tz_submit` | import | `firmware/trustzone/nonsecure/src/main.rs, extern "C", unconditional` | `arm-none-eabi-gcc` |
+| `rsk_tz_usb` | import | `firmware/trustzone/nonsecure/src/usb.rs, extern "C", unconditional` | `arm-none-eabi-gcc` |
 | `crates/rsk-rsa/csrc/bignum_asm.S` | unit | `crates/rsk-rsa/build.rs, cc::Build` | `arm-none-eabi-as` |
 | `crates/rsk-rsa/csrc/bignum_high_level.c` | unit | `crates/rsk-rsa/build.rs, cc::Build` | `arm-none-eabi-gcc` |
 
@@ -80,7 +98,7 @@ Root inputs of `flake.lock` deliberately outside this TCB:
 
 - **assembler** — `arm-none-eabi-as`, `cortex-m`
 - **compiler** — `arm-none-eabi-gcc`, `rustc`
-- **ffi** — the 10 boundary(s) in the table above, each joined to the pinned tool that produces its foreign half
+- **ffi** — the 28 boundary(s) in the table above, each joined to the pinned tool that produces its foreign half
 - **linker** — `flip-link`, `rust-lld`
 
 Not enumerated by this generator at all, and not by any other:
@@ -318,10 +336,26 @@ What `nix build .#<flavor>` runs, out of `nix/firmware.nix`:
 ```sh
 # buildPhase
 export PATH="${toolchain}/lib/rustlib/$(rustc -vV | sed -n 's/^host: //p')/bin:$PATH"
+${
+if trustzone then
+''
+export CARGO_NET_OFFLINE=true
+export RSK_TZ_CARGO_CONFIG="target.${target}.rustflags=[\"--remap-path-prefix=$NIX_BUILD_TOP=/build\",\"--remap-path-prefix=${toolchain}=/toolchain\"]"
+bash firmware/trustzone/build.sh
+''
+else
+''
 cargo build --release --offline --frozen -p firmware --target ${target} --config "target.${target}.rustflags=[\"--remap-path-prefix=$NIX_BUILD_TOP=/build\",\"--remap-path-prefix=${toolchain}=/toolchain\"]" ${lib.escapeShellArgs cargoFlags}
+''
+}
 # installPhase
 mkdir -p "$out"
-bash scripts/pt.sh "target/${target}/release/firmware" "$out/${name}.elf"
+${
+if trustzone then
+''cp "target/trustzone/combined.elf" "$out/${name}.elf"''
+else
+''bash scripts/pt.sh "target/${target}/release/firmware" "$out/${name}.elf"''
+}
 picotool uf2 convert "$out/${name}.elf" -t elf "$out/${name}.uf2"
 ```
 
@@ -333,7 +367,7 @@ The files that decide what a release is. A digest here covers the parts the tabl
 |---|---|
 | `.github/workflows/release.yml` | `9f4218cfb9869bc458be8076f2185af6bdb734598db9b49167557dca30324a05` |
 | `.github/workflows/release-build.yml` | `54923e1ab4639d62d8a23220abd0c064e462d3806e45f812b8e62f61570a449a` |
-| `nix/firmware.nix` | `93468064b0328a06e8059b418e3e220df3ee4f273b4445052494f832eb5e26d8` |
+| `nix/firmware.nix` | `d64ca23022f6d397ccb696e74ee3ebece9c1df229644560a6540cbbabc646339` |
 | `scripts/pt.sh` | `c55ba6255421a664c13ba8b1e3b05b01af842d3ba8e95cd986a7a46005c877ed` |
 
 The CI code that runs them, pinned by commit:

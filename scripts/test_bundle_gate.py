@@ -985,7 +985,7 @@ def test_a_disposed_inverse_kill_is_admitted_and_counted_apart(tmp_path, disposi
      ("gate_ledger", "walk=4", "walk=5"),
      ("gate_assumption", "FALSE=91", "FALSE=90"),
      ("gate_ghost", "24 route(s)", "25 route(s)"),
-     ("gate_matrix", "1312 cells", "1313 cells")],
+     ("gate_matrix", "1353 cells", "1354 cells")],
 )
 def test_a_transcribed_gate_line_that_the_gate_does_not_derive(tmp_path, key, old, new):
     """The second half of the hole `35afe59` named and did not close: editing
@@ -1090,10 +1090,10 @@ def test_the_assumption_total_read_is_the_line_s_first():
     "key,old,new,says",
     [("gate_matrix", "(38 covered", "(109 covered", "109 covered"),
      ("gate_ghost", "21 action(s)", "24 action(s)", "24 action(s) record"),
-     ("gate_matrix", "1019 gap", "109 gap", "109 gap"),
+     ("gate_matrix", "1060 gap", "109 gap", "109 gap"),
      ("gate_ghost", "11 guard(s)", "21 guard(s)", "21 guard(s)"),
      ("gate_matrix", "0 conditional", "38 conditional", "38 conditional"),
-     ("gate_matrix", "41 P0-family", "32 P0-family", "32 P0-family properties")],
+     ("gate_matrix", "41 P0-family", "33 P0-family", "33 P0-family properties")],
 )
 def test_a_transcribed_unit_count_is_the_one_that_noun_was_written_for(
     tmp_path, key, old, new, says
@@ -1117,7 +1117,7 @@ def test_a_transcribed_unit_count_is_the_one_that_noun_was_written_for(
 
     The READING is asserted too, and two of them are two words long. Each claim
     position is reported once, on the LONGEST spelling the gate wrote a count
-    for, so `41 P0-family properties → 32` is one finding about `P0-family
+    for, so `41 P0-family properties → 33` is one finding about `P0-family
     properties` rather than two about the same drift. Typed out rather than
     derived for the reason every count here is: it is the third copy that fails
     loudly instead of the one that agrees with itself.
@@ -1183,10 +1183,10 @@ def test_a_unit_count_the_gate_line_restates_unquoted_is_a_transcription(tmp_pat
 
 @pytest.mark.parametrize(
     "key,old,new,says",
-    [("gate_matrix", "32 build configurations", "38 build-configurations",
+    [("gate_matrix", "33 build configurations", "38 build-configurations",
       "38 build-configurations"),
-     ("gate_matrix", "1019 gap)", "109 gaps)", "109 gaps"),
-     ("gate_matrix", "1312 cells", "109 cell", "109 cell"),
+     ("gate_matrix", "1060 gap)", "109 gaps)", "109 gaps"),
+     ("gate_matrix", "1353 cells", "109 cell", "109 cell"),
      ("gate_ghost", "11 guard(s)", "24 guards", "24 guards"),
      ("gate_ghost", "21 action(s) record", "24 actions record", "24 actions")],
 )

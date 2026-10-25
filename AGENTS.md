@@ -39,7 +39,7 @@ project — see [README.md](README.md) and
   smallest scope. The lint policy is `[workspace.lints]` in the root
   `Cargo.toml`; a new crate opts in with `[lints] workspace = true`.
 - **`unsafe` and new dependencies are not free.** `unsafe` compiles only in
-  `firmware`, `rsk-wipe` and — on the device target — `rsk-rsa`; a new site
+  `firmware`, `firmware-ns`, `rsk-wipe` and — on the device target — `rsk-rsa`; a new site
   there needs an entry in [docs/unsafe.md](docs/unsafe.md) (held by
   `check-assurance.sh`), and a new `unsafe` block or `unsafe impl` a
   `// SAFETY:` comment (clippy refuses it otherwise). A new dependency needs a
@@ -215,6 +215,7 @@ CONTRIBUTING.md → "Code".
 | Path | What |
 |---|---|
 | `firmware/` | The binary: boot, USB, the worker's sequencing, LED, presence, and the board halves of `rsk-device`'s `Hooks` / `rsk-vendor`'s `Platform`. `no_std`, embedded-only. |
+| `firmware/trustzone/nonsecure/` | `firmware-ns`, the TrustZone USB classes/framing and TIMER1 binary; it shares the root workspace and is built with the Secure half by `firmware/trustzone/build.sh`. |
 | `crates/rsk-*` | The libraries, and the one thing that separates them from `firmware/`: they are **host-tested**, so host-testable logic belongs here. Which crates exist is [`docs/architecture.md`](docs/architecture.md#crates) — `scripts/crate_graph.py` holds that table to the workspace members, so it is the list that cannot go stale. Naming them here instead is what drifted across four refactors. |
 | `tools/rsk/` | The Python host CLI (`rsk …`). Match the neighbouring modules: `register(sub)`, `die()`, flake-provided deps (no pip). |
 | `tools/tui/` | The Rust TUI cockpit — **its own workspace** (build/clippy/test via its own manifest). |

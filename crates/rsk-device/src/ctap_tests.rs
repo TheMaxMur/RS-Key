@@ -16,6 +16,27 @@ fn u2f_version() -> std::vec::Vec<u8> {
 const GET_INFO: [u8; 1] = [rsk_fido::consts::CTAP_GET_INFO];
 
 #[test]
+fn transport_reset_wipes_authorization_and_keeps_the_pin_failure_budget() {
+    let env = Env::new();
+    let mut ctap = env.ctap();
+    {
+        let mut state = ctap.fido_state.borrow_mut();
+        state.restore_pin_lock(rsk_fido::state::PinLock {
+            engaged: true,
+            mismatches: 3,
+        });
+        state.paut.token.fill(0xa5);
+        state.paut.in_use = true;
+    }
+    ctap.reset_transport_session();
+    let state = ctap.fido_state.borrow();
+    assert!(state.paut.token.iter().all(|&byte| byte == 0));
+    assert!(!state.paut.in_use);
+    assert!(state.pin_lock().engaged);
+    assert_eq!(state.pin_lock().mismatches, 3);
+}
+
+#[test]
 fn a_u2f_command_reaches_fido_when_nothing_is_selected() {
     // U2F has no SELECT over CTAPHID, so its INS is routed straight to the FIDO
     // applet — but only while the dispatcher holds no selection.
@@ -272,6 +293,24 @@ fn scrub_wipes_the_response_buffer() {
     assert!(ctap.resp.iter().any(|&b| b != 0));
     ctap.scrub();
     assert!(ctap.resp.iter().all(|&b| b == 0));
+}
+
+#[test]
+fn the_board_wipe_receives_the_whole_response_including_its_dirty_tail() {
+    let env = Env::new();
+    let mut ctap = env.ctap();
+    ctap.handle_cbor(1, &GET_INFO, 0);
+    let selected = ctap.disp.current();
+    ctap.resp.fill(0xa5);
+    let mut received = 0;
+    ctap.scrub_with(|bytes| {
+        received = bytes.len();
+        assert!(bytes.iter().all(|&byte| byte == 0xa5));
+        bytes.fill(0);
+    });
+    assert_eq!(received, RESP_CAP);
+    assert!(ctap.resp.iter().all(|&byte| byte == 0));
+    assert_eq!(ctap.disp.current(), selected);
 }
 
 #[test]

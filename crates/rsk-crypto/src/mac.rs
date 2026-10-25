@@ -8,8 +8,8 @@
 
 use hkdf::Hkdf;
 use hmac::{Hmac, Mac};
+use rsk_sha256::Sha256;
 use sha1::Sha1;
-use sha2::Sha256;
 // SHA-512 (HMAC + the FIDO HKDF ratchet) uses the Cortex-M33-fast core; the
 // generic HMAC/HKDF constructions above it are unchanged, so the output stays
 // byte-identical to sha2::Sha512.
@@ -35,6 +35,22 @@ pub fn hmac_sha256(key: &[u8], msg: &[u8]) -> [u8; 32] {
     let mut out = [0u8; 32];
     out.copy_from_slice(&tag);
     out
+}
+
+/// A command-local HMAC template; keep it in returned frames covered by the
+/// Secure stack sweep, never in a mounted store or between backend operations.
+pub struct HmacSha256(Hmac<Sha256>);
+
+impl HmacSha256 {
+    pub fn new(key: &[u8]) -> Self {
+        Self(Hmac::<Sha256>::new_from_slice(key).expect("HMAC accepts any key length"))
+    }
+
+    pub fn tag(&self, msg: &[u8]) -> [u8; 32] {
+        let mut mac = self.0.clone();
+        mac.update(msg);
+        mac.finalize().into_bytes().into()
+    }
 }
 
 /// HMAC-SHA512. Any key length is accepted.

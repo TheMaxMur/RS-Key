@@ -31,6 +31,10 @@ impl<F: NorFlash> VerifiedFlash<F> {
         }
         Self(flash)
     }
+    pub(crate) fn inner_mut(&mut self) -> &mut F {
+        &mut self.0
+    }
+
     async fn verify(
         &mut self,
         mut address: u32,

@@ -62,7 +62,7 @@ PHASES=(
   "emu|deep|~15 min|the on-device suites, the vendored OpenPGP and ykman suites and the diff against a frozen YubiKey 5.8.0, against tools/emu instead of a board|./scripts/emu-suites.sh"
   "image|deep|~5 min|command stacks, known-secret lifetimes and interrupted writes in the partitioned firmware ELF on the emulated RP2350|./scripts/image-suites.sh"
   "proofs-all|deep|~8 h|the weekly Kani roster: every harness in every proven crate, in the four tiers CI shards it into|./scripts/kani.sh light1 && ./scripts/kani.sh light2 && ./scripts/kani.sh light3 && ./scripts/kani.sh heavy"
-  "coverage|deep|~20 min|host-crate line coverage against the floor the weekly job holds|cargo llvm-cov --summary-only --fail-under-lines 80 --target \$HOST_TRIPLE --workspace --exclude firmware --exclude rsk-wipe"
+  "coverage|deep|~20 min|host-crate line coverage against the floor the weekly job holds|cargo llvm-cov --summary-only --fail-under-lines 80 --target \$HOST_TRIPLE --workspace --exclude firmware --exclude firmware-ns --exclude rsk-wipe"
   "repro|deep|~30 min|the hermetic firmware build is bit-identical on a rebuild|nix build .#firmware -o result-repro && nix build .#firmware --rebuild"
   "miri|deep|~40 min|every fuzz target's logic under Miri's UB checker|nix develop .#fuzz -c ./scripts/miri-all.sh"
   "fuzz|deep|~2 h|a timed libFuzzer run over every fuzz target, from whatever corpus this checkout has|nix develop .#fuzz -c ./scripts/fuzz-all.sh"
@@ -185,6 +185,7 @@ CLAIM_JOBS=(
 #: `Unmatched (`, on stderr, while the row it was meant to claim reads as
 #: unrecognised. Measured on the first run of this table.
 CLAIM_ROWS=(
+  "^bash firmware/trustzone/build\\.sh$|gate|builds the combined S/NS image from pinned local sources without a board or signing key"
   "^cargo |gate|"
   "^env .*cargo |gate|"
   "^python3? scripts/|gate|"

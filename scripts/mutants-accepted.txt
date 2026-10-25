@@ -22,6 +22,9 @@
 #   [unpinned]     a value no test pins on purpose, a colour or a coordinate
 #   [const-assert] a compile-time assert, which no runtime test can kill
 
+[empty-suffix] Torn::tear's > to >= change only appends old[prefix..] when old.len() == prefix; that slice is empty, so the stored bytes are identical.
+crates/rsk-fs/src/storage.rs: replace > with >= in faults::Torn::tear
+
 [bit-lanes] OR and XOR combine disjoint bit lanes; SHA-512 Ch/Maj replacements retain the complete bit truth table, including Rust operator precedence.
 crates/rsk-crypto/src/base64url.rs: replace | with ^ in decode
 crates/rsk-crypto/src/base64url.rs: replace | with ^ in encode

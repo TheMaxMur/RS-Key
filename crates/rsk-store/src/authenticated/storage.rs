@@ -79,6 +79,7 @@ impl<F: NorFlash + MultiwriteNorFlash + Clone, C: CacheImpl<u16>> Authenticated<
             epoch,
             arm,
             arm,
+            None,
         )
     }
 
@@ -96,6 +97,7 @@ impl<F: NorFlash + MultiwriteNorFlash + Clone, C: CacheImpl<u16>> Authenticated<
         epoch: [u8; super::EPOCH_BYTES],
         main_arm: RootArm,
         counter_arm: RootArm,
+        digest: Option<super::BankDigest<F>>,
     ) -> Result<Self> {
         if main_range.start >= main_range.end || main_range.end > counter_range.start {
             return Err(Error::MemoryFatal);
@@ -103,10 +105,15 @@ impl<F: NorFlash + MultiwriteNorFlash + Clone, C: CacheImpl<u16>> Authenticated<
         let layout = Layout::new(counter_range.clone())?;
         let [main_zero, main_one] = layout.main;
         let [counter_zero, counter_one] = layout.counter;
-        let main_journals = [
+        let mut main_journals = [
             Journal::new(RawBank::new(flash.clone(), main_zero)?, Partition::Main),
             Journal::new(RawBank::new(flash.clone(), main_one)?, Partition::Main),
         ];
+        if let Some(digest) = digest {
+            for journal in &mut main_journals {
+                journal.set_digest(digest);
+            }
+        }
         let counter_banks = [
             CounterBank::new(RawBank::new(flash.clone(), counter_zero)?),
             CounterBank::new(RawBank::new(flash.clone(), counter_one)?),
@@ -216,6 +223,13 @@ impl<F: NorFlash + MultiwriteNorFlash + Clone, C: CacheImpl<u16>> Authenticated<
         result
     }
 
+    pub(super) fn checkpoint_history(&mut self) -> Result<()> {
+        let mut key = self.source.key(self.main_arm)?;
+        let result = self.main.checkpoint_history(key.expose());
+        key.wipe();
+        result
+    }
+
     pub fn root_closed(&self) -> bool {
         self.main_arm == RootArm::Otp && self.counter_arm == RootArm::Otp
     }
@@ -229,14 +243,15 @@ impl<F: NorFlash + MultiwriteNorFlash + Clone, C: CacheImpl<u16>> Authenticated<
     }
 
     fn read_checked(&mut self, fid: u16, out: &mut [u8]) -> Result<Option<usize>> {
-        let mut key = self.source.key(self.arm(fid))?;
-        let result = if crate::is_counter_fid(fid) {
-            self.counters.read(key.expose(), fid, out)
+        if crate::is_counter_fid(fid) {
+            let mut key = self.source.key(self.counter_arm)?;
+            let result = self.counters.read(key.expose(), fid, out);
+            key.wipe();
+            result
         } else {
-            self.main.read(key.expose(), fid, out)
-        };
-        key.wipe();
-        result
+            self.main
+                .read_with_source(self.source, self.main_arm, fid, out)
+        }
     }
 }
 

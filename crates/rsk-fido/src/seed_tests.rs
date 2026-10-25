@@ -717,7 +717,7 @@ fn enc_identifier_needs_both_a_token_and_a_readable_seed() {
     let (d, mut f, mut rng) = (dev(), fs(), SeqRng(7));
     ensure_seed(&d, &mut f, &mut rng).unwrap();
     assert!(
-        enc_identifier(&d, &mut f, &mut rng).is_some(),
+        enc_getinfo_members(&d, &mut f, &mut rng).0.is_some(),
         "provisioning mints the grant, so the member is published from the start"
     );
 
@@ -725,17 +725,17 @@ fn enc_identifier_needs_both_a_token_and_a_readable_seed() {
     // it is still an absence rather than an error.
     clear_ppuat(&mut f).unwrap();
     assert!(
-        enc_identifier(&d, &mut f, &mut rng).is_none(),
+        enc_getinfo_members(&d, &mut f, &mut rng).0.is_none(),
         "no persistent token — nothing to key it with"
     );
 
     ensure_ppuat(&d, &mut f, &mut rng).unwrap();
-    assert!(enc_identifier(&d, &mut f, &mut rng).is_some());
+    assert!(enc_getinfo_members(&d, &mut f, &mut rng).0.is_some());
 
     // A soft lock moves the seed into EF_KEY_DEV_ENC and deletes the plain record.
     f.delete_key(EF_KEY_DEV).unwrap();
     assert!(
-        enc_identifier(&d, &mut f, &mut rng).is_none(),
+        enc_getinfo_members(&d, &mut f, &mut rng).0.is_none(),
         "seed unreadable behind a soft lock — no identifier to encrypt"
     );
 }
@@ -752,8 +752,8 @@ fn enc_identifier_is_fresh_per_call_but_stable_underneath() {
     ensure_seed(&d, &mut f, &mut rng).unwrap();
     let token = ensure_ppuat(&d, &mut f, &mut rng).unwrap();
 
-    let first = enc_identifier(&d, &mut f, &mut rng).unwrap();
-    let second = enc_identifier(&d, &mut f, &mut rng).unwrap();
+    let first = enc_getinfo_members(&d, &mut f, &mut rng).0.unwrap();
+    let second = enc_getinfo_members(&d, &mut f, &mut rng).0.unwrap();
     assert_ne!(first, second, "a repeated blob is a device fingerprint");
     assert_ne!(first[..16], second[..16], "the IV itself must be fresh");
 
@@ -787,22 +787,22 @@ fn enc_cred_store_state_needs_a_token_but_not_the_seed() {
     let (d, mut f, mut rng) = (dev(), fs(), SeqRng(17));
     ensure_seed(&d, &mut f, &mut rng).unwrap();
     assert!(
-        enc_cred_store_state(&d, &mut f, &mut rng).is_some(),
+        enc_getinfo_members(&d, &mut f, &mut rng).1.is_some(),
         "provisioning mints the grant, so the member is published from the start"
     );
 
     clear_ppuat(&mut f).unwrap();
     assert!(
-        enc_cred_store_state(&d, &mut f, &mut rng).is_none(),
+        enc_getinfo_members(&d, &mut f, &mut rng).1.is_none(),
         "no persistent token — nothing to key it with"
     );
 
     ensure_ppuat(&d, &mut f, &mut rng).unwrap();
-    assert!(enc_cred_store_state(&d, &mut f, &mut rng).is_some());
+    assert!(enc_getinfo_members(&d, &mut f, &mut rng).1.is_some());
 
     f.delete_key(EF_KEY_DEV).unwrap();
     assert!(
-        enc_cred_store_state(&d, &mut f, &mut rng).is_some(),
+        enc_getinfo_members(&d, &mut f, &mut rng).1.is_some(),
         "a soft lock hides the seed, which this member never reads"
     );
 }
@@ -816,8 +816,8 @@ fn enc_cred_store_state_is_fresh_per_call_and_carries_the_stored_tag() {
     ensure_seed(&d, &mut f, &mut rng).unwrap();
     let token = ensure_ppuat(&d, &mut f, &mut rng).unwrap();
 
-    let first = enc_cred_store_state(&d, &mut f, &mut rng).unwrap();
-    let second = enc_cred_store_state(&d, &mut f, &mut rng).unwrap();
+    let first = enc_getinfo_members(&d, &mut f, &mut rng).1.unwrap();
+    let second = enc_getinfo_members(&d, &mut f, &mut rng).1.unwrap();
     assert_ne!(first[..16], second[..16], "the IV itself must be fresh");
     assert_ne!(first, second, "a repeated blob is a fingerprint");
     assert_eq!(
@@ -832,7 +832,7 @@ fn enc_cred_store_state_is_fresh_per_call_and_carries_the_stored_tag() {
     );
 
     crate::credential::renew_store_state(&mut f, &mut SeqRng(21)).unwrap();
-    let after = enc_cred_store_state(&d, &mut f, &mut rng).unwrap();
+    let after = enc_getinfo_members(&d, &mut f, &mut rng).1.unwrap();
     assert_ne!(
         open_enc_cred_store_state(token.expose(), &after),
         open_enc_cred_store_state(token.expose(), &first),
@@ -855,8 +855,8 @@ fn the_two_encrypted_members_do_not_decrypt_to_each_other() {
     ensure_seed(&d, &mut f, &mut rng).unwrap();
     let token = ensure_ppuat(&d, &mut f, &mut rng).unwrap();
 
-    let id_blob = enc_identifier(&d, &mut f, &mut rng).unwrap();
-    let state_blob = enc_cred_store_state(&d, &mut f, &mut rng).unwrap();
+    let id_blob = enc_getinfo_members(&d, &mut f, &mut rng).0.unwrap();
+    let state_blob = enc_getinfo_members(&d, &mut f, &mut rng).1.unwrap();
     let id = open_enc_identifier(token.expose(), &id_blob);
     let state = open_enc_cred_store_state(token.expose(), &state_blob);
 
@@ -883,14 +883,14 @@ fn enc_identifier_follows_the_seed_across_a_reseed() {
     let token = ensure_ppuat(&d, &mut f, &mut rng).unwrap();
     let before = open_enc_identifier(
         token.expose(),
-        &enc_identifier(&d, &mut f, &mut rng).unwrap(),
+        &enc_getinfo_members(&d, &mut f, &mut rng).0.unwrap(),
     );
 
     f.delete_key(EF_KEY_DEV).unwrap();
     ensure_seed(&d, &mut f, &mut rng).unwrap();
     let after = open_enc_identifier(
         token.expose(),
-        &enc_identifier(&d, &mut f, &mut rng).unwrap(),
+        &enc_getinfo_members(&d, &mut f, &mut rng).0.unwrap(),
     );
 
     assert_ne!(before, after, "a new seed must mean a new identity");
@@ -906,7 +906,7 @@ fn enc_identifier_is_not_the_seed_nor_the_at_rest_key() {
     let token = ensure_ppuat(&d, &mut f, &mut rng).unwrap();
     let id = open_enc_identifier(
         token.expose(),
-        &enc_identifier(&d, &mut f, &mut rng).unwrap(),
+        &enc_getinfo_members(&d, &mut f, &mut rng).0.unwrap(),
     );
 
     let seed = load_keydev(&d, &mut f).unwrap();
@@ -1207,7 +1207,7 @@ fn a_faulted_cred_state_probe_does_not_publish_the_zero_tag() {
     let token = ensure_ppuat(&d, &mut fs, &mut SeqRng(31)).unwrap();
     // An older build provisioned without a tag, and absent reads as zero.
     fs.delete(crate::consts::EF_CRED_STATE).unwrap();
-    let fresh = enc_cred_store_state(&d, &mut fs, &mut SeqRng(33)).unwrap();
+    let fresh = enc_getinfo_members(&d, &mut fs, &mut SeqRng(33)).1.unwrap();
     assert_eq!(
         open_enc_cred_store_state(token.expose(), &fresh),
         [0u8; 16],
@@ -1216,7 +1216,7 @@ fn a_faulted_cred_state_probe_does_not_publish_the_zero_tag() {
 
     crate::credential::renew_store_state(&mut fs, &mut SeqRng(21)).unwrap();
     medium.stick_once(crate::consts::EF_CRED_STATE);
-    let faulted = enc_cred_store_state(&d, &mut fs, &mut SeqRng(35));
+    let faulted = enc_getinfo_members(&d, &mut fs, &mut SeqRng(35)).1;
     medium.stick(None);
     assert!(
         faulted.is_none_or(|b| open_enc_cred_store_state(token.expose(), &b) != [0u8; 16]),
@@ -1477,3 +1477,6 @@ fn an_absent_global_signature_counter_reads_zero_without_initializing_it() {
     fs.put_counter(EF_COUNTER, &7u32.to_le_bytes()).unwrap();
     assert_eq!(global_sign_counter(&mut fs), Ok(7));
 }
+
+#[path = "seed_getinfo_tests.rs"]
+mod getinfo;

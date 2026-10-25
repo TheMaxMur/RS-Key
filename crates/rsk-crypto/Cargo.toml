@@ -14,9 +14,11 @@ workspace = true
 [dependencies]
 sha1 = { workspace = true }
 sha2 = { workspace = true }
-# SHA-512/384 come from rsk-sha512 (fast on the Cortex-M33, byte-identical to
-# sha2); SHA-256/SHA-1 stay on sha2 (already fast on the M33).
+# SHA-256 and SHA-512/384 use the Cortex-M33 cores behind the same digest API;
+# SHA-1 retains RustCrypto's implementation.
 rsk-sha512 = { workspace = true }
+# Byte-identical SHA-256; local core keeps keyed states and schedules in Secret.
+rsk-sha256 = { workspace = true }
 hmac = { workspace = true }
 hkdf = { workspace = true }
 aes = { workspace = true }
@@ -32,10 +34,12 @@ ml-kem = { workspace = true }
 # re-exported below.
 rsk-mldsa = { workspace = true }
 
+[target.'cfg(all(target_arch = "arm", target_os = "none"))'.dependencies]
+# Remaining sha2 consumers keep the rolled backend: its unrolled compressor
+# evicts the storage verifier from the XIP cache.
+sha2 = { workspace = true, features = ["force-soft-compact"] }
+
 [features]
-# Kani cannot model the inline asm behind `cpufeatures`' runtime CPU
-# detection, so a harness that hashes reaches `__cpuid_count` and fails as
-# "unsupported construct". Only `scripts/kani.sh` turns this on; the firmware
-# never does, because forcing the soft backend swaps sha2's XIP-cache-sized
-# compressor for its ~28 KB unrolled one and moves the image (measured).
+# Kani cannot model `cpufeatures` CPU-detection asm. scripts/kani.sh enables
+# software hashing for host proofs; firmware uses the compact backend above.
 kani-soft = ["sha2/force-soft", "sha1/force-soft"]

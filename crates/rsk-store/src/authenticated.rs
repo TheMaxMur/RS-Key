@@ -17,6 +17,10 @@ pub use record::{Entry, Identity, Partition};
 mod directory;
 pub use directory::Directory;
 
+mod authority;
+mod read_proof;
+mod read_tags;
+
 mod keys;
 pub use keys::{KeySource, RootArm, RootRead};
 
@@ -27,7 +31,7 @@ mod transaction;
 pub use transaction::{DELTA_BYTES, Delta, DeltaKind, Prepared, TransactionState};
 
 mod bank;
-pub use bank::RawBank;
+pub use bank::{BankDigest, RawBank, all_erased};
 
 mod journal;
 pub use journal::{Journal, JournalScan, JournalStatus};

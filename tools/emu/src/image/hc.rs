@@ -189,6 +189,16 @@ impl Hc {
         self.port == Port::Ready
     }
 
+    pub fn reset_port(&mut self, now: u64, cycle: u64) {
+        let failed = self.fail_all();
+        self.done = failed;
+        self.bus_reset(cycle);
+        self.endpoints.clear();
+        self.port = Port::Reset {
+            until: now + RESET_NS,
+        };
+    }
+
     pub fn submit(&mut self, t: Transfer) -> u64 {
         let id = self.next_id;
         self.next_id += 1;

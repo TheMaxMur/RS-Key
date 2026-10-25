@@ -88,7 +88,7 @@
 #   nix develop -c ./scripts/mutants-all.sh   (MUTANTS_SHARD=2/12 for one shard)
 #   nix develop -c python scripts/comutate.py run
 #   nix develop -c ./scripts/check-assurance.sh
-#   nix develop -c cargo llvm-cov --summary-only --fail-under-lines 80 --target <host> --workspace --exclude firmware --exclude rsk-wipe
+#   nix develop -c cargo llvm-cov --summary-only --fail-under-lines 80 --target <host> --workspace --exclude firmware --exclude firmware-ns --exclude rsk-wipe
 
 name: deep-checks
 
@@ -393,7 +393,7 @@ jobs:
         run: |
           nix develop -c cargo llvm-cov --summary-only --fail-under-lines 80 \
             --target x86_64-unknown-linux-gnu \
-            --workspace --exclude firmware --exclude rsk-wipe
+            --workspace --exclude firmware --exclude firmware-ns --exclude rsk-wipe
 
       - name: condition coverage and raw evidence for the shipping profile
         run: nix develop .#fuzz -c ./scripts/metrics.sh --coverage

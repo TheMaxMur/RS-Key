@@ -33,6 +33,20 @@ fn hmac_sha256_rfc4231_case1() {
 }
 
 #[test]
+fn an_hmac_template_starts_each_frame_from_the_original_key() {
+    for length in [0, 1, 32, 63, 64, 65, 129] {
+        let key = std::vec![0x39; length];
+        let template = HmacSha256::new(&key);
+        for round in 0..3 {
+            for size in [0, 1, 55, 56, 64, 68, 72, 128, 4096] {
+                let message = std::vec![round; size];
+                assert_eq!(template.tag(&message), hmac_sha256(&key, &message));
+            }
+        }
+    }
+}
+
+#[test]
 fn hkdf_sha256_rfc5869_case1() {
     let ikm = [0x0b; 22];
     let salt: [u8; 13] = [

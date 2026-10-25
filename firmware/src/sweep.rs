@@ -15,6 +15,9 @@ use cortex_m::register::{msp, msplim};
 
 const WORD: usize = size_of::<u32>();
 
+mod buffer;
+pub use buffer::wipe_bytes;
+
 /// This core's dead stack, `[floor, top)`: from the floor its `MSPLIM` holds up to
 /// the stack pointer. Empty while `MSPLIM` is unarmed (it reads 0).
 fn dead_region() -> (usize, usize) {
@@ -42,9 +45,10 @@ pub fn dead_stack() {
         unsafe { core::ptr::with_exposed_provenance_mut::<u32>(word).write_volatile(0) };
     };
     let mut word = floor;
-    // Eight stores a pass, written out: at `opt-level = "s"` a loop stays a loop,
-    // and its compare and branch cost more than the store they repeat.
-    while top - word >= 8 * WORD {
+    const WORDS_PER_PASS: usize = 32;
+    // Thirty-two stores keep offsets in the narrow STR encoding while
+    // amortizing the loop branch over a full 128-byte span.
+    while top - word >= WORDS_PER_PASS * WORD {
         zero(word);
         zero(word + WORD);
         zero(word + 2 * WORD);
@@ -53,7 +57,31 @@ pub fn dead_stack() {
         zero(word + 5 * WORD);
         zero(word + 6 * WORD);
         zero(word + 7 * WORD);
-        word += 8 * WORD;
+        zero(word + 8 * WORD);
+        zero(word + 9 * WORD);
+        zero(word + 10 * WORD);
+        zero(word + 11 * WORD);
+        zero(word + 12 * WORD);
+        zero(word + 13 * WORD);
+        zero(word + 14 * WORD);
+        zero(word + 15 * WORD);
+        zero(word + 16 * WORD);
+        zero(word + 17 * WORD);
+        zero(word + 18 * WORD);
+        zero(word + 19 * WORD);
+        zero(word + 20 * WORD);
+        zero(word + 21 * WORD);
+        zero(word + 22 * WORD);
+        zero(word + 23 * WORD);
+        zero(word + 24 * WORD);
+        zero(word + 25 * WORD);
+        zero(word + 26 * WORD);
+        zero(word + 27 * WORD);
+        zero(word + 28 * WORD);
+        zero(word + 29 * WORD);
+        zero(word + 30 * WORD);
+        zero(word + 31 * WORD);
+        word += WORDS_PER_PASS * WORD;
     }
     while word < top {
         zero(word);

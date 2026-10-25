@@ -303,6 +303,67 @@ fn a_healthy_ram_medium_still_rearms_the_lap() {
     assert!(!fs.has_data(crate::EF_HARDENED));
 }
 
+#[test]
+fn an_empty_marker_left_by_a_swallowed_remove_does_not_suppress_the_lap() {
+    let (backend, medium) = Silent::new();
+    let mut fs = Fs::new(backend);
+    fs.put(crate::EF_HARDENED, b"").unwrap();
+    medium.arm(Some(crate::EF_HARDENED));
+
+    assert!(crate::request_rescrub(&mut fs).is_ok());
+    assert_eq!(medium.attempts(), 1);
+    assert_eq!(medium.value(crate::EF_HARDENED), Some(std::vec::Vec::new()));
+    assert!(!fs.rescrub_refused());
+    assert!(!fs.try_has_data(crate::EF_HARDENED).unwrap());
+}
+
+#[test]
+fn a_silent_medium_enumerates_the_records_its_writes_actually_kept() {
+    let (mut backend, medium) = Silent::new();
+    backend.write(KEY_DEV, b"owner").unwrap();
+    backend.write(KEY_DEV + 2, b"neighbor").unwrap();
+    medium.arm(Some(KEY_DEV + 1));
+    backend.write(KEY_DEV + 1, b"lost").unwrap();
+
+    let mut keys = std::vec::Vec::new();
+    assert!(backend.for_each_key(&mut |fid| keys.push(fid)));
+    keys.sort_unstable();
+    assert_eq!(keys, [KEY_DEV, KEY_DEV + 2]);
+    assert_eq!(medium.attempts(), 1);
+}
+
+#[test]
+fn a_persistent_tear_affects_each_target_write_until_disarmed() {
+    let (mut backend, medium) = Torn::new();
+    assert_eq!(backend.size(KEY_DEV), None);
+    backend.write(KEY_DEV, b"old-record").unwrap();
+    medium.arm(KEY_DEV, 3);
+
+    backend.write(KEY_DEV, b"ONE-new-tail").unwrap();
+    assert_eq!(
+        medium.value(KEY_DEV).as_deref(),
+        Some(b"ONE-record".as_slice())
+    );
+    assert_eq!(backend.size(KEY_DEV), Some(10));
+    backend.write(KEY_DEV + 2, b"neighbor").unwrap();
+    backend.write(KEY_DEV, b"TWO-another-tail").unwrap();
+    assert_eq!(
+        medium.value(KEY_DEV).as_deref(),
+        Some(b"TWO-record".as_slice())
+    );
+    assert_eq!(
+        medium.value(KEY_DEV + 2).as_deref(),
+        Some(b"neighbor".as_slice())
+    );
+    assert_eq!(medium.attempts(), 2);
+
+    medium.disarm();
+    backend.write(KEY_DEV, b"healed").unwrap();
+    assert_eq!(medium.value(KEY_DEV).as_deref(), Some(b"healed".as_slice()));
+    assert_eq!(backend.size(KEY_DEV), Some(6));
+    assert_eq!(medium.attempts(), 2);
+}
+
 /// Phase 3's correlated fault, driven as the applet commands drive the store: a
 /// `write` that lands only a PREFIX of its bytes and reports `Ok`, and a read of
 /// that fid that answers the TORN value — the new prefix over the old tail. That

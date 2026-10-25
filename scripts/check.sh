@@ -102,13 +102,13 @@ embassy_revs_match() {
 
 # The shipping image must fit the 2560K code region (firmware/memory.x); this
 # ceiling is a *ratchet* well under that hard limit. It hugs the current image
-# (876 KiB) plus a small margin, so a runaway — an accidental fat dependency
+# (819 KiB) plus a small margin, so a runaway — an accidental fat dependency
 # (one extra EC curve is ~150 KiB) — or any surprise growth trips it, while
 # ordinary build noise does not. Ratchet discipline: when the image shrinks,
 # lower this to lock the win in; when a real feature grows it, raise this in the
 # same commit. Measured on the default (shipping) build before the display/
 # no-touch rebuilds overwrite the ELF; arm-none-eabi-size ships in the dev shell.
-FIRMWARE_FLASH_BUDGET_KIB=918
+FIRMWARE_FLASH_BUDGET_KIB=885
 firmware_size_budget() {
   local elf="target/thumbv8m.main-none-eabihf/release/firmware"
   local bytes kib
@@ -343,7 +343,7 @@ release_image_retires_its_unsigned_image_def() {
 # Same floor, and the same reason, as scripts/fuzz-coverage.sh and
 # scripts/fuzz-all.sh: a `for` over an empty word list runs nothing and exits
 # 0. Lower all three in the commit that removes a target.
-FUZZ_TARGET_FLOOR=52
+FUZZ_TARGET_FLOOR=54
 fuzz_targets_are_alive() {
   local manifest log empty bins dead="" name dict_args
   manifest=$(mktemp)
@@ -401,11 +401,17 @@ run "fmt"                      cargo fmt --all --check
 # `BOARD` because `rsk-wipe`'s build script refuses to guess a flash size (see
 # the rsk-wipe steps below); `waveshare-one` is the reference board, whose
 # values are the same defaults every other knob falls back to.
-run "clippy (embedded)"        env BOARD=waveshare-one cargo clippy --workspace -- -D warnings
-# Every host row below selects the same way: the whole workspace less the two
-# members that are not under `crates/`. `firmware` and `rsk-wipe` are
+run "TrustZone image" bash firmware/trustzone/build.sh
+export RSK_TZ_IMPLIB="$PWD/target/trustzone/ns-import.a"
+export RSK_TZ_NS_MEMORY="$PWD/target/trustzone/nonsecure-memory.x"
+
+run "clippy (embedded)"        cargo clippy --workspace --exclude firmware --exclude firmware-ns --exclude rsk-wipe -- -D warnings
+run "clippy (S/wipe)"          env BOARD=waveshare-one cargo clippy -p firmware -p rsk-wipe -- -D warnings # roster: scoped
+run "clippy (NS)"              cargo clippy -p firmware-ns -- -D warnings # roster: scoped
+# Every host row below selects the same way: the whole workspace less the three
+# device binaries outside `crates/`. `firmware`, `firmware-ns` and `rsk-wipe` are
 # thumbv8m-only, so a host target cannot build them; nothing else is excluded.
-run "clippy (host tests)"      cargo clippy --workspace --exclude firmware --exclude rsk-wipe --target "$HOST" --all-targets -- -D warnings
+run "clippy (host tests)"      cargo clippy --workspace --exclude firmware --exclude firmware-ns --exclude rsk-wipe --target "$HOST" --all-targets -- -D warnings
 # tools/tui is its own workspace (host-only), so the --all/--workspace runs
 # above never see it — gate it explicitly. Its lockfile was scanned by nobody
 # until Dependabot flagged a transitive advisory from the GitHub side.
@@ -427,6 +433,13 @@ run_tests "test (tui)"               cargo test --manifest-path tools/tui/Cargo.
 run "fmt (emu)"                cargo fmt --manifest-path tools/emu/Cargo.toml --check
 run "clippy (emu)"             cargo clippy --manifest-path tools/emu/Cargo.toml --target "$HOST" --all-targets -- -D warnings
 run "clippy (emu conformance)" cargo clippy --manifest-path tools/emu/Cargo.toml --target "$HOST" --all-targets --features fido-conformance -- -D warnings
+picoem_manifest() {
+  cargo metadata --locked --manifest-path tools/emu/Cargo.toml --format-version 1 |
+    python -c 'import json, sys; print(next(p["manifest_path"] for p in json.load(sys.stdin)["packages"] if p["name"] == "rp2350-emu"))'
+}
+
+run "fmt (RP2350 model)"       cargo fmt --manifest-path "$(picoem_manifest)" -p rp2350-emu -p picoem-common -- --check
+run "clippy (RP2350 model)"    cargo clippy --locked --manifest-path "$(picoem_manifest)" -p rp2350-emu -p picoem-common --target "$HOST" --all-features --all-targets -- -D warnings
 # fuzz/ is also its own (nightly) workspace. rustfmt needs no toolchain, so the
 # stable gate can format-check it here. Format fuzz/ with this same stable
 # rustfmt — not the .#fuzz nightly one, which lays imports out differently.
@@ -465,8 +478,8 @@ run "fuzz targets alive"       fuzz_targets_are_alive
 # What these rows still do NOT check, so nobody reads them as more than they are:
 # `missing_docs` is off (an undocumented item is nobody's failure here); a plain
 # `//` comment is not parsed for links, so a dead name in one rots unseen.
-run "rustdoc (host)"           env RUSTDOCFLAGS="-D warnings" cargo doc --workspace --exclude firmware --exclude rsk-wipe --no-deps --target "$HOST"
-run "rustdoc (host all-feat)"  env RUSTDOCFLAGS="-D warnings" cargo doc --workspace --exclude firmware --exclude rsk-wipe --no-deps --all-features --target "$HOST"
+run "rustdoc (host)"           env RUSTDOCFLAGS="-D warnings" cargo doc --workspace --exclude firmware --exclude firmware-ns --exclude rsk-wipe --no-deps --target "$HOST"
+run "rustdoc (host all-feat)"  env RUSTDOCFLAGS="-D warnings" cargo doc --workspace --exclude firmware --exclude firmware-ns --exclude rsk-wipe --no-deps --all-features --target "$HOST"
 # A third permutation, because the two above document only public items and so
 # resolve only the links a public item carries: 28 more were broken at the commit
 # that fixed the first 75, in eight crates, two of them on that commit's clean
@@ -479,8 +492,8 @@ run "rustdoc (host all-feat)"  env RUSTDOCFLAGS="-D warnings" cargo doc --worksp
 # invalidates the other's fingerprint. Deliberately no seconds: the pair timed
 # 8.5 s -> 15.6 s when this line was written and 21 s -> 43 s when re-timed later
 # in the same tree, so a figure here is a claim that does not survive re-reading.
-run "rustdoc (host private)"   env RUSTDOCFLAGS="-D warnings" cargo doc --workspace --exclude firmware --exclude rsk-wipe --no-deps --document-private-items --target "$HOST"
-# `firmware` and `rsk-wipe` are the workspace's only thumbv8m-only members, so
+run "rustdoc (host private)"   env RUSTDOCFLAGS="-D warnings" cargo doc --workspace --exclude firmware --exclude firmware-ns --exclude rsk-wipe --no-deps --document-private-items --target "$HOST"
+# `firmware` and `rsk-wipe` are documented for the device target here, so
 # these two rows take the default target instead of $HOST. `BOARD` because
 # rsk-wipe refuses to guess a flash size, `LED_KIND=none` because `--all-features`
 # turns on `display`, whose compile_error guard demands it. rsk-wipe declares no
@@ -494,7 +507,7 @@ run "rustdoc (emu)"            env RUSTDOCFLAGS="-D warnings" cargo doc --manife
 # exits 0 in 0.1 s — a green row over an empty set, the defect this block exists
 # to prevent. The flag overrides `doc = false`; `--all-targets` is not a `doc` flag.
 run "rustdoc (fuzz)"           env RUSTDOCFLAGS="-D warnings" cargo doc --manifest-path fuzz/Cargo.toml --bins --no-deps --target "$HOST"
-run_tests "test (host)"              cargo test --workspace --exclude firmware --exclude rsk-wipe --target "$HOST"
+run_tests "test (host)"              cargo test --workspace --exclude firmware --exclude firmware-ns --exclude rsk-wipe --target "$HOST"
 # The PQC-advertisement opt-in changes the getInfo shape — test both forms.
 run_tests "test (advertise-pqc)"     cargo test -p rsk-fido --features advertise-pqc --target "$HOST" getinfo
 # fido-conformance suppresses the default EdDSA (-8) advertisement (the
@@ -666,6 +679,7 @@ run "cargo-audit (tui SCA)"    cargo audit --file tools/tui/Cargo.lock
 # The emulator's own host tests — today the USB/IP codec, whose struct layouts are
 # the Linux kernel's and whose framing rule decides how many bytes come off the
 # socket next; both fail silently on the wire rather than loudly.
+run_tests "test (RP2350 model)"      cargo test --locked --manifest-path "$(picoem_manifest)" -p rp2350-emu -p picoem-common --lib --target "$HOST"
 run_tests "test (emu)"               cargo test --manifest-path tools/emu/Cargo.toml --target "$HOST"
 run_tests "test (emu security trace)" cargo test --manifest-path tools/emu/Cargo.toml --target "$HOST" --features security-trace
 run_tests "test (emu conformance)"   cargo test --manifest-path tools/emu/Cargo.toml --target "$HOST" --features fido-conformance
@@ -712,7 +726,7 @@ run "kani roster"              python scripts/kani_gate.py
 # set is derived from the crates now, in both directions.
 run "kani shrink roster"       python scripts/shrink_gate.py
 # Same failure one file closer to home, and the reason the host rows above say
-# `--workspace --exclude firmware --exclude rsk-wipe` rather than naming crates:
+# `--workspace --exclude firmware --exclude firmware-ns --exclude rsk-wipe` rather than naming crates:
 # the list they used to name was written out nine times over four files and had
 # rotted to 16 of 24 in the docs, 20 on the nightly coverage row, 12 in the
 # flake. This holds every copy of that selection to the tree.

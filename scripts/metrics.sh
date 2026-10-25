@@ -48,7 +48,7 @@ identity = {
     "target": host,
     "compiler": subprocess.check_output(["rustc", "-vV"], text=True),
     "commit": subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(),
-    "scope": "raw host workspace; firmware and rsk-wipe excluded; verification helpers retained",
+    "scope": "raw host workspace; firmware, firmware-ns and rsk-wipe excluded; verification helpers retained",
     "instrumentation": "condition outcomes; not MC/DC; match, ? and for require semantic evidence",
     "status": "incomplete",
     "commands": [],
@@ -110,7 +110,7 @@ host_features = sorted(names[node["id"]] + "/" + feature
                        if names[node["id"]].startswith("rsk-") and names[node["id"]] != "rsk-wipe"
                        for feature in set(node["features"]) - base_features.get(node["id"], set()))
 identity["host_feature_args"] = host_features
-selection = ["--workspace", "--exclude", "firmware", "--exclude", "rsk-wipe", "--target", host]
+selection = ["--workspace", "--exclude", "firmware", "--exclude", "firmware-ns", "--exclude", "rsk-wipe", "--target", host]
 feature_args = ["--features", ",".join(host_features)] if host_features else []
 run(["cargo", "llvm-cov", *selection, *feature_args, "--json", "--output-path", str(out / "coverage.json")],
     "tests.log")

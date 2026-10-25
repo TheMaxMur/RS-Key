@@ -66,6 +66,7 @@
 # Internals
 
 - [Architecture](architecture.md)
+  - [TrustZone boundary](trustzone.md)
 - [Host protocol](protocol.md)
 - [Testing](testing.md)
   - [Testing roadmap](testing-roadmap.md)

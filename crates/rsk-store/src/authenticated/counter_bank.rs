@@ -9,6 +9,9 @@ use rsk_secret::Secret;
 use super::{CHECKPOINT_BYTES, Checkpoint, Directory, ENTRY_BYTES, Entry, JournalStatus};
 use super::{MAX_COUNTER_ENTRIES, Partition, RawBank};
 
+#[path = "counter_scan.rs"]
+mod scan;
+
 const VALUE_ALIGNMENT: usize = 16;
 const VALUE_BUFFER: usize = crate::KV_BUF;
 
@@ -50,18 +53,11 @@ impl<F: NorFlash + MultiwriteNorFlash> CounterBank<F> {
     }
 
     fn counter_index(fid: u16) -> Result<usize> {
-        rsk_fs::counter::COUNTER_FIDS
-            .iter()
-            .position(|counter| counter.get() == fid)
-            .ok_or(Error::MemoryFatal)
+        scan::counter_index(fid)
     }
 
     fn padded_length(entry: Entry) -> Result<usize> {
-        let length = entry.length().unwrap_or(0);
-        if length > rsk_fs::MAX_VALUE_BYTES {
-            return Err(Error::MemoryFatal);
-        }
-        Ok(length.div_ceil(VALUE_ALIGNMENT) * VALUE_ALIGNMENT)
+        scan::padded_length(entry)
     }
 
     fn read_entry_value(
@@ -72,29 +68,7 @@ impl<F: NorFlash + MultiwriteNorFlash> CounterBank<F> {
         key: &[u8; 32],
         buffer: &mut [u8; VALUE_BUFFER],
     ) -> Result<Option<usize>> {
-        let padded = Self::padded_length(entry)?;
-        let length = entry.length().unwrap_or(0);
-        let bytes = buffer.get_mut(..padded).ok_or(Error::MemoryFatal)?;
-        self.bank.read(offset, bytes)?;
-        if !bytes
-            .get(length..)
-            .ok_or(Error::MemoryFatal)?
-            .iter()
-            .all(|&byte| byte == 0xFF)
-        {
-            return Ok(None);
-        }
-        if entry
-            .verify(
-                checkpoint.identity,
-                key,
-                bytes.get(..length).ok_or(Error::MemoryFatal)?,
-            )
-            .is_err()
-        {
-            return Ok(None);
-        }
-        Ok(Some(padded))
+        scan::read_entry_value(&mut self.bank, entry, offset, checkpoint, key, buffer)
     }
 
     pub fn scan(
@@ -102,127 +76,7 @@ impl<F: NorFlash + MultiwriteNorFlash> CounterBank<F> {
         key: &[u8; 32],
         directory: &mut Directory<MAX_COUNTER_ENTRIES>,
     ) -> Result<CounterScan> {
-        directory.clear();
-        let header = self.read_header()?;
-        let mut scan = CounterScan {
-            status: JournalStatus::Dirty,
-            checkpoint: None,
-            sequence: None,
-            lower_bound: None,
-            next: 0,
-            locations: [None; MAX_COUNTER_ENTRIES],
-        };
-        if header.iter().all(|&byte| byte == 0xFF) {
-            if self.bank.read_erased(0)? {
-                scan.status = JournalStatus::Empty;
-            }
-            return Ok(scan);
-        }
-        let Ok(checkpoint) = Checkpoint::verify(&header, key) else {
-            return Ok(scan);
-        };
-        if checkpoint.identity.partition != Partition::Counter {
-            return Ok(scan);
-        }
-        scan.checkpoint = Some(checkpoint);
-        scan.lower_bound = Some(checkpoint.sequence);
-        let mut scratch = Secret::<[u8; VALUE_BUFFER]>::zeroed();
-        let mut at = u32::try_from(CHECKPOINT_BYTES).map_err(|_| Error::MemoryFatal)?;
-        for _ in 0..checkpoint.entries {
-            let mut encoded = [0; ENTRY_BYTES];
-            self.bank.read(at, &mut encoded)?;
-            let Ok(entry) = Entry::decode(&encoded) else {
-                return Ok(scan);
-            };
-            let Ok(index) = Self::counter_index(entry.fid()) else {
-                return Ok(scan);
-            };
-            if entry.length().is_none()
-                || directory.push_snapshot(entry, checkpoint.sequence).is_err()
-            {
-                return Ok(scan);
-            }
-            let value_at = at
-                .checked_add(u32::try_from(ENTRY_BYTES).map_err(|_| Error::MemoryFatal)?)
-                .ok_or(Error::MemoryFatal)?;
-            let Some(padded) =
-                self.read_entry_value(entry, value_at, checkpoint, key, scratch.expose_mut())?
-            else {
-                return Ok(scan);
-            };
-            *scan.locations.get_mut(index).ok_or(Error::MemoryFatal)? = Some(CounterLocation {
-                entry,
-                value_offset: value_at,
-            });
-            at = value_at
-                .checked_add(u32::try_from(padded).map_err(|_| Error::MemoryFatal)?)
-                .ok_or(Error::MemoryFatal)?;
-        }
-        if !ct_eq(
-            &directory.digest(checkpoint.identity, key, checkpoint.sequence)?,
-            &checkpoint.digest,
-        ) {
-            return Ok(scan);
-        }
-        scan.sequence = Some(checkpoint.sequence);
-        scan.next = at;
-        while at < self.bank.capacity() {
-            if self.bank.capacity() - at
-                < u32::try_from(ENTRY_BYTES).map_err(|_| Error::MemoryFatal)?
-            {
-                if self.bank.read_erased(at)? {
-                    scan.status = JournalStatus::Complete;
-                }
-                return Ok(scan);
-            }
-            let mut encoded = [0; ENTRY_BYTES];
-            self.bank.read(at, &mut encoded)?;
-            if encoded.iter().all(|&byte| byte == 0xFF) {
-                if self.bank.read_erased(at)? {
-                    scan.status = JournalStatus::Complete;
-                }
-                return Ok(scan);
-            }
-            let Ok(entry) = Entry::decode(&encoded) else {
-                return Ok(scan);
-            };
-            let Ok(index) = Self::counter_index(entry.fid()) else {
-                return Ok(scan);
-            };
-            let sequence = scan
-                .sequence
-                .ok_or(Error::MemoryFatal)?
-                .checked_add(1)
-                .ok_or(Error::MemoryFatal)?;
-            if entry.generation() != sequence {
-                return Ok(scan);
-            }
-            let value_at = at
-                .checked_add(u32::try_from(ENTRY_BYTES).map_err(|_| Error::MemoryFatal)?)
-                .ok_or(Error::MemoryFatal)?;
-            let Some(padded) =
-                self.read_entry_value(entry, value_at, checkpoint, key, scratch.expose_mut())?
-            else {
-                return Ok(scan);
-            };
-            if directory.apply(entry).is_err() {
-                return Ok(scan);
-            }
-            *scan.locations.get_mut(index).ok_or(Error::MemoryFatal)? =
-                entry.length().map(|_| CounterLocation {
-                    entry,
-                    value_offset: value_at,
-                });
-            at = value_at
-                .checked_add(u32::try_from(padded).map_err(|_| Error::MemoryFatal)?)
-                .ok_or(Error::MemoryFatal)?;
-            scan.sequence = Some(sequence);
-            scan.lower_bound = Some(sequence);
-            scan.next = at;
-        }
-        scratch.wipe();
-        scan.status = JournalStatus::Complete;
-        Ok(scan)
+        scan::scan(&mut self.bank, key, directory)
     }
 
     pub fn read_value(

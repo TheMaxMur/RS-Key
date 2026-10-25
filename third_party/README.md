@@ -1,6 +1,6 @@
 # third_party — code from elsewhere
 
-Code that is not RS-Key's, kept in the tree so a checkout has what it needs. Five
+Code that is not RS-Key's, kept in the tree so a checkout has what it needs. Six
 unrelated kinds live here:
 
 - **Four external conformance suites** — `pico-fido-tests/`,
@@ -8,11 +8,27 @@ unrelated kinds live here:
   validated without checking out the upstream repos. They are **not** part of RS-Key's own test
   suite (`tests/`, `cargo test`) — they are the upstream ecosystems' own tests,
   kept runnable against this implementation. Everything below is about them.
-- **A vendored crate carrying a local fork** — `sequential-storage/` plus
+- **Vendored crates carrying local forks** — `sequential-storage/` plus
   `sequential-storage.patch`, wired into `[patch.crates-io]` by the root,
   `fuzz/` and `tools/emu/` manifests. All three, or the emulator runs a
   different KV store from the firmware. The patch file's own header is the
-  record of what each change is and why the fork stays inside `src/map.rs`.
+  record of what each change is and why the fork stays inside `src/map.rs` and `src/lib.rs`.
+  `p384/` plus `p384.patch` specialize 32-bit P-384 field products with a
+  constant-time CIOS product and symmetric square kernels; the same three
+  workspaces resolve that fork.
+  The patch records its origin, unchanged surfaces and host/ARM verification.
+  `p256/` plus `p256.patch` remove repeated borrow-mask conversions from the
+  32-bit field backend and inline its correction, retaining ctutils barriers.
+  Field squaring specializes the upstream symmetric product for eight words
+  with constant cross-term indices and unchanged reduction.
+  All four workspaces, including the TUI, resolve this fork; the patch records
+  its provenance.
+  `crypto-bigint/` plus `crypto-bigint.patch` propagate the protected borrow
+  across P-521's 17-word integers on 32-bit targets without intermediate masks.
+  Other widths keep the upstream word loop. All four workspaces use this fork of 0.7.6; its security fixes and ctutils primitives are retained.
+- **The image emulator** — `picoem/`, the two host libraries and pinned A4
+  ROM used by `tools/emu`. Origin, local isolation changes and checks are
+  recorded in [TrustZone](../docs/trustzone.md#emulator-source-and-isolation-checks).
 - **Generated font data** — `ibm-plex/`, the four-bit coverage tables the
   trusted display draws its text from, emitted by
   `scripts/generate_ui_fonts.py` from the Nix-pinned IBM Plex Sans/Mono files

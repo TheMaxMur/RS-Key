@@ -23,6 +23,8 @@ const OTHER: u32 = 0x5566_7788;
 thread_local! {
     static CANCELS: Cell<usize> = const { Cell::new(0) };
     static PENDING_POLLS: Cell<usize> = const { Cell::new(0) };
+    static COMPUTE_CANCEL: Cell<bool> = const { Cell::new(false) };
+    static EPOCH: Cell<u32> = const { Cell::new(0) };
 }
 
 fn release_presence() -> bool {
@@ -89,6 +91,12 @@ impl Handler {
 }
 
 impl MsgHandler for Handler {
+    fn session_epoch() -> u32 {
+        EPOCH.with(Cell::get)
+    }
+    fn cancel_processing() -> bool {
+        COMPUTE_CANCEL.with(Cell::get)
+    }
     async fn handle_msg(&mut self, cid: u32, data: &[u8], out: &mut [u8]) -> usize {
         self.requests.push((cid, CTAPHID_MSG, data.to_vec()));
         self.reply(out).await
@@ -137,7 +145,17 @@ fn with_hid(
     reads: impl IntoIterator<Item = Read>,
     test: impl FnOnce(&mut CtapHid<'_, TestDriver, Handler>, &Trace),
 ) {
+    with_hid_handler(Handler::default(), reads, test);
+}
+
+fn with_hid_handler<H: MsgHandler>(
+    handler: H,
+    reads: impl IntoIterator<Item = Read>,
+    test: impl FnOnce(&mut CtapHid<'_, TestDriver, H>, &Trace),
+) {
     CANCELS.with(|count| count.set(0));
+    COMPUTE_CANCEL.with(|enabled| enabled.set(false));
+    EPOCH.with(|epoch| epoch.set(0));
     let trace = Trace::default();
     trace.borrow_mut().reads.extend(reads);
     let mut state = State::new();
@@ -166,8 +184,33 @@ fn with_hid(
         },
     );
     let (reader, writer) = io.split();
-    let mut hid = CtapHid::new(reader, writer, Handler::default(), || false, cancel);
+    let mut hid = CtapHid::new(reader, writer, handler, || false, cancel);
     test(&mut hid, &trace);
+}
+
+#[test]
+fn a_legacy_handler_keeps_compute_cancel_disabled() {
+    struct Legacy;
+    impl MsgHandler for Legacy {
+        async fn handle_msg(&mut self, _: u32, _: &[u8], _: &mut [u8]) -> usize {
+            0
+        }
+        async fn handle_cbor(&mut self, _: u32, _: &[u8], out: &mut [u8]) -> usize {
+            Timer::after_millis(KEEPALIVE_MS / 2).await;
+            out[..2].copy_from_slice(&[0x90, 0]);
+            2
+        }
+        fn reset_app_selection(&mut self) {}
+    }
+    let reads =
+        frames(OWNER, CTAPHID_CBOR, &[1])
+            .into_iter()
+            .chain(frames(OWNER, CTAPHID_CANCEL, &[]));
+    with_hid_handler(Legacy, reads, |hid, trace| {
+        let _ = block_on(select(hid.run(), Timer::after_millis(KEEPALIVE_MS)));
+        assert_eq!(responses(trace), [(OWNER, CTAPHID_CBOR, vec![0x90, 0])]);
+        assert_eq!(CANCELS.with(Cell::get), 0);
+    });
 }
 
 fn responses(trace: &Trace) -> Vec<(u32, u8, Vec<u8>)> {
@@ -403,6 +446,139 @@ fn processing_keepalives_do_not_consume_the_pipelined_next_command() {
                 (OTHER, CTAPHID_CBOR, vec![0x90, 0]),
             ]
         );
+    });
+}
+
+#[test]
+fn compute_cancel_answers_the_original_request_and_preserves_the_next_request() {
+    let reads = frames(OWNER, CTAPHID_CBOR, &[1])
+        .into_iter()
+        .chain(frames(OTHER, CTAPHID_CANCEL, &[]))
+        .chain(frames(OWNER, CTAPHID_CANCEL, &[]))
+        .chain(frames(OTHER, CTAPHID_CBOR, &[2]));
+    with_hid(reads, |hid, trace| {
+        COMPUTE_CANCEL.with(|enabled| enabled.set(true));
+        hid.handler.reply_delay_ms = Some(2 * KEEPALIVE_MS);
+        let _ = block_on(select(hid.run(), Timer::after_millis(5 * KEEPALIVE_MS)));
+        let cbor: Vec<_> = responses(trace)
+            .into_iter()
+            .filter(|(_, cmd, _)| *cmd == CTAPHID_CBOR)
+            .collect();
+        assert_eq!(
+            cbor,
+            [
+                (OWNER, CTAPHID_CBOR, vec![CTAP_KEEPALIVE_CANCEL]),
+                (OTHER, CTAPHID_CBOR, vec![0x90, 0])
+            ]
+        );
+        assert_eq!(CANCELS.with(Cell::get), 1);
+        assert_eq!(hid.handler.requests.len(), 2);
+        assert!(hid.pending_bytes.expose().iter().all(|&byte| byte == 0));
+    });
+}
+
+#[test]
+fn compute_watch_preserves_every_fragment_of_a_pipelined_request() {
+    let body = vec![2; 100];
+    let reads =
+        frames(OWNER, CTAPHID_CBOR, &[1])
+            .into_iter()
+            .chain(frames(OTHER, CTAPHID_CBOR, &body));
+    with_hid(reads, |hid, trace| {
+        COMPUTE_CANCEL.with(|enabled| enabled.set(true));
+        hid.handler.wait_for_keepalive = Some(trace.clone());
+        let _ = block_on(select(hid.run(), Timer::after_millis(3 * KEEPALIVE_MS)));
+        assert_eq!(
+            hid.handler.requests,
+            [(OWNER, CTAPHID_CBOR, vec![1]), (OTHER, CTAPHID_CBOR, body)]
+        );
+        assert_eq!(
+            responses(trace)
+                .iter()
+                .filter(|(_, cmd, _)| *cmd == CTAPHID_CBOR)
+                .count(),
+            2
+        );
+    });
+}
+
+#[test]
+fn a_new_epoch_drops_the_old_reply_and_channel_lock() {
+    with_hid(frames(OWNER, CTAPHID_CBOR, &[1]), |hid, trace| {
+        COMPUTE_CANCEL.with(|enabled| enabled.set(true));
+        hid.handler.reply_delay_ms = Some(2 * KEEPALIVE_MS);
+        hid.lock
+            .arm(OWNER, LOCK_MAX_SECONDS, Instant::now().as_millis());
+        let change = async {
+            Timer::after_millis(KEEPALIVE_MS / 2).await;
+            EPOCH.with(|epoch| epoch.set(1));
+            Timer::after_millis(2 * KEEPALIVE_MS).await;
+            trace
+                .borrow_mut()
+                .reads
+                .extend(frames(OTHER, CTAPHID_CBOR, &[2]));
+            Timer::after_millis(3 * KEEPALIVE_MS).await;
+        };
+        let _ = block_on(select(hid.run(), change));
+        let cbor: Vec<_> = responses(trace)
+            .into_iter()
+            .filter(|(_, cmd, _)| *cmd == CTAPHID_CBOR)
+            .collect();
+        assert_eq!(cbor, [(OTHER, CTAPHID_CBOR, vec![0x90, 0])]);
+    });
+}
+
+#[test]
+fn a_new_sessions_packet_arriving_before_old_work_finishes_is_preserved() {
+    with_hid(frames(OWNER, CTAPHID_CBOR, &[1]), |hid, trace| {
+        COMPUTE_CANCEL.with(|enabled| enabled.set(true));
+        hid.handler.reply_delay_ms = Some(2 * KEEPALIVE_MS);
+        let change = async {
+            Timer::after_millis(KEEPALIVE_MS / 2).await;
+            EPOCH.with(|epoch| epoch.set(1));
+            trace
+                .borrow_mut()
+                .reads
+                .extend(frames(OTHER, CTAPHID_CBOR, &[2]));
+            Timer::after_millis(5 * KEEPALIVE_MS).await;
+        };
+        let _ = block_on(select(hid.run(), change));
+        let cbor: Vec<_> = responses(trace)
+            .into_iter()
+            .filter(|(_, cmd, _)| *cmd == CTAPHID_CBOR)
+            .collect();
+        assert_eq!(cbor, [(OTHER, CTAPHID_CBOR, vec![0x90, 0])]);
+    });
+}
+
+#[test]
+fn an_unchanged_epoch_keeps_the_channel_lock_in_the_bulk_loop() {
+    with_hid(frames(OTHER, CTAPHID_PING, &[1]), |hid, trace| {
+        hid.lock
+            .arm(OWNER, LOCK_MAX_SECONDS, Instant::now().as_millis());
+        drain_ready(hid.run());
+        assert_eq!(
+            responses(trace),
+            [(OTHER, CTAPHID_ERROR, vec![ERR_CHANNEL_BUSY])]
+        );
+    });
+}
+
+#[test]
+fn a_reset_while_idle_clears_the_old_lock_before_the_first_new_packet() {
+    with_hid([], |hid, trace| {
+        hid.lock
+            .arm(OWNER, LOCK_MAX_SECONDS, Instant::now().as_millis());
+        let mut run = core::pin::pin!(hid.run());
+        let mut cx = Context::from_waker(Waker::noop());
+        assert!(core::future::Future::poll(run.as_mut(), &mut cx).is_pending());
+        EPOCH.with(|epoch| epoch.set(1));
+        trace
+            .borrow_mut()
+            .reads
+            .extend(frames(OTHER, CTAPHID_PING, &[1]));
+        assert!(core::future::Future::poll(run.as_mut(), &mut cx).is_pending());
+        assert_eq!(responses(trace), [(OTHER, CTAPHID_PING, vec![1])]);
     });
 }
 

@@ -51,6 +51,8 @@ const ST_SETUP_REC: u32 = 1 << 17;
 const ST_CONNECTED: u32 = 1 << 16;
 const ST_RX_OVERFLOW: u32 = 1 << 26;
 const ST_VBUS_DETECTED: u32 = 1 << 0;
+const ST_SUSPENDED: u32 = 1 << 4;
+const ST_RESUME: u32 = 1 << 11;
 /// Bits a write of 1 clears (everything but the live status fields).
 const ST_W1C: u32 = 0xFF8F_1810;
 
@@ -216,10 +218,26 @@ impl UsbCore {
 
     /// The device presents its pull-up to the host.
     pub fn attached(&self) -> bool {
-        self.main_ctrl & MAIN_CTRL_CONTROLLER_EN != 0
+        self.host_vbus
+            && self.main_ctrl & MAIN_CTRL_CONTROLLER_EN != 0
             && self.main_ctrl & MAIN_CTRL_HOST_NDEVICE == 0
             && self.sie_ctrl & SIE_CTRL_PULLUP_EN != 0
             && self.usb_muxing & 0x9 == 0x9 // TO_PHY | SOFTCON
+    }
+
+    pub fn fatal_fenced(&self) -> bool {
+        !self.attached()
+            && self.inte == 0
+            && (0..16).all(|ep| {
+                [true, false].into_iter().all(|input| {
+                    self.rd32(Self::buf_ctrl_off(ep, input)) & (BC_AVAILABLE | (BC_AVAILABLE << 16))
+                        == 0
+                })
+            })
+            && self
+                .dpram
+                .get(0x100..)
+                .is_some_and(|payload| payload.iter().all(|byte| *byte == 0))
     }
 
     fn sie_status_value(&self) -> u32 {
@@ -237,6 +255,8 @@ impl UsbCore {
         let s = self.sie_status_value();
         let mut r = 0;
         let map = [
+            (ST_SUSPENDED, IN_DEV_SUSPEND),
+            (ST_RESUME, IN_DEV_RESUME),
             (ST_SETUP_REC, IN_SETUP_REQ),
             (ST_BUS_RESET, IN_BUS_RESET),
             (ST_VBUS_DETECTED, IN_VBUS_DETECT),
@@ -417,12 +437,20 @@ impl UsbCore {
 
     /// Bus reset from the host (SE0 >= 2.5 us).
     pub fn host_bus_reset(&mut self, cycle: u64) {
+        self.sie_status &= !(ST_SUSPENDED | ST_RESUME);
         self.sie_status |= ST_BUS_RESET;
         if !self.reset_seen {
             self.lat_conn = true;
         }
         self.reset_seen = true;
         self.note(cycle, "host: bus reset".into());
+    }
+
+    pub fn host_connection(&mut self, connected: bool, cycle: u64) {
+        self.host_vbus = connected;
+        self.sie_status |= if connected { ST_RESUME } else { ST_SUSPENDED };
+        self.lat_conn = true;
+        self.note(cycle, format!("host: connected={connected}"));
     }
 
     /// Start of frame.

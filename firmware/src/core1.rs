@@ -86,6 +86,8 @@ static BUSY: AtomicBool = AtomicBool::new(false);
 /// SRAM load per spin keeps it off the spinlock and (nearly) off XIP, instead
 /// of hammering both through the Mutex on every spurious wake.
 static JOB_PENDING: AtomicBool = AtomicBool::new(false);
+static STARTED: AtomicBool = AtomicBool::new(false);
+static XIP_PAUSE: rsk_store::xip_pause::Pause = rsk_store::xip_pause::Pause::new();
 
 /// Core1's stack. The deep frame is `passes_fermat_base2` → `modexp_priv`
 /// (~6 KiB of fixed buffers); 16 KiB leaves comfortable headroom for the
@@ -140,7 +142,50 @@ pub fn stats() -> [u8; 32] {
 pub fn spawn(core1: Peri<'static, CORE1>) {
     let stack = CORE1_STACK.init_with(Stack::new);
     let floor = stack.mem.as_ptr() as u32;
+    STARTED.store(true, Ordering::Release);
     spawn_core1(core1, stack, move || core1_main(floor));
+}
+
+/// Run before core1 starts or after its dedicated SRAM park acknowledgment;
+/// a busy core can decline without blocking the worker indefinitely.
+pub fn with_xip_idle<R>(action: impl FnOnce() -> R) -> Option<R> {
+    if !STARTED.load(Ordering::Acquire) {
+        return Some(action());
+    }
+    if BUSY.load(Ordering::Acquire) || !XIP_PAUSE.request_park() {
+        return None;
+    }
+    cortex_m::asm::sev();
+    let deadline = embassy_time::Instant::now() + embassy_time::Duration::from_millis(1);
+    while !XIP_PAUSE.is_parked() {
+        if embassy_time::Instant::now() >= deadline && XIP_PAUSE.cancel() {
+            return None;
+        }
+    }
+    struct Resume;
+    impl Drop for Resume {
+        fn drop(&mut self) {
+            assert!(XIP_PAUSE.release());
+            cortex_m::asm::sev();
+        }
+    }
+    let _resume = Resume;
+    Some(action())
+}
+
+// SAFETY: startup copies this section into executable read-only SRAM. The ACK
+// is published only after interrupts are masked; no flash call occurs before release.
+#[unsafe(link_section = ".data.ram_func")]
+#[inline(never)]
+fn service_xip_pause() {
+    cortex_m::interrupt::free(|_| {
+        if XIP_PAUSE.acknowledge() {
+            while XIP_PAUSE.is_parked() {
+                core::hint::spin_loop();
+            }
+            assert!(XIP_PAUSE.finish());
+        }
+    });
 }
 
 /// Scrub and drop any primes still sitting in the mailbox.
@@ -233,6 +278,8 @@ const SCRUB_WAIT_ITERS: u32 = 2_000_000;
 
 /// Core1 entry: wait for a job, search until satisfied or told to stop, repeat.
 fn core1_main(stack_floor: u32) -> ! {
+    #[cfg(rsk_trustzone_prototype)]
+    crate::trustzone::mpu::secure();
     // This stack is a plain array in `.bss`, so an overflow lands in whatever the
     // linker put below it — flip-link only guards core0's, the one at the edge of
     // RAM. MSPLIM traps the SP decrement itself, so a frame big enough to step
@@ -249,6 +296,7 @@ fn core1_main(stack_floor: u32) -> ! {
         seed: Secret::zeroed(),
     };
     loop {
+        service_xip_pause();
         // The cheap idle gate: one SRAM atomic, no lock (see JOB_PENDING).
         if !JOB_PENDING.load(Ordering::Acquire) {
             // STOP up means core0 has assembled and drained: anything still

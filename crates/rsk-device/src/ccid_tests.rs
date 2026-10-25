@@ -468,6 +468,24 @@ fn scrub_wipes_the_response_buffer() {
     assert!(ccid.resp.iter().all(|&b| b == 0));
 }
 
+#[test]
+fn the_board_wipe_receives_the_whole_response_including_its_dirty_tail() {
+    let env = Env::new();
+    let mut ccid = env.ccid();
+    ccid.handle_apdu(&select(rsk_mgmt::MANAGEMENT_AID), 0);
+    let selected = ccid.disp.current();
+    ccid.resp.fill(0xa5);
+    let mut received = 0;
+    ccid.scrub_with(|bytes| {
+        received = bytes.len();
+        assert!(bytes.iter().all(|&byte| byte == 0xa5));
+        bytes.fill(0);
+    });
+    assert_eq!(received, RESP_BUILD + 2);
+    assert!(ccid.resp.iter().all(|&byte| byte == 0));
+    assert_eq!(ccid.disp.current(), selected);
+}
+
 /// Whether `applet` itself reports PIN reference `p2` verified: an empty VERIFY
 /// handed to the applet, not through the dispatcher, whose next SELECT would
 /// re-lock the status and hide a wipe that missed it.
@@ -2748,3 +2766,6 @@ fn a_refused_otp_config_command_preserves_the_status_and_storage() {
 
 #[path = "factory_restart_tests.rs"]
 mod factory_restarts;
+
+#[path = "ccid_transport_session_tests.rs"]
+mod transport_session;

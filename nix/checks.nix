@@ -41,7 +41,7 @@ in
     buildPhase = ''
       runHook preBuild
       cargo test --offline --frozen --target ${hostTarget} \
-        --workspace --exclude firmware --exclude rsk-wipe
+        --workspace --exclude firmware --exclude firmware-ns --exclude rsk-wipe
       runHook postBuild
     '';
     installPhase = "touch $out";

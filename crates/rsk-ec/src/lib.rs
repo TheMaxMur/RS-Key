@@ -22,8 +22,9 @@
 //! `k·G` (the ECDSA nonce commitment) and `d·G` (public-key derivation) are both
 //! *fixed-base* on `G`, so a width-4 comb over a `build.rs`-precomputed table runs
 //! them several× faster than the crate's generic `mul_by_generator` on the in-order
-//! Cortex-M33 — and **bit-identical** to it (KAT-checked in `tests`). ECDH is
-//! variable-base (`d·P`) and stays on the crate, untouched.
+//! Cortex-M33 — and **bit-identical** to it (KAT-checked in `tests`). P-384 ECDH
+//! and P-521 ECDH use constant-time Jacobian multipliers; other variable-base
+//! curves use their upstream multiplier.
 //!
 //! The ECDSA signers reproduce `ecdsa` 0.17's `sign_prehashed_rfc6979` body with the
 //! comb spliced in for `R = k·G`, so their output is byte-for-byte the crate's — the
@@ -32,29 +33,36 @@
 
 pub mod pubdo;
 
+mod comb_p384;
+mod comb_p384_params;
+mod comb_p521;
+mod comb_p521_params;
 mod curve;
+mod ecdh_p384;
+mod ecdh_p521;
 mod error;
 mod key;
+mod nonce_p384;
 mod rng;
+mod sign_p521_deterministic;
 
+pub use comb_p384::comb_mul_p384;
+pub use comb_p521::comb_mul_p521;
 pub use curve::Curve;
 pub use error::EcError;
 pub use key::{MAX_EC_POINT, MAX_EC_SIG, PrivKey};
 pub use pubdo::{MAX_EC_PUBDO, make_ec_pubkey_do};
 pub use rng::Rng;
 
-// Fixed-base comb tables (`build.rs`-generated): 16 entries `T[i]`, affine `(x, y)`
-// big-endian; `T[0]` is an unused identity sentinel.
-include!(concat!(env!("OUT_DIR"), "/gen_comb_p521.rs"));
+// Generated affine coordinates; P-384 keeps centered half-tables and a correction.
+// P-521 owns its signed tables; P-256 and secp256k1 keep identity sentinels.
 include!(concat!(env!("OUT_DIR"), "/gen_comb_p256.rs"));
-include!(concat!(env!("OUT_DIR"), "/gen_comb_p384.rs"));
+include!(concat!(env!("OUT_DIR"), "/gen_signed_p384.rs"));
 include!(concat!(env!("OUT_DIR"), "/gen_comb_k256.rs"));
 
 /// Comb width / bits-per-block — MUST match `build.rs`.
 const COMB_W: usize = 4;
-const COMB_D_P521: usize = 131; // P-521: ceil(521 / 4)
 const COMB_D_P256: usize = 64; // P-256: ceil(256 / 4)
-const COMB_D_P384: usize = 96; // P-384: ceil(384 / 4)
 const COMB_D_K256: usize = 64; // secp256k1: ceil(256 / 4)
 
 /// Emits `<name>(k) -> k·G` for one curve via a width-`COMB_W` Lim–Lee comb over its
@@ -117,9 +125,8 @@ macro_rules! comb_mul_fn {
     };
 }
 
-comb_mul_fn!(comb_mul_p521, p521, GEN_COMB, COMB_D_P521, 521, 66);
 comb_mul_fn!(comb_mul_p256, p256, GEN_COMB_P256, COMB_D_P256, 256, 32);
-comb_mul_fn!(comb_mul_p384, p384, GEN_COMB_P384, COMB_D_P384, 384, 48);
+
 comb_mul_fn!(comb_mul_k256, k256, GEN_COMB_K256, COMB_D_K256, 256, 32);
 
 /// A prehash as `N`-byte field bytes, exactly as `ecdsa`'s `bits2field` for a
@@ -172,26 +179,17 @@ pub fn sign_p256(d: &p256::Scalar, prehash: &[u8]) -> Option<p256::ecdsa::Signat
 /// the fixed-base [`comb_mul_p384`] — byte-identical to `p384::ecdsa::SigningKey::
 /// sign_prehash`.
 pub fn sign_p384(d: &p384::Scalar, prehash: &[u8]) -> Option<p384::ecdsa::Signature> {
-    use p384::NistP384;
-    use p384::elliptic_curve::Curve;
     use p384::elliptic_curve::PrimeField;
     use p384::elliptic_curve::bigint::U384;
     use p384::elliptic_curve::ops::Reduce;
     use p384::elliptic_curve::point::AffineCoordinates;
 
     let fb = to_field::<48>(prehash);
-    let order = NistP384::ORDER;
-    let mut kgen = rfc6979::KGenerator::<<NistP384 as ecdsa::DigestAlgorithm>::Digest, U384>::new(
-        &d.to_repr(),
-        &fb,
-        &[],
-        &order,
-    );
-    let mut kb = p384::FieldBytes::default();
-    kgen.fill_next_k(&mut kb);
+    let mut kb = rsk_secret::Secret::<[u8; 48]>::zeroed();
+    nonce_p384::fill_nonce(d, &fb, kb.expose_mut());
     #[cfg(test)]
-    tests::override_nonce(&mut kb);
-    let k = Option::<p384::Scalar>::from(p384::Scalar::from_repr(kb))?;
+    tests::override_nonce(kb.expose_mut());
+    let k = Option::<p384::Scalar>::from(p384::Scalar::from_repr((*kb.expose()).into()))?;
     let k_inv = Option::<p384::Scalar>::from(k.invert())?;
     let reduce = |b: &[u8]| <p384::Scalar as Reduce<U384>>::reduce(&U384::from_be_slice(b));
     let z = reduce(&fb);
@@ -278,3 +276,11 @@ pub fn sign_p521(
 #[cfg(test)]
 #[path = "tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "../../../third_party/p384/src/arithmetic/montgomery32.rs"]
+mod p384_montgomery32;
+
+#[cfg(test)]
+#[path = "p384_montgomery32_tests.rs"]
+mod p384_montgomery32_tests;

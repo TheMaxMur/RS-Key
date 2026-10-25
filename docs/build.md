@@ -15,6 +15,10 @@ The middle step embeds the [partition table](#the-partition-table); skip it and
 the key ships with its storage exposed to the bootloader. `nix build .#firmware`
 folds all three together.
 
+The embedded target selects RustCrypto 0.11's compact SHA-2 backend in
+`.cargo/config.toml`. Looped rounds fit the Cortex-M33 XIP cache better than
+unrolled SHA-512, reducing P-384 signing latency and image size.
+
 ```mermaid
 flowchart TD
     knobs["env knobs + cargo features"] --> build["cargo build (or nix build)"]
@@ -328,3 +332,9 @@ flowchart TD
 - The two UF2 flavors on a release build of this repo:
   `firmware.uf2` (touch) and `firmware-test.uf2` (no-touch). `scripts/check.sh`
   builds both.
+
+## TrustZone transport prototype
+
+The [TrustZone page](trustzone.md#prototype-build-and-measurements) contains the
+prototype's build commands, scope and recorded checks. Ordinary firmware builds
+do not enable the experimental split.

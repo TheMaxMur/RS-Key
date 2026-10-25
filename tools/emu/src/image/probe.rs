@@ -4,8 +4,45 @@
 //! Laboratory access to the running cores and their SRAM, outside the USB path.
 
 use super::Chip;
-use crate::image::inspect::{PAINT, SRAM_BASE, SRAM_LEN, Stack};
+use crate::image::inspect::{PAINT, SRAM_BASE, SRAM_LEN, Stack, Stacks};
 use crate::image::qspi::Qmi;
+
+pub(super) fn stack_registers(
+    core: &rp2350_emu::CortexM33,
+    secure: bool,
+) -> Result<(u32, u32), String> {
+    // picoem swaps the pairs on each transition; *_ns holds the inactive bank.
+    let active = core.is_secure() == secure;
+    let control = if active {
+        core.regs.control
+    } else {
+        core.regs.control_ns
+    };
+    if control & 2 != 0 {
+        return Err("process-stack measurement is unsupported".into());
+    }
+    Ok(if active {
+        (core.regs.sp(), core.regs.msplim)
+    } else {
+        (core.regs.msp_ns, core.regs.msplim_ns)
+    })
+}
+
+fn nonsecure_region(core: &rp2350_emu::CortexM33, start: u32, end: u32) -> Option<u32> {
+    if core.ppb.sau_ctrl & 1 == 0 {
+        return None;
+    }
+    let mut matches =
+        core.ppb.sau_regions.iter().filter(|&&(base, limit)| {
+            limit & 1 != 0 && (base & !31) <= end && start <= (limit | 31)
+        });
+    let &(base, limit) = matches.next()?;
+    if matches.next().is_some() {
+        return None;
+    }
+    let base = base & !31;
+    (limit & 3 == 1 && base <= start && end <= (limit | 31)).then_some(base)
+}
 
 impl Chip {
     pub fn measuring(&self) -> bool {
@@ -29,6 +66,9 @@ impl Chip {
     }
 
     pub fn begin_measurement(&mut self) -> Result<String, String> {
+        if !self.emu.core(1).is_secure() {
+            return Err("Non-secure core1 stack measurement is unsupported".into());
+        }
         let exact = |name: &str| {
             self.elf
                 .symbols
@@ -47,39 +87,58 @@ impl Chip {
         ];
         let mut stacks = Vec::new();
         for (c, (symbol_low, top)) in bounds.into_iter().enumerate() {
-            let low = self.emu.core(c).regs.msplim;
-            let sp = self.emu.core(c).regs.sp();
-            if !(SRAM_BASE..SRAM_BASE + SRAM_LEN).contains(&low)
-                || low < symbol_low
-                || top > SRAM_BASE + SRAM_LEN
-                || !(low..=top).contains(&sp)
-            {
-                return Err(format!("core {c} is outside its ELF stack: {sp:#x}"));
-            }
-            stacks.push(Stack {
+            let (sp, low) = stack_registers(self.emu.core(c), true)?;
+            stacks.push(Stack::checked(
                 low,
                 top,
-                initial_sp: sp,
-                min_sp: sp,
-            });
+                sp,
+                symbol_low,
+                &format!("core {c}"),
+            )?);
         }
-        for stack in &stacks {
+        let stacks = Stacks {
+            secure: [stacks[0].clone(), stacks[1].clone()],
+            nonsecure: self.nonsecure_stack()?,
+        };
+        let measured: Vec<_> = stacks
+            .secure
+            .iter()
+            .chain(stacks.nonsecure.iter())
+            .collect();
+        for (index, stack) in measured.iter().enumerate() {
+            if measured[..index]
+                .iter()
+                .any(|other| stack.low < other.top && other.low < stack.top)
+            {
+                return Err("ELF stack ranges overlap".into());
+            }
+        }
+        for stack in measured {
             for a in stack.low..stack.initial_sp {
                 self.emu.bus.memory.sram_write8(a - SRAM_BASE, PAINT);
             }
         }
-        self.stacks = Some([stacks[0].clone(), stacks[1].clone()]);
+        self.stacks = Some(stacks);
         Ok(format!("cycle={}", self.cycles()))
     }
 
     pub fn end_measurement(&mut self) -> Result<String, String> {
         let stacks = self.stacks.take().ok_or("no measurement is active")?;
         let mut report = vec![format!("cycle={}", self.cycles())];
-        for (c, stack) in stacks.iter().enumerate() {
+        let mut measured: Vec<_> = stacks
+            .secure
+            .iter()
+            .enumerate()
+            .map(|(c, stack)| (format!("core{c}"), stack))
+            .collect();
+        if let Some(stack) = &stacks.nonsecure {
+            measured.push(("ns0".into(), stack));
+        }
+        for (name, stack) in measured {
             let touched = (stack.low..stack.initial_sp)
                 .find(|a| self.emu.bus.memory.sram_read8(*a - SRAM_BASE) != PAINT);
             report.push(format!(
-                "core{c}_low={} core{c}_top={} core{c}_min={} core{c}_used={} core{c}_painted={}",
+                "{name}_low={} {name}_top={} {name}_min={} {name}_used={} {name}_painted={}",
                 stack.low,
                 stack.top,
                 stack.min_sp,
@@ -88,6 +147,38 @@ impl Chip {
             ));
         }
         Ok(report.join(" "))
+    }
+
+    fn nonsecure_stack(&self) -> Result<Option<Stack>, String> {
+        let core = self.emu.core(0);
+        let vector = core.ppb.ns.vtor;
+        let bytes = self.elf.segments.iter().find_map(|segment| {
+            let offset = vector.checked_sub(segment.paddr)? as usize;
+            segment.data.get(offset..offset + 8)
+        });
+        let Some(bytes) = bytes else {
+            return if core.is_secure() && self.fault_stop.is_none() {
+                Ok(None)
+            } else {
+                Err("ELF has no Non-secure vectors".into())
+            };
+        };
+        if nonsecure_region(core, vector, vector.saturating_add(7)).is_none() {
+            return Err("ELF vectors are outside Non-secure SAU memory".into());
+        }
+        let top = u32::from_le_bytes(bytes[..4].try_into().unwrap());
+        let last = top.checked_sub(1).ok_or("invalid Non-secure stack top")?;
+        let base =
+            nonsecure_region(core, last, last).ok_or("Non-secure stack has no SAU region")?;
+        let (sp, low) = stack_registers(core, false)?;
+        if !top.is_multiple_of(8) {
+            return Err("Non-secure stack top is not aligned".into());
+        }
+        let stack = Stack::checked(low, top, sp, base, "ns0")?;
+        if nonsecure_region(core, low, last).is_none() {
+            return Err("Non-secure stack is outside unambiguous SAU memory".into());
+        }
+        Ok(Some(stack))
     }
 
     pub fn scan_sram(&self, pattern: &[u8]) -> String {

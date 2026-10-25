@@ -4,6 +4,22 @@
 use super::*;
 
 #[test]
+fn abort_requires_slot_zero_an_empty_body_and_zero_reserved_fields() {
+    let valid = msg(CCID_ABORT, 0xa6, &[]);
+    assert_eq!(abort_sequence(&valid), Some(0xa6));
+    for offset in 0..HEADER {
+        if offset == 6 {
+            continue;
+        }
+        let mut bad = valid.clone();
+        bad[offset] ^= 1;
+        assert_eq!(abort_sequence(&bad), None, "offset {offset}");
+    }
+    assert_eq!(abort_sequence(&valid[..HEADER - 1]), None);
+    assert_eq!(abort_sequence(&msg(CCID_ABORT, 0xa6, &[1])), None);
+}
+
+#[test]
 fn a_handler_without_a_pinpad_rejects_secure_without_writing_a_reply() {
     struct NoPinpad;
     impl ApduHandler for NoPinpad {

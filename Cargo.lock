@@ -430,9 +430,7 @@ checksum = "460fbee9c2c2f33933d720630a6a0bac33ba7053db5344fac858d4b8952d77d5"
 
 [[package]]
 name = "crypto-bigint"
-version = "0.7.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1a52aa3fcda4e6302a9f48734f234d35d4721b96f8fe07d073f07ce9df4f0271"
+version = "0.7.6"
 dependencies = [
  "cpubits",
  "ctutils",
@@ -474,9 +472,9 @@ dependencies = [
 
 [[package]]
 name = "ctutils"
-version = "0.4.2"
+version = "0.4.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7d5515a3834141de9eafb9717ad39eea8247b5674e6066c404e8c4b365d2a29e"
+checksum = "38d28fb6aa7dd680b3ffd1a3e64e115c177bdba63c0ae7f9cd48129ff05c4fa0"
 dependencies = [
  "cmov",
  "subtle",
@@ -1102,6 +1100,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "firmware-ns"
+version = "0.1.0"
+dependencies = [
+ "cortex-m",
+ "cortex-m-rt",
+ "critical-section",
+ "embassy-executor",
+ "embassy-rp",
+ "embassy-sync",
+ "embassy-time",
+ "embassy-time-driver",
+ "embassy-time-queue-utils",
+ "embassy-usb",
+ "panic-halt",
+ "rp-pac",
+ "rsk-otp",
+ "rsk-phy",
+ "rsk-secret",
+ "rsk-usb",
+ "static_cell",
+]
+
+[[package]]
 name = "fixed"
 version = "1.29.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1688,8 +1709,6 @@ checksum = "c08d65885ee38876c4f86fa503fb49d7b507c2b62552df7c70b2fce627e06381"
 [[package]]
 name = "p256"
 version = "0.14.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d2c9239b2dbc807adbbe147e8cf72ea7450c3a0aabe62cb8e75ff4ec22e1f72a"
 dependencies = [
  "ecdsa",
  "elliptic-curve",
@@ -1701,8 +1720,6 @@ dependencies = [
 [[package]]
 name = "p384"
 version = "0.14.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d17b851e6b3e378ab4ecb07fa2ed23f4d15f075735f8fec9fa1e7bdce5f8301f"
 dependencies = [
  "ecdsa",
  "elliptic-curve",
@@ -2106,6 +2123,7 @@ dependencies = [
  "p256",
  "rsk-mldsa",
  "rsk-secret",
+ "rsk-sha256",
  "rsk-sha512",
  "sha1",
  "sha2 0.10.9",
@@ -2347,6 +2365,16 @@ name = "rsk-secret"
 version = "0.1.0"
 dependencies = [
  "zeroize",
+]
+
+[[package]]
+name = "rsk-sha256"
+version = "0.1.0"
+dependencies = [
+ "hkdf 0.12.4",
+ "hmac 0.12.1",
+ "rsk-secret",
+ "sha2 0.10.9",
 ]
 
 [[package]]

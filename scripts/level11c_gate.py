@@ -29,6 +29,7 @@ on the run, so the page cannot be repaired by editing this file.
 import pathlib
 import re
 import sys
+import tomllib
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 PAGE = pathlib.Path("docs/verified-compilation.md")
@@ -84,17 +85,13 @@ def fido_functions() -> tuple[int, int, int]:
 
 
 def boundaries() -> tuple[int, int]:
-    """(every `[[boundary]]` row, the linker-symbol ones).
-
-    Read off the registry's own `id =` lines rather than through a TOML parse: the
-    kinds are a prefix of the id (`import:` / `unit:`) and the linker half is the
-    one whose importing file is the firmware binary, which is what makes it a
-    symbol's ADDRESS rather than a function a compiler could be verified about.
-    """
-    text = (ROOT / "assurance/toolchain.toml").read_text()
-    ids = re.findall(r'^id = "((?:import|export|unit):[^"]+)"', text, re.M)
-    linker = [i for i in ids if i.startswith("import:firmware/src/main.rs:")]
-    return len(ids), len(linker)
+    """Count every crossing and imports whose producer is the linker."""
+    registry = tomllib.loads((ROOT / "assurance/toolchain.toml").read_text())
+    rows = registry["boundary"]
+    producers = {tool["name"] for tool in registry["tool"] if tool["role"] == "linker"}
+    linker = [row for row in rows if row["id"].startswith("import:")
+              and row["provider"] in producers]
+    return len(rows), len(linker)
 
 
 def roster() -> tuple[int, int, int, int]:
@@ -198,9 +195,9 @@ def derived() -> list[tuple[str, int, re.Pattern]]:
         ("unpinned tools", unpinned, re.compile(r"and (\d+) is\s+unpinned")),
         ("TCB categories reached", reached,
          re.compile(r"the registry reaches (\d+) and\s+says\s+why")),
-        ("`[[boundary]]` rows", every, re.compile(r"five of the (\w+) `\[\[boundary\]\]` rows")),
+        ("`[[boundary]]` rows", every, re.compile(r"\w+ of the (\w+) `\[\[boundary\]\]` rows")),
         ("linker-symbol boundaries", linker,
-         re.compile(r"(\w+) of the ten `\[\[boundary\]\]` rows")),
+         re.compile(r"(\w+) of the \w+ `\[\[boundary\]\]` rows")),
         ("check.sh rows", total_rows, re.compile(r"runs (\d+) rows")),
         ("cargo rows", cargo, re.compile(r"(\d+) invoke `cargo`")),
         ("python rows", python, re.compile(r"(\d+) are Python")),

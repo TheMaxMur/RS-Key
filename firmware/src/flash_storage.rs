@@ -6,6 +6,10 @@
 //! the two `sequential-storage` maps, the counter routing and the scrub lap — is
 //! [`rsk_store`], where the fuzzer can cut its power and the emulator can run it.
 
+mod quad;
+mod sha256;
+mod stream;
+
 use core::cell::RefCell;
 use core::ops::Range;
 
@@ -79,6 +83,8 @@ pub type FlashStorage = rsk_store::authenticated::Managed<SharedFlash, MainCache
 #[derive(Clone, Copy)]
 pub struct SharedFlash {
     inner: &'static RefCell<AsyncFlash>,
+    sha256: &'static RefCell<sha256::Engine>,
+    quad: &'static RefCell<quad::Engine>,
 }
 
 impl ErrorType for SharedFlash {
@@ -96,6 +102,21 @@ impl ReadNorFlash for SharedFlash {
         offset: u32,
         bytes: &mut [u8],
     ) -> core::result::Result<(), Self::Error> {
+        if let [byte] = bytes {
+            let _owner = self.inner.borrow_mut();
+            *byte = stream::read_byte(offset)?;
+            return Ok(());
+        }
+        if let [first, second] = bytes {
+            let _owner = self.inner.borrow_mut();
+            [*first, *second] = stream::read_pair(offset)?;
+            return Ok(());
+        }
+        if bytes.len() >= 256 && offset.is_multiple_of(4) && bytes.len().is_multiple_of(4) {
+            self.quad.borrow_mut().ensure_mode();
+            let _owner = self.inner.borrow_mut();
+            return stream::read(offset, bytes);
+        }
         block_on(self.inner.borrow_mut().read(offset, bytes))
     }
     fn capacity(&self) -> usize {
@@ -106,9 +127,23 @@ impl NorFlash for SharedFlash {
     const WRITE_SIZE: usize = <AsyncFlash as NorFlash>::WRITE_SIZE;
     const ERASE_SIZE: usize = <AsyncFlash as NorFlash>::ERASE_SIZE;
     async fn erase(&mut self, from: u32, to: u32) -> core::result::Result<(), Self::Error> {
+        #[cfg(rsk_trustzone_prototype)]
+        {
+            crate::trustzone::mpu::with_flash_code(|| {
+                block_on(self.inner.borrow_mut().erase(from, to))
+            })
+        }
+        #[cfg(not(rsk_trustzone_prototype))]
         block_on(self.inner.borrow_mut().erase(from, to))
     }
     async fn write(&mut self, offset: u32, bytes: &[u8]) -> core::result::Result<(), Self::Error> {
+        #[cfg(rsk_trustzone_prototype)]
+        {
+            crate::trustzone::mpu::with_flash_code(|| {
+                block_on(self.inner.borrow_mut().write(offset, bytes))
+            })
+        }
+        #[cfg(not(rsk_trustzone_prototype))]
         block_on(self.inner.borrow_mut().write(offset, bytes))
     }
 }
@@ -130,12 +165,21 @@ pub fn new_storage(
 ) -> FlashStorage {
     debug_assert!((main_range.end - main_range.start) as usize == MAIN_LEN);
     debug_assert!((counter_range.end - counter_range.start) as usize == COUNTER_LEN);
-    FlashStorage::new_unmounted(
-        SharedFlash { inner: flash },
+    static QUAD: static_cell::StaticCell<RefCell<quad::Engine>> = static_cell::StaticCell::new();
+    let quad = QUAD.init(RefCell::new(quad::Engine::new(flash)));
+    static HASH: static_cell::StaticCell<RefCell<sha256::Engine>> = static_cell::StaticCell::new();
+    let sha256 = HASH.init(RefCell::new(sha256::Engine::new()));
+    FlashStorage::new_unmounted_with_digest(
+        SharedFlash {
+            inner: flash,
+            sha256,
+            quad,
+        },
         main_range,
         counter_range,
         source,
         main_cache,
+        Some(sha256::digest),
     )
 }
 

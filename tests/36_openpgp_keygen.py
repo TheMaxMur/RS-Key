@@ -156,6 +156,9 @@ def main():
 
     def tx(cmd, what, expect=(0x90, 0x00)):
         data, sw1, sw2 = conn.transmit(cmd)
+        while sw1 == 0x61:
+            more, sw1, sw2 = conn.transmit([0x00, 0xC0, 0x00, 0x00, sw2])
+            data.extend(more)
         shown = toHexString(data) if data else ""
         print("%-36s -> %s %02X%02X" % (what, shown[:42], sw1, sw2))
         if expect is not None and (sw1, sw2) != expect:
@@ -254,8 +257,7 @@ def main():
         print(f"  RSA-{rsa_bits} GENERATE raised after {dt:.1f}s: {ex}")
         print("  -> on-device RSA keygen exceeds the reader's timeout; a CCID keepalive")
         print("     (WTX) is needed for RSA generate. EC generate is unaffected.")
-        print("PASS (EC) — RSA generate TIMED OUT, see note above")
-        return 0
+        fail(f"RSA-{rsa_bits} GENERATE did not complete: {ex}")
     dt = time.monotonic() - t0
     print("GENERATE RSA-%d SIG -> %02X%02X  (took %.1fs)" % (rsa_bits, sw1, sw2, dt))
     if (sw1, sw2) != (0x90, 0x00):

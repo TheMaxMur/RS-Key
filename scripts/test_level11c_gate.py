@@ -79,12 +79,12 @@ def test_every_rule_ran(audit):
     [
         ("73% of the foreign half", "70% of the foreign half",
          r"the assembly's share reads '70', the tree says 73"),
-        ("five of the ten `[[boundary]]`", "five of the nine `[[boundary]]`",
-         r"`\[\[boundary\]\]` rows reads 'nine', the tree says 10"),
-        ("five of the ten `[[boundary]]`", "four of the ten `[[boundary]]`",
-         r"linker-symbol boundaries reads 'four', the tree says 5"),
-        ("176 of those carry", "177 of those carry",
-         r"`<S: Storage` sites reads '177', the tree says 176"),
+        ("seven of the 28 `[[boundary]]`", "seven of the 24 `[[boundary]]`",
+         r"`\[\[boundary\]\]` rows reads '24', the tree says 28"),
+        ("seven of the 28 `[[boundary]]`", "six of the 28 `[[boundary]]`",
+         r"linker-symbol boundaries reads 'six', the tree says 7"),
+        ("177 of those carry", "178 of those carry",
+         r"`<S: Storage` sites reads '178', the tree says 177"),
         ("13 registered tools", "12 registered tools",
          r"registered tools reads '12', the tree says 13"),
         ("and 1 is\nunpinned", "and 0 is\nunpinned",
@@ -135,3 +135,30 @@ def test_the_named_row_still_runs_this_guard():
     """
     check = (ROOT / "scripts/check-assurance.sh").read_text()
     assert "python scripts/level11c_gate.py" in check
+
+
+def test_linker_imports_follow_provider_roles_across_source_files(monkeypatch, tmp_path):
+    registry = tmp_path / "assurance" / "toolchain.toml"
+    registry.parent.mkdir()
+    registry.write_text('''
+[[tool]]
+name = "layout-linker"
+role = "linker"
+[[tool]]
+name = "compiler"
+role = "compiler"
+[[boundary]]
+id = "import:new_layout_symbol"
+provider = "layout-linker"
+file = "firmware/src/trustzone/mpu.rs"
+[[boundary]]
+id = "export:probe_marker"
+provider = "compiler"
+file = "firmware/trustzone/nonsecure/src/probe.rs"
+[[boundary]]
+id = "import:compiler_function"
+provider = "compiler"
+file = "firmware/src/core1.rs"
+''')
+    monkeypatch.setattr(g, "ROOT", tmp_path)
+    assert g.boundaries() == (3, 1)

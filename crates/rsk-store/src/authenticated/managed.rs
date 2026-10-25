@@ -46,8 +46,21 @@ impl<F: NorFlash + MultiwriteNorFlash + Clone, C: CacheImpl<u16>> Managed<F, C> 
         source: KeySource,
         cache: fn() -> C,
     ) -> Self {
+        Self::new_unmounted_with_digest(flash, main_range, counter_range, source, cache, None)
+    }
+
+    /// Construct in place with the board's public-metadata SHA-256 backend.
+    #[inline(always)]
+    pub fn new_unmounted_with_digest(
+        flash: F,
+        main_range: Range<u32>,
+        counter_range: Range<u32>,
+        source: KeySource,
+        cache: fn() -> C,
+        digest: Option<super::BankDigest<F>>,
+    ) -> Self {
         Self {
-            active: Authenticated::new(
+            active: Authenticated::new_arms(
                 flash.clone(),
                 main_range.clone(),
                 counter_range.clone(),
@@ -55,6 +68,8 @@ impl<F: NorFlash + MultiwriteNorFlash + Clone, C: CacheImpl<u16>> Managed<F, C> 
                 source,
                 [0; super::EPOCH_BYTES],
                 RootArm::PreOtp,
+                RootArm::PreOtp,
+                digest,
             )
             .ok(),
             ready: false,
@@ -171,6 +186,7 @@ impl<F: NorFlash + MultiwriteNorFlash + Clone, C: CacheImpl<u16>> Managed<F, C> 
         let active = self.active.as_mut().ok_or(Error::MemoryFatal)?;
         active.repair_activation()?;
         active.close_pre_otp()?;
+        active.checkpoint_history()?;
         self.ready = true;
         self.last_error = false;
         Ok(())
@@ -325,6 +341,13 @@ impl<F: NorFlash + MultiwriteNorFlash + Clone, C: CacheImpl<u16>> Storage for Ma
             return self.mount();
         }
         if import.has_activation()? || self.headers()?.iter().any(Option::is_some) {
+            return Err(Error::Blocked);
+        }
+        if self
+            .active
+            .as_ref()
+            .is_some_and(|active| active.main.has_authority())
+        {
             return Err(Error::Blocked);
         }
         if action == StorageAction::Initialize

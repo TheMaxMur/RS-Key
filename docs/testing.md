@@ -69,7 +69,7 @@ committed drawing has drifted from them; its mutation table is
 `thumbv8m`):
 
 ```sh
-nix develop -c cargo test --workspace --exclude firmware --exclude rsk-wipe \
+nix develop -c cargo test --workspace --exclude firmware --exclude firmware-ns --exclude rsk-wipe \
     --target aarch64-apple-darwin
 ```
 
@@ -159,13 +159,13 @@ OUT=target/coverage-decisions
 mkdir -p "$OUT"
 
 CARGO_TARGET_DIR="$OUT/branch-build" cargo llvm-cov --branch \
-    --target "$HOST_TARGET" --workspace --exclude firmware --exclude rsk-wipe \
+    --target "$HOST_TARGET" --workspace --exclude firmware --exclude firmware-ns --exclude rsk-wipe \
     --json --output-path "$OUT/branch.json" -- --test-threads=1
 
 export CARGO_TARGET_DIR="$OUT/condition-build"
 export RUSTFLAGS='-Z coverage-options=condition'
 cargo llvm-cov --target "$HOST_TARGET" \
-    --workspace --exclude firmware --exclude rsk-wipe \
+    --workspace --exclude firmware --exclude firmware-ns --exclude rsk-wipe \
     --json --output-path "$OUT/condition.json" -- --test-threads=1
 cargo llvm-cov report --branch --target "$HOST_TARGET" \
     --html --output-dir "$OUT/condition-html"
@@ -832,11 +832,11 @@ command with it. "Peak" is the tier's `maximum resident set size` under
 
 | Tier | Crates | Harnesses | Covers | Solve | Wall | Peak | Slowest harness |
 |---|---|---|---|---|---|---|---|
-| `pr` | 13 | 70 | 58 | 229 s | 251 s | 2.8 GiB | `rsk-usb::no_buffer_overrun_after_any_single_frame`, 39 s |
+| `pr` | 13 | 75 | 60 | 229 s | 251 s | 2.8 GiB | `rsk-usb::no_buffer_overrun_after_any_single_frame`, 39 s |
 | `state` | 2 | 32 | 39 | 1341 s | 1365 s | 15.3 GiB | `rsk-fido::…_at_call_site`, 6 m 06 s |
-| `all` | 17 | 102 | 87 | 3735 s | 3770 s | 19.0 GiB | `rsk-phy::serialize_parse_roundtrip`, 19 m 07 s |
+| `all` | 17 | 107 | 89 | 3735 s | 3770 s | 19.0 GiB | `rsk-phy::serialize_parse_roundtrip`, 19 m 07 s |
 | `light1` | 4 | 35 | 38 | 528 s | 538 s | 9.3 GiB | `rsk-fido::…_at_call_site`, 5 m 35 s |
-| `light2` | 5 | 29 | 12 | 1289 s | 1300 s | 8.9 GiB | `rsk-rsa::sieve_step_keeps_residues`, 17 m 38 s |
+| `light2` | 5 | 34 | 14 | 1289 s | 1300 s | 8.9 GiB | `rsk-rsa::sieve_step_keeps_residues`, 17 m 38 s |
 | `light3` | 7 | 33 | 36 | 162 s | 176 s | 2.4 GiB | `rsk-usb::no_buffer_overrun_after_any_single_frame`, 36 s |
 | `heavy` | 1 | 5 | 1 | 1785 s | 1788 s | 19.9 GiB | `rsk-phy::serialize_parse_roundtrip`, 18 m 35 s |
 
@@ -873,12 +873,12 @@ shards ran separately in the same session and checked the same harness names as
 `all` did, compared name by name out of the four logs against `all`'s own
 listing, for 3763 s of solving against `all`'s 3735 s. That count was the `all`
 roster **of the 2026-08-26 tree: 89 names**. The same tier is **today's
-`FLOOR_all` of 102** — the `all` row above, thirteen harnesses later — and the four
+`FLOOR_all` of 107** — the `all` row above, eighteen harnesses later — and the four
 weekly floors still sum to it, because the shards partition the crates and
 `kani.sh` refuses to run when they stop. The count adds up; the *solving* does
 not, which is what 3763 s against 3735 s says. So `FLOOR_all` and `COVERS_all`
 are numbers a run has reached, and the reading they have reached is the 89 —
-moving it onto the 102 takes a fresh run of the four shards.
+moving it onto the 107 takes a fresh run of the four shards.
 
 Two figures this page carried are refuted by that run rather than confirmed.
 `rsk-phy`'s tier peaks at **19.9 GiB** against the 11.1 GB recorded for the
@@ -897,9 +897,9 @@ and not as a side effect of measuring.
 20 m 33 s, `light2` 54 m 52 s, `light3` 4 m 59 s and `heavy` 1 h 33 m 41 s on
 hosted `ubuntu-latest` runners, all four inside the 6 h job cap — and only one of
 the four is a reading of the roster above. That run was `main` at `06813cc1`,
-where `FLOOR_all` was 66 against today's `FLOOR_all` of 102, `light1` carried 17
+where `FLOOR_all` was 66 against today's `FLOOR_all` of 107, `light1` carried 17
 harnesses against today's `FLOOR_light1` of 35 and `light2` 21 against today's
-`FLOOR_light2` of 29. A run that proved 17 of `light1` is not evidence for a
+`FLOOR_light2` of 34. A run that proved 17 of `light1` is not evidence for a
 `light1` floor of 35.
 
 By *cost* it reads better than by count, and the two answers should not be
@@ -1423,6 +1423,10 @@ board's speed, two slower (an RSA-2048 keygen: 13.6 s, the board's ~4.3 s). Pres
 the OTP beside it. What it still is not is silicon: every model goes as deep as
 the bootrom and the image reach, no deeper. `tools/emu/README.md` has the rest.
 
+Neither backend models XIP-cache misses. Measure getInfo latency on an idle
+board with `nix develop -c python tests/105_fido_getinfo_latency.py`.
+`tests/emu.py` refuses this suite: host wall time cannot establish board latency.
+
 The picoem pin's empty-`PULL` batching was compared on 2026-10-02 using two
 independent release builds, `d83e668` and `4b1953f`, and the same partitioned
 `bcdDevice 0x0A8B` no-touch ELF. Three 10-second idle samples per build reduced
@@ -1452,6 +1456,8 @@ restore, certificate binding and signatures after reboot, rejection of the old
 resident credential and a damaged load tag, and persistent sealing of export.
 Known seed and MSE-key patterns must be absent after completed and refused
 commands; a planted seed residue falsifies the same scan.
+The split image also reports `ns0_*`: its main stack is measured independently
+of the Secure core0 stack and checked by the same operation runner.
 Core1's tail remains inside the stack measurement; its timeout follows emulated
 time, with a separate host progress bound. Every RSA size has a planted-factor
 control and independent verification of a signature from the generated key.
@@ -2981,3 +2987,10 @@ This adds one correlated read+write story, the torn write. It does not close Pha
 3: longer retained campaigns and semantic record-loss detection beyond the current
 CRC/legacy and authenticated record formats remain open, as do correlated-fault
 stories beyond the torn write.
+
+## TrustZone prototype keepalive
+
+The [TrustZone page](trustzone.md#prototype-build-and-measurements) contains the
+image-backend commands and recorded keepalive, crypto and session-boundary
+checks. These tests exercise the experiment, separately from the ordinary
+applet-backend sweep; they require explicit emulator ports.

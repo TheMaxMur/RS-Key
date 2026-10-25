@@ -76,9 +76,9 @@ power-cycle helper at the emulator — so the suites run unmodified, and neither
 hidapi nor pyscard need be installed. `RSK_EMU` / `RSK_EMU_CCID` override the
 addresses.
 
-**42 of the 53 suites pass; the other 10 are refused by name, with the reason,
-before they start** (exit 77 — so a sweep counts skips apart from failures). None
-of them is an unexplained failure:
+Suites that need hardware or the real USB transport are refused by name,
+with a reason, before they start (exit 77 — so a sweep counts skips apart from
+failures):
 
 | Skipped here | Why |
 |---|---|
@@ -87,11 +87,12 @@ of them is an unexplained failure:
 | `53` | the PC/SC `FEATURE_VERIFY_PIN_DIRECT` reader layer |
 | `61`, `65` | driven through python-fido2's own HID transport — faking it would leave the suite testing this shim instead of a third-party client. Under `--usbip` there is nothing to fake, and they run |
 | `29`, `54`, `90` | real power-cut, SRAM residue and OTP-fuse migration — hardware by definition |
+| `105` | physical getInfo latency; neither backend models XIP-cache misses |
 
 The list lives in `tests/emu.py` (`UNSUPPORTED`); removing an entry is a claim
 that the emulator grew the capability.
 
-`14` is the 43rd: it asserts with a credential a person enrolled
+`14` asserts with a credential a person enrolled
 (`ssh-keygen -t ed25519-sk`), so without that key it skips 77 too.
 
 `30` needs the Yubico card identity: start the emulator `--yubico` and it runs,
@@ -260,11 +261,20 @@ disabled for an ordinary protocol run.
 |---|---|
 | `status` | Current cycle, readiness, fault state, power-up count and last injected cut |
 | `begin`, then `end` | Paint unused stacks, step by one cycle and record each core's lowest SP until `end` |
+| `transport-begin`, then `transport-end` | Time the next socket CBOR/CCID request at USB completion: elapsed nanoseconds, keepalive count and largest gap, including the first and final gaps |
+| `usb-reset` | Reset and re-enumerate the USB bus without restarting either CPU; returns whether a measured request was in flight |
+| `where` | Report the current symbol/PC of both CPU cores for a stalled-operation diagnosis |
+| `usb-disconnect`, then `usb-connect` | Remove/reconnect the host link with device RAM retained; loss of the link raises USB suspend, reconnect drives a new bus reset |
+| `usb-control HEX` | Submit an eight-byte SETUP packet with zero data length; wait for acceptance, STALL or disconnection |
 | `scan HEX` | Count and SRAM addresses of an exact 1–256-byte pattern; no secret bytes printed |
 | `plant ADDRESS HEX` | Write a synthetic positive-control pattern at a hexadecimal SRAM address |
 | `cut-cycles N` | Cut N cycles after the next socket HID report or CCID request is accepted |
 | `cut-program N` | Cut after N accepted page-program bytes, counted across programs |
 | `cut-program-cycles N` | Cut N cycles after the next page program starts |
+
+Transport timing ends at the first final HID report or complete CCID message.
+Later response fragments, GET RESPONSE commands and host scheduling delays do
+not extend it. It retains the ordinary stepping quantum and changes no USB bytes.
 
 Fault arms replace one another and clear on reboot. An injected cut immediately
 disconnects in-flight transfers, saves flash and cold-boots. With `--store`, a
@@ -275,7 +285,13 @@ Program order wraps within a 256-byte page. This deterministic fault model
 exercises recovery from incomplete writes, not every physically possible cell
 pattern. It changes no flash timing when unarmed.
 
-Stack bounds come from the ELF, checked against the core's live `MSPLIM`.
+Secure stack bounds come from the ELF, checked against the core's `MSPLIM`.
+For a split image, the embedded NS vector supplies its stack top; Secure SAU
+supplies the allocation floor, checked against the NS bank's `MSPLIM`.
+Measurements retain `core0_*` and `core1_*` for Secure and add `ns0_*` for NS.
+Each bank keeps its own sampled minimum and paint below its saved MSP, including
+while the other bank runs. PSP and a Non-secure core1 are refused explicitly.
+
 `coreN_used` is the ELF stack symbol's top minus the lowest sampled SP; core1's
 symbol includes `StaticCell` padding, so its value is a conservative bound.
 `coreN_painted` means bytes covered by writes. It is **not stack usage**: the
@@ -283,6 +299,13 @@ firmware clears the entire dead stack after a command, which consumes all the
 paint. Sampling SP also catches a reserved frame that never writes its bottom.
 Single-cycle sampling slows the emulator and is enabled only between `begin`
 and `end`, or while a fault is armed.
+
+The image laboratory bounds CTAP commands to 120 seconds on the image clock,
+with a separate 1,200-second host watchdog. Both cover the final response and
+continuation reads; a reboot, a terminal fault or a backwards clock fails the
+command. Native runs retain the ordinary 120-second keepalive wait. Measured
+image operations also retain every CTAP transport sample and refuse USB gaps
+over 500 ms on the image clock, independently of host sampling overhead.
 
 The standalone runner owns fresh processes, socket ports and flash files:
 
@@ -403,7 +426,7 @@ the transport regression covers concurrent MSC/PICOBOOT-style bulk endpoints.
 Double-buffer completion status preserves both events and exposes the next
 buffer after the CPU clears the first, as RP2350 datasheet §12.7.3.8 specifies.
 The MSC runner invalidates its owned disk's cache before repeated file reads.
-The picoem pin also makes Non-secure RCP reads return zero and ignores writes
+The vendored picoem source also makes Non-secure RCP reads return zero and ignores writes
 to Secure RCP state (RP2350 datasheet §3.6.3.2), allowing BootROM's interrupted
 Non-secure memory routines to coexist with Secure buffer validation.
 

@@ -144,3 +144,10 @@ file = "firmware/src/pin_lock.rs"
 function = "round_trips"
 basis = "const-evaluated"
 why = "a `const fn` reached only by `const _: () = assert!(round_trips(..))` items in its own file; the compiler answers it and emits no code"
+
+
+[[absent]]
+file = "crates/rsk-device/src/ctap.rs"
+function = "reset_transport_session"
+basis = "cfg-gated"
+why = "the trustzone feature is selected by the separate Secure build; the ordinary firmware dependency does not enable it. This absence is for the default ELF, not the combined TrustZone image"

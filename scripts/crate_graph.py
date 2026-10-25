@@ -58,7 +58,7 @@ DENY = ROOT / "deny.toml"
 #: must point into a *later* band. Order inside a band is horizontal placement
 #: only — nothing may depend sideways, so nothing reads it.
 TIERS = [
-    ("BINARIES", "the two flashable images", "#3E3A36", ["firmware", "rsk-wipe"]),
+    ("BINARIES", "device binaries", "#3E3A36", ["firmware", "firmware-ns", "rsk-wipe"]),
     ("DISPLAY FLOW", "which screen is shown when — display build only", "#57514A",
      ["rsk-display"]),
     ("DEVICE WIRING", "which applets exist, and how a message reaches one", "#57514A",
@@ -99,14 +99,14 @@ TIERS = [
     ("APDU CORE", "parsing, TLV, status words, the Applet seams", "#2F7E75", ["rsk-sdk"]),
     ("CRYPTO FACADE", "the one crate that names a primitive", "#37877E", ["rsk-crypto"]),
     ("ALGORITHMS", "reached by an allowlist, never by every applet", "#4C9086",
-     ["rsk-rsa", "rsk-ec", "rsk-sha512", "rsk-mldsa"]),
+     ["rsk-rsa", "rsk-ec", "rsk-sha512", "rsk-sha256", "rsk-mldsa"]),
     ("SECRETS", "key-grade bytes that wipe themselves on every exit", "#5E9A92",
      ["rsk-secret"]),
 ]
 
 APPLET_LABEL = "APPLETS"
 #: A row of `docs/architecture.md`'s per-crate table.
-CRATE_ROW = re.compile(r"^\| `(firmware|rsk-[a-z0-9]+)` \|", re.M)
+CRATE_ROW = re.compile(r"^\| `(firmware(?:-ns)?|rsk-[a-z0-9]+)` \|", re.M)
 
 
 def applet_tier():
@@ -345,7 +345,7 @@ def render(members, edges, firm):
     bottom, n = TIERS[-1][0].lower(), len(TIERS[-1][3])
     desc = (
         f"Crate dependency layers: {len(members)} crates in {len(TIERS)} tiers, from the "
-        f"{len(TIERS[0][3])} flashable binaries at the top, down through the "
+        f"{len(TIERS[0][3])} device binaries at the top, down through the "
         f"{len(TIERS[applet_tier()][3])} applets, to the {n} {bottom} "
         f"crate{'s' if n != 1 else ''} at the bottom. All {len(edges)} in-workspace "
         f"dependencies point strictly downward, and applet-to-applet edges number "
@@ -394,7 +394,8 @@ def render(members, edges, firm):
         f'  <text class="sub" x="{MARGIN}" y="68">{len(members)} crates · {len(edges)}'
         " in-workspace dependencies · every one points strictly downward</text>",
         f'  <text class="sub" x="{MARGIN}" y="88">each tier is host-tested (no_std) except'
-        ' <tspan font-weight="700">firmware</tspan> and <tspan font-weight="700">rsk-wipe</tspan>,'
+        ' <tspan font-weight="700">firmware</tspan>, <tspan font-weight="700">firmware-ns</tspan>'
+        ' and <tspan font-weight="700">rsk-wipe</tspan>,'
         " which are thumbv8m-only</text>",
         "",
     ]

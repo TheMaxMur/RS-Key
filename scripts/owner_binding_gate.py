@@ -596,13 +596,26 @@ def callers(root: pathlib.Path) -> dict[tuple[str, str], str]:
 
 
 def crates(root: pathlib.Path) -> dict[str, str]:
-    """{package name: the directory it lives in} over the first-party trees."""
+    """{package name: directory} in the image's workspace, without nested namespaces."""
+    root_manifest = root / "Cargo.toml"
+    workspace = (
+        tomllib.loads(root_manifest.read_text(encoding="utf-8")).get("workspace", {})
+        if root_manifest.is_file() else {}
+    )
+    members = workspace.get("members")
+    manifests = (
+        sorted(root / member / "Cargo.toml" for member in members
+               if any(member == base or member.startswith(f"{base}/")
+                      for base in FIRST_PARTY))
+        if isinstance(members, list)
+        else sorted(manifest for base in FIRST_PARTY
+                    for manifest in (root / base).rglob("Cargo.toml"))
+    )
     found = {}
-    for base in FIRST_PARTY:
-        for manifest in sorted((root / base).rglob("Cargo.toml")):
-            package = tomllib.loads(manifest.read_text(encoding="utf-8")).get("package")
-            if isinstance(package, dict) and package.get("name"):
-                found[str(package["name"])] = str(manifest.parent.relative_to(root))
+    for manifest in manifests:
+        package = tomllib.loads(manifest.read_text(encoding="utf-8")).get("package")
+        if isinstance(package, dict) and package.get("name"):
+            found[str(package["name"])] = str(manifest.parent.relative_to(root))
     return found
 
 

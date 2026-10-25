@@ -1,11 +1,35 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 RS-Key contributors
 
-//! One-shot SHA-1 / SHA-256 / SHA-384 / SHA-512 helpers.
+//! SHA-1 / SHA-256 / SHA-384 / SHA-512 helpers.
 
-use sha2::{Digest, Sha256};
+use rsk_sha256::Sha256;
+use sha2::Digest;
 // SHA-384/512 use the Cortex-M33-fast core (byte-identical to sha2::Sha384/512).
 use rsk_sha512::{Sha384, Sha512};
+
+/// Streaming SHA-256 for public metadata larger than a command's scratch buffer.
+pub struct Sha256State(Sha256);
+
+impl Default for Sha256State {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Sha256State {
+    pub fn new() -> Self {
+        Self(Sha256::new())
+    }
+
+    pub fn update(&mut self, bytes: &[u8]) {
+        self.0.update(bytes);
+    }
+
+    pub fn finish(self) -> [u8; 32] {
+        self.0.finalize().into()
+    }
+}
 
 /// One-shot SHA-1 — only for X.509 key identifiers (SKI/AKI, RFC 5280 method 1),
 /// never for new signatures.
