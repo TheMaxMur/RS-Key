@@ -434,17 +434,30 @@ fn sign_p521(s: &[u8; 66], prehash: &[u8], out: &mut [u8]) -> Result<usize, EcEr
 
 /// P-256 ECDH: peer point parsed as a SEC1 uncompressed point, shared secret =
 /// the affine x-coordinate.
+// Keep peer decoding out of the other curves' dispatch frame.
+#[inline(never)]
 fn ecdh_p256(scalar: &[u8; 32], peer_point: &[u8], out: &mut [u8]) -> Result<usize, EcError> {
     let sk = p256::SecretKey::from_bytes(&p256::FieldBytes::from(*scalar))
         .map_err(|_| EcError::Failed)?;
     let peer = sec1_peer::<p256::NistP256>(peer_point)?;
-    let shared = p256::ecdh::diffie_hellman(sk.to_nonzero_scalar(), peer.as_affine());
+    let shared = ecdh_p256_shared(&sk.to_nonzero_scalar(), peer.as_affine());
     let z = shared.raw_secret_bytes();
     out[..z.len()].copy_from_slice(z.as_slice());
     Ok(z.len())
 }
 
+// Give the TrustZone linker a small, independently placed multiplication loop.
+#[inline(never)]
+fn ecdh_p256_shared(
+    scalar: &p256::NonZeroScalar,
+    peer: &p256::AffinePoint,
+) -> p256::ecdh::SharedSecret {
+    p256::ecdh::diffie_hellman(scalar, peer)
+}
+
 /// P-384 ECDH — same SEC1 idiom as [`ecdh_p256`], 48-byte shared x-coordinate.
+// Keep peer decoding out of the other curves' dispatch frame.
+#[inline(never)]
 fn ecdh_p384(scalar: &[u8; 48], peer_point: &[u8], out: &mut [u8]) -> Result<usize, EcError> {
     let sk = p384::SecretKey::from_bytes(&p384::FieldBytes::from(*scalar))
         .map_err(|_| EcError::Failed)?;

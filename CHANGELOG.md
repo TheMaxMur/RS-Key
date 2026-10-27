@@ -38,6 +38,14 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ## [Unreleased]
 
+- **bcdDevice → 0x0B83:** reuse command-local HMAC setup within complete
+  directory passes, reducing PIN retry and HOTP update
+  work. Every value is still read and authenticated at the same points; root
+  observations, rollback floors, publication order and persistent formats are
+  unchanged. No keyed state is kept between storage operations. P-256 ECDH
+  uses the same multiplication in Secure SRAM; P-256/P-384 decoding stays in
+  separate frames without changing point validation.
+
 - **bcdDevice → 0x0B70:** close main-journal and counter appends by freshly
   checking both complete banks against the authenticated prefix and exact new
   records, without replaying every older record's MAC. Compact SHA prefix state

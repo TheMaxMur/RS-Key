@@ -59,6 +59,10 @@ counter writes. Both banks are freshly checked against the exact expected
 publication before success, including all historical bytes and erased tails.
 Value MACs, retry ordering and recovery after power loss are unchanged.
 
+Build `0x0B83` reduces repeated directory HMAC setup during the storage checks behind
+PIN updates. Attempts are still durably charged before comparison, and a
+successful PIN restores its retry count before authorization is granted.
+
 From build `0x0AD1`, key information reads the shared origin record once per
 response. Later responses read it again; an unreadable or unrecorded slot still
 reports imported.

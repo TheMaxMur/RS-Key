@@ -227,6 +227,16 @@ second read of potentially changed data. Mutation discards the mount before
 programming; verified closure seeds the next mount. Invalid occupied suffixes
 retain authenticated progress as a minimum generation; an older replica cannot silently replace that progress.
 
+From `0x0B83`, each directory digest prepares one local HMAC template for its
+fixed root key. Every original frame is still authenticated. Payload reads,
+root observations, rollback floors and publication order are unchanged.
+The template lives only in returned frames covered by the Secure stack sweep;
+it never enters the mounted store. Persistent bytes are unchanged. The digest
+loop stays out of line so the template does not enlarge its callers' frames.
+The P-256 ECDH multiplication also executes from existing Secure RX SRAM;
+its scalar arithmetic and point validation are unchanged. P-256 and P-384
+peer decoding use separate frames to keep their workspaces out of other curves.
+
 From `0x0B70`, main and counter journals retain the SHA state of complete public
 metadata blocks from the authenticating scan. Before extending that state, the
 partial block is reread and checked against the root-bound prefix fingerprint.

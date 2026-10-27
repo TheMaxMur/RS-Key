@@ -2,7 +2,7 @@
 // Copyright (C) 2026 RS-Key contributors
 
 use heapless::Vec;
-use rsk_crypto::hmac_sha256;
+use rsk_crypto::mac::HmacSha256;
 use rsk_sdk::error::{Error, Result};
 
 use super::record::field;
@@ -120,6 +120,8 @@ impl<const N: usize> Directory<N> {
         )
     }
 
+    // Keep the keyed template out of the surrounding backend frames.
+    #[inline(never)]
     fn digest_entries(
         identity: Identity,
         key: &[u8; 32],
@@ -134,12 +136,13 @@ impl<const N: usize> Directory<N> {
         field(&mut prefix, 28, &sequence.to_le_bytes())?;
         let count = u32::try_from(count).map_err(|_| Error::MemoryFatal)?;
         field(&mut prefix, 36, &count.to_le_bytes())?;
-        let mut digest = hmac_sha256(key, &prefix);
+        let mac = HmacSha256::new(key);
+        let mut digest = mac.tag(&prefix);
         let mut frame = [0; 32 + ENTRY_BYTES];
         for entry in entries {
             field(&mut frame, 0, &digest)?;
             field(&mut frame, 32, &entry.encode()?)?;
-            digest = hmac_sha256(key, &frame);
+            digest = mac.tag(&frame);
         }
         Ok(digest)
     }

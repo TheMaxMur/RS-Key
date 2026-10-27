@@ -49,6 +49,10 @@ ykman piv info            # PIV version 5.8.0, slot + PIN/PUK/mgmt-key state
 | Management key | `010203040506070801020304050607080102030405060708` | AES-192, the well-known YubiKey 5.7-era default |
 | PIN / PUK retries | 3 / 3 | resets to full on each correct entry |
 
+Build `0x0B83` reduces repeated directory HMAC setup in the storage checks behind PIN
+updates. Each attempt still becomes durable before comparison; successful
+verification restores the counter before granting authorization.
+
 Change all three before real use:
 
 ```sh
