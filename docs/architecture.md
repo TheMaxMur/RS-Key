@@ -217,12 +217,25 @@ Main writes reserve a candidate before publishing an authenticated intent,
 verify that exact candidate, and then publish to both journals. Recovery
 finishes a complete candidate or cancels its reserved span before allowing GC.
 Counter values and their authority are committed together and mirrored before
-success. Invalid occupied suffixes retain authenticated progress as a minimum
-generation; an older replica cannot silently replace that progress.
+success. From `0x0B66`, counter reads and write admission reuse authenticated
+locations only after freshly checking both complete physical banks. The used
+prefix is hashed and every byte of the erased tail is checked; changed bytes
+trigger full replay and recovery. Fingerprints are bound to the current root
+key, epoch and root arm, and requested values retain their full MAC check.
+Fingerprints are formed from the same bytes as the authenticating scan, not a
+second read of potentially changed data. Mutation discards the mount before
+programming; full closing replay seeds the next mount. Invalid occupied suffixes
+retain authenticated progress as a minimum generation; an older replica cannot silently replace that progress.
 
 From `0x0B05`, TrustZone places shared memory-copy and clearing helpers beside
 the verifier in read-only Secure SRAM. Their instruction bodies are unchanged;
 startup copies them before use under the existing executable-memory policy.
+Build `0x0B66` groups the X25519 ladder, field multiplication, subtraction and
+squaring into one aligned 8 KiB XIP cache way. The arithmetic stays unchanged;
+neither SRAM nor cache-control permissions change. Ed25519 uses dalek's existing
+constant-time base-point tables, with `zeroize` retained and no heap required.
+The tables occupy 30 KiB of flash. The store crate uses speed optimization,
+as the shared SHA-256 core already does.
 
 From build `0x0ACF`, Main keeps its complete authenticated version directory
 in protected RAM. A warm read freshly checks the root, verifies its binding to
@@ -236,6 +249,14 @@ After the physical-journal check, a healthy payload map can reuse this position
 without replaying the journal again. The completed write's full authenticated
 resolution seeds the next read mount; errors clear these hints. Payload repair
 still takes the original resolution path, and no root key or payload is retained.
+From `0x0B66`, unpublished-value retirement first performs an unrepaired,
+read-only walk. Known FIDs exclude historical bodies from this walk without
+warming their key pointers; included candidates still pass the full CRC.
+All published values are authenticated before any deletion or subsequent GC.
+Deletion retains the post-cleanup validation; a walk that changed nothing needs
+only the pre-mutation validation. The ordinary item iterator stays separate
+so the filtered walk does not enlarge lookup futures. Payload seals and
+persistent formats are unchanged.
 A separate mounted authority tracks the exact epoch, root arm, sequence and
 directory digest through Prepare, Commit, Abort and rekey. Errors and remounts
 clear acceleration hints but retain this floor; the first verified publication

@@ -10,6 +10,8 @@ const EPOCH: [u8; 16] = [0x4B; 16];
 
 #[path = "main_raw_tags_tests.rs"]
 mod raw_tags;
+#[path = "main_retirement_tests.rs"]
+mod retirement;
 #[path = "main_write_mount_tests.rs"]
 mod write_mount;
 type UncachedMap = Cache<Uncached, Uncached, Uncached, u16>;
@@ -569,14 +571,24 @@ fn accelerated_cache_rejects_backend_errors_mismatches_wrong_roots_and_each_read
         range: core::ops::Range<u32>,
         end: u32,
         prefix: &[u8],
-    ) -> Result<[u8; 32]> {
-        super::super::RawBank::new(flash.clone(), range)?.digest(end, prefix)
+    ) -> Result<Option<[u8; 32]>> {
+        super::super::RawBank::new(flash.clone(), range)?.digest_if_erased_tail(end, prefix)
     }
-    fn refused(_: &mut FaultFlash, _: core::ops::Range<u32>, _: u32, _: &[u8]) -> Result<[u8; 32]> {
+    fn refused(
+        _: &mut FaultFlash,
+        _: core::ops::Range<u32>,
+        _: u32,
+        _: &[u8],
+    ) -> Result<Option<[u8; 32]>> {
         Err(Error::MemoryFatal)
     }
-    fn changed(_: &mut FaultFlash, _: core::ops::Range<u32>, _: u32, _: &[u8]) -> Result<[u8; 32]> {
-        Ok([0; 32])
+    fn changed(
+        _: &mut FaultFlash,
+        _: core::ops::Range<u32>,
+        _: u32,
+        _: &[u8],
+    ) -> Result<Option<[u8; 32]>> {
+        Ok(Some([0; 32]))
     }
     let flash = crate::tests::fault_flash_for_authenticated_tests();
     let mut main = main_on(flash.clone());

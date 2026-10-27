@@ -48,6 +48,12 @@ Later tag hits keep bounded scratch and freshly authenticate the complete value.
 Every byte a read can fill is still cleared on success and failure; recovery
 retains full-buffer cleanup.
 
+From build `0x0B66`, signature-counter reads reuse authenticated journal
+locations after freshly checking both complete banks, including their erased
+tails. A change triggers full journal verification and recovery. Signatures
+still require durable counter publication to both banks before success;
+existing cards need no migration or reset.
+
 From build `0x0AD1`, key information reads the shared origin record once per
 response. Later responses read it again; an unreadable or unrecorded slot still
 reports imported.

@@ -62,7 +62,18 @@ fn a_dirty_unpublished_snapshot_has_no_positive_progress_to_adopt() {
 fn constructor_bank_digest_survives_mount_and_configuration() {
     use crate::tests::FaultFlash;
     use rsk_fs::Storage;
-    fn refused(_: &mut FaultFlash, _: Range<u32>, _: u32, _: &[u8]) -> Result<[u8; 32]> {
+    fn refused(
+        flash: &mut FaultFlash,
+        range: Range<u32>,
+        end: u32,
+        prefix: &[u8],
+    ) -> Result<Option<[u8; 32]>> {
+        let layout =
+            super::super::Layout::new(32768..32768 + super::super::storage::AUTHORITY_BYTES)?;
+        if layout.counter.contains(&range) {
+            return super::super::RawBank::new(flash.clone(), range)?
+                .digest_if_erased_tail(end, prefix);
+        }
         Err(Error::MemoryFatal)
     }
     let flash = crate::tests::fault_flash_for_authenticated_tests();

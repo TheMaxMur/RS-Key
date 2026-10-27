@@ -19,6 +19,7 @@ pub struct Counters<F: NorFlash + MultiwriteNorFlash> {
     banks: [CounterBank<F>; 2],
     identity: Identity,
     arm: RootArm,
+    mount: Option<[CounterScan; 2]>,
 }
 
 impl<F: NorFlash + MultiwriteNorFlash> Counters<F> {
@@ -30,10 +31,12 @@ impl<F: NorFlash + MultiwriteNorFlash> Counters<F> {
             banks,
             identity,
             arm,
+            mount: None,
         })
     }
 
     pub(super) fn configure(&mut self, epoch: [u8; super::EPOCH_BYTES], arm: RootArm) {
+        self.mount = None;
         self.identity = Identity {
             partition: Partition::Counter,
             epoch,
@@ -69,6 +72,42 @@ impl<F: NorFlash + MultiwriteNorFlash> Counters<F> {
     }
 
     fn resolve(&mut self, key: &[u8; 32]) -> Result<Option<Current>> {
+        if let Some(scans) = self.mount.take() {
+            let mut unchanged = true;
+            for (bank, scan) in self.banks.iter_mut().zip(scans) {
+                let fingerprint = bank.fingerprint(key, scan.next)?;
+                unchanged &= scan
+                    .fingerprint
+                    .zip(fingerprint)
+                    .is_some_and(|(expected, fresh)| ct_eq(&expected, &fresh));
+            }
+            if unchanged {
+                let mut directory = Directory::new();
+                for location in scans
+                    .first()
+                    .ok_or(Error::MemoryFatal)?
+                    .locations
+                    .iter()
+                    .flatten()
+                {
+                    directory.apply(location.entry)?;
+                }
+                self.mount = Some(scans);
+                return Ok(Some(Current {
+                    source: 0,
+                    scans,
+                    directory,
+                }));
+            }
+        }
+        let current = self.resolve_uncached(key)?;
+        if let Some(current) = &current {
+            self.mount = Some(current.scans);
+        }
+        Ok(current)
+    }
+
+    fn resolve_uncached(&mut self, key: &[u8; 32]) -> Result<Option<Current>> {
         let [zero, one] = &mut self.banks;
         let mut zero_dir = Directory::new();
         let mut one_dir = Directory::new();
@@ -155,6 +194,7 @@ impl<F: NorFlash + MultiwriteNorFlash> Counters<F> {
         sequence: u64,
         mut load: impl FnMut(Entry, &mut [u8]) -> Result<()>,
     ) -> Result<()> {
+        self.mount = None;
         let checkpoint = self.checkpoint(directory, key, sequence)?;
         let [zero, one] = &mut self.banks;
         zero.write_snapshot(checkpoint, key, directory, &mut load)?;
@@ -170,11 +210,16 @@ impl<F: NorFlash + MultiwriteNorFlash> Counters<F> {
             .get(current.source)
             .ok_or(Error::MemoryFatal)?;
         let (source, _) = self.source_target(current.source)?;
-        source.read_value(scan, key, fid, out)
+        let result = source.read_value(scan, key, fid, out);
+        if result.is_err() {
+            self.mount = None;
+        }
+        result
     }
 
     pub fn rekey(&mut self, old: &[u8; 32], new: &[u8; 32], arm: RootArm) -> Result<()> {
         let current = self.resolve(old)?.ok_or(Error::MemoryFatal)?;
+        self.mount = None;
         let source_scan = *current
             .scans
             .get(current.source)
@@ -225,6 +270,7 @@ impl<F: NorFlash + MultiwriteNorFlash> Counters<F> {
 
     pub fn write(&mut self, key: &[u8; 32], fid: u16, value: Option<&[u8]>) -> Result<()> {
         let mut current = self.resolve(key)?.ok_or(Error::MemoryFatal)?;
+        self.mount = None;
         let source_scan = *current
             .scans
             .get(current.source)

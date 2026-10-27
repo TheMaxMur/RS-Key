@@ -169,6 +169,14 @@ symbol = "rsk_store::authenticated::counters::Counters<F>::resolve"
 surface = "storage v2 replicated counter authority agreement and recovery"
 
 [[caller]]
+symbol = "rsk_store::authenticated::counters::Counters<F>::resolve::_{{closure}}"
+surface = "storage v2 freshly observed counter-bank fingerprints before mounted-directory reuse"
+
+[[caller]]
+symbol = "rsk_store::authenticated::counters::Counters<F>::resolve_uncached"
+surface = "storage v2 replicated counter authority agreement after complete replay"
+
+[[caller]]
 symbol = "rsk_store::authenticated::import::Import<F>::load_manifest"
 surface = "attended storage v2 legacy-import manifest authentication"
 
@@ -227,6 +235,38 @@ surface = "the full mounted directory binding with a command-local HMAC context"
 [[caller]]
 symbol = "rsk_store::authenticated::authority::Bound::same_context"
 surface = "the exact mounted context for volatile read-tag hints"
+
+[[caller]]
+symbol = "rsk_store::authenticated::read_tags::ReadTags::bind"
+surface = "binding volatile read tags to the exact mounted authority"
+
+[[caller]]
+symbol = "rsk_store::authenticated::read_tags::ReadTags::bind::_{{closure}}"
+surface = "mounted-context equality before retaining volatile read tags"
+
+[[caller]]
+symbol = "rsk_store::authenticated::read_tags::ReadTags::find"
+surface = "mounted-context equality before reusing a complete-payload tag"
+
+[[caller]]
+symbol = "rsk_store::authenticated::read_tags::ReadTags::find::_{{closure}}"
+surface = "the cached context match for a complete-payload tag lookup"
+
+[[caller]]
+symbol = "rsk_store::authenticated::read_tags::ReadTags::insert"
+surface = "mounted-context equality before remembering a complete-payload tag"
+
+[[caller]]
+symbol = "rsk_store::authenticated::read_tags::ReadTags::insert::_{{closure}}"
+surface = "the cached context match for complete-payload tag insertion"
+
+[[caller]]
+symbol = "rsk_store::authenticated::read_tags::ReadTags::mount_tag"
+surface = "mounted-context equality before reusing a mounted-authority tag"
+
+[[caller]]
+symbol = "rsk_store::authenticated::read_tags::ReadTags::mount_tag::_{{closure}}"
+surface = "the cached context match for a mounted-authority tag lookup"
 
 [[caller]]
 symbol = "rsk_store::authenticated::main::read_proof::_<impl rsk_store::authenticated::main::Main<F,C>>::read_proven"

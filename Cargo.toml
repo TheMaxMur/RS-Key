@@ -116,7 +116,7 @@ bp384 = { version = "=0.14.0-rc.15", default-features = false, features = ["ecds
 ecdsa = { version = "0.17", default-features = false, features = ["algorithm"] }
 elliptic-curve = { version = "0.14", default-features = false, features = ["ecdh", "arithmetic", "sec1"] }
 # EdDSA (Ed25519) — OKP key, deterministic 64-byte signature.
-ed25519-dalek = { version = "2", default-features = false, features = ["zeroize"] }
+ed25519-dalek = { version = "2", default-features = false, features = ["fast", "zeroize"] }
 # X25519 ECDH for OpenPGP Cv25519. Same curve25519-dalek 4 backend as
 # ed25519-dalek, so no version split. The bare `x25519()` needs no extra feature.
 x25519-dalek = { version = "2", default-features = false }
@@ -213,4 +213,8 @@ sequential-storage = { path = "third_party/sequential-storage" }
 
 # Optimize only the software SHA-256 core, keeping applet code compact.
 [profile.release.package.rsk-sha256]
+opt-level = 3
+
+# Journal replay and authenticated lookups run on every card operation.
+[profile.release.package.rsk-store]
 opt-level = 3

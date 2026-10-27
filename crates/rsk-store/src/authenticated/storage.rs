@@ -114,10 +114,15 @@ impl<F: NorFlash + MultiwriteNorFlash + Clone, C: CacheImpl<u16>> Authenticated<
                 journal.set_digest(digest);
             }
         }
-        let counter_banks = [
+        let mut counter_banks = [
             CounterBank::new(RawBank::new(flash.clone(), counter_zero)?),
             CounterBank::new(RawBank::new(flash.clone(), counter_one)?),
         ];
+        if let Some(digest) = digest {
+            for bank in &mut counter_banks {
+                bank.set_digest(digest);
+            }
+        }
         let counter_identity = Identity {
             partition: Partition::Counter,
             epoch,

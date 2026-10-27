@@ -38,9 +38,9 @@ pub fn all_erased(bytes: &[u8]) -> bool {
     rest.iter().all(|&byte| byte == 0xFF)
 }
 
-/// Hash `prefix || bank[..end] || end.to_le_bytes()` and refuse a non-erased tail.
+/// Hash `prefix || bank[..end] || end.to_le_bytes()`; a non-erased tail returns `None`.
 /// The callback reads the supplied flash afresh; it never receives a root key.
-pub type BankDigest<F> = fn(&mut F, Range<u32>, u32, &[u8]) -> Result<[u8; 32]>;
+pub type BankDigest<F> = fn(&mut F, Range<u32>, u32, &[u8]) -> Result<Option<[u8; 32]>>;
 
 /// A raw authority window. Metadata reads never invoke map repair or CRC filtering.
 pub struct RawBank<F: NorFlash + MultiwriteNorFlash> {
@@ -142,6 +142,15 @@ impl<F: NorFlash + MultiwriteNorFlash> RawBank<F> {
     }
 
     pub(super) fn digest(&mut self, end: u32, prefix: &[u8]) -> Result<[u8; 32]> {
+        self.digest_if_erased_tail(end, prefix)?
+            .ok_or(Error::MemoryFatal)
+    }
+
+    pub(super) fn digest_if_erased_tail(
+        &mut self,
+        end: u32,
+        prefix: &[u8],
+    ) -> Result<Option<[u8; 32]>> {
         self.span(0, usize::try_from(end).map_err(|_| Error::MemoryFatal)?)?;
         if let Some(digest) = self.digest {
             return digest(self.flash.inner_mut(), self.range.clone(), end, prefix);
@@ -160,10 +169,10 @@ impl<F: NorFlash + MultiwriteNorFlash> RawBank<F> {
             at += u32::try_from(count).map_err(|_| Error::MemoryFatal)?;
         }
         if !self.read_erased(end)? {
-            return Err(Error::MemoryFatal);
+            return Ok(None);
         }
         hash.update(&end.to_le_bytes());
-        Ok(hash.finish())
+        Ok(Some(hash.finish()))
     }
 
     pub fn program(&mut self, offset: u32, data: &[u8]) -> Result<()> {

@@ -1,4 +1,4 @@
-# Local changes to sequential-storage 8.0.0, confined to src/map.rs and src/lib.rs.
+# Local changes to sequential-storage 8.0.0, confined to src/{map,lib,item}.rs.
 # The root, fuzz and emulator workspaces all use these exact vendored files.
 #
 # 1. Warm key pointers only after a complete scan; propagate read refusals.
@@ -12,8 +12,11 @@
 # 7. Batch fresh page markers across adjacent boundaries; retain full
 #    successor and wrap checks, propagating every read refusal.
 # 8. Expose a read-only item iterator for pre-admission import validation.
+# 9. Exclude independently validated fixed-width keys by prefix during orphan
+#    enumeration; returned entries retain full CRC checks and excluded keys
+#    never warm the pointer cache; discard an interrupted walk before reuse.
 #
-# Regenerate against pristine crates.io 8.0.0 src/{map,lib}.rs; preserve CRLF.
+# Regenerate against pristine crates.io 8.0.0 src/{map,lib,item}.rs; preserve CRLF.
 
 --- a/src/map.rs
 +++ b/src/map.rs
@@ -549,7 +552,7 @@
                              _ => true,
                          };
                          // If this item has the same key as the key we're trying to erase, then erase the item.
-@@ -773,67 +1195,78 @@
+@@ -773,67 +1195,81 @@
          &mut self,
          data_buffer: &mut [u8],
      ) -> Result<MapItemIter<'_, K, S, C>, Error<S::Error>> {
@@ -613,6 +616,9 @@
 +    pub async fn fetch_all_items_unrepaired(
 +        &mut self,
 +    ) -> Result<MapItemIter<'_, K, S, C>, Error<S::Error>> {
++        if self.inner.cache.is_dirty() {
++            self.inner.cache.invalidate_cache_state();
++        }
 +        let first_page = self.first_item_page().await?.ok_or_else(|| Error::Corrupted {
 +            #[cfg(feature = "_test")]
 +            backtrace: std::backtrace::Backtrace::capture(),
@@ -676,7 +682,7 @@
      }
  
      async fn migrate_items(
-@@ -853,7 +1286,7 @@
+@@ -853,7 +1289,7 @@
              calculate_page_end_address::<S>(self.flash_range(), source_page) - S::WORD_SIZE as u32,
          );
          while let Some((item, item_address)) = it.next(&mut self.inner.flash, data_buffer).await? {
@@ -685,7 +691,7 @@
  
              // We're in a decent state here
              self.inner.cache.unmark_dirty();
-@@ -912,7 +1345,13 @@
+@@ -912,7 +1348,13 @@
      async fn try_repair(&mut self, data_buffer: &mut [u8]) -> Result<(), Error<S::Error>> {
          self.inner.cache.invalidate_cache_state();
  
@@ -700,9 +706,26 @@
  
          // Let's check if we corrupted in the middle of a migration
          if let Some(partial_open_page) = self
-@@ -1053,14 +1492,16 @@
+@@ -1052,15 +1494,34 @@
+         &mut self,
          data_buffer: &'a mut [u8],
      ) -> Result<Option<(K, V)>, Error<S::Error>> {
++        self.next_inner(data_buffer, None, |_| false).await
++    }
++
++    /// Skip keys from an unverified prefix; returned items still pass their full CRC.
++    /// Only use this for exclusions whose values the caller validates independently.
++    /// Skipped entries never update key pointers. Requires a fixed-width key codec.
++    pub async fn next_unless<'a, V: Value<'a>>(
++        &mut self, data_buffer: &'a mut [u8], skip: impl Fn(&K) -> bool,
++    ) -> Result<Option<(K, V)>, Error<S::Error>> {
++        let prefix_len = K::get_len(&[]).map_err(Error::SerializationError)?;
++        self.next_inner(data_buffer, Some(prefix_len), skip).await
++    }
++
++    async fn next_inner<'a, V: Value<'a>>(
++        &mut self, data_buffer: &'a mut [u8], prefix_len: Option<usize>, skip: impl Fn(&K) -> bool,
++    ) -> Result<Option<(K, V)>, Error<S::Error>> {
          // Find the next item
 -        let item = loop {
 -            if let Some((item, _address)) = self
@@ -711,7 +734,9 @@
 +        let (item, address) = loop {
 +            if let Some((item, address)) = self
                  .current_iter
-                 .next(&mut self.storage.inner.flash, data_buffer)
+-                .next(&mut self.storage.inner.flash, data_buffer)
++                .next_unless(&mut self.storage.inner.flash, data_buffer, prefix_len,
++                    |prefix| K::deserialize_from(prefix).is_ok_and(|(key, _)| skip(&key)))
                  .await?
              {
                  // We've found the next item, quit the loop
@@ -720,7 +745,7 @@
              }
  
              // The current page is done, we need to find the next page
-@@ -1070,6 +1511,10 @@
+@@ -1070,6 +1531,10 @@
  
                  // We've looped back to the first page, which means all pages are checked, there's nothing left so we return None
                  if self.current_page_index == self.first_page {
@@ -731,7 +756,7 @@
                      return Ok(None);
                  }
  
-@@ -1092,15 +1537,34 @@
+@@ -1092,15 +1557,34 @@
                          );
                          break;
                      }
@@ -820,3 +845,51 @@
  
          let discovered_state = match (start_marked, end_marked) {
              (true, true) => PageState::Closed,
+--- a/src/item.rs
++++ b/src/item.rs
+@@ -602,6 +602,45 @@
+         }
+         Ok(None)
+     }
++
++    // Keep ordinary lookup futures small even when their pointer cache misses.
++    // The filtered walk is used only by retirement and must not enlarge them.
++    pub(crate) async fn next_unless<'d, S: NorFlash>(
++        &mut self, flash: &mut S, data_buffer: &'d mut [u8],
++        prefix_len: Option<usize>, skip: impl Fn(&[u8]) -> bool,
++    ) -> Result<Option<(Item<'d>, u32)>, Error<S::Error>> {
++        let mut data_buffer = Some(data_buffer);
++        while let (Some(header), address) = self.header.next(flash).await? {
++            let buffer = data_buffer.take().unwrap();
++            if let Some(length) = prefix_len.filter(|length| *length <= usize::from(header.length)) {
++                let read_len = round_up_to_alignment_usize::<S>(length);
++                if header.crc.is_some() && read_len != 0 && read_len <= buffer.len() {
++                    flash.read(ItemHeader::data_address::<S>(address), &mut buffer[..read_len])
++                        .await.map_err(|value| Error::Storage {
++                            value,
++                            #[cfg(feature = "_test")]
++                            backtrace: std::backtrace::Backtrace::capture(),
++                        })?;
++                    if skip(&buffer[..length]) {
++                        data_buffer.replace(buffer);
++                        continue;
++                    }
++                }
++            }
++            match header
++                .read_item(flash, buffer, address, self.header.end_address)
++                .await?
++            {
++                MaybeItem::Corrupted(_, buffer) | MaybeItem::Erased(_, buffer) => {
++                    data_buffer.replace(buffer);
++                }
++                MaybeItem::Present(item) => {
++                    return Ok(Some((item, address)));
++                }
++            }
++        }
++        Ok(None)
++    }
+ }
+ 
+ pub(crate) struct ItemHeaderIter {

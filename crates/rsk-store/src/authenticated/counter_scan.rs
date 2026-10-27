@@ -64,20 +64,20 @@ fn read_scan_value<F: NorFlash + MultiwriteNorFlash>(
     entry: Entry,
     offset: u32,
     checkpoint: Checkpoint,
-    key: &[u8; 32],
     buffer: &mut [u8; VALUE_BUFFER],
-    mac: &mut Option<rsk_crypto::mac::HmacSha256>,
+    mac: &rsk_crypto::mac::HmacSha256,
+    fingerprint: &mut Sha256State,
 ) -> Result<Option<usize>> {
     let Some((padded, value)) = read_payload(reader, entry, offset, buffer)? else {
         return Ok(None);
     };
-    let mac = mac.get_or_insert_with(|| rsk_crypto::mac::HmacSha256::new(key));
     if entry
         .verify_with_mac(checkpoint.identity, mac, value)
         .is_err()
     {
         return Ok(None);
     }
+    fingerprint.update(buffer.get(..padded).ok_or(Error::MemoryFatal)?);
     Ok(Some(padded))
 }
 
@@ -89,6 +89,10 @@ pub(super) fn scan<F: NorFlash + MultiwriteNorFlash>(
     directory.clear();
     let mut header = [0; CHECKPOINT_BYTES];
     reader.read(0, &mut header)?;
+    let mut fingerprint = Sha256State::new();
+    fingerprint.update(RAW_DOMAIN);
+    fingerprint.update(&reader.capacity().to_le_bytes());
+    fingerprint.update(&header);
     let mut scan = CounterScan {
         status: JournalStatus::Dirty,
         checkpoint: None,
@@ -96,6 +100,7 @@ pub(super) fn scan<F: NorFlash + MultiwriteNorFlash>(
         lower_bound: None,
         next: 0,
         locations: [None; MAX_COUNTER_ENTRIES],
+        fingerprint: None,
     };
     if header.iter().all(|&byte| byte == 0xFF) {
         if reader.read_erased(0)? {
@@ -112,11 +117,12 @@ pub(super) fn scan<F: NorFlash + MultiwriteNorFlash>(
     scan.checkpoint = Some(checkpoint);
     scan.lower_bound = Some(checkpoint.sequence);
     let mut scratch = Secret::<[u8; VALUE_BUFFER]>::zeroed();
-    let mut mac = None;
+    let mac = rsk_crypto::mac::HmacSha256::new(key);
     let mut at = u32::try_from(CHECKPOINT_BYTES).map_err(|_| Error::MemoryFatal)?;
     for _ in 0..checkpoint.entries {
         let mut encoded = [0; ENTRY_BYTES];
         reader.read(at, &mut encoded)?;
+        fingerprint.update(&encoded);
         let Ok(entry) = Entry::decode(&encoded) else {
             return Ok(scan);
         };
@@ -135,9 +141,9 @@ pub(super) fn scan<F: NorFlash + MultiwriteNorFlash>(
             entry,
             value_at,
             checkpoint,
-            key,
             scratch.expose_mut(),
-            &mut mac,
+            &mac,
+            &mut fingerprint,
         )?
         else {
             return Ok(scan);
@@ -160,19 +166,14 @@ pub(super) fn scan<F: NorFlash + MultiwriteNorFlash>(
     scan.next = at;
     while at < reader.capacity() {
         if reader.capacity() - at < u32::try_from(ENTRY_BYTES).map_err(|_| Error::MemoryFatal)? {
-            if reader.read_erased(at)? {
-                scan.status = JournalStatus::Complete;
-            }
-            return Ok(scan);
+            return finish_scan(reader, key, fingerprint, scan, at);
         }
         let mut encoded = [0; ENTRY_BYTES];
         reader.read(at, &mut encoded)?;
         if encoded.iter().all(|&byte| byte == 0xFF) {
-            if reader.read_erased(at)? {
-                scan.status = JournalStatus::Complete;
-            }
-            return Ok(scan);
+            return finish_scan(reader, key, fingerprint, scan, at);
         }
+        fingerprint.update(&encoded);
         let Ok(entry) = Entry::decode(&encoded) else {
             return Ok(scan);
         };
@@ -195,9 +196,9 @@ pub(super) fn scan<F: NorFlash + MultiwriteNorFlash>(
             entry,
             value_at,
             checkpoint,
-            key,
             scratch.expose_mut(),
-            &mut mac,
+            &mac,
+            &mut fingerprint,
         )?
         else {
             return Ok(scan);
@@ -218,6 +219,21 @@ pub(super) fn scan<F: NorFlash + MultiwriteNorFlash>(
         scan.next = at;
     }
     scratch.wipe();
+    finish_scan(reader, key, fingerprint, scan, at)
+}
+
+fn finish_scan<F: NorFlash + MultiwriteNorFlash>(
+    reader: &mut RawBank<F>,
+    key: &[u8; 32],
+    mut fingerprint: Sha256State,
+    mut scan: CounterScan,
+    at: u32,
+) -> Result<CounterScan> {
+    if !reader.read_erased(at)? {
+        return Ok(scan);
+    }
+    fingerprint.update(&at.to_le_bytes());
+    scan.fingerprint = Some(hmac_sha256(key, &fingerprint.finish()));
     scan.status = JournalStatus::Complete;
     Ok(scan)
 }

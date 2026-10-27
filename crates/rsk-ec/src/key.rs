@@ -598,6 +598,10 @@ mod tests;
 mod x25519_tests;
 
 #[cfg(test)]
+#[path = "key_ed25519_tests.rs"]
+mod ed25519_tests;
+
+#[cfg(test)]
 #[path = "key_bp_kat.rs"]
 mod bp_kat;
 

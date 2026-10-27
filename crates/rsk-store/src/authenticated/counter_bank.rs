@@ -2,7 +2,7 @@
 // Copyright (C) 2026 RS-Key contributors
 
 use embedded_storage_async::nor_flash::{MultiwriteNorFlash, NorFlash};
-use rsk_crypto::ct_eq;
+use rsk_crypto::{ct_eq, hash::Sha256State, hmac_sha256};
 use rsk_sdk::error::{Error, Result};
 use rsk_secret::Secret;
 
@@ -11,6 +11,8 @@ use super::{MAX_COUNTER_ENTRIES, Partition, RawBank};
 
 #[path = "counter_scan.rs"]
 mod scan;
+
+const RAW_DOMAIN: &[u8; 8] = b"RSKV2CTR";
 
 const VALUE_ALIGNMENT: usize = 16;
 const VALUE_BUFFER: usize = crate::KV_BUF;
@@ -31,6 +33,7 @@ pub struct CounterScan {
     pub lower_bound: Option<u64>,
     pub next: u32,
     pub locations: [Option<CounterLocation>; MAX_COUNTER_ENTRIES],
+    pub(crate) fingerprint: Option<[u8; 32]>,
 }
 
 /// Inline counter authority avoids a separate payload mutation and intent journal.
@@ -44,6 +47,26 @@ impl<F: NorFlash + MultiwriteNorFlash> CounterBank<F> {
     }
     pub fn capacity(&self) -> u32 {
         self.bank.capacity()
+    }
+
+    pub(super) fn set_digest(&mut self, digest: super::BankDigest<F>) {
+        self.bank.digest = Some(digest);
+    }
+
+    pub(super) fn fingerprint(&mut self, key: &[u8; 32], end: u32) -> Result<Option<[u8; 32]>> {
+        let mut prefix = [0; RAW_DOMAIN.len() + core::mem::size_of::<u32>()];
+        prefix
+            .get_mut(..RAW_DOMAIN.len())
+            .ok_or(Error::MemoryFatal)?
+            .copy_from_slice(RAW_DOMAIN);
+        prefix
+            .get_mut(RAW_DOMAIN.len()..)
+            .ok_or(Error::MemoryFatal)?
+            .copy_from_slice(&self.capacity().to_le_bytes());
+        Ok(self
+            .bank
+            .digest_if_erased_tail(end, &prefix)?
+            .map(|digest| hmac_sha256(key, &digest)))
     }
 
     pub fn read_header(&mut self) -> Result<[u8; CHECKPOINT_BYTES]> {

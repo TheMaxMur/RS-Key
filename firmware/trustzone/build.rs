@@ -18,6 +18,7 @@ pub fn configure(out: &Path, memory: &mut String, code_size: u32, flash_size: u3
     const NSC_BYTES: u32 = 4096;
     const SCRATCH_START: u32 = 0x2008_0100;
     const SCRATCH_END: u32 = 0x2008_2000;
+    const XIP_WAY_BYTES: u32 = 8 * 1024;
     let ns_start = FLASH_BASE + code_size - NS_BYTES;
     let ns_end = ns_start + NS_BYTES;
     let nsc_start = ns_start - NSC_BYTES;
@@ -65,6 +66,16 @@ pub fn configure(out: &Path, memory: &mut String, code_size: u32, flash_size: u3
     );
     memory.push_str(&format!(
         "ASSERT(LOADADDR(.data) + SIZEOF(.data) <= {nsc_start:#010x}, \"Secure image overlaps NSC\")\n",
+    ));
+    // Keep the Montgomery ladder and field arithmetic within one XIP cache way.
+    memory.push_str(&format!(
+        "SECTIONS {{ .rsk_curve25519 : ALIGN({XIP_WAY_BYTES}) {{\n\
+         __rsk_curve25519_start = .;\n\
+         KEEP(*(.text.*FieldElement2625*Mul* .text.*FieldElement2625*Sub* .text.*FieldElement262512square_inner* .text._ZN12x25519_dalek6x255196x2551917h????????????????E))\n\
+         __rsk_curve25519_end = .;\n\
+         }} > FLASH }} INSERT BEFORE .rodata;\n\
+         ASSERT(SIZEOF(.rsk_curve25519) > 0, \"Curve25519 code is missing\")\n\
+         ASSERT(SIZEOF(.rsk_curve25519) <= {XIP_WAY_BYTES}, \"Curve25519 code exceeds one XIP cache way\")\n",
     ));
     // Keep the shared verifier and its memory helpers off the XIP path.
     memory.push_str(

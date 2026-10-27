@@ -96,7 +96,7 @@ pub(super) fn digest(
     range: Range<u32>,
     end: u32,
     prefix: &[u8],
-) -> Result<[u8; 32]> {
+) -> Result<Option<[u8; 32]>> {
     let owner = flash.sha256;
     let mut exclusive = owner.try_borrow_mut().map_err(|_| Error::MemoryFatal)?;
     if !exclusive.available {
@@ -130,7 +130,7 @@ pub(super) fn digest(
                 .map_err(|_| Error::MemoryFatal)?
                 .min(CHUNK);
             if !super::stream::read_erased(at, count).map_err(|_| Error::MemoryFatal)? {
-                return Err(Error::MemoryFatal);
+                return Ok(None);
             }
             at += u32::try_from(count).map_err(|_| Error::MemoryFatal)?;
             continue;
@@ -149,7 +149,7 @@ pub(super) fn digest(
                 return Err(Error::MemoryFatal);
             }
         } else if !rsk_store::authenticated::all_erased(bytes) {
-            return Err(Error::MemoryFatal);
+            return Ok(None);
         }
         at += u32::try_from(count).map_err(|_| Error::MemoryFatal)?;
     }
@@ -173,5 +173,5 @@ pub(super) fn digest(
     ]) {
         bytes.copy_from_slice(&register.read().to_be_bytes());
     }
-    Ok(out)
+    Ok(Some(out))
 }

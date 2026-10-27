@@ -170,6 +170,7 @@ fn repair_rejects_a_changed_peer_scan_after_verified_publication() {
         .erase()
         .unwrap();
     let original = baseline.image();
+    healthy.mount = None;
     baseline.arm(&[]);
     assert_eq!(
         healthy.read(&KEY, rsk_fs::counter::EF_COUNTER.get(), &mut []),
@@ -368,3 +369,6 @@ fn rollover_rejects_changed_status_or_sequence_before_copying_the_second_bank() 
         );
     }
 }
+
+#[path = "counter_mount_tests.rs"]
+mod mount;

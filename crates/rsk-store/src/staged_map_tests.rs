@@ -273,3 +273,28 @@ fn six_counter_pages_support_four_maximum_values_and_a_staged_replacement() {
         );
     }
 }
+
+#[test]
+fn a_filtered_walk_cannot_trust_key_pointers_from_an_interrupted_older_walk() {
+    let flash = SharedMock::new();
+    let mut store = mount(&flash);
+    store.write(0xCF00, b"old").unwrap();
+    store.write(0xCF00, b"new").unwrap();
+    {
+        let mut walk = block_on(store.main.fetch_all_items_unrepaired()).unwrap();
+        let (fid, value) = block_on(walk.next::<&[u8]>(&mut store.buf))
+            .unwrap()
+            .unwrap();
+        assert_eq!(fid, 0xCF00);
+        assert_eq!(value, b"old");
+    }
+    {
+        let mut walk = block_on(store.main.fetch_all_items_unrepaired()).unwrap();
+        assert!(
+            block_on(walk.next_unless::<&[u8]>(&mut store.buf, |fid| *fid == 0xCF00))
+                .unwrap()
+                .is_none()
+        );
+    }
+    assert_eq!(unrepaired(&mut store, 0xCF00).as_deref(), Some(&b"new"[..]));
+}

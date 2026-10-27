@@ -189,8 +189,8 @@ fn bank_digest_matches_software_hash_and_checks_full_suffix_before_acceleration(
         range: Range<u32>,
         end: u32,
         prefix: &[u8],
-    ) -> Result<[u8; 32]> {
-        RawBank::new(flash.clone(), range)?.digest(end, prefix)
+    ) -> Result<Option<[u8; 32]>> {
+        RawBank::new(flash.clone(), range)?.digest_if_erased_tail(end, prefix)
     }
     for end in [0u32, 1, 13, 55, 56, 63, 64, 65, 255, 256, 257, 4096] {
         let flash = FaultFlash::new();
@@ -208,6 +208,7 @@ fn bank_digest_matches_software_hash_and_checks_full_suffix_before_acceleration(
         if end < 4096 {
             bank.program(4095, &[0]).unwrap();
             assert_eq!(bank.digest(end, prefix), Err(Error::MemoryFatal));
+            assert_eq!(bank.digest_if_erased_tail(end, prefix), Ok(None));
         }
     }
 }

@@ -1209,6 +1209,9 @@ impl<S: NorFlash, C: CacheImpl<K>, K: Key> MapStorage<K, S, C> {
     pub async fn fetch_all_items_unrepaired(
         &mut self,
     ) -> Result<MapItemIter<'_, K, S, C>, Error<S::Error>> {
+        if self.inner.cache.is_dirty() {
+            self.inner.cache.invalidate_cache_state();
+        }
         let first_page = self.first_item_page().await?.ok_or_else(|| Error::Corrupted {
             #[cfg(feature = "_test")]
             backtrace: std::backtrace::Backtrace::capture(),
@@ -1491,13 +1494,30 @@ impl<K: Key, S: NorFlash, C: CacheImpl<K>> MapItemIter<'_, K, S, C> {
         &mut self,
         data_buffer: &'a mut [u8],
     ) -> Result<Option<(K, V)>, Error<S::Error>> {
+        self.next_inner(data_buffer, None, |_| false).await
+    }
+
+    /// Skip keys from an unverified prefix; returned items still pass their full CRC.
+    /// Only use this for exclusions whose values the caller validates independently.
+    /// Skipped entries never update key pointers. Requires a fixed-width key codec.
+    pub async fn next_unless<'a, V: Value<'a>>(
+        &mut self, data_buffer: &'a mut [u8], skip: impl Fn(&K) -> bool,
+    ) -> Result<Option<(K, V)>, Error<S::Error>> {
+        let prefix_len = K::get_len(&[]).map_err(Error::SerializationError)?;
+        self.next_inner(data_buffer, Some(prefix_len), skip).await
+    }
+
+    async fn next_inner<'a, V: Value<'a>>(
+        &mut self, data_buffer: &'a mut [u8], prefix_len: Option<usize>, skip: impl Fn(&K) -> bool,
+    ) -> Result<Option<(K, V)>, Error<S::Error>> {
         // Find the next item
         // RS-Key: surface the item's flash address so the warm below can seed the
         // key-pointer cache (upstream discards it as `_address`).
         let (item, address) = loop {
             if let Some((item, address)) = self
                 .current_iter
-                .next(&mut self.storage.inner.flash, data_buffer)
+                .next_unless(&mut self.storage.inner.flash, data_buffer, prefix_len,
+                    |prefix| K::deserialize_from(prefix).is_ok_and(|(key, _)| skip(&key)))
                 .await?
             {
                 // We've found the next item, quit the loop

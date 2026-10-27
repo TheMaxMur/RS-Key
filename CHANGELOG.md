@@ -38,6 +38,16 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ## [Unreleased]
 
+- **bcdDevice → 0x0B66:** reuse authenticated counter locations after
+  fresh full-bank fingerprint and erased-tail checks; keep complete value MACs,
+  changed-bank recovery, and both durable publications. Unpublished-value cleanup
+  skips bodies of already-published files during its read-only walk and avoids
+  duplicate validation when it changed nothing. Keep ordinary lookup futures
+  separate, optimize the store for speed, and group the hot X25519 loop within
+  one XIP cache way. Enable the existing constant-time Ed25519 base-point tables.
+  Existing storage formats,
+  capacities, root checks, and rollback policy are unchanged.
+
 - **bcdDevice → 0x0B55:** Reuse the verified main-journal append position
   after checking both complete physical journals and the mounted authority.
   A completed write retains its authenticated mount for the next read.

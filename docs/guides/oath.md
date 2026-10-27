@@ -85,6 +85,11 @@ Build `0x0B55` reduces repeated storage checks during HOTP updates. Existing
 accounts and counters need no reset or migration; each counter advance still
 becomes durable before its code is returned.
 
+Build `0x0B66` also reduces shared-backend cleanup work during HOTP advances
+and PIN updates. It skips historical bodies of published files during the
+read-only orphan walk, while authenticating every published value before
+cleanup or garbage collection. Both durable publications remain required.
+
 The **Yubico Authenticator** GUI shows all TOTP codes live and re-derives them
 each period. Touch and HOTP entries get a tap-to-reveal button instead.
 

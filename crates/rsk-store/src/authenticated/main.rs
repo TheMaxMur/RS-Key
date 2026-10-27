@@ -704,16 +704,23 @@ impl<F: NorFlash + MultiwriteNorFlash, C: CacheImpl<u16>> Main<F, C> {
     }
 
     fn retire_unpublished(&mut self, key: &[u8; 32]) -> Result<()> {
-        self.validate_values(key)?;
         let mut retired = heapless::Vec::<u16, MAX_MAIN_ENTRIES>::new();
-        let mut iterator = block_on(self.map.fetch_all_items(self.buffer.expose_mut()))
-            .map_err(|_| Error::MemoryFatal)?;
-        while let Some((fid, _)) = block_on(iterator.next::<&[u8]>(self.buffer.expose_mut()))
-            .map_err(|_| Error::MemoryFatal)?
+        let mut iterator =
+            block_on(self.map.fetch_all_items_unrepaired()).map_err(|_| Error::MemoryFatal)?;
+        while let Some((fid, _)) = block_on(
+            iterator.next_unless::<&[u8]>(self.buffer.expose_mut(), |fid| {
+                self.directory.find(*fid).is_some()
+            }),
+        )
+        .map_err(|_| Error::MemoryFatal)?
         {
             if self.directory.find(fid).is_none() && !retired.contains(&fid) {
                 retired.push(fid).map_err(|_| Error::MemoryFatal)?;
             }
+        }
+        self.validate_values(key)?;
+        if retired.is_empty() {
+            return Ok(());
         }
         for fid in retired {
             block_on(self.map.remove_item(self.buffer.expose_mut(), &fid))
