@@ -9,6 +9,7 @@ use rsk_crypto::hash::Sha256State;
 use rsk_sdk::error::{Error, Result};
 use rsk_secret::Secret;
 
+use super::append_proof::AppendProof;
 use crate::FlashBuf;
 use crate::verified_flash::VerifiedFlash;
 
@@ -47,6 +48,7 @@ pub struct RawBank<F: NorFlash + MultiwriteNorFlash> {
     flash: VerifiedFlash<F>,
     range: Range<u32>,
     pub(super) digest: Option<BankDigest<F>>,
+    pub(super) append_proof: Option<AppendProof>,
 }
 
 impl<F: NorFlash + MultiwriteNorFlash> RawBank<F> {
@@ -72,6 +74,7 @@ impl<F: NorFlash + MultiwriteNorFlash> RawBank<F> {
             flash: VerifiedFlash::new(flash),
             range,
             digest: None,
+            append_proof: None,
         })
     }
 
@@ -144,6 +147,46 @@ impl<F: NorFlash + MultiwriteNorFlash> RawBank<F> {
     pub(super) fn digest(&mut self, end: u32, prefix: &[u8]) -> Result<[u8; 32]> {
         self.digest_if_erased_tail(end, prefix)?
             .ok_or(Error::MemoryFatal)
+    }
+
+    pub(super) fn remember_prefix(
+        &mut self,
+        state: Sha256State,
+        end: u32,
+        key: &[u8; 32],
+    ) -> [u8; 32] {
+        let proof = AppendProof::new(state, end, key);
+        let tag = proof.tag();
+        self.append_proof = Some(proof);
+        tag
+    }
+
+    // Both replicas share this pass instead of duplicating hash framing in callers.
+    #[inline(never)]
+    pub(super) fn confirm_append(
+        &mut self,
+        key: &[u8; 32],
+        start: u32,
+        parts: &[&[u8]],
+        prefix: &[u8],
+    ) -> Result<Option<[u8; 32]>> {
+        let Some(proof) = self.append_proof.take() else {
+            return Ok(None);
+        };
+        let mut tail = [0; 64];
+        let bytes = tail.get_mut(..proof.tail()).ok_or(Error::MemoryFatal)?;
+        let tail_at = proof
+            .end()
+            .checked_sub(u32::try_from(bytes.len()).map_err(|_| Error::MemoryFatal)?)
+            .ok_or(Error::MemoryFatal)?;
+        self.read(tail_at, bytes)?;
+        let expected = proof.extend(key, start, bytes, parts)?;
+        let fresh = rsk_crypto::hmac_sha256(key, &self.digest(expected.end(), prefix)?);
+        if !rsk_crypto::ct_eq(&fresh, &expected.tag()) {
+            return Err(Error::MemoryFatal);
+        }
+        self.append_proof = Some(expected);
+        Ok(Some(fresh))
     }
 
     pub(super) fn digest_if_erased_tail(
@@ -241,6 +284,7 @@ impl<F: NorFlash + MultiwriteNorFlash> RawBank<F> {
     }
 
     pub fn erase(&mut self) -> Result<()> {
+        self.append_proof = None;
         block_on(self.flash.erase(self.range.start, self.range.end)).map_err(|_| Error::MemoryFatal)
     }
 }

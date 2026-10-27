@@ -90,6 +90,11 @@ and PIN updates. It skips historical bodies of published files during the
 read-only orphan walk, while authenticating every published value before
 cleanup or garbage collection. Both durable publications remain required.
 
+Build `0x0B70` replaces the closing history replay with a fresh check of both
+complete banks against the exact expected append. HOTP still returns its code
+only after both publications are durable; payload authentication, erased-tail
+checks and power-loss recovery retain their existing contracts.
+
 The **Yubico Authenticator** GUI shows all TOTP codes live and re-derives them
 each period. Touch and HOTP entries get a tap-to-reveal button instead.
 

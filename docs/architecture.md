@@ -224,8 +224,22 @@ trigger full replay and recovery. Fingerprints are bound to the current root
 key, epoch and root arm, and requested values retain their full MAC check.
 Fingerprints are formed from the same bytes as the authenticating scan, not a
 second read of potentially changed data. Mutation discards the mount before
-programming; full closing replay seeds the next mount. Invalid occupied suffixes
+programming; verified closure seeds the next mount. Invalid occupied suffixes
 retain authenticated progress as a minimum generation; an older replica cannot silently replace that progress.
+
+From `0x0B70`, main and counter journals retain the SHA state of complete public
+metadata blocks from the authenticating scan. Before extending that state, the
+partial block is reread and checked against the root-bound prefix fingerprint.
+The exact intended append extends this state in RAM. After both publications,
+each complete physical bank is read afresh: its occupied prefix must match the
+expected fingerprint and every tail byte must remain erased. Only then can the
+new append position be reused. This replaces per-record closing replay without
+accepting a changed historical prefix, a different append or a hidden suffix.
+No root key or payload plaintext is retained. Cold mounts, recovery and
+compaction keep the full replay path; missing proof state uses that path too.
+A GET RESPONSE that only drains a prepared answer leaves the public OTP HID
+status mirror alone. Every new APDU and OTP operation still refreshes it; the
+mirror is not used to authorize operations or validate stored values.
 
 From `0x0B05`, TrustZone places shared memory-copy and clearing helpers beside
 the verifier in read-only Secure SRAM. Their instruction bodies are unchanged;
@@ -246,8 +260,8 @@ mutation, full physical-journal fingerprints are checked. Otherwise authenticate
 journal resolution and recovery precede mutation.
 From `0x0B55`, a verified mount also retains the append offsets and chain heads.
 After the physical-journal check, a healthy payload map can reuse this position
-without replaying the journal again. The completed write's full authenticated
-resolution seeds the next read mount; errors clear these hints. Payload repair
+without replaying the journal again. The completed write's authenticated
+closure seeds the next read mount; errors clear these hints. Payload repair
 still takes the original resolution path, and no root key or payload is retained.
 From `0x0B66`, unpublished-value retirement first performs an unrepaired,
 read-only walk. Known FIDs exclude historical bodies from this walk without

@@ -9,7 +9,19 @@ use sha2::Digest;
 use rsk_sha512::{Sha384, Sha512};
 
 /// Streaming SHA-256 for public metadata larger than a command's scratch buffer.
+#[derive(Clone)]
 pub struct Sha256State(Sha256);
+
+/// Complete public-message blocks; the caller supplies the omitted partial block.
+pub struct Sha256Prefix(rsk_sha256::Sha256Core);
+
+impl Sha256Prefix {
+    pub fn resume(self, tail: &[u8]) -> Sha256State {
+        let mut state = Sha256State(Sha256::from_core(self.0));
+        state.update(tail);
+        state
+    }
+}
 
 impl Default for Sha256State {
     fn default() -> Self {
@@ -28,6 +40,11 @@ impl Sha256State {
 
     pub fn finish(self) -> [u8; 32] {
         self.0.finalize().into()
+    }
+
+    pub fn into_prefix(self) -> (Sha256Prefix, usize) {
+        let (core, buffer) = self.0.decompose();
+        (Sha256Prefix(core), buffer.get_pos())
     }
 }
 

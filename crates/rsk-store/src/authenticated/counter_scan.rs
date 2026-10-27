@@ -86,6 +86,7 @@ pub(super) fn scan<F: NorFlash + MultiwriteNorFlash>(
     key: &[u8; 32],
     directory: &mut Directory<MAX_COUNTER_ENTRIES>,
 ) -> Result<CounterScan> {
+    reader.append_proof = None;
     directory.clear();
     let mut header = [0; CHECKPOINT_BYTES];
     reader.read(0, &mut header)?;
@@ -225,15 +226,14 @@ pub(super) fn scan<F: NorFlash + MultiwriteNorFlash>(
 fn finish_scan<F: NorFlash + MultiwriteNorFlash>(
     reader: &mut RawBank<F>,
     key: &[u8; 32],
-    mut fingerprint: Sha256State,
+    fingerprint: Sha256State,
     mut scan: CounterScan,
     at: u32,
 ) -> Result<CounterScan> {
     if !reader.read_erased(at)? {
         return Ok(scan);
     }
-    fingerprint.update(&at.to_le_bytes());
-    scan.fingerprint = Some(hmac_sha256(key, &fingerprint.finish()));
+    scan.fingerprint = Some(reader.remember_prefix(fingerprint, at, key));
     scan.status = JournalStatus::Complete;
     Ok(scan)
 }

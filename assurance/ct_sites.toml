@@ -217,6 +217,14 @@ symbol = "rsk_store::authenticated::authority::Bound::verify"
 surface = "fresh root binding for storage v2 cached main authority reads"
 
 [[caller]]
+symbol = "rsk_store::authenticated::append_proof::AppendProof::extend"
+surface = "storage v2 root-bound SHA prefix before extending an authenticated append"
+
+[[caller]]
+symbol = "rsk_store::authenticated::bank::RawBank<F>::confirm_append"
+surface = "storage v2 freshly read complete journal against the exact expected append"
+
+[[caller]]
 symbol = "rsk_store::authenticated::main::Main<F,C>::check_banks"
 surface = "storage v2 complete physical bank fingerprints before reusing mounted state for mutation"
 

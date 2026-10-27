@@ -8,6 +8,8 @@ use sequential_storage::map::MapConfig;
 const KEY: [u8; 32] = [0x35; 32];
 const EPOCH: [u8; 16] = [0x4B; 16];
 
+#[path = "main_append_tests.rs"]
+mod append;
 #[path = "main_raw_tags_tests.rs"]
 mod raw_tags;
 #[path = "main_retirement_tests.rs"]

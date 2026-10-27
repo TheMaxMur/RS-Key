@@ -6,6 +6,7 @@
 
 Replaces OTP slot 2 with a scratch HMAC configuration and deletes it afterwards.
 Uses HID feature requests on EP0 without capturing keyboard input.
+Requires FIDO enabled for the pending GET RESPONSE check.
 """
 
 import argparse
@@ -24,6 +25,7 @@ from yubikit.yubiotp import HmacSha1SlotConfiguration, SLOT, YubiOtpSession
 from _device import find, find_reader
 
 OTP_AID = bytes.fromhex("a0000005272001")
+FIDO_AID = bytes.fromhex("a0000006472f0001")
 REPORT_SIZE = 8
 
 
@@ -58,6 +60,23 @@ def select_otp(card, otp):
         f"NS OTP status {report[1:7].hex()} differs from Secure CCID status {bytes(data).hex()}")
 
 
+def continue_response(card, otp):
+    _, sw1, sw2 = card.transmit([0, 0xA4, 4, 0, len(FIDO_AID), *FIDO_AID])
+    assert (sw1, sw2) == (0x90, 0)
+    _, sw1, sw2 = card.transmit([0x80, 0x10, 0, 0, 1, 4, 64])
+    assert sw1 == 0x61, "getInfo must leave a pending answer"
+    status = otp.receive()[1:7]
+    parts = 0
+    while sw1 == 0x61:
+        data, sw1, sw2 = card.transmit([0, 0xC0, 0, 0, 64])
+        assert data and len(data) <= 64
+        assert otp.receive()[1:7] == status
+        parts += 1
+        assert parts <= 32, "GET RESPONSE did not terminate"
+    assert (sw1, sw2) == (0x90, 0)
+    select_otp(card, otp)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--serial", required=True)
@@ -85,13 +104,16 @@ def main():
                     assert session.get_config_state().is_configured(SLOT.TWO)
                     assert session.calculate_hmac_sha1(SLOT.TWO, message) == hmac.new(key, message, hashlib.sha1).digest()
                     select_otp(card, otp)
+                    continue_response(card, otp)
                 finally:
                     cleanup = YubiOtpSession(otp)
                     if cleanup.get_config_state().is_configured(SLOT.TWO):
                         cleanup.delete_slot(SLOT.TWO)
                 assert not cleanup.get_config_state().is_configured(SLOT.TWO)
                 select_otp(card, otp)
+                continue_response(card, otp)
                 print(json.dumps({"run": run + 1, "CCID_and_HID_status_match": True,
+                                  "GET_RESPONSE_preserves_public_status": True,
                                   "YubiKit_HMAC_SHA1_verified": True, "scratch_slot_removed": True}), flush=True)
     finally:
         card.disconnect()

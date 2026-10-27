@@ -54,6 +54,14 @@ impl<F: NorFlash + MultiwriteNorFlash> CounterBank<F> {
     }
 
     pub(super) fn fingerprint(&mut self, key: &[u8; 32], end: u32) -> Result<Option<[u8; 32]>> {
+        let prefix = self.fingerprint_prefix()?;
+        Ok(self
+            .bank
+            .digest_if_erased_tail(end, &prefix)?
+            .map(|digest| hmac_sha256(key, &digest)))
+    }
+
+    fn fingerprint_prefix(&self) -> Result<[u8; RAW_DOMAIN.len() + core::mem::size_of::<u32>()]> {
         let mut prefix = [0; RAW_DOMAIN.len() + core::mem::size_of::<u32>()];
         prefix
             .get_mut(..RAW_DOMAIN.len())
@@ -63,10 +71,50 @@ impl<F: NorFlash + MultiwriteNorFlash> CounterBank<F> {
             .get_mut(RAW_DOMAIN.len()..)
             .ok_or(Error::MemoryFatal)?
             .copy_from_slice(&self.capacity().to_le_bytes());
-        Ok(self
-            .bank
-            .digest_if_erased_tail(end, &prefix)?
-            .map(|digest| hmac_sha256(key, &digest)))
+        Ok(prefix)
+    }
+
+    pub(super) fn confirm_append(
+        &mut self,
+        mut scan: CounterScan,
+        key: &[u8; 32],
+        entry: Entry,
+        value: &[u8],
+    ) -> Result<Option<CounterScan>> {
+        let index = Self::counter_index(entry.fid())?;
+        let padded = Self::padded_length(entry)?;
+        let padding = padded.checked_sub(value.len()).ok_or(Error::MemoryFatal)?;
+        let erased = [0xff; VALUE_ALIGNMENT];
+        let prefix = self.fingerprint_prefix()?;
+        let Some(tag) = self.bank.confirm_append(
+            key,
+            scan.next,
+            &[
+                &entry.encode()?,
+                value,
+                erased.get(..padding).ok_or(Error::MemoryFatal)?,
+            ],
+            &prefix,
+        )?
+        else {
+            return Ok(None);
+        };
+        let value_offset = scan
+            .next
+            .checked_add(u32::try_from(ENTRY_BYTES).map_err(|_| Error::MemoryFatal)?)
+            .ok_or(Error::MemoryFatal)?;
+        *scan.locations.get_mut(index).ok_or(Error::MemoryFatal)? =
+            entry.length().map(|_| CounterLocation {
+                entry,
+                value_offset,
+            });
+        scan.next = value_offset
+            .checked_add(u32::try_from(padded).map_err(|_| Error::MemoryFatal)?)
+            .ok_or(Error::MemoryFatal)?;
+        scan.sequence = Some(entry.generation());
+        scan.lower_bound = scan.sequence;
+        scan.fingerprint = Some(tag);
+        Ok(Some(scan))
     }
 
     pub fn read_header(&mut self) -> Result<[u8; CHECKPOINT_BYTES]> {

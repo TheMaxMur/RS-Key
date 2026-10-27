@@ -11,6 +11,9 @@ use crate::tests::{
 #[path = "ccid_mutation_tests.rs"]
 mod mutation_boundaries;
 
+#[path = "ccid_continuation_tests.rs"]
+mod response_continuation;
+
 /// The DeviceInfo serial the management applet reports for [`crate::tests::SERIAL_ID`].
 fn serial() -> [u8; 4] {
     rsk_sdk::serial4(crate::tests::SERIAL_ID)

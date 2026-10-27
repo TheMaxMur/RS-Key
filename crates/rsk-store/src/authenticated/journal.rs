@@ -59,16 +59,18 @@ impl<F: NorFlash + MultiwriteNorFlash> Journal<F> {
         state
     }
 
-    fn seal_fingerprint(key: &[u8; 32], mut state: Sha256State, end: u32) -> [u8; 32] {
-        state.update(&end.to_le_bytes());
-        hmac_sha256(key, &state.finish())
-    }
-
     pub(super) fn set_digest(&mut self, digest: super::BankDigest<F>) {
         self.bank.digest = Some(digest);
     }
 
     pub(super) fn fingerprint(&mut self, key: &[u8; 32], end: u32) -> Result<[u8; 32]> {
+        let prefix = self.fingerprint_prefix()?;
+        Ok(hmac_sha256(key, &self.bank.digest(end, &prefix)?))
+    }
+
+    fn fingerprint_prefix(
+        &self,
+    ) -> Result<[u8; RAW_DOMAIN.len() + 1 + core::mem::size_of::<u32>()]> {
         let mut prefix = [0; RAW_DOMAIN.len() + 1 + core::mem::size_of::<u32>()];
         prefix
             .get_mut(..RAW_DOMAIN.len())
@@ -79,7 +81,23 @@ impl<F: NorFlash + MultiwriteNorFlash> Journal<F> {
             .get_mut(RAW_DOMAIN.len() + 1..)
             .ok_or(Error::MemoryFatal)?
             .copy_from_slice(&self.capacity().to_le_bytes());
-        Ok(hmac_sha256(key, &self.bank.digest(end, &prefix)?))
+        Ok(prefix)
+    }
+
+    pub(super) fn confirm_append(
+        &mut self,
+        key: &[u8; 32],
+        start: u32,
+        prepare: Delta,
+        commit: Delta,
+    ) -> Result<Option<[u8; 32]>> {
+        let prefix = self.fingerprint_prefix()?;
+        self.bank.confirm_append(
+            key,
+            start,
+            &[&prepare.encode(key)?, &commit.encode(key)?],
+            &prefix,
+        )
     }
 
     fn finish_scan(
@@ -93,7 +111,7 @@ impl<F: NorFlash + MultiwriteNorFlash> Journal<F> {
             return Ok(scan);
         }
         scan.status = JournalStatus::Complete;
-        scan.fingerprint = Some(Self::seal_fingerprint(key, state, at));
+        scan.fingerprint = Some(self.bank.remember_prefix(state, at, key));
         Ok(scan)
     }
 
@@ -102,6 +120,7 @@ impl<F: NorFlash + MultiwriteNorFlash> Journal<F> {
         key: &[u8; 32],
         directory: &mut Directory<N>,
     ) -> Result<JournalScan> {
+        self.bank.append_proof = None;
         directory.clear();
         let header = self.read_header()?;
         let mut fingerprint = self.fingerprint_state();

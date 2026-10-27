@@ -30,6 +30,7 @@ pub use checkpoint::{CHECKPOINT_BYTES, Checkpoint};
 mod transaction;
 pub use transaction::{DELTA_BYTES, Delta, DeltaKind, Prepared, TransactionState};
 
+mod append_proof;
 mod bank;
 pub use bank::{BankDigest, RawBank, all_erased};
 

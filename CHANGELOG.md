@@ -38,6 +38,16 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ## [Unreleased]
 
+- **bcdDevice → 0x0B70:** close main-journal and counter appends by freshly
+  checking both complete banks against the authenticated prefix and exact new
+  records, without replaying every older record's MAC. Compact SHA prefix state
+  stays in protected RAM; its reread partial block is authenticated before use.
+  PIN retry writes, HOTP advances and OpenPGP signatures retain both durable
+  publications, full payload checks, rollback floors and power-cut recovery.
+  Existing records need no migration; cold mounts and compaction still replay.
+  GET RESPONSE tails reuse the public OTP-status mirror from the producing
+  command; new APDUs and OTP operations still refresh it.
+
 - **bcdDevice → 0x0B66:** reuse authenticated counter locations after
   fresh full-bank fingerprint and erased-tail checks; keep complete value MACs,
   changed-bank recovery, and both durable publications. Unpublished-value cleanup

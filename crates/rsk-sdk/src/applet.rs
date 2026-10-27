@@ -305,7 +305,7 @@ impl Dispatcher {
         // owed its SM bits are not judged: a YubiKey 5.8.0 serves the rest of an
         // answer it already began in the clear.
         let get_response = apdu.ins == INS_GET_RESPONSE;
-        if get_response && !apdu.is_chaining() && self.response_owed() {
+        if self.continues_response(&apdu) {
             return self.serve_pending(apdu.frame_cap(), res);
         }
         // With the chaining bit and no chain open a YubiKey 5.8.0 answers it `9000`
@@ -528,6 +528,11 @@ impl Dispatcher {
     /// Whether a GET RESPONSE would be served a tail: an answer begun, not finished.
     pub fn response_owed(&self) -> bool {
         self.pending_off < self.pending_len
+    }
+
+    /// Whether dispatch only drains an answer already held in RAM.
+    pub fn continues_response(&self, apdu: &Apdu<'_>) -> bool {
+        apdu.ins == INS_GET_RESPONSE && !apdu.is_chaining() && self.response_owed()
     }
 
     /// The answer half of [`Self::process`], for a response an applet made outside

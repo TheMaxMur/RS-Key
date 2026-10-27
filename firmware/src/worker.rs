@@ -691,6 +691,9 @@ impl<'a> Worker<'a> {
             let otp = ex.kind == Kind::Otp;
             #[cfg(not(rsk_trustzone_prototype))]
             let otp = false;
+            #[cfg(rsk_trustzone_prototype)]
+            let response_continuation =
+                ex.kind == Kind::Apdu && self.ccid.continues_response(&ex.req[..ex.req_len]);
             if otp {
                 #[cfg(rsk_trustzone_prototype)]
                 self.handle_otp_portal(&mut ex);
@@ -786,7 +789,9 @@ impl<'a> Worker<'a> {
             self.ctap.scrub_with(crate::sweep::wipe_bytes);
             self.ccid.scrub_with(crate::sweep::wipe_bytes);
             #[cfg(rsk_trustzone_prototype)]
-            if matches!(ex.kind, Kind::Apdu | Kind::Otp) {
+            if matches!(ex.kind, Kind::Apdu | Kind::Otp) && !response_continuation {
+                // Draining a prepared response cannot change OTP slots. Their public
+                // HID mirror was refreshed after the command that produced the answer.
                 publish_otp_status(self.ccid.otp_status_record());
             }
         }

@@ -423,6 +423,11 @@ impl<'a, S: Storage, R: rsk_sdk::Rng + 'static, VP: rsk_vendor::Platform>
         self.scrub_secrets();
     }
 
+    /// Whether this APDU only continues an answer already produced by an applet.
+    pub fn continues_response(&self, raw: &[u8]) -> bool {
+        Apdu::parse(raw).is_ok_and(|apdu| self.disp.continues_response(&apdu))
+    }
+
     /// Dispatch one CCID APDU synchronously, returning the response APDU (body +
     /// SW1 SW2), or nothing for a class a YubiKey 5.8.0 does not pass on. On-card
     /// RSA keygen is run to completion inline (see module docs); everything else

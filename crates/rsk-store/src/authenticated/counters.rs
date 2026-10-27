@@ -304,6 +304,30 @@ impl<F: NorFlash + MultiwriteNorFlash> Counters<F> {
             let (source, peer) = self.source_target(current.source)?;
             peer.append(peer_scan, key, entry, data)?;
             source.append(source_scan, key, entry, data)?;
+            let zero = self
+                .banks
+                .first_mut()
+                .ok_or(Error::MemoryFatal)?
+                .confirm_append(
+                    *current.scans.first().ok_or(Error::MemoryFatal)?,
+                    key,
+                    entry,
+                    data,
+                )?;
+            let one = self
+                .banks
+                .get_mut(1)
+                .ok_or(Error::MemoryFatal)?
+                .confirm_append(
+                    *current.scans.get(1).ok_or(Error::MemoryFatal)?,
+                    key,
+                    entry,
+                    data,
+                )?;
+            if let (Some(zero), Some(one)) = (zero, one) {
+                self.mount = Some([zero, one]);
+                return Ok(());
+            }
         } else {
             current.directory.apply(entry)?;
             let checkpoint = self.checkpoint(&current.directory, key, sequence)?;

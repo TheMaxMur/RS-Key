@@ -966,9 +966,36 @@ impl<F: NorFlash + MultiwriteNorFlash, C: CacheImpl<u16>> Main<F, C> {
             key,
         )?;
         self.buffer.wipe();
-        let current = self.resolve(key)?.ok_or(Error::MemoryFatal)?;
-        if data.is_some() {
-            self.cache_resolved(&current)?;
+        let confirmed_zero = zero.confirm_append(key, zero_end, prepare_zero, commit_zero)?;
+        let confirmed_one = one.confirm_append(key, one_end, prepare_one, commit_one)?;
+        if let (Some(zero), Some(one)) = (confirmed_zero, confirmed_one)
+            && !block_on(self.map.needs_repair()).map_err(|_| Error::MemoryFatal)?
+        {
+            self.directory.apply(entry)?;
+            self.authority
+                .finish(key, self.mounted_snapshot(key, sequence)?)?;
+            let ends = [zero_end + needs, one_end + needs];
+            if data.is_some() {
+                self.read_cache = Some(ReadCache {
+                    position: WritePosition {
+                        source: current.source,
+                        sequence,
+                        ends,
+                        chains: [
+                            rsk_crypto::sha256(&commit_zero.encode(key)?),
+                            rsk_crypto::sha256(&commit_one.encode(key)?),
+                        ],
+                    },
+                    source: current.source,
+                    ends,
+                    fingerprints: [zero, one],
+                });
+            }
+        } else {
+            let current = self.resolve(key)?.ok_or(Error::MemoryFatal)?;
+            if data.is_some() {
+                self.cache_resolved(&current)?;
+            }
         }
         if data.is_none() {
             self.validate_values(key)?;
