@@ -81,6 +81,10 @@ are *not* computed there and show a placeholder instead:
 - **HOTP accounts** are never computed in bulk either (it would silently burn
   the counter). Name them to step the counter once.
 
+Build `0x0B55` reduces repeated storage checks during HOTP updates. Existing
+accounts and counters need no reset or migration; each counter advance still
+becomes durable before its code is returned.
+
 The **Yubico Authenticator** GUI shows all TOTP codes live and re-derives them
 each period. Touch and HOTP entries get a tap-to-reveal button instead.
 

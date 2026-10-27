@@ -231,6 +231,11 @@ its expected entry. The complete directory also authorizes absence. Neither root
 keys nor payload plaintext are cached. Before reusing a mounted directory for
 mutation, full physical-journal fingerprints are checked. Otherwise authenticated
 journal resolution and recovery precede mutation.
+From `0x0B55`, a verified mount also retains the append offsets and chain heads.
+After the physical-journal check, a healthy payload map can reuse this position
+without replaying the journal again. The completed write's full authenticated
+resolution seeds the next read mount; errors clear these hints. Payload repair
+still takes the original resolution path, and no root key or payload is retained.
 A separate mounted authority tracks the exact epoch, root arm, sequence and
 directory digest through Prepare, Commit, Abort and rekey. Errors and remounts
 clear acceleration hints but retain this floor; the first verified publication

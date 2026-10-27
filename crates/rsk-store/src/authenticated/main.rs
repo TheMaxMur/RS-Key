@@ -24,7 +24,31 @@ struct Current {
 }
 
 #[derive(Clone, Copy)]
+struct WritePosition {
+    source: usize,
+    sequence: u64,
+    ends: [u32; 2],
+    chains: [[u8; 32]; 2],
+}
+
+impl WritePosition {
+    fn from_current(current: &Current) -> Result<Self> {
+        let [zero, one] = current.scans;
+        Ok(Self {
+            source: current.source,
+            sequence: current.sequence,
+            ends: [zero.next, one.next],
+            chains: [
+                zero.state.ok_or(Error::MemoryFatal)?.chain(),
+                one.state.ok_or(Error::MemoryFatal)?.chain(),
+            ],
+        })
+    }
+}
+
+#[derive(Clone, Copy)]
 struct ReadCache {
+    position: WritePosition,
     source: usize,
     ends: [u32; 2],
     fingerprints: [[u8; 32]; 2],
@@ -92,7 +116,7 @@ impl<F: NorFlash + MultiwriteNorFlash, C: CacheImpl<u16>> Main<F, C> {
     }
 
     pub(super) fn publish_import(&mut self, key: &[u8; 32]) -> Result<()> {
-        self.with_buffer(key, |this| this.snapshots(key, 0, 0).map(|_| ()))
+        self.with_buffer(key, |this, _current| this.snapshots(key, 0, 0).map(|_| ()))
     }
 
     pub(super) fn invalidate_read_cache(&mut self) {
@@ -206,7 +230,7 @@ impl<F: NorFlash + MultiwriteNorFlash, C: CacheImpl<u16>> Main<F, C> {
     }
 
     pub(super) fn repair_activation(&mut self, key: &[u8; 32]) -> Result<()> {
-        self.with_buffer(key, |this| {
+        self.with_buffer(key, |this, _current| {
             let current = this.resolve(key)?.ok_or(Error::MemoryFatal)?;
             let fid = super::import::ACTIVATION_FID;
             let entry = this.directory.find(fid).ok_or(Error::MemoryFatal)?;
@@ -524,7 +548,7 @@ impl<F: NorFlash + MultiwriteNorFlash, C: CacheImpl<u16>> Main<F, C> {
     fn with_buffer<T>(
         &mut self,
         key: &[u8; 32],
-        operation: impl FnOnce(&mut Self) -> Result<T>,
+        operation: impl FnOnce(&mut Self, Option<WritePosition>) -> Result<T>,
     ) -> Result<T> {
         let cached = self.read_cache.take();
         self.read_tags.clear();
@@ -534,9 +558,12 @@ impl<F: NorFlash + MultiwriteNorFlash, C: CacheImpl<u16>> Main<F, C> {
                 self.authority.verify_read(key, self.identity, self.arm)?;
                 self.check_banks(key, current)?;
             }
-            operation(self)
+            operation(self, cached.map(|value| value.position))
         })();
         self.buffer.wipe();
+        if result.is_err() {
+            self.invalidate_read_cache();
+        }
         result
     }
 
@@ -558,7 +585,9 @@ impl<F: NorFlash + MultiwriteNorFlash, C: CacheImpl<u16>> Main<F, C> {
         sequence: u64,
         directory: &Directory<MAX_MAIN_ENTRIES>,
     ) -> Result<()> {
-        self.with_buffer(key, |this| this.initialize_inner(key, sequence, directory))
+        self.with_buffer(key, |this, _current| {
+            this.initialize_inner(key, sequence, directory)
+        })
     }
 
     pub fn read(&mut self, key: &[u8; 32], fid: u16, out: &mut [u8]) -> Result<Option<usize>> {
@@ -627,19 +656,21 @@ impl<F: NorFlash + MultiwriteNorFlash, C: CacheImpl<u16>> Main<F, C> {
     }
 
     pub fn write(&mut self, key: &[u8; 32], fid: u16, data: Option<&[u8]>) -> Result<()> {
-        self.with_buffer(key, |this| this.write_inner(key, fid, data))
+        self.with_buffer(key, |this, current| {
+            this.write_inner(key, fid, data, current)
+        })
     }
 
     pub fn for_each_key(&mut self, key: &[u8; 32], visit: impl FnMut(u16)) -> Result<()> {
-        self.with_buffer(key, |this| this.for_each_key_inner(key, visit))
+        self.with_buffer(key, |this, _current| this.for_each_key_inner(key, visit))
     }
 
     pub fn compact(&mut self, key: &[u8; 32]) -> Result<()> {
-        self.with_buffer(key, |this| this.compact_inner(key))
+        self.with_buffer(key, |this, _current| this.compact_inner(key))
     }
 
     pub fn rekey(&mut self, old: &[u8; 32], new: &[u8; 32], arm: RootArm) -> Result<()> {
-        self.with_buffer(old, |this| {
+        self.with_buffer(old, |this, _current| {
             let current = this.resolve(old)?.ok_or(Error::MemoryFatal)?;
             let sequence = current.sequence.checked_add(1).ok_or(Error::MemoryFatal)?;
             for index in 0..this.directory.entries().len() {
@@ -705,6 +736,26 @@ impl<F: NorFlash + MultiwriteNorFlash, C: CacheImpl<u16>> Main<F, C> {
         Ok(())
     }
 
+    fn cache_resolved(&mut self, current: &Current) -> Result<()> {
+        if current.scans.iter().all(|scan| {
+            scan.status == JournalStatus::Complete
+                && scan.fingerprint.is_some()
+                && scan.state.is_some_and(|state| state.pending().is_none())
+        }) {
+            let [zero, one] = current.scans;
+            self.read_cache = Some(ReadCache {
+                position: WritePosition::from_current(current)?,
+                source: current.source,
+                ends: [zero.next, one.next],
+                fingerprints: [
+                    zero.fingerprint.ok_or(Error::MemoryFatal)?,
+                    one.fingerprint.ok_or(Error::MemoryFatal)?,
+                ],
+            });
+        }
+        Ok(())
+    }
+
     fn read_inner(&mut self, key: &[u8; 32], fid: u16, out: &mut [u8]) -> Result<Option<usize>> {
         if let Some(current) = self.read_cache {
             self.journals
@@ -714,21 +765,7 @@ impl<F: NorFlash + MultiwriteNorFlash, C: CacheImpl<u16>> Main<F, C> {
         }
         if self.read_cache.is_none() {
             let current = self.resolve(key)?.ok_or(Error::MemoryFatal)?;
-            if current.scans.iter().all(|scan| {
-                scan.status == JournalStatus::Complete
-                    && scan.fingerprint.is_some()
-                    && scan.state.is_some_and(|state| state.pending().is_none())
-            }) {
-                let [zero, one] = current.scans;
-                self.read_cache = Some(ReadCache {
-                    source: current.source,
-                    ends: [zero.next, one.next],
-                    fingerprints: [
-                        zero.fingerprint.ok_or(Error::MemoryFatal)?,
-                        one.fingerprint.ok_or(Error::MemoryFatal)?,
-                    ],
-                });
-            }
+            self.cache_resolved(&current)?;
         }
         let Some(entry) = self.directory.find(fid) else {
             return Ok(None);
@@ -775,7 +812,7 @@ impl<F: NorFlash + MultiwriteNorFlash, C: CacheImpl<u16>> Main<F, C> {
         if !self.checkpoint_due {
             return Ok(());
         }
-        self.with_buffer(key, |this| {
+        self.with_buffer(key, |this, _current| {
             let current = this.resolve(key)?.ok_or(Error::MemoryFatal)?;
             if this.history_reclaimable(&current)? {
                 this.snapshots(key, current.sequence, current.source)?;
@@ -785,11 +822,25 @@ impl<F: NorFlash + MultiwriteNorFlash, C: CacheImpl<u16>> Main<F, C> {
         })
     }
 
-    fn write_inner(&mut self, key: &[u8; 32], fid: u16, data: Option<&[u8]>) -> Result<()> {
+    fn write_inner(
+        &mut self,
+        key: &[u8; 32],
+        fid: u16,
+        data: Option<&[u8]>,
+        verified: Option<WritePosition>,
+    ) -> Result<()> {
         if crate::is_counter_fid(fid) {
             return Err(Error::MemoryFatal);
         }
-        let mut current = self.resolve(key)?.ok_or(Error::MemoryFatal)?;
+        let mut current = if let Some(current) = verified
+            && !block_on(self.map.needs_repair()).map_err(|_| Error::MemoryFatal)?
+        {
+            self.authority
+                .finish(key, self.mounted_snapshot(key, current.sequence)?)?;
+            current
+        } else {
+            WritePosition::from_current(&self.resolve(key)?.ok_or(Error::MemoryFatal)?)?
+        };
         let sequence = current.sequence.checked_add(1).ok_or(Error::MemoryFatal)?;
         let entry = match data {
             Some(value) => Entry::live(self.identity, key, fid, sequence, value)?,
@@ -805,10 +856,10 @@ impl<F: NorFlash + MultiwriteNorFlash, C: CacheImpl<u16>> Main<F, C> {
         };
         let needs = u32::try_from(2 * DELTA_BYTES).map_err(|_| Error::MemoryFatal)?;
         if !current
-            .scans
+            .ends
             .iter()
             .zip(&self.journals)
-            .all(|(scan, journal)| journal.capacity().saturating_sub(scan.next) >= needs)
+            .all(|(end, journal)| journal.capacity().saturating_sub(*end) >= needs)
         {
             if data.is_none() {
                 self.authority.stage_replace(key, key, target)?;
@@ -818,7 +869,11 @@ impl<F: NorFlash + MultiwriteNorFlash, C: CacheImpl<u16>> Main<F, C> {
                     .map_err(|_| Error::MemoryFatal)?;
                 return Ok(());
             }
-            current = self.snapshots(key, current.sequence, current.source)?;
+            current = WritePosition::from_current(&self.snapshots(
+                key,
+                current.sequence,
+                current.source,
+            )?)?;
         }
         if data.is_some()
             && self.directory.find(fid).is_none()
@@ -845,22 +900,23 @@ impl<F: NorFlash + MultiwriteNorFlash, C: CacheImpl<u16>> Main<F, C> {
         let address = reserved.map_or(0, ReservedItem::address);
         self.authority.locate(Prepared { entry, address })?;
         let [zero, one] = &mut self.journals;
-        let [zero_scan, one_scan] = current.scans;
+        let [zero_end, one_end] = current.ends;
+        let [zero_previous, one_previous] = current.chains;
         let prepare_zero = Delta {
             kind: DeltaKind::Prepare,
             partition: Partition::Main,
             sequence,
             address,
             entry,
-            previous: zero_scan.state.ok_or(Error::MemoryFatal)?.chain(),
+            previous: zero_previous,
         };
         let prepare_one = Delta {
-            previous: one_scan.state.ok_or(Error::MemoryFatal)?.chain(),
+            previous: one_previous,
             ..prepare_zero
         };
-        zero.append(zero_scan.next, prepare_zero, key)?;
+        zero.append(zero_end, prepare_zero, key)?;
         self.authority.observe_prepare()?;
-        one.append(one_scan.next, prepare_one, key)?;
+        one.append(one_end, prepare_one, key)?;
         if let (Some(value), Some(reserved)) = (data, reserved) {
             block_on(
                 self.map
@@ -892,18 +948,21 @@ impl<F: NorFlash + MultiwriteNorFlash, C: CacheImpl<u16>> Main<F, C> {
         };
         let [zero, one] = &mut self.journals;
         zero.append(
-            zero_scan.next + u32::try_from(DELTA_BYTES).map_err(|_| Error::MemoryFatal)?,
+            zero_end + u32::try_from(DELTA_BYTES).map_err(|_| Error::MemoryFatal)?,
             commit_zero,
             key,
         )?;
         self.authority.admit(key, target, None)?;
         one.append(
-            one_scan.next + u32::try_from(DELTA_BYTES).map_err(|_| Error::MemoryFatal)?,
+            one_end + u32::try_from(DELTA_BYTES).map_err(|_| Error::MemoryFatal)?,
             commit_one,
             key,
         )?;
         self.buffer.wipe();
-        self.resolve(key)?.ok_or(Error::MemoryFatal)?;
+        let current = self.resolve(key)?.ok_or(Error::MemoryFatal)?;
+        if data.is_some() {
+            self.cache_resolved(&current)?;
+        }
         if data.is_none() {
             self.validate_values(key)?;
             block_on(self.map.remove_item(self.buffer.expose_mut(), &fid))

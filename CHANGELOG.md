@@ -38,6 +38,12 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ## [Unreleased]
 
+- **bcdDevice → 0x0B55:** Reuse the verified main-journal append position
+  after checking both complete physical journals and the mounted authority.
+  A completed write retains its authenticated mount for the next read.
+  PIN retry and OATH HOTP updates avoid redundant history scans; publication,
+  payload checks, recovery, persistent formats and retry ordering are unchanged.
+
 - Correct the cross-applet fuzz oracle's OATH authorization and credential
   lifecycle model, including code removal, command chaining and DELETE's BER
   fields. Production authorization and persistent formats are unchanged.

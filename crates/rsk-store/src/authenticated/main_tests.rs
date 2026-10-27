@@ -10,6 +10,8 @@ const EPOCH: [u8; 16] = [0x4B; 16];
 
 #[path = "main_raw_tags_tests.rs"]
 mod raw_tags;
+#[path = "main_write_mount_tests.rs"]
+mod write_mount;
 type UncachedMap = Cache<Uncached, Uncached, Uncached, u16>;
 
 fn main() -> Main<impl MultiwriteNorFlash + Clone, UncachedMap> {
@@ -52,7 +54,7 @@ fn cached_reads_bind_the_current_root_and_invalidate_before_mutations_or_configu
     assert!(main.read_cache.is_none());
     assert_eq!(main.read(&KEY, 0xB000, &mut []), Ok(Some(5)));
     main.write(&KEY, 0xB000, Some(b"new")).unwrap();
-    assert!(main.read_cache.is_none());
+    assert!(main.read_cache.is_some());
     assert_eq!(main.read(&KEY, 0xB000, &mut []), Ok(Some(3)));
     main.configure(EPOCH, RootArm::PreOtp);
     assert!(main.read_cache.is_none());
@@ -69,6 +71,7 @@ fn warm_reads_use_the_mounted_directory_with_either_selected_bank() {
     main.journals[1]
         .write_snapshot(checkpoint, &KEY, &main.directory)
         .unwrap();
+    main.invalidate_read_cache();
     assert_eq!(main.read(&KEY, 0xB000, &mut []), Ok(Some(5)));
     let cached = main.read_cache.unwrap();
     assert_ne!(cached.ends[0], cached.ends[1]);
