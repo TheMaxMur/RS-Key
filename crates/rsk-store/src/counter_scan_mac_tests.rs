@@ -33,7 +33,7 @@ fn history() -> (FaultFlash, CounterBank<FaultFlash>, Vec<CounterScan>) {
         }
         .unwrap();
         bank.append(
-            *scans.last().unwrap(),
+            scans.last().unwrap(),
             &JOURNAL_KEY,
             entry,
             value.unwrap_or(&[]),
@@ -63,7 +63,7 @@ fn counter_scan_mac_preserves_snapshot_history_delete_and_short_reads() {
     for length in [0, 1, 7, 16] {
         let mut out = [0xCC; 16];
         assert_eq!(
-            bank.read_value(scan, &JOURNAL_KEY, CTR, &mut out[..length]),
+            bank.read_value(&scan, &JOURNAL_KEY, CTR, &mut out[..length]),
             Ok(Some(7))
         );
         let copied = length.min(7);
@@ -100,7 +100,7 @@ fn counter_scan_mac_never_skips_superseded_value_or_tombstone_authentication() {
             assert_eq!(scan.next, previous.next);
             let mut out = [0xCC; 7];
             assert_eq!(
-                bank.read_value(scan, &JOURNAL_KEY, CTR, &mut out),
+                bank.read_value(&scan, &JOURNAL_KEY, CTR, &mut out),
                 Err(Error::MemoryFatal)
             );
             assert_eq!(out, [0xCC; 7]);
@@ -140,7 +140,7 @@ fn counter_scan_mac_does_not_cross_root_or_epoch_between_scans() {
     let initial = bank.scan(&key, &mut directory).unwrap();
     assert_eq!(initial.status, JournalStatus::Complete);
     let entry = Entry::live(identity, &key, CTR, 1, b"new root").unwrap();
-    bank.append(initial, &key, entry, b"new root").unwrap();
+    bank.append(&initial, &key, entry, b"new root").unwrap();
     let current = bank.scan(&key, &mut directory).unwrap();
     assert_eq!(current.status, JournalStatus::Complete);
     assert_eq!(current.sequence, Some(1));
@@ -160,7 +160,7 @@ fn counter_scan_mac_does_not_cross_root_or_epoch_between_scans() {
     flash.inner.bytes.borrow_mut()[at..at + ENTRY_BYTES].copy_from_slice(&entry.encode().unwrap());
     assert_eq!(bank.scan(&key, &mut directory).unwrap(), current);
     let mut out = [0xCC; 8];
-    assert_eq!(bank.read_value(current, &key, CTR, &mut out), Ok(Some(8)));
+    assert_eq!(bank.read_value(&current, &key, CTR, &mut out), Ok(Some(8)));
     assert_eq!(&out, b"new root");
 }
 

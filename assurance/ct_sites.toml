@@ -295,3 +295,43 @@ surface = "the complete stored payload and expected entry"
 [[caller]]
 symbol = "rsk_store::authenticated::record::Entry::verify_with_mac"
 surface = "the complete stored payload with a command-local HMAC context"
+
+[[caller]]
+symbol = "rsk_store::authenticated::counter_bank::CounterBank<F>::read_bound_frame"
+surface = "PIN/HOTP counter entry identity before copying its physical frame"
+
+[[caller]]
+symbol = "rsk_store::authenticated::counters::read::_<impl rsk_store::authenticated::counters::Counters<F>>::read_mirrored"
+surface = "PIN/HOTP entry, payload and padding equality across both physical replicas"
+
+[[caller]]
+symbol = "rsk_store::authenticated::counters::read::_<impl rsk_store::authenticated::counters::Counters<F>>::read_proven"
+surface = "fresh-root counter proof and complete-bank equality for public counter reads"
+
+[[caller]]
+symbol = "rsk_store::authenticated::counters::read::_<impl rsk_store::authenticated::counters::Counters<F>>::read_proven::_{{closure}}"
+surface = "the fresh complete counter-bank fingerprint match before mounted-directory reuse"
+
+[[caller]]
+symbol = "rsk_store::authenticated::counters::read::_<impl rsk_store::authenticated::counters::Counters<F>>::read_with_source"
+surface = "fresh-root authenticated counter reads and failure invalidation"
+
+[[caller]]
+symbol = "rsk_store::authenticated::counters::read::tags::ReadCache::mount"
+surface = "counter authority context equality before returning a mounted proof"
+
+[[caller]]
+symbol = "rsk_store::authenticated::counters::read::tags::ReadCache::mount::_{{closure}}"
+surface = "the cached counter authority context match during proof lookup"
+
+[[caller]]
+symbol = "rsk_store::authenticated::counters::read::tags::ReadCache::verify"
+surface = "fresh-root complete counter payload authentication before returning bytes"
+
+[[caller]]
+symbol = "rsk_store::authenticated::counters::read::tags::ValueTag::binds"
+surface = "counter payload tag equality with the current authority context"
+
+[[caller]]
+symbol = "rsk_store::authenticated::counters::read::tags::ValueTag::verify"
+surface = "counter payload MAC equality under its authenticated entry and authority"

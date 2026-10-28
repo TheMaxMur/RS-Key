@@ -32,7 +32,7 @@ pub use transaction::{DELTA_BYTES, Delta, DeltaKind, Prepared, TransactionState}
 
 mod append_proof;
 mod bank;
-pub use bank::{BankDigest, RawBank, all_erased};
+pub use bank::{BankDigest, BankErased, RawBank, all_erased};
 
 mod journal;
 pub use journal::{Journal, JournalScan, JournalStatus};
@@ -42,6 +42,9 @@ pub use counter_bank::{CounterBank, CounterLocation, CounterScan};
 
 mod counters;
 pub use counters::Counters;
+
+pub(crate) mod bound_counter;
+mod bound_storage;
 
 mod main;
 pub use main::Main;
@@ -64,8 +67,8 @@ pub const TAG_BYTES: usize = 16;
 pub const EPOCH_BYTES: usize = 16;
 /// EF_META does not consume a dynamic-file slot.
 pub const MAX_MAIN_ENTRIES: usize = rsk_fs::MAX_DYNAMIC_FILES + 1 + 6;
-/// Counter routing is closed over the declared counter FIDs.
-pub const MAX_COUNTER_ENTRIES: usize = rsk_fs::counter::COUNTER_FIDS.len();
+/// Public counter records and private owner-bound counter buckets.
+pub const MAX_COUNTER_ENTRIES: usize = rsk_fs::counter::COUNTER_FIDS.len() + bound_counter::BUCKETS;
 
 #[cfg(test)]
 #[expect(

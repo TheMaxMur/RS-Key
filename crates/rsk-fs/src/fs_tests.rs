@@ -6,6 +6,9 @@ use super::*;
 use crate::storage::faults::{Cut, RemoveStuck, TruncatedWalk};
 use crate::storage::ram::RamStorage;
 
+#[path = "fs_bound_counter_tests.rs"]
+mod bound_counter;
+
 // A stand-in working-EF fid used by the plain put/read tests.
 const KEY_DEV: u16 = 0xCC00;
 

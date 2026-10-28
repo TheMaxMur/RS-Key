@@ -47,10 +47,12 @@ pub struct Identity {
 
 /// A published value, including empty values, or an authenticated deletion.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(align(4))]
 pub struct Entry {
     fid: u16,
     length: u16,
-    generation: u64,
+    // Byte alignment avoids four padding bytes per mounted directory entry.
+    generation: [u8; 8],
     tag: [u8; TAG_BYTES],
 }
 
@@ -69,7 +71,7 @@ impl Entry {
         let mut entry = Self {
             fid,
             length,
-            generation,
+            generation: generation.to_le_bytes(),
             tag: [0; TAG_BYTES],
         };
         entry.tag = entry.authenticate(identity, key, data)?;
@@ -80,7 +82,7 @@ impl Entry {
         let mut entry = Self {
             fid,
             length: DELETED_LENGTH,
-            generation,
+            generation: generation.to_le_bytes(),
             tag: [0; TAG_BYTES],
         };
         entry.tag = entry.authenticate(identity, key, &[])?;
@@ -92,7 +94,7 @@ impl Entry {
     }
 
     pub const fn generation(self) -> u64 {
-        self.generation
+        u64::from_le_bytes(self.generation)
     }
 
     pub const fn length(self) -> Option<usize> {
@@ -166,7 +168,7 @@ impl Entry {
         field(&mut frame, 8, &[FORMAT, identity.partition.code()])?;
         field(&mut frame, 10, &self.length.to_le_bytes())?;
         field(&mut frame, 12, &identity.epoch)?;
-        field(&mut frame, 28, &self.generation.to_le_bytes())?;
+        field(&mut frame, 28, &self.generation)?;
         field(&mut frame, 36, &self.fid.to_le_bytes())?;
         field(&mut frame, 40, digest)?;
         let full_tag = tag(&frame);
@@ -179,7 +181,7 @@ impl Entry {
         let mut out = [0xFF; ENTRY_BYTES];
         field(&mut out, 0, &self.fid.to_le_bytes())?;
         field(&mut out, 2, &self.length.to_le_bytes())?;
-        field(&mut out, 4, &self.generation.to_le_bytes())?;
+        field(&mut out, 4, &self.generation)?;
         field(&mut out, 12, &self.tag)?;
         Ok(out)
     }
@@ -196,7 +198,7 @@ impl Entry {
         }
         let fid = u16::from_le_bytes(take(bytes, 0)?);
         let length = u16::from_le_bytes(take(bytes, 2)?);
-        let generation = u64::from_le_bytes(take(bytes, 4)?);
+        let generation = take(bytes, 4)?;
         let tag = take(bytes, 12)?;
         if length != DELETED_LENGTH && usize::from(length) > rsk_fs::MAX_VALUE_BYTES {
             return Err(Error::MemoryFatal);

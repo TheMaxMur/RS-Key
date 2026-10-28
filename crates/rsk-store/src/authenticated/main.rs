@@ -680,11 +680,12 @@ impl<F: NorFlash + MultiwriteNorFlash, C: CacheImpl<u16>> Main<F, C> {
                     .get(index)
                     .ok_or(Error::MemoryFatal)?;
                 let length = this.published_value(old, owner)?;
+                // Re-keying preserves the payload incarnation used by bound counters.
                 let replacement = Entry::live(
                     this.identity,
                     new,
                     owner.fid(),
-                    sequence,
+                    owner.generation(),
                     this.buffer
                         .expose()
                         .get(..length)

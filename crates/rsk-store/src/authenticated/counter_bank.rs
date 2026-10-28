@@ -2,7 +2,7 @@
 // Copyright (C) 2026 RS-Key contributors
 
 use embedded_storage_async::nor_flash::{MultiwriteNorFlash, NorFlash};
-use rsk_crypto::{ct_eq, hash::Sha256State, hmac_sha256};
+use rsk_crypto::{ct_eq, hash::Sha256State};
 use rsk_sdk::error::{Error, Result};
 use rsk_secret::Secret;
 
@@ -14,7 +14,7 @@ mod scan;
 
 const RAW_DOMAIN: &[u8; 8] = b"RSKV2CTR";
 
-const VALUE_ALIGNMENT: usize = 16;
+pub(super) const VALUE_ALIGNMENT: usize = 16;
 const VALUE_BUFFER: usize = crate::KV_BUF;
 
 /// The header precedes the complete value, although the value is programmed first.
@@ -34,6 +34,17 @@ pub struct CounterScan {
     pub next: u32,
     pub locations: [Option<CounterLocation>; MAX_COUNTER_ENTRIES],
     pub(crate) fingerprint: Option<[u8; 32]>,
+    pub(crate) raw_fingerprint: Option<[u8; 32]>,
+}
+
+impl CounterScan {
+    pub(super) fn entry(&self, fid: u16) -> Option<Entry> {
+        self.locations
+            .get(scan::counter_index(fid).ok()?)?
+            .as_ref()
+            .filter(|location| location.entry.fid() == fid)
+            .map(|location| location.entry)
+    }
 }
 
 /// Inline counter authority avoids a separate payload mutation and intent journal.
@@ -53,12 +64,13 @@ impl<F: NorFlash + MultiwriteNorFlash> CounterBank<F> {
         self.bank.digest = Some(digest);
     }
 
-    pub(super) fn fingerprint(&mut self, key: &[u8; 32], end: u32) -> Result<Option<[u8; 32]>> {
+    pub(super) fn set_erased(&mut self, erased: super::BankErased<F>) {
+        self.bank.erased = Some(erased);
+    }
+
+    pub(super) fn raw_fingerprint(&mut self, end: u32) -> Result<Option<[u8; 32]>> {
         let prefix = self.fingerprint_prefix()?;
-        Ok(self
-            .bank
-            .digest_if_erased_tail(end, &prefix)?
-            .map(|digest| hmac_sha256(key, &digest)))
+        self.bank.digest_if_erased_tail(end, &prefix)
     }
 
     fn fingerprint_prefix(&self) -> Result<[u8; RAW_DOMAIN.len() + core::mem::size_of::<u32>()]> {
@@ -76,11 +88,11 @@ impl<F: NorFlash + MultiwriteNorFlash> CounterBank<F> {
 
     pub(super) fn confirm_append(
         &mut self,
-        mut scan: CounterScan,
+        scan: &mut CounterScan,
         key: &[u8; 32],
         entry: Entry,
         value: &[u8],
-    ) -> Result<Option<CounterScan>> {
+    ) -> Result<bool> {
         let index = Self::counter_index(entry.fid())?;
         let padded = Self::padded_length(entry)?;
         let padding = padded.checked_sub(value.len()).ok_or(Error::MemoryFatal)?;
@@ -97,7 +109,7 @@ impl<F: NorFlash + MultiwriteNorFlash> CounterBank<F> {
             &prefix,
         )?
         else {
-            return Ok(None);
+            return Ok(false);
         };
         let value_offset = scan
             .next
@@ -114,7 +126,12 @@ impl<F: NorFlash + MultiwriteNorFlash> CounterBank<F> {
         scan.sequence = Some(entry.generation());
         scan.lower_bound = scan.sequence;
         scan.fingerprint = Some(tag);
-        Ok(Some(scan))
+        scan.raw_fingerprint = self
+            .bank
+            .append_proof
+            .as_ref()
+            .map(|proof| proof.raw_digest());
+        Ok(true)
     }
 
     pub fn read_header(&mut self) -> Result<[u8; CHECKPOINT_BYTES]> {
@@ -131,17 +148,6 @@ impl<F: NorFlash + MultiwriteNorFlash> CounterBank<F> {
         scan::padded_length(entry)
     }
 
-    fn read_entry_value(
-        &mut self,
-        entry: Entry,
-        offset: u32,
-        checkpoint: Checkpoint,
-        key: &[u8; 32],
-        buffer: &mut [u8; VALUE_BUFFER],
-    ) -> Result<Option<usize>> {
-        scan::read_entry_value(&mut self.bank, entry, offset, checkpoint, key, buffer)
-    }
-
     pub fn scan(
         &mut self,
         key: &[u8; 32],
@@ -152,33 +158,57 @@ impl<F: NorFlash + MultiwriteNorFlash> CounterBank<F> {
 
     pub fn read_value(
         &mut self,
-        scan: CounterScan,
+        scan: &CounterScan,
         key: &[u8; 32],
         fid: u16,
         out: &mut [u8],
     ) -> Result<Option<usize>> {
+        let checkpoint = scan.checkpoint.ok_or(Error::MemoryFatal)?;
+        self.read_checked(scan, fid, out, |entry, value| {
+            entry.verify(checkpoint.identity, key, value).map(|_| ())
+        })
+    }
+
+    pub(super) fn read_checked(
+        &mut self,
+        scan: &CounterScan,
+        fid: u16,
+        out: &mut [u8],
+        verify: impl FnOnce(Entry, &[u8]) -> Result<()>,
+    ) -> Result<Option<usize>> {
         if scan.status != JournalStatus::Complete {
             return Err(Error::MemoryFatal);
         }
-        let checkpoint = scan.checkpoint.ok_or(Error::MemoryFatal)?;
         let index = Self::counter_index(fid)?;
         let Some(location) = *scan.locations.get(index).ok_or(Error::MemoryFatal)? else {
             return Ok(None);
         };
-        let mut scratch = Secret::<[u8; VALUE_BUFFER]>::zeroed();
-        if location.entry.fid() != fid
-            || self
-                .read_entry_value(
-                    location.entry,
-                    location.value_offset,
-                    checkpoint,
-                    key,
-                    scratch.expose_mut(),
-                )?
-                .is_none()
-        {
+        if location.entry.fid() != fid {
             return Err(Error::MemoryFatal);
         }
+        if Self::padded_length(location.entry)? <= VALUE_ALIGNMENT {
+            self.copy_checked::<VALUE_ALIGNMENT>(location, out, verify)
+        } else {
+            self.copy_checked::<VALUE_BUFFER>(location, out, verify)
+        }
+    }
+
+    #[inline(never)]
+    fn copy_checked<const N: usize>(
+        &mut self,
+        location: CounterLocation,
+        out: &mut [u8],
+        verify: impl FnOnce(Entry, &[u8]) -> Result<()>,
+    ) -> Result<Option<usize>> {
+        let mut scratch = Secret::new(crate::FlashBuf::<N>::new());
+        let (_, value) = scan::read_payload(
+            &mut self.bank,
+            location.entry,
+            location.value_offset,
+            scratch.expose_mut(),
+        )?
+        .ok_or(Error::MemoryFatal)?;
+        verify(location.entry, value)?;
         let length = location.entry.length().ok_or(Error::MemoryFatal)?;
         let count = out.len().min(length);
         out.get_mut(..count)
@@ -186,6 +216,51 @@ impl<F: NorFlash + MultiwriteNorFlash> CounterBank<F> {
             .copy_from_slice(scratch.expose().get(..count).ok_or(Error::MemoryFatal)?);
         scratch.wipe();
         Ok(Some(length))
+    }
+
+    pub(super) fn read_bound_frame(
+        &mut self,
+        scan: &CounterScan,
+        fid: u16,
+        out: &mut [u8],
+    ) -> Result<Option<Entry>> {
+        if scan.status != JournalStatus::Complete
+            || super::bound_counter::bucket_index(fid).is_none()
+        {
+            return Err(Error::MemoryFatal);
+        }
+        let Some(location) = *scan
+            .locations
+            .get(Self::counter_index(fid)?)
+            .ok_or(Error::MemoryFatal)?
+        else {
+            return Ok(None);
+        };
+        let entry = location.entry;
+        let length = entry.length().ok_or(Error::MemoryFatal)?;
+        let padded = Self::padded_length(entry)?;
+        let offset = location
+            .value_offset
+            .checked_sub(u32::try_from(ENTRY_BYTES).map_err(|_| Error::MemoryFatal)?)
+            .ok_or(Error::MemoryFatal)?;
+        let bytes = out
+            .get_mut(..ENTRY_BYTES + padded)
+            .ok_or(Error::MemoryFatal)?;
+        self.bank.read(offset, bytes)?;
+        if entry.fid() != fid
+            || !ct_eq(
+                bytes.get(..ENTRY_BYTES).ok_or(Error::MemoryFatal)?,
+                &entry.encode()?,
+            )
+            || !bytes
+                .get(ENTRY_BYTES + length..)
+                .ok_or(Error::MemoryFatal)?
+                .iter()
+                .all(|&byte| byte == 0xff)
+        {
+            return Err(Error::MemoryFatal);
+        }
+        Ok(Some(entry))
     }
 
     pub fn write_snapshot(
@@ -256,7 +331,7 @@ impl<F: NorFlash + MultiwriteNorFlash> CounterBank<F> {
 
     pub fn append(
         &mut self,
-        scan: CounterScan,
+        scan: &CounterScan,
         key: &[u8; 32],
         entry: Entry,
         value: &[u8],
@@ -286,7 +361,23 @@ impl<F: NorFlash + MultiwriteNorFlash> CounterBank<F> {
         if end > self.bank.capacity() {
             return Err(Error::NoMemory);
         }
-        let mut scratch = Secret::<[u8; VALUE_BUFFER]>::zeroed();
+        if padded <= VALUE_ALIGNMENT {
+            self.program_value::<VALUE_ALIGNMENT>(value_at, value, padded)?;
+        } else {
+            self.program_value::<VALUE_BUFFER>(value_at, value, padded)?;
+        }
+        self.bank.program(scan.next, &entry.encode()?)?;
+        Ok(())
+    }
+
+    #[inline(never)]
+    fn program_value<const N: usize>(
+        &mut self,
+        value_at: u32,
+        value: &[u8],
+        padded: usize,
+    ) -> Result<()> {
+        let mut scratch = Secret::<[u8; N]>::zeroed();
         scratch.expose_mut().fill(0xFF);
         scratch
             .expose_mut()
@@ -298,7 +389,6 @@ impl<F: NorFlash + MultiwriteNorFlash> CounterBank<F> {
             scratch.expose().get(..padded).ok_or(Error::MemoryFatal)?,
         )?;
         scratch.wipe();
-        self.bank.program(scan.next, &entry.encode()?)?;
         Ok(())
     }
 }

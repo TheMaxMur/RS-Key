@@ -59,6 +59,28 @@ impl<F: NorFlash + MultiwriteNorFlash + Clone, C: CacheImpl<u16>> Managed<F, C> 
         cache: fn() -> C,
         digest: Option<super::BankDigest<F>>,
     ) -> Self {
+        Self::new_unmounted_with_reads(
+            flash,
+            main_range,
+            counter_range,
+            source,
+            cache,
+            digest,
+            None,
+        )
+    }
+
+    /// Construct with fresh board reads for metadata digests and erased suffixes.
+    #[inline(always)]
+    pub fn new_unmounted_with_reads(
+        flash: F,
+        main_range: Range<u32>,
+        counter_range: Range<u32>,
+        source: KeySource,
+        cache: fn() -> C,
+        digest: Option<super::BankDigest<F>>,
+        erased: Option<super::BankErased<F>>,
+    ) -> Self {
         Self {
             active: Authenticated::new_arms(
                 flash.clone(),
@@ -70,6 +92,7 @@ impl<F: NorFlash + MultiwriteNorFlash + Clone, C: CacheImpl<u16>> Managed<F, C> 
                 RootArm::PreOtp,
                 RootArm::PreOtp,
                 digest,
+                erased,
             )
             .ok(),
             ready: false,
@@ -399,6 +422,24 @@ impl<F: NorFlash + MultiwriteNorFlash + Clone, C: CacheImpl<u16>> Storage for Ma
 
     fn size(&mut self, fid: u16) -> Option<usize> {
         self.read(fid, &mut [])
+    }
+    fn read_bound_counter(&mut self, fid: u16, out: &mut [u8]) -> Result<Option<usize>> {
+        if !self.ready {
+            return Err(Error::MemoryFatal);
+        }
+        self.active
+            .as_mut()
+            .ok_or(Error::MemoryFatal)?
+            .read_bound_counter(fid, out)
+    }
+    fn write_bound_counter(&mut self, fid: u16, sealed: &[u8]) -> Result<bool> {
+        if !self.ready {
+            return Err(Error::MemoryFatal);
+        }
+        self.active
+            .as_mut()
+            .ok_or(Error::MemoryFatal)?
+            .write_bound_counter(fid, sealed)
     }
     fn last_error(&self) -> bool {
         self.last_error

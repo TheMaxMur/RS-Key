@@ -63,6 +63,11 @@ Build `0x0B83` reduces repeated directory HMAC setup during the storage checks b
 PIN updates. Attempts are still durably charged before comparison, and a
 successful PIN restores its retry count before authorization is granted.
 
+From `0x0BA8`, retry bytes use the mirrored counter journal while the PIN
+verifiers stay in their original records. Existing remaining attempts migrate
+on the first update. Earlier v2 firmware then refuses the store; reinstalling this
+build or later resumes it. No PIN or key reset is needed for the upgrade.
+
 From build `0x0AD1`, key information reads the shared origin record once per
 response. Later responses read it again; an unreadable or unrecorded slot still
 reports imported.

@@ -1022,6 +1022,12 @@ invalid selectors and `6A80` for a wrong magic payload. READ `1E/07` includes
 bit `0020` while storage authority remains under the pre-OTP root. Storage
 setup performs no OTP operation.
 
+Build `0x0BA8` extends v2 with private, owner-bound PIN/HOTP counter records;
+APDUs and the `02 01` state response are unchanged. Migration occurs on the
+first counter update. Earlier builds report recovery and refuse normal applets
+on this store. Reinstalling a compatible build resumes it; storage initialization
+is not an upgrade or downgrade procedure.
+
 Every P1 this applet implements is in that table. **A P1 outside it answers
 `6A86`** (RS-Key `0x088E`+; earlier builds answered `9000` to an unimplemented
 `1C` selector without writing anything, so a newer client could not tell a

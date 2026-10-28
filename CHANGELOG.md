@@ -38,6 +38,21 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ## [Unreleased]
 
+- **bcdDevice → 0x0BA8:** move PIN retry updates and encrypted HOTP moving
+  factors into the mirrored counter journal. Verifier-bearing PIN records and
+  HOTP credentials bind counters to their main publication generation; public
+  PIV/OpenPGP retry records are authoritative in the counter journal.
+  Existing records migrate on their first update;
+  replacement and deletion cannot inherit an older owner's counter. Retry
+  charging still precedes comparison, and both counter copies precede success.
+  The counter journal now retains an authenticated live rollback floor across
+  errors, as the main journal does. Earlier v2 firmware refuses the extended store
+  after migration; reinstalling this build resumes it without a reset.
+  P-384 field addition, subtraction and doubling stay out of line on 32-bit
+  targets, improving P-384 latency without changing arithmetic. TrustZone keeps
+  P-256 point addition and field inversion beside its multiplication loop in
+  Secure SRAM, avoiding the measured P-256 layout regression.
+
 - **bcdDevice → 0x0B83:** reuse command-local HMAC setup within complete
   directory passes, reducing PIN retry and HOTP update
   work. Every value is still read and authenticated at the same points; root

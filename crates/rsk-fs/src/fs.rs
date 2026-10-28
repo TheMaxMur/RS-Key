@@ -812,6 +812,22 @@ impl<S: Storage> Fs<S> {
         self.put(fid.get(), data)
     }
 
+    /// Read a sealed counter belonging to this key slot's current incarnation.
+    pub fn read_bound_counter(&mut self, fid: KeyFid, out: &mut [u8]) -> Result<Option<usize>> {
+        self.storage.read_bound_counter(fid.get(), out)
+    }
+
+    /// Publish a counter without replacing its sealed credential, when supported.
+    pub fn write_bound_counter(&mut self, fid: KeyFid, sealed: Sealed) -> Result<bool> {
+        let written = self
+            .storage
+            .write_bound_counter(fid.get(), sealed.as_bytes())?;
+        if written {
+            self.write_gen = self.write_gen.wrapping_add(1);
+        }
+        Ok(written)
+    }
+
     /// Copy a counter record into `buf`; its full length, or `None` if absent (or
     /// unreadable — see [`try_read`](Self::try_read)).
     pub fn read_counter(&mut self, fid: CounterFid, buf: &mut [u8]) -> Option<usize> {

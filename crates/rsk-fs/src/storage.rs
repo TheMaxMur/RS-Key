@@ -52,6 +52,16 @@ pub trait Storage {
     fn write(&mut self, fid: u16, data: &[u8]) -> Result<()>;
     /// Remove `fid` if present.
     fn remove(&mut self, fid: u16) -> Result<()>;
+    /// Read a sealed counter bound to the current incarnation of `fid`.
+    /// Backends without a separate counter journal leave the value in its owner.
+    fn read_bound_counter(&mut self, _fid: u16, _out: &mut [u8]) -> Result<Option<usize>> {
+        Ok(None)
+    }
+    /// Publish a sealed counter before releasing its response. `false` requests
+    /// the caller's ordinary whole-record write; errors must never fall back.
+    fn write_bound_counter(&mut self, _fid: u16, _sealed: &[u8]) -> Result<bool> {
+        Ok(false)
+    }
     /// Length of the value for `fid`, or `None`.
     fn size(&mut self, fid: u16) -> Option<usize>;
     /// Whether `fid` has a stored value.

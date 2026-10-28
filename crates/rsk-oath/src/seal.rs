@@ -21,15 +21,15 @@ use rsk_secret::Secret;
 
 use crate::{CRED_MAX, Rng};
 
-const NONCE_LEN: usize = 12;
-const TAG_LEN: usize = 16;
+pub(crate) const NONCE_LEN: usize = 12;
+pub(crate) const TAG_LEN: usize = 16;
 /// Largest sealed plaintext: a full credential blob.
 const MAX_PLAIN: usize = CRED_MAX;
 pub(crate) const MAX_BLOB: usize = NONCE_LEN + MAX_PLAIN + TAG_LEN;
 
 const INFO_OATH_KEYS: &[u8] = b"OATH/KEYS";
 
-fn kenc(dev: &Device) -> Secret<[u8; 32]> {
+pub(crate) fn kenc(dev: &Device) -> Secret<[u8; 32]> {
     let mut kbase = dev.derive_kbase();
     let mut out = Secret::<[u8; 32]>::zeroed();
     #[expect(
@@ -122,6 +122,9 @@ pub fn try_seal_read<S: Storage, const N: usize>(
         .try_read_key(fid, blob.expose_mut())?
         .and_then(|n| open(dev, blob.expose().get(..n)?, out));
     blob.wipe();
+    if let Some(length) = r {
+        crate::counter::apply(dev, fs, fid, out, length)?;
+    }
     Ok(r)
 }
 

@@ -234,8 +234,78 @@ The template lives only in returned frames covered by the Secure stack sweep;
 it never enters the mounted store. Persistent bytes are unchanged. The digest
 loop stays out of line so the template does not enlarge its callers' frames.
 The P-256 ECDH multiplication also executes from existing Secure RX SRAM;
-its scalar arithmetic and point validation are unchanged. P-256 and P-384
+from `0x0BA8`, its complete point addition and field inversion do too.
+The addition's upstream monomorph has a linker size assertion: a dependency
+or code-generation change requires reviewing the relocation again.
+Its scalar arithmetic and point validation are unchanged. P-256 and P-384
 peer decoding use separate frames to keep their workspaces out of other curves.
+P-384 addition, subtraction and doubling stay out of line on 32-bit targets;
+these are the existing constant-time field operations, with no change to point
+validation or scalar handling. The Fiat and 64-bit backends keep their inlining.
+
+From `0x0BA8`, PIN retry bytes and AES-GCM-sealed HOTP moving factors use private
+counter-journal buckets. The complete public PIV/OpenPGP retry records live in
+separate private counter entries; a durable tombstone prevents legacy fallback
+after deletion. Verifier-bearing PIN presence probes authenticate their main-file owner
+without fetching retry bytes. Each slot names the main record's publication
+generation; changing or deleting that record invalidates the old slot. Root
+re-keying preserves publication generations. PIN verifiers and OATH secrets
+remain in the main payload map; the buckets contain neither. A retry update
+keeps all other bytes of the PIN record intact. HOTP reads combine its sealed
+credential with its separately sealed moving factor, and rename materializes
+that effective value before replacing the credential.
+
+Legacy records remain authoritative until a matching bound slot is published.
+Both counter banks must acknowledge an update before comparison or a code can
+escape. A malformed, unreadable or unauthenticated bucket is an error, never
+permission to use the legacy value. Counter authority retains its authenticated
+live state across read failures and admits only its staged writes. Mounted
+PIN/HOTP reads fetch the requested entry and payload in both banks, require
+byte-identical copies and authenticate the value against that live authority. As with
+the main payload map, unrelated historical records are checked at mutation and
+recovery boundaries, rather than on each addressed read. Every update still
+checks both complete banks before and after publication; the original four
+counter APIs retain their complete-bank reads.
+
+Mounted reads retain only nonsecret authentication tags. Each read fetches the
+root again, authenticates the current authority and reads the physical payload.
+An unchanged entry may reuse its payload tag across unrelated publications,
+but only while it exactly matches the current authenticated directory entry;
+the fresh mount proof binds it to the current authority. A payload tag already
+bound to the current authority authenticates both together. After a successful
+read across an unrelated publication, the payload tag is refreshed to that bound.
+The counter authority MAC covers a SHA-256 digest of the entire canonical
+directory, plus its epoch, root arm and sequence. Persistent directory MACs and
+checkpoint encodings are unchanged.
+Warm mutations compare fresh complete-bank SHA-256 digests with the verified
+mount and check its authority MAC with the current key. Append confirmation
+verifies the saved prefix MAC before comparing the intended and physical digests.
+No root, derived key or keyed hash state survives the call. Private reads do
+not reread unrelated journal bytes; writes and recovery authenticate both full
+banks, including their erased suffixes. A changed private value is refused on
+read even when both banks are replayed, and reading an unchanged value cannot
+lower another counter's retained floor. A complete flash replay across cold
+boot retains the limitation described in the threat model. Earlier v2 builds reject the new private
+FIDs during mount, so downgrade cannot expose the old embedded counts.
+
+The bucket layout keeps all 255 OATH slots and all 256 FIDO counters. Directory
+entries use an unaligned byte representation for their generation in RAM to
+make room for the larger counter index; the 32-byte on-flash entry is unchanged.
+The original four-counter legacy import manifest also remains unchanged.
+
+The private on-flash FIDs and value layouts are fixed:
+
+| FID | Value |
+|---|---|
+| `CD00` | Five 16-byte slots: legacy PIV, legacy OpenPGP, FIDO, device and OATH PIN retries |
+| `CD01`–`CD20` | Eight 48-byte HOTP slots per bucket, in credential-FID order from `BA00` |
+| `CD21`, `CD22` | PIV and OpenPGP retry records: `01` followed by the complete record, or the one-byte tombstone `00` |
+
+A bound slot starts with the owner's 8-byte little-endian publication generation,
+then a one-byte value length and that many value bytes; unused bytes are zero.
+An unused slot is entirely zero. PIN slots hold up to three retry bytes; HOTP
+slots hold the 36-byte nonce, ciphertext and GCM tag. The last HOTP bucket's
+eighth slot is unused because `BAFF` belongs to the OATH access code.
 
 From `0x0B70`, main and counter journals retain the SHA state of complete public
 metadata blocks from the authenticating scan. Before extending that state, the

@@ -53,6 +53,11 @@ Build `0x0B83` reduces repeated directory HMAC setup in the storage checks behin
 updates. Each attempt still becomes durable before comparison; successful
 verification restores the counter before granting authorization.
 
+From `0x0BA8`, PIN and PUK retry updates use the mirrored counter journal.
+Existing PINs and remaining attempts are preserved during the first update.
+After this migration, earlier v2 firmware opens only recovery mode; reinstalling
+`0x0BA8` or later resumes the existing store without resetting the key.
+
 Change all three before real use:
 
 ```sh

@@ -99,6 +99,13 @@ Build `0x0B83` reduces repeated directory HMAC setup during HOTP's storage updat
 All payload checks and durable publications remain; existing accounts need no
 migration or reset.
 
+From `0x0BA8`, HOTP advances a separately encrypted counter in the mirrored
+journal instead of rewriting the credential. Existing counters migrate on
+their next use; rename preserves the current counter, while replacing or
+deleting an account starts a new owner. OATH PIN retries use the same journal.
+After migration, earlier v2 firmware refuses the store. Reinstall this build or
+later to resume it without resetting accounts.
+
 The **Yubico Authenticator** GUI shows all TOTP codes live and re-derives them
 each period. Touch and HOTP entries get a tap-to-reveal button instead.
 

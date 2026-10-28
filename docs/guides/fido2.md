@@ -149,6 +149,11 @@ and has to run within ten seconds of a replug (see [Factory
 reset](#factory-reset)). `rsk fido set-pin` asks for the current PIN when changing,
 the new one twice, and prints the resulting `clientPin` state.
 
+From `0x0BA8`, persistent retry updates use the mirrored counter journal, bound
+to the current PIN record. The upgrade preserves the remaining attempts and
+the per-power-cycle limit. After the first update, earlier v2 firmware refuses the
+store; reinstall this build or later to resume it without a factory reset.
+
 When the policy requires a PIN change, the replacement must differ from the
 current PIN. If its verifier cannot be read, the change returns
 `CTAP2_ERR_OTHER` (`0x7F`) and remains pending; retry with a different PIN once

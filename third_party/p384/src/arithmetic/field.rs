@@ -68,21 +68,25 @@ impl FieldElement {
         self.0.to_canonical()
     }
 
+    // Keep twelve-limb additions out of each point-formula call site on Cortex-M.
     /// Add elements.
-    #[inline]
+    #[cfg_attr(target_pointer_width = "32", inline(never))]
+    #[cfg_attr(not(target_pointer_width = "32"), inline)]
     pub const fn add(&self, rhs: &Self) -> Self {
         Self(self.0.add(&rhs.0))
     }
 
     /// Double an element.
-    #[inline]
+    #[cfg_attr(target_pointer_width = "32", inline(never))]
+    #[cfg_attr(not(target_pointer_width = "32"), inline)]
     #[must_use]
     pub const fn double(&self) -> Self {
         Self(self.0.double())
     }
 
     /// Subtract elements.
-    #[inline]
+    #[cfg_attr(target_pointer_width = "32", inline(never))]
+    #[cfg_attr(not(target_pointer_width = "32"), inline)]
     pub const fn sub(&self, rhs: &Self) -> Self {
         Self(self.0.sub(&rhs.0))
     }

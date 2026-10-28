@@ -106,7 +106,7 @@ fn reads_words_in_order_drains_stale_fifo_and_preserves_output_guards() {
         (0, 0, true),
         (1, 3, true),
     ] {
-        for length in [4, 8, 12, 60] {
+        for length in [4, 8, 12, 32, 48, 60] {
             let mut stream = Fake {
                 stale,
                 delay,

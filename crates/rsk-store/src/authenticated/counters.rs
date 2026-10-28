@@ -1,12 +1,16 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 RS-Key contributors
 
+use super::authority::{Authority, Snapshot};
 use embedded_storage_async::nor_flash::{MultiwriteNorFlash, NorFlash};
 use rsk_crypto::ct_eq;
 use rsk_sdk::error::{Error, Result};
 
 use super::{Checkpoint, CounterBank, CounterScan, Directory, ENTRY_BYTES, Entry, Identity};
 use super::{JournalStatus, MAX_COUNTER_ENTRIES, Partition, RootArm};
+
+#[path = "counter_read.rs"]
+mod read;
 
 struct Current {
     source: usize,
@@ -20,6 +24,8 @@ pub struct Counters<F: NorFlash + MultiwriteNorFlash> {
     identity: Identity,
     arm: RootArm,
     mount: Option<[CounterScan; 2]>,
+    authority: Authority,
+    read_cache: read::tags::ReadCache,
 }
 
 impl<F: NorFlash + MultiwriteNorFlash> Counters<F> {
@@ -32,11 +38,14 @@ impl<F: NorFlash + MultiwriteNorFlash> Counters<F> {
             identity,
             arm,
             mount: None,
+            authority: Authority::New,
+            read_cache: read::tags::ReadCache::new(),
         })
     }
 
     pub(super) fn configure(&mut self, epoch: [u8; super::EPOCH_BYTES], arm: RootArm) {
         self.mount = None;
+        self.read_cache.clear();
         self.identity = Identity {
             partition: Partition::Counter,
             epoch,
@@ -74,14 +83,16 @@ impl<F: NorFlash + MultiwriteNorFlash> Counters<F> {
     fn resolve(&mut self, key: &[u8; 32]) -> Result<Option<Current>> {
         if let Some(scans) = self.mount.take() {
             let mut unchanged = true;
-            for (bank, scan) in self.banks.iter_mut().zip(scans) {
-                let fingerprint = bank.fingerprint(key, scan.next)?;
+            for (bank, scan) in self.banks.iter_mut().zip(&scans) {
+                let fingerprint = bank.raw_fingerprint(scan.next)?;
                 unchanged &= scan
-                    .fingerprint
+                    .raw_fingerprint
                     .zip(fingerprint)
                     .is_some_and(|(expected, fresh)| ct_eq(&expected, &fresh));
             }
             if unchanged {
+                // Full media equality reuses the mounted directory only under its fresh MAC.
+                self.authority.verify_read(key, self.identity, self.arm)?;
                 let mut directory = Directory::new();
                 for location in scans
                     .first()
@@ -102,6 +113,14 @@ impl<F: NorFlash + MultiwriteNorFlash> Counters<F> {
         }
         let current = self.resolve_uncached(key)?;
         if let Some(current) = &current {
+            let sequence = current
+                .scans
+                .get(current.source)
+                .ok_or(Error::MemoryFatal)?
+                .sequence
+                .ok_or(Error::MemoryFatal)?;
+            let snapshot = self.snapshot(&current.directory, sequence)?;
+            self.authority.cancel_unpublished(key, snapshot)?;
             self.mount = Some(current.scans);
         }
         Ok(current)
@@ -122,6 +141,9 @@ impl<F: NorFlash + MultiwriteNorFlash> Counters<F> {
             }
         }
         if zero_scan.status == JournalStatus::Empty && one_scan.status == JournalStatus::Empty {
+            if self.authority.established() {
+                return Err(Error::MemoryFatal);
+            }
             return Ok(None);
         }
         let zero_seq = (zero_scan.status == JournalStatus::Complete)
@@ -150,6 +172,8 @@ impl<F: NorFlash + MultiwriteNorFlash> Counters<F> {
             return Err(Error::MemoryFatal);
         }
         let directory = if source == 0 { zero_dir } else { one_dir };
+        self.authority
+            .admit(key, self.snapshot(&directory, sequence)?, None)?;
         if synchronized {
             return Ok(Some(Current {
                 source,
@@ -158,7 +182,7 @@ impl<F: NorFlash + MultiwriteNorFlash> Counters<F> {
             }));
         }
         let checkpoint = self.checkpoint(&directory, key, sequence)?;
-        let source_scan = *scans.get(source).ok_or(Error::MemoryFatal)?;
+        let source_scan = scans.get(source).ok_or(Error::MemoryFatal)?;
         let (read, write) = self.source_target(source)?;
         write.write_snapshot(checkpoint, key, &directory, |entry, out| {
             let length = read.read_value(source_scan, key, entry.fid(), out)?;
@@ -194,6 +218,9 @@ impl<F: NorFlash + MultiwriteNorFlash> Counters<F> {
         sequence: u64,
         mut load: impl FnMut(Entry, &mut [u8]) -> Result<()>,
     ) -> Result<()> {
+        if self.authority.established() {
+            return Err(Error::MemoryFatal);
+        }
         self.mount = None;
         let checkpoint = self.checkpoint(directory, key, sequence)?;
         let [zero, one] = &mut self.banks;
@@ -203,9 +230,31 @@ impl<F: NorFlash + MultiwriteNorFlash> Counters<F> {
         Ok(())
     }
 
+    fn snapshot(
+        &self,
+        directory: &Directory<MAX_COUNTER_ENTRIES>,
+        sequence: u64,
+    ) -> Result<Snapshot> {
+        // Authority authenticates this complete digest together with epoch, arm and sequence.
+        // The persistent checkpoint keeps its original keyed directory encoding.
+        let mut digest = rsk_crypto::hash::Sha256State::new();
+        digest.update(b"RSKV2CST");
+        let count = u32::try_from(directory.entries().len()).map_err(|_| Error::MemoryFatal)?;
+        digest.update(&count.to_le_bytes());
+        for entry in directory.entries() {
+            digest.update(&entry.encode()?);
+        }
+        Ok(Snapshot {
+            identity: self.identity,
+            arm: self.arm,
+            sequence,
+            digest: digest.finish(),
+        })
+    }
+
     pub fn read(&mut self, key: &[u8; 32], fid: u16, out: &mut [u8]) -> Result<Option<usize>> {
         let current = self.resolve(key)?.ok_or(Error::MemoryFatal)?;
-        let scan = *current
+        let scan = current
             .scans
             .get(current.source)
             .ok_or(Error::MemoryFatal)?;
@@ -218,9 +267,10 @@ impl<F: NorFlash + MultiwriteNorFlash> Counters<F> {
     }
 
     pub fn rekey(&mut self, old: &[u8; 32], new: &[u8; 32], arm: RootArm) -> Result<()> {
+        self.read_cache.clear();
         let current = self.resolve(old)?.ok_or(Error::MemoryFatal)?;
         self.mount = None;
-        let source_scan = *current
+        let source_scan = current
             .scans
             .get(current.source)
             .ok_or(Error::MemoryFatal)?;
@@ -245,6 +295,11 @@ impl<F: NorFlash + MultiwriteNorFlash> Counters<F> {
             )?)?;
         }
         buffer.wipe();
+        let target = Snapshot {
+            arm,
+            ..self.snapshot(&directory, sequence)?
+        };
+        self.authority.stage_replace(old, new, target)?;
         self.arm = arm;
         let checkpoint = self.checkpoint(&directory, new, sequence)?;
         let (source, peer) = self.source_target(current.source)?;
@@ -260,18 +315,19 @@ impl<F: NorFlash + MultiwriteNorFlash> Counters<F> {
             return Err(Error::MemoryFatal);
         }
         source.write_snapshot(checkpoint, new, &directory, |entry, out| {
-            if peer.read_value(scan, new, entry.fid(), out)? != Some(out.len()) {
+            if peer.read_value(&scan, new, entry.fid(), out)? != Some(out.len()) {
                 return Err(Error::MemoryFatal);
             }
             Ok(())
         })?;
+        self.resolve(new)?.ok_or(Error::MemoryFatal)?;
         Ok(())
     }
 
     pub fn write(&mut self, key: &[u8; 32], fid: u16, value: Option<&[u8]>) -> Result<()> {
         let mut current = self.resolve(key)?.ok_or(Error::MemoryFatal)?;
         self.mount = None;
-        let source_scan = *current
+        let source_scan = current
             .scans
             .get(current.source)
             .ok_or(Error::MemoryFatal)?;
@@ -287,6 +343,9 @@ impl<F: NorFlash + MultiwriteNorFlash> Counters<F> {
         if !crate::is_counter_fid(fid) {
             return Err(Error::MemoryFatal);
         }
+        current.directory.apply(entry)?;
+        let target = self.snapshot(&current.directory, sequence)?;
+        self.authority.stage_replace(key, key, target)?;
         let data = value.unwrap_or(&[]);
         let needed = ENTRY_BYTES
             .checked_add(data.len().div_ceil(16) * 16)
@@ -297,7 +356,7 @@ impl<F: NorFlash + MultiwriteNorFlash> Counters<F> {
                 .is_some_and(|needed| bank.capacity().saturating_sub(scan.next) >= needed)
         });
         if space {
-            let peer_scan = *current
+            let peer_scan = current
                 .scans
                 .get(1 - current.source)
                 .ok_or(Error::MemoryFatal)?;
@@ -309,7 +368,7 @@ impl<F: NorFlash + MultiwriteNorFlash> Counters<F> {
                 .first_mut()
                 .ok_or(Error::MemoryFatal)?
                 .confirm_append(
-                    *current.scans.first().ok_or(Error::MemoryFatal)?,
+                    current.scans.first_mut().ok_or(Error::MemoryFatal)?,
                     key,
                     entry,
                     data,
@@ -319,17 +378,17 @@ impl<F: NorFlash + MultiwriteNorFlash> Counters<F> {
                 .get_mut(1)
                 .ok_or(Error::MemoryFatal)?
                 .confirm_append(
-                    *current.scans.get(1).ok_or(Error::MemoryFatal)?,
+                    current.scans.get_mut(1).ok_or(Error::MemoryFatal)?,
                     key,
                     entry,
                     data,
                 )?;
-            if let (Some(zero), Some(one)) = (zero, one) {
-                self.mount = Some([zero, one]);
+            if zero && one {
+                self.authority.admit(key, target, None)?;
+                self.mount = Some(current.scans);
                 return Ok(());
             }
         } else {
-            current.directory.apply(entry)?;
             let checkpoint = self.checkpoint(&current.directory, key, sequence)?;
             let (source, peer) = self.source_target(current.source)?;
             peer.write_snapshot(checkpoint, key, &current.directory, |owner, out| {
@@ -347,7 +406,7 @@ impl<F: NorFlash + MultiwriteNorFlash> Counters<F> {
                 return Err(Error::MemoryFatal);
             }
             source.write_snapshot(checkpoint, key, &current.directory, |owner, out| {
-                if peer.read_value(new_scan, key, owner.fid(), out)? != Some(out.len()) {
+                if peer.read_value(&new_scan, key, owner.fid(), out)? != Some(out.len()) {
                     return Err(Error::MemoryFatal);
                 }
                 Ok(())

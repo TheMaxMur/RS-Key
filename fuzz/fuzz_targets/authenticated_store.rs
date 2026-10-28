@@ -100,6 +100,66 @@ fn budget(data: &[u8], offset: usize) -> Option<u32> {
     ])))
 }
 
+fn bound_value(store: &mut Store, fid: u16) -> Result<Vec<u8>, rsk_sdk::error::Error> {
+    if fid == rsk_fs::counter::PIV_RETRIES {
+        return value(store, fid)?.ok_or(rsk_sdk::error::Error::MemoryFatal);
+    }
+    let mut out = [0; 36];
+    assert_eq!(store.read_bound_counter(fid, &mut out)?, Some(out.len()));
+    Ok(out.to_vec())
+}
+
+fn publish_bound(store: &mut Store, fid: u16, value: &[u8]) -> rsk_sdk::error::Result<()> {
+    if fid == rsk_fs::counter::PIV_RETRIES {
+        store.write(fid, value)
+    } else {
+        assert!(store.write_bound_counter(fid, value)?);
+        Ok(())
+    }
+}
+
+fn bound_cuts(medium: &Medium, mut store: Store, data: &[u8]) {
+    let pin = data.get(4).copied().unwrap_or(0) & 32 == 0;
+    let fid = if pin {
+        rsk_fs::counter::PIV_RETRIES
+    } else {
+        rsk_fs::counter::OATH_FIRST
+    };
+    let old = if pin { vec![3, 2, 3, 3] } else { vec![1; 36] };
+    let new = if pin { vec![3, 1, 3, 3] } else { vec![2; 36] };
+    store
+        .write(fid, if pin { &[3; 4] } else { b"sealed owner" })
+        .unwrap();
+    store.write(NEIGHBOR, b"acknowledged neighbor").unwrap();
+    for _ in 0..=data.get(6).copied().unwrap_or(0) % 128 {
+        publish_bound(&mut store, fid, &old).unwrap();
+    }
+    arm(medium, budget(data, 0));
+    let acknowledged = publish_bound(&mut store, fid, &new).is_ok();
+    arm(medium, budget(data, 2));
+    let _interrupted_recovery = bound_value(&mut mount(medium), fid);
+    arm(medium, None);
+    let mut recovered = mount(medium);
+    let current = bound_value(&mut recovered, fid).unwrap();
+    assert!(current == new || !acknowledged && current == old);
+    assert_eq!(
+        value(&mut recovered, NEIGHBOR).unwrap().as_deref(),
+        Some(&b"acknowledged neighbor"[..])
+    );
+    let acknowledged_image = medium.flash.borrow().as_bytes().to_vec();
+    let next = if pin { vec![3, 0, 3, 3] } else { vec![3; 36] };
+    publish_bound(&mut recovered, fid, &next).unwrap();
+    medium
+        .flash
+        .borrow_mut()
+        .as_bytes_mut()
+        .copy_from_slice(&acknowledged_image);
+    assert_eq!(
+        bound_value(&mut recovered, fid),
+        Err(rsk_sdk::error::Error::MemoryFatal)
+    );
+}
+
 pub fn run(data: &[u8]) {
     // MultiwriteNorFlash permits repeated programs that only clear bits. v2's
     // recovery rewrites a torn item header a third time; `Twice` refused it and
@@ -114,6 +174,10 @@ pub fn run(data: &[u8]) {
     };
     let mut store = mount(&medium);
     store.initialize_blank().unwrap();
+    if data.get(4).copied().unwrap_or(0) & 16 != 0 {
+        bound_cuts(&medium, store, data);
+        return;
+    }
     let fid = if data.get(4).copied().unwrap_or(0) & 1 == 0 {
         OWNER
     } else {

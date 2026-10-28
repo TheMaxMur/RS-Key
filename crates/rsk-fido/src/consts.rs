@@ -332,7 +332,7 @@ pub use rsk_fs::EF_HARDENED;
 /// `[retries, len, format, verifier(32)]`, device-sealed. Wiped by `authenticatorReset`
 /// (so a forgotten device PIN is recoverable by a host reset) and by factory reset. NOT
 /// in the OpenPGP 0x10xx range — kept in FIDO's 0xCExx block to avoid an applet clash.
-pub const EF_DEVICE_PIN: u16 = 0xCE20;
+pub const EF_DEVICE_PIN: u16 = rsk_fs::counter::DEVICE_PIN;
 pub use rsk_fs::counter::EF_COUNTER; // global signature counter (U2F + legacy-cred migration seed)
 /// Per-credential signature counters, a single packed `u32`-LE array indexed by
 /// EF_CRED slot (`[..MAX_RESIDENT_CREDENTIALS*4]`). One file keeps the
@@ -358,7 +358,7 @@ pub const RP_NICK_MAX_LEN: usize = 24;
 /// build: a key that ran that firmware once must still be wipeable by the one it
 /// is flashed with next.
 pub const EF_CRED_BLOB: u16 = 0xD500;
-pub const EF_PIN: u16 = 0x1080; // PIN: [retries, len, format, verifier(32)]
+pub const EF_PIN: u16 = rsk_fs::counter::FIDO_PIN; // PIN: [retries, len, format, verifier(32)]
 /// The **persistent** pinUvAuthToken (CTAP 2.2 §6.5.2.2): a bearer secret the
 /// platform keeps across power cycles, so it is kbase-sealed like the seed. Minted
 /// at provisioning and by a pcmr request; HOLDING it is the grant. Dropped

@@ -38,7 +38,7 @@ struct Manifest {
     epoch: [u8; 16],
     arm: RootArm,
     main_digest: [u8; 32],
-    counters: [Entry; super::MAX_COUNTER_ENTRIES],
+    counters: [Entry; rsk_fs::counter::COUNTER_FIDS.len()],
 }
 
 impl Manifest {
@@ -103,7 +103,7 @@ impl Manifest {
         }
         let epoch = take(bytes, 16)?;
         let mut counters = [Entry::decode(bytes.get(80..112).ok_or(Error::MemoryFatal)?)?;
-            super::MAX_COUNTER_ENTRIES];
+            rsk_fs::counter::COUNTER_FIDS.len()];
         for (index, slot) in counters.iter_mut().enumerate() {
             *slot = Entry::decode(
                 bytes
@@ -247,7 +247,7 @@ impl<F: NorFlash + MultiwriteNorFlash + Clone> Import<F> {
                 .ok_or(Error::MemoryFatal)?
                 .get(),
             0,
-        )?; super::MAX_COUNTER_ENTRIES];
+        )?; rsk_fs::counter::COUNTER_FIDS.len()];
         for (index, slot) in counters.iter_mut().enumerate() {
             let fid = rsk_fs::counter::COUNTER_FIDS
                 .get(index)

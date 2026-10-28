@@ -40,6 +40,7 @@ fn a_root_read_error_clears_payload_tags_and_every_hit_reads_otp_again() {
             RootArm::Otp,
             RootArm::Otp,
             None,
+            None,
         )
         .unwrap();
         store.initialize_blank().unwrap();
@@ -83,6 +84,7 @@ fn a_changed_partition_arm_cannot_reuse_a_warm_main_read() {
         [0x4B; 16],
         RootArm::Otp,
         RootArm::Otp,
+        None,
         None,
     )
     .unwrap();
@@ -130,6 +132,7 @@ fn root_closure_requires_both_partition_arms() {
             [0x4B; 16],
             main_arm,
             counter_arm,
+            None,
             None,
         )
         .unwrap();

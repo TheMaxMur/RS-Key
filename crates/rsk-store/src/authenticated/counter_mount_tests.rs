@@ -17,6 +17,68 @@ fn provision(flash: &FaultFlash) -> Counters<FaultFlash> {
     pair
 }
 
+fn lose_one_append_proof(pair: &mut Counters<FaultFlash>, flash: &FaultFlash, bank: usize) {
+    use crate::tests::{Effect, Rule};
+    flash.arm(&[Rule {
+        io: Io::Read,
+        skip: 0,
+        effect: Effect::Refuse,
+        latched: false,
+    }]);
+    assert_eq!(
+        pair.banks[bank].scan(&KEY, &mut Directory::new()),
+        Err(Error::MemoryFatal)
+    );
+    assert_eq!(flash.hits(), [1]);
+    flash.clear();
+}
+
+#[test]
+fn one_missing_append_proof_requires_complete_confirmation_before_acknowledgement() {
+    use crate::tests::{Effect, Rule};
+    for bank in 0..2 {
+        let trace = crate::tests::fault_flash_for_authenticated_tests();
+        let mut healthy = provision(&trace);
+        lose_one_append_proof(&mut healthy, &trace, bank);
+        trace.arm(&[]);
+        healthy.write(&KEY, FID, Some(&[12])).unwrap();
+        let events = trace.events();
+        let last_program = events
+            .iter()
+            .rposition(|event| event.0 == Io::Program)
+            .unwrap();
+        let layout =
+            Layout::new(32768..32768 + super::super::super::storage::AUTHORITY_BYTES).unwrap();
+        for address in layout.counter[bank].clone() {
+            assert!(
+                events[last_program + 1..].iter().any(|&(io, at, count)| {
+                    io == Io::Read && at <= address && address < at + u32::try_from(count).unwrap()
+                }),
+                "missing-proof bank {bank} was not checked at {address:#x} before acknowledgement"
+            );
+        }
+        let reads = events.iter().filter(|event| event.0 == Io::Read).count();
+        let mut value = [0];
+        assert_eq!(healthy.read(&KEY, FID, &mut value), Ok(Some(1)));
+        assert_eq!(value, [12]);
+
+        let flash = crate::tests::fault_flash_for_authenticated_tests();
+        let mut pair = provision(&flash);
+        lose_one_append_proof(&mut pair, &flash, bank);
+        flash.arm(&[Rule {
+            io: Io::Read,
+            skip: reads.checked_sub(1).unwrap(),
+            effect: Effect::Refuse,
+            latched: false,
+        }]);
+        assert_eq!(pair.write(&KEY, FID, Some(&[12])), Err(Error::MemoryFatal));
+        assert_eq!(flash.hits(), [1]);
+        flash.clear();
+        assert_eq!(pair.read(&KEY, FID, &mut value), Ok(Some(1)));
+        assert_eq!(value, [12]);
+    }
+}
+
 #[test]
 fn a_counter_mount_reads_both_entire_banks_and_reduces_replay_reads() {
     let flash = crate::tests::fault_flash_for_authenticated_tests();
@@ -42,16 +104,20 @@ fn a_counter_mount_reads_both_entire_banks_and_reduces_replay_reads() {
 }
 
 #[test]
-fn a_counter_mount_observes_valid_publication_beyond_its_previous_end() {
+fn a_counter_mount_refuses_unstaged_publication_beyond_its_previous_end() {
     let flash = crate::tests::fault_flash_for_authenticated_tests();
     let mut pair = provision(&flash);
     let mut writer = counters(&flash);
     writer.write(&KEY, FID, Some(b"new")).unwrap();
     let mut out = [0; 3];
-    assert_eq!(pair.read(&KEY, FID, &mut out), Ok(Some(3)));
+    assert_eq!(pair.read(&KEY, FID, &mut out), Err(Error::MemoryFatal));
+    assert_eq!(out, [0; 3]);
+    let mut reopened = counters(&flash);
+    assert_eq!(reopened.read(&KEY, FID, &mut out), Ok(Some(3)));
     assert_eq!(&out, b"new");
     writer.write(&KEY, FID, None).unwrap();
-    assert_eq!(pair.read(&KEY, FID, &mut out), Ok(None));
+    assert_eq!(pair.read(&KEY, FID, &mut out), Err(Error::MemoryFatal));
+    assert_eq!(counters(&flash).read(&KEY, FID, &mut out), Ok(None));
     assert_eq!(&out, b"new");
 }
 
@@ -90,6 +156,24 @@ fn a_counter_mount_remains_bound_to_the_root_key_and_configuration() {
     pair.configure(EPOCH, RootArm::Otp);
     assert!(pair.mount.is_none());
     assert_eq!(pair.read(&KEY, FID, &mut []), Err(Error::MemoryFatal));
+}
+
+#[test]
+fn unchanged_counter_banks_cannot_authorize_a_write_with_another_key() {
+    let flash = crate::tests::fault_flash_for_authenticated_tests();
+    let mut pair = provision(&flash);
+    let before = flash.image();
+    flash.arm(&[]);
+    assert_eq!(
+        pair.write(&[0x36; 32], FID, Some(b"unauthorized")),
+        Err(Error::MemoryFatal)
+    );
+    assert_eq!(flash.image(), before);
+    assert!(flash.events().iter().all(|event| event.0 == Io::Read));
+    assert!(pair.mount.is_none());
+    let mut out = [0; 1];
+    assert_eq!(pair.read(&KEY, FID, &mut out), Ok(Some(1)));
+    assert_eq!(out, [11]);
 }
 
 #[test]

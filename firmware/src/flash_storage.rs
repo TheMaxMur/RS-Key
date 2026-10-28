@@ -112,7 +112,10 @@ impl ReadNorFlash for SharedFlash {
             [*first, *second] = stream::read_pair(offset)?;
             return Ok(());
         }
-        if bytes.len() >= 256 && offset.is_multiple_of(4) && bytes.len().is_multiple_of(4) {
+        if bytes.len() >= rsk_store::authenticated::ENTRY_BYTES
+            && offset.is_multiple_of(4)
+            && bytes.len().is_multiple_of(4)
+        {
             self.quad.borrow_mut().ensure_mode();
             let _owner = self.inner.borrow_mut();
             return stream::read(offset, bytes);
@@ -169,7 +172,7 @@ pub fn new_storage(
     let quad = QUAD.init(RefCell::new(quad::Engine::new(flash)));
     static HASH: static_cell::StaticCell<RefCell<sha256::Engine>> = static_cell::StaticCell::new();
     let sha256 = HASH.init(RefCell::new(sha256::Engine::new()));
-    FlashStorage::new_unmounted_with_digest(
+    FlashStorage::new_unmounted_with_reads(
         SharedFlash {
             inner: flash,
             sha256,
@@ -180,6 +183,7 @@ pub fn new_storage(
         source,
         main_cache,
         Some(sha256::digest),
+        Some(sha256::erased),
     )
 }
 

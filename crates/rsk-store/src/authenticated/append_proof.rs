@@ -14,6 +14,7 @@ pub(super) struct AppendProof {
     tail: usize,
     end: u32,
     tag: [u8; 32],
+    digest: [u8; 32],
 }
 
 #[cfg(test)]
@@ -22,20 +23,30 @@ mod tests;
 
 impl AppendProof {
     pub(super) fn new(state: Sha256State, end: u32, key: &[u8; 32]) -> Self {
-        let tag = Self::seal(&state, end, key);
+        let digest = Self::digest(&state, end);
+        let tag = hmac_sha256(key, &digest);
         let (state, tail) = state.into_prefix();
         Self {
             state,
             tail,
             end,
             tag,
+            digest,
         }
     }
 
     fn seal(state: &Sha256State, end: u32, key: &[u8; 32]) -> [u8; 32] {
+        hmac_sha256(key, &Self::digest(state, end))
+    }
+
+    fn digest(state: &Sha256State, end: u32) -> [u8; 32] {
         let mut finished = state.clone();
         finished.update(&end.to_le_bytes());
-        hmac_sha256(key, &finished.finish())
+        finished.finish()
+    }
+
+    pub(super) fn raw_digest(&self) -> [u8; 32] {
+        self.digest
     }
 
     pub(super) fn tag(&self) -> [u8; 32] {

@@ -43,11 +43,15 @@ pub fn all_erased(bytes: &[u8]) -> bool {
 /// The callback reads the supplied flash afresh; it never receives a root key.
 pub type BankDigest<F> = fn(&mut F, Range<u32>, u32, &[u8]) -> Result<Option<[u8; 32]>>;
 
+/// Read every byte of the supplied flash range and require erased contents.
+pub type BankErased<F> = fn(&mut F, Range<u32>) -> Result<bool>;
+
 /// A raw authority window. Metadata reads never invoke map repair or CRC filtering.
 pub struct RawBank<F: NorFlash + MultiwriteNorFlash> {
     flash: VerifiedFlash<F>,
     range: Range<u32>,
     pub(super) digest: Option<BankDigest<F>>,
+    pub(super) erased: Option<BankErased<F>>,
     pub(super) append_proof: Option<AppendProof>,
 }
 
@@ -74,6 +78,7 @@ impl<F: NorFlash + MultiwriteNorFlash> RawBank<F> {
             flash: VerifiedFlash::new(flash),
             range,
             digest: None,
+            erased: None,
             append_proof: None,
         })
     }
@@ -181,12 +186,14 @@ impl<F: NorFlash + MultiwriteNorFlash> RawBank<F> {
             .ok_or(Error::MemoryFatal)?;
         self.read(tail_at, bytes)?;
         let expected = proof.extend(key, start, bytes, parts)?;
-        let fresh = rsk_crypto::hmac_sha256(key, &self.digest(expected.end(), prefix)?);
-        if !rsk_crypto::ct_eq(&fresh, &expected.tag()) {
+        // extend verified the saved HMAC before deriving this expected digest.
+        let fresh = self.digest(expected.end(), prefix)?;
+        if !rsk_crypto::ct_eq(&fresh, &expected.raw_digest()) {
             return Err(Error::MemoryFatal);
         }
+        let tag = expected.tag();
         self.append_proof = Some(expected);
-        Ok(Some(fresh))
+        Ok(Some(tag))
     }
 
     pub(super) fn digest_if_erased_tail(
@@ -261,6 +268,10 @@ impl<F: NorFlash + MultiwriteNorFlash> RawBank<F> {
     pub fn read_erased(&mut self, offset: u32) -> Result<bool> {
         if offset > self.capacity() {
             return Err(Error::MemoryFatal);
+        }
+        if let Some(erased) = self.erased {
+            let start = self.span(offset, 0)?.start;
+            return erased(self.flash.inner_mut(), start..self.range.end);
         }
         let mut scratch = Secret::new(FlashBuf::<IO_CHUNK>::new());
         let mut at = offset;

@@ -8,7 +8,9 @@
 # Cargo checksum/cache metadata and the upstream Cargo.lock are omitted.
 # field.rs expands primefield 0.14.0's monty_field_arithmetic (Apache-2.0 OR MIT)
 # to replace multiply/square on 32-bit targets; all other methods keep upstream
-# semantics. The Fiat backend and 64-bit arithmetic remain unchanged.
+# semantics. On 32-bit targets add/sub/double stay out of line to bound the
+# point-formula instruction footprint. The Fiat backend and 64-bit arithmetic
+# remain unchanged.
 #
 # CIOS: Koc, Acar, Kaliski, Analyzing and Comparing Montgomery Multiplication
 # Algorithms, IEEE Micro 16(3), 1996, section 5:
@@ -41,7 +43,7 @@
  
 --- a/src/arithmetic/field.rs
 +++ b/src/arithmetic/field.rs
-@@ -49,11 +49,97 @@
+@@ -49,11 +49,101 @@
      doc: "Element in the finite field modulo `p = 2^{384} − 2^{128} − 2^{96} + 2^{32} − 1`."
  }
  
@@ -68,21 +70,25 @@
 +        self.0.to_canonical()
 +    }
 +
++    // Keep twelve-limb additions out of each point-formula call site on Cortex-M.
 +    /// Add elements.
-+    #[inline]
++    #[cfg_attr(target_pointer_width = "32", inline(never))]
++    #[cfg_attr(not(target_pointer_width = "32"), inline)]
 +    pub const fn add(&self, rhs: &Self) -> Self {
 +        Self(self.0.add(&rhs.0))
 +    }
 +
 +    /// Double an element.
-+    #[inline]
++    #[cfg_attr(target_pointer_width = "32", inline(never))]
++    #[cfg_attr(not(target_pointer_width = "32"), inline)]
 +    #[must_use]
 +    pub const fn double(&self) -> Self {
 +        Self(self.0.double())
 +    }
 +
 +    /// Subtract elements.
-+    #[inline]
++    #[cfg_attr(target_pointer_width = "32", inline(never))]
++    #[cfg_attr(not(target_pointer_width = "32"), inline)]
 +    pub const fn sub(&self, rhs: &Self) -> Self {
 +        Self(self.0.sub(&rhs.0))
 +    }

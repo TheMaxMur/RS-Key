@@ -4,6 +4,54 @@
 use super::*;
 use sequential_storage::cache::{Cache, Uncached};
 
+#[test]
+#[expect(
+    clippy::unwrap_used,
+    reason = "Initialized managed fixtures must preserve counters across mount and owner replacement."
+)]
+fn bound_counters_require_a_ready_managed_store_and_follow_the_current_owner() {
+    let flash = crate::tests::fault_flash_for_authenticated_tests();
+    let source = KeySource::new([0x43; 32], |_| super::super::RootRead::Blank, false);
+    let mut store = Managed::new_unmounted(
+        flash.clone(),
+        0..32768,
+        32768..32768 + super::super::storage::AUTHORITY_BYTES,
+        source,
+        Cache::<Uncached, Uncached, Uncached, u16>::new_uncached,
+    );
+    let mut out = [0xA5; 36];
+    let before = flash.image();
+    assert_eq!(
+        store.read_bound_counter(0xBA00, &mut out),
+        Err(Error::MemoryFatal)
+    );
+    assert_eq!(
+        store.write_bound_counter(0xBA00, &[0x42; 36]),
+        Err(Error::MemoryFatal)
+    );
+    assert_eq!(out, [0xA5; 36]);
+    assert_eq!(flash.image(), before);
+    store
+        .administer(StorageAction::Initialize, [0x4B; 16])
+        .unwrap();
+    store.write(0xBA00, b"owner").unwrap();
+    assert_eq!(store.read_bound_counter(0xBA00, &mut out), Ok(None));
+    assert_eq!(store.write_bound_counter(0xBA00, &[0x42; 36]), Ok(true));
+    store.mount().unwrap();
+    assert_eq!(store.read_bound_counter(0xBA00, &mut out), Ok(Some(36)));
+    assert_eq!(out, [0x42; 36]);
+    store.remove(0xBA00).unwrap();
+    assert_eq!(
+        store.read_bound_counter(0xBA00, &mut out),
+        Err(Error::MemoryFatal)
+    );
+    store.write(0xBA00, b"replacement").unwrap();
+    assert_eq!(store.read_bound_counter(0xBA00, &mut out), Ok(None));
+    assert_eq!(store.write_bound_counter(0xBA00, &[0x43; 36]), Ok(true));
+    assert_eq!(store.read_bound_counter(0xBA00, &mut out), Ok(Some(36)));
+    assert_eq!(out, [0x43; 36]);
+}
+
 #[expect(
     clippy::unwrap_used,
     reason = "Verified zero-sequence headers precede deliberately malformed unpublished snapshot entries."
@@ -117,6 +165,9 @@ fn constructor_bank_digest_survives_mount_and_configuration() {
 )]
 #[path = "managed_checkpoint_tests.rs"]
 mod checkpoint;
+
+#[path = "managed_erased_tests.rs"]
+mod erased;
 
 #[test]
 #[expect(

@@ -372,3 +372,42 @@ fn rollover_rejects_changed_status_or_sequence_before_copying_the_second_bank() 
 
 #[path = "counter_mount_tests.rs"]
 mod mount;
+
+#[test]
+fn live_counter_authority_rejects_another_authenticated_directory_at_the_same_sequence() {
+    let layout = Layout::new(32768..32768 + super::super::storage::AUTHORITY_BYTES).unwrap();
+    for keep_owner in [false, true] {
+        let flash = crate::tests::fault_flash_for_authenticated_tests();
+        let mut pair = counters(&flash);
+        pair.initialize(&KEY, &Directory::new(), 0, |_, _| unreachable!())
+            .unwrap();
+        pair.write(&KEY, rsk_fs::counter::EF_COUNTER.get(), Some(b"current"))
+            .unwrap();
+        let mut substituted = flash.image();
+        for range in &layout.counter {
+            substituted[usize::try_from(range.start).unwrap()..usize::try_from(range.end).unwrap()]
+                .fill(0xff);
+            replace_peer(
+                &mut substituted,
+                range.clone(),
+                &KEY,
+                1,
+                RootArm::PreOtp,
+                keep_owner,
+            );
+        }
+        flash.replace_image_before_read(0, substituted);
+        pair.mount = None;
+        for _ in 0..2 {
+            let mut out = [0xA5; 7];
+            assert_eq!(
+                pair.read(&KEY, rsk_fs::counter::EF_COUNTER.get(), &mut out),
+                Err(Error::MemoryFatal)
+            );
+            assert_eq!(out, [0xA5; 7]);
+        }
+    }
+}
+
+#[path = "counter_proven_tests.rs"]
+mod proven;

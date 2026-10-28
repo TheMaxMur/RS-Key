@@ -7,6 +7,10 @@ pub(super) fn counter_index(fid: u16) -> Result<usize> {
     rsk_fs::counter::COUNTER_FIDS
         .iter()
         .position(|counter| counter.get() == fid)
+        .or_else(|| {
+            super::super::bound_counter::bucket_index(fid)
+                .map(|index| rsk_fs::counter::COUNTER_FIDS.len() + index)
+        })
         .ok_or(Error::MemoryFatal)
 }
 
@@ -18,11 +22,11 @@ pub(super) fn padded_length(entry: Entry) -> Result<usize> {
     Ok(length.div_ceil(VALUE_ALIGNMENT) * VALUE_ALIGNMENT)
 }
 
-fn read_payload<'a, F: NorFlash + MultiwriteNorFlash>(
+pub(super) fn read_payload<'a, F: NorFlash + MultiwriteNorFlash>(
     reader: &mut RawBank<F>,
     entry: Entry,
     offset: u32,
-    buffer: &'a mut [u8; VALUE_BUFFER],
+    buffer: &'a mut [u8],
 ) -> Result<Option<(usize, &'a [u8])>> {
     let padded = padded_length(entry)?;
     let length = entry.length().unwrap_or(0);
@@ -40,23 +44,6 @@ fn read_payload<'a, F: NorFlash + MultiwriteNorFlash>(
         padded,
         bytes.get(..length).ok_or(Error::MemoryFatal)?,
     )))
-}
-
-pub(super) fn read_entry_value<F: NorFlash + MultiwriteNorFlash>(
-    reader: &mut RawBank<F>,
-    entry: Entry,
-    offset: u32,
-    checkpoint: Checkpoint,
-    key: &[u8; 32],
-    buffer: &mut [u8; VALUE_BUFFER],
-) -> Result<Option<usize>> {
-    let Some((padded, value)) = read_payload(reader, entry, offset, buffer)? else {
-        return Ok(None);
-    };
-    if entry.verify(checkpoint.identity, key, value).is_err() {
-        return Ok(None);
-    }
-    Ok(Some(padded))
 }
 
 fn read_scan_value<F: NorFlash + MultiwriteNorFlash>(
@@ -102,6 +89,7 @@ pub(super) fn scan<F: NorFlash + MultiwriteNorFlash>(
         next: 0,
         locations: [None; MAX_COUNTER_ENTRIES],
         fingerprint: None,
+        raw_fingerprint: None,
     };
     if header.iter().all(|&byte| byte == 0xFF) {
         if reader.read_erased(0)? {
@@ -234,6 +222,7 @@ fn finish_scan<F: NorFlash + MultiwriteNorFlash>(
         return Ok(scan);
     }
     scan.fingerprint = Some(reader.remember_prefix(fingerprint, at, key));
+    scan.raw_fingerprint = reader.append_proof.as_ref().map(|proof| proof.raw_digest());
     scan.status = JournalStatus::Complete;
     Ok(scan)
 }

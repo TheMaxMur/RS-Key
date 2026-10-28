@@ -33,7 +33,7 @@ fn populated<const R: usize>() -> (FaultFlash, CounterBank<Geometry<R, 4, SECTOR
     .unwrap();
     let scan = bank.scan(&JOURNAL_KEY, &mut directory).unwrap();
     bank.append(
-        scan,
+        &scan,
         &JOURNAL_KEY,
         Entry::live(COUNTER_ID, &JOURNAL_KEY, CTR, SNAPSHOT_SEQUENCE + 1, b"new").unwrap(),
         b"new",
@@ -41,7 +41,7 @@ fn populated<const R: usize>() -> (FaultFlash, CounterBank<Geometry<R, 4, SECTOR
     .unwrap();
     let scan = bank.scan(&JOURNAL_KEY, &mut directory).unwrap();
     bank.append(
-        scan,
+        &scan,
         &JOURNAL_KEY,
         Entry::deleted(COUNTER_ID, &JOURNAL_KEY, CTR, SNAPSHOT_SEQUENCE + 2).unwrap(),
         &[],

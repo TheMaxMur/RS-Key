@@ -327,7 +327,7 @@ why = "BACKUP_LOAD drops the old certificate BEFORE the new seed commits: a surv
 
 [[site]]
 file = "crates/rsk-oath/src/lib.rs"
-line = 359
+line = 360
 call = "Ok(Some((fid, _))) => match fs.delete(fid) {"
 verb = "delete"
 answer = "read"
@@ -338,7 +338,7 @@ why = "DELETE's only effect. Discarded until 0x0988, so a refused removal answer
 
 [[site]]
 file = "crates/rsk-oath/src/lib.rs"
-line = 385
+line = 386
 call = "let dropped = fs.delete_key(EF_OATH_CODE);"
 verb = "delete_key"
 answer = "read"
@@ -349,7 +349,7 @@ why = "SET CODE's 73 00: select derives validated from !code_set, so a 9000 over
 
 [[site]]
 file = "crates/rsk-oath/src/lib.rs"
-line = 1792
+line = 1804
 call = "let gone = fs.force_delete_halves(fid);"
 verb = "force_delete_halves"
 answer = "read"
@@ -689,7 +689,7 @@ why = "the unconditional twin, and `force_delete`'s body as well. Same reason: t
 
 [[fs_removal]]
 file = "crates/rsk-fs/src/fs.rs"
-line = 955
+line = 971
 method = "meta_delete"
 call = "self.storage.remove(EF_META)?;"
 rearms = false

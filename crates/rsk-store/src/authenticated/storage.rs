@@ -49,7 +49,7 @@ impl Layout {
 /// Storage decisions are made from authenticated authority, including confirmed absence.
 pub struct Authenticated<F: NorFlash + MultiwriteNorFlash + Clone, C: CacheImpl<u16>> {
     pub(super) main: Main<F, C>,
-    counters: Counters<F>,
+    pub(super) counters: Counters<F>,
     pub(super) source: KeySource,
     pub(super) main_arm: RootArm,
     pub(super) counter_arm: RootArm,
@@ -80,6 +80,7 @@ impl<F: NorFlash + MultiwriteNorFlash + Clone, C: CacheImpl<u16>> Authenticated<
             arm,
             arm,
             None,
+            None,
         )
     }
 
@@ -98,6 +99,7 @@ impl<F: NorFlash + MultiwriteNorFlash + Clone, C: CacheImpl<u16>> Authenticated<
         main_arm: RootArm,
         counter_arm: RootArm,
         digest: Option<super::BankDigest<F>>,
+        erased: Option<super::BankErased<F>>,
     ) -> Result<Self> {
         if main_range.start >= main_range.end || main_range.end > counter_range.start {
             return Err(Error::MemoryFatal);
@@ -123,11 +125,18 @@ impl<F: NorFlash + MultiwriteNorFlash + Clone, C: CacheImpl<u16>> Authenticated<
                 bank.set_digest(digest);
             }
         }
+        if let Some(erased) = erased {
+            for bank in &mut counter_banks {
+                bank.set_erased(erased);
+            }
+        }
         let counter_identity = Identity {
             partition: Partition::Counter,
             epoch,
         };
         let config = MapConfig::try_new(main_range.clone()).map_err(|_| Error::MemoryFatal)?;
+        // Finish fallible construction before building Main's large inline buffers.
+        let counters = Counters::new(counter_banks, counter_identity, counter_arm)?;
         Ok(Self {
             main: Main::new(
                 MapStorage::new(VerifiedFlash::new(flash.clone()), config, cache),
@@ -135,7 +144,7 @@ impl<F: NorFlash + MultiwriteNorFlash + Clone, C: CacheImpl<u16>> Authenticated<
                 epoch,
                 main_arm,
             ),
-            counters: Counters::new(counter_banks, counter_identity, counter_arm)?,
+            counters,
             source,
             main_arm,
             counter_arm,
@@ -248,11 +257,15 @@ impl<F: NorFlash + MultiwriteNorFlash + Clone, C: CacheImpl<u16>> Authenticated<
     }
 
     fn read_checked(&mut self, fid: u16, out: &mut [u8]) -> Result<Option<usize>> {
+        if super::bound_counter::public_pin(fid).is_some() {
+            return self.read_public_pin(fid, out);
+        }
+        if super::bound_counter::Slot::pin(fid).is_some() {
+            return self.read_pin(fid, out);
+        }
         if crate::is_counter_fid(fid) {
-            let mut key = self.source.key(self.counter_arm)?;
-            let result = self.counters.read(key.expose(), fid, out);
-            key.wipe();
-            result
+            self.counters
+                .read_with_source(self.source, self.counter_arm, fid, out)
         } else {
             self.main
                 .read_with_source(self.source, self.main_arm, fid, out)
@@ -264,7 +277,9 @@ impl<F: NorFlash + MultiwriteNorFlash + Clone, C: CacheImpl<u16>> Storage for Au
     const MAX_VALUE: usize = rsk_fs::MAX_VALUE_BYTES;
 
     fn read(&mut self, fid: u16, out: &mut [u8]) -> Option<usize> {
-        if rsk_fs::STORE_INTERNAL_FIDS.contains(&fid) {
+        if rsk_fs::STORE_INTERNAL_FIDS.contains(&fid)
+            || super::bound_counter::bucket_index(fid).is_some()
+        {
             self.last_error = false;
             return None;
         }
@@ -274,29 +289,45 @@ impl<F: NorFlash + MultiwriteNorFlash + Clone, C: CacheImpl<u16>> Storage for Au
     }
 
     fn write(&mut self, fid: u16, data: &[u8]) -> Result<()> {
-        if rsk_fs::STORE_INTERNAL_FIDS.contains(&fid) {
+        if rsk_fs::STORE_INTERNAL_FIDS.contains(&fid)
+            || super::bound_counter::bucket_index(fid).is_some()
+        {
             return Err(Error::Blocked);
         }
+        if super::bound_counter::public_pin(fid).is_some() {
+            return self.write_public_pin(fid, Some(data));
+        }
+        if super::bound_counter::Slot::pin(fid).is_some() && self.write_pin(fid, data)? {
+            return Ok(());
+        }
+        if crate::is_counter_fid(fid) {
+            return self
+                .counters
+                .write_with_source(self.source, self.counter_arm, fid, Some(data));
+        }
         let mut key = self.source.key(self.arm(fid))?;
-        let result = if crate::is_counter_fid(fid) {
-            self.counters.write(key.expose(), fid, Some(data))
-        } else {
-            self.main.write(key.expose(), fid, Some(data))
-        };
+        let result = self.main.write(key.expose(), fid, Some(data));
         key.wipe();
         result
     }
 
     fn remove(&mut self, fid: u16) -> Result<()> {
-        if rsk_fs::STORE_INTERNAL_FIDS.contains(&fid) {
+        if rsk_fs::STORE_INTERNAL_FIDS.contains(&fid)
+            || super::bound_counter::bucket_index(fid).is_some()
+        {
             return Err(Error::Blocked);
         }
+        if super::bound_counter::public_pin(fid).is_some() {
+            // A durable tombstone prevents fallback even if legacy removal is interrupted.
+            self.write_public_pin(fid, None)?;
+        }
+        if crate::is_counter_fid(fid) {
+            return self
+                .counters
+                .write_with_source(self.source, self.counter_arm, fid, None);
+        }
         let mut key = self.source.key(self.arm(fid))?;
-        let result = if crate::is_counter_fid(fid) {
-            self.counters.write(key.expose(), fid, None)
-        } else {
-            self.main.write(key.expose(), fid, None)
-        };
+        let result = self.main.write(key.expose(), fid, None);
         key.wipe();
         result
     }
@@ -305,17 +336,31 @@ impl<F: NorFlash + MultiwriteNorFlash + Clone, C: CacheImpl<u16>> Storage for Au
         self.read(fid, &mut [])
     }
 
+    fn read_bound_counter(&mut self, fid: u16, out: &mut [u8]) -> Result<Option<usize>> {
+        self.read_oath_counter(fid, out)
+    }
+
+    fn write_bound_counter(&mut self, fid: u16, sealed: &[u8]) -> Result<bool> {
+        self.write_oath_counter(fid, sealed)
+    }
+
     fn last_error(&self) -> bool {
         self.last_error
     }
 
     fn for_each_key(&mut self, visit: &mut dyn FnMut(u16)) -> bool {
+        use super::bound_counter::{PUBLIC_PINS, PublicPinState};
         let Ok(mut key) = self.source.key(self.main_arm) else {
             self.last_error = true;
             return false;
         };
+        let mut legacy_pins = [false; PUBLIC_PINS.len()];
         let main = self.main.for_each_key(key.expose(), |fid| {
-            if !rsk_fs::STORE_INTERNAL_FIDS.contains(&fid) {
+            if let Some(index) = PUBLIC_PINS.iter().position(|&owner| owner == fid) {
+                if let Some(present) = legacy_pins.get_mut(index) {
+                    *present = true;
+                }
+            } else if !rsk_fs::STORE_INTERNAL_FIDS.contains(&fid) {
                 visit(fid);
             }
         });
@@ -337,6 +382,19 @@ impl<F: NorFlash + MultiwriteNorFlash + Clone, C: CacheImpl<u16>> Storage for Au
             }
         }
         key.wipe();
+        if main.is_ok() && counters.is_ok() {
+            for (fid, legacy) in PUBLIC_PINS.into_iter().zip(legacy_pins) {
+                match self.read_published_pin(fid, &mut []) {
+                    Ok(PublicPinState::Present(_)) => visit(fid),
+                    Ok(PublicPinState::Legacy) if legacy => visit(fid),
+                    Ok(PublicPinState::Legacy | PublicPinState::Absent) => {}
+                    Err(error) => {
+                        counters = Err(error);
+                        break;
+                    }
+                }
+            }
+        }
         self.last_error = main.is_err() || counters.is_err();
         !self.last_error
     }

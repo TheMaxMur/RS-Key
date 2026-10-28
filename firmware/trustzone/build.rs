@@ -78,6 +78,7 @@ pub fn configure(out: &Path, memory: &mut String, code_size: u32, flash_size: u3
          ASSERT(SIZEOF(.rsk_curve25519) <= {XIP_WAY_BYTES}, \"Curve25519 code exceeds one XIP cache way\")\n",
     ));
     // Keep the shared verifier and its memory helpers off the XIP path.
+    // The P-256 addition monomorph's size check makes dependency drift explicit.
     memory.push_str(
         "SECTIONS {\n\
          .rsk_exec : ALIGN(32) {\n\
@@ -106,6 +107,10 @@ pub fn configure(out: &Path, memory: &mut String, code_size: u32, flash_size: u3
          KEEP(*(.text._ZN74_$LT$firmware..ZeroingHeap$u20$as$u20$core..alloc..global..GlobalAlloc$GT$7dealloc17h????????????????E))\n\
          KEEP(*(.text._ZN13crypto_bigint4limb2ct97_$LT$impl$u20$ctutils..traits..ct_assign..CtAssignSlice$u20$for$u20$crypto_bigint..limb..Limb$GT$15ct_assign_slice17h????????????????E))\n\
          KEEP(*(.text._ZN124_$LT$num_bigint_dig..biguint..BigUint$u20$as$u20$core..ops..arith..SubAssign$LT$$RF$num_bigint_dig..biguint..BigUint$GT$$GT$10sub_assign17h????????????????E))\n\
+         __rsk_p256_add_start = .;\n\
+         KEEP(*(.text._ZN134_$LT$primeorder..point_arithmetic..EquationAIsMinusThree$u20$as$u20$primeorder..point_arithmetic..sealed..PointArithmetic$LT$C$GT$$GT$10add_assign17h54848a1e6960f4b6E))\n\
+         __rsk_p256_add_end = .;\n\
+         KEEP(*(.text._ZN67_$LT$p256..arithmetic..field..FieldElement$u20$as$u20$ff..Field$GT$6invert17h????????????????E))\n\
          KEEP(*(.text._ZN6rsk_ec3key16ecdh_p256_shared17h????????????????E))\n\
          KEEP(*(.text._ZN14elliptic_curve4ecdh14diffie_hellman17h????????????????E))\n\
          KEEP(*(.text._ZN10primeorder6tables6lookup24LookupTable$LT$Point$GT$6select17h????????????????E))\n\
@@ -120,6 +125,7 @@ pub fn configure(out: &Path, memory: &mut String, code_size: u32, flash_size: u3
          } INSERT BEFORE .data;\n\
          SECTIONS { .rsk_init_anchor (NOLOAD) : { __sdata = ADDR(.rsk_exec); __sidata = LOADADDR(.rsk_exec); } > RAM } INSERT AFTER .uninit;\n\
          ASSERT(__rsk_sha256_initial_end - __rsk_sha256_initial_start == 32, \"SHA-256 initial vector is not 32 bytes\")\n\
+         ASSERT(__rsk_p256_add_end - __rsk_p256_add_start == 1222, \"P-256 addition monomorph changed; review relocation\")\n\
          ASSERT(__rsk_memory_end > __rsk_memory_start, \"Memory helpers are missing from Secure SRAM\")\n\
          ASSERT(LOADADDR(.data) - LOADADDR(.rsk_exec) == ADDR(.data) - ADDR(.rsk_exec), \"RAM initialization is not contiguous\")\n",
     );

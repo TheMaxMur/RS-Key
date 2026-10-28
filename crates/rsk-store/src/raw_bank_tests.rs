@@ -312,7 +312,7 @@ fn counter_bank_preserves_all_four_maximum_values_without_reducing_the_ceiling()
     let mut out = vec![0; rsk_fs::MAX_VALUE_BYTES];
     for (fid, expected) in &owners {
         assert_eq!(
-            bank.read_value(initial, &JOURNAL_KEY, *fid, &mut out),
+            bank.read_value(&initial, &JOURNAL_KEY, *fid, &mut out),
             Ok(Some(expected.len()))
         );
         assert_eq!(&out, expected);
@@ -321,7 +321,7 @@ fn counter_bank_preserves_all_four_maximum_values_without_reducing_the_ceiling()
     let replacement = vec![0xB5; rsk_fs::MAX_VALUE_BYTES];
     let entry = Entry::live(COUNTER_ID, &JOURNAL_KEY, fid, 1, &replacement).unwrap();
     assert_eq!(
-        bank.append(initial, &JOURNAL_KEY, entry, &replacement),
+        bank.append(&initial, &JOURNAL_KEY, entry, &replacement),
         Err(Error::NoMemory)
     );
     owners[0].1 = replacement;
@@ -347,7 +347,7 @@ fn counter_bank_preserves_all_four_maximum_values_without_reducing_the_ceiling()
     assert_eq!(final_state.sequence, Some(1));
     for (fid, expected) in &owners {
         assert_eq!(
-            bank.read_value(final_state, &JOURNAL_KEY, *fid, &mut out),
+            bank.read_value(&final_state, &JOURNAL_KEY, *fid, &mut out),
             Ok(Some(expected.len()))
         );
         assert_eq!(&out, expected);
@@ -379,7 +379,7 @@ fn counter_bank_authenticates_the_full_value_before_releasing_a_short_prefix() {
     flash.inner.bytes.borrow_mut()[physical] ^= 0x80;
     let mut out = [0xCC; 1];
     assert_eq!(
-        bank.read_value(scan, &JOURNAL_KEY, CTR, &mut out),
+        bank.read_value(&scan, &JOURNAL_KEY, CTR, &mut out),
         Err(Error::MemoryFatal)
     );
     assert_eq!(
@@ -409,7 +409,7 @@ fn counter_bank_does_not_skip_a_corrupted_delta_or_a_hidden_data_first_append() 
     .unwrap();
     let initial = bank.scan(&JOURNAL_KEY, &mut Directory::new()).unwrap();
     let owner = Entry::live(COUNTER_ID, &JOURNAL_KEY, CTR, 1, b"new counter").unwrap();
-    bank.append(initial, &JOURNAL_KEY, owner, b"new counter")
+    bank.append(&initial, &JOURNAL_KEY, owner, b"new counter")
         .unwrap();
     let complete = bank.scan(&JOURNAL_KEY, &mut Directory::new()).unwrap();
     assert_eq!(complete.status, JournalStatus::Complete);

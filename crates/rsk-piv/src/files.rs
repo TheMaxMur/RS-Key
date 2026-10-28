@@ -235,7 +235,7 @@ pub fn key_fid(slot: u8) -> KeyFid {
 pub const EF_PIN: u16 = 0xD180;
 pub const EF_PUK: u16 = 0xD181;
 /// Retry state: `[pin_total, pin_left, puk_total, puk_left]`.
-pub const EF_RETRIES: u16 = 0xD1FE;
+pub const EF_RETRIES: u16 = rsk_fs::counter::PIV_RETRIES;
 
 /// The X.509 certificate object that pairs with a key slot:
 /// `5FC105/0A/0B/01` for the active four, `5FC10D…5FC120` for retired 1–20

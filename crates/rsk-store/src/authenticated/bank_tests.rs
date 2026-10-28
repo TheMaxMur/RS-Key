@@ -3,6 +3,52 @@
 
 use super::*;
 
+#[test]
+#[expect(
+    clippy::unwrap_used,
+    reason = "Public fixed bank fixtures distinguish a verified append from changed history and output."
+)]
+fn append_confirmation_checks_history_payload_tail_and_fresh_key() {
+    const KEY: [u8; 32] = [0x25; 32];
+    const PREFIX: &[u8] = b"public bank domain";
+    for damage in [None, Some(0), Some(127), Some(128), Some(143), Some(144)] {
+        for wrong_key in [false, true] {
+            let mut bank =
+                RawBank::new(crate::tests::flash_for_authenticated_tests(), 4096..8192).unwrap();
+            bank.program(0, &[0xA5; 128]).unwrap();
+            let mut state = Sha256State::new();
+            state.update(PREFIX);
+            state.update(&[0xA5; 128]);
+            bank.remember_prefix(state, 128, &KEY);
+            bank.program(128, &[0xA5; 16]).unwrap();
+            if let Some(offset) = damage {
+                bank.program(offset, &[0xA4]).unwrap();
+            }
+            let key = if wrong_key { &[0x26; 32] } else { &KEY };
+            let result = bank.confirm_append(key, 128, &[&[0xA5; 16]], PREFIX);
+            if damage.is_some() || wrong_key {
+                assert_eq!(result, Err(Error::MemoryFatal));
+                assert!(bank.append_proof.is_none());
+            } else {
+                let mut state = Sha256State::new();
+                state.update(PREFIX);
+                state.update(&[0xA5; 144]);
+                state.update(&144u32.to_le_bytes());
+                assert_eq!(
+                    result,
+                    Ok(Some(rsk_crypto::hmac_sha256(&KEY, &state.finish())))
+                );
+                bank.program(144, &[0x5A; 16]).unwrap();
+                assert!(
+                    bank.confirm_append(&KEY, 144, &[&[0x5A; 16]], PREFIX)
+                        .unwrap()
+                        .is_some()
+                );
+            }
+        }
+    }
+}
+
 #[expect(
     clippy::unwrap_used,
     reason = "An admitted window precedes invalid span arguments without allocating giant buffers."

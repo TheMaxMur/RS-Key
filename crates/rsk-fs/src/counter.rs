@@ -5,7 +5,8 @@
 //!
 //! A counter is rewritten on every operation that bumps it, so the store keeps
 //! it in a partition of its own and its churn never reclaims a page that holds a
-//! key or a credential; `rsk_store::is_counter_fid` routes by [`COUNTER_FIDS`].
+//! key or a credential. [`COUNTER_FIDS`] names the public counter records;
+//! authenticated backends can also own private, generation-bound buckets.
 //! A FID on the wrong side reads absent while its old value stays live in the
 //! other ring, and the set has drifted twice while it was spelled out in more
 //! than one place — so it is spelled here only, and each counter is a
@@ -52,6 +53,16 @@ pub const COUNTER_FID: CounterFid = CounterFid(0xCC01);
 /// Every counter record. One declared above and left out of this list is read
 /// from and written to the main partition, a split nothing else would notice.
 pub const COUNTER_FIDS: [CounterFid; 4] = [EF_COUNTER, EF_CRED_CTR, EF_SIG_COUNT, COUNTER_FID];
+
+/// Main-file owners whose retry bytes may use the authenticated counter journal.
+pub const PIV_RETRIES: u16 = 0xD1FE;
+pub const OPENPGP_RETRIES: u16 = 0x10C4;
+pub const FIDO_PIN: u16 = 0x1080;
+pub const DEVICE_PIN: u16 = 0xCE20;
+pub const OATH_PIN: u16 = 0x10A0;
+/// Credential owners for the independently sealed HOTP moving factors.
+pub const OATH_FIRST: u16 = 0xBA00;
+pub const OATH_SLOTS: u16 = 255;
 
 #[cfg(test)]
 #[path = "counter_tests.rs"]

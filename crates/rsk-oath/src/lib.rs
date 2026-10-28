@@ -15,6 +15,7 @@
     clippy::cast_possible_truncation
 )]
 
+mod counter;
 mod seal;
 
 use core::cell::RefCell;
@@ -38,7 +39,7 @@ pub const VERSION: (u8, u8, u8) = rsk_sdk::FIRMWARE_VERSION;
 
 // FIDs.
 /// First credential slot, for fault injection through the storage interface.
-pub const EF_OATH_CRED: u16 = 0xBA00; // 255 cred slots, 0xBA00..=0xBAFE (each a sealed KeyFid)
+pub const EF_OATH_CRED: u16 = rsk_fs::counter::OATH_FIRST; // 255 cred slots, 0xBA00..=0xBAFE (each a sealed KeyFid)
 const EF_OATH_CODE: KeyFid = KeyFid::new(0xBAFF); // SET CODE validation key, sealed
 /// VALIDATE's read buffer, and so the widest access code that can still be
 /// read back — otherwise `seal_read` fails and (pre-fix) VALIDATE unlocked the
@@ -46,9 +47,9 @@ const EF_OATH_CODE: KeyFid = KeyFid::new(0xBAFF); // SET CODE validation key, se
 /// ([`CODE_TLV_MAX`]); this stays wide because a build before that rule stored
 /// up to this much, and such a key must go on opening.
 const OATH_CODE_MAX: usize = 128;
-const EF_OTP_PIN: u16 = 0x10A0;
+const EF_OTP_PIN: u16 = rsk_fs::counter::OATH_PIN;
 
-const MAX_OATH_CRED: u16 = 255;
+const MAX_OATH_CRED: u16 = rsk_fs::counter::OATH_SLOTS;
 /// Width of the VALIDATE challenge SELECT offers — the one place YKOATH fixes a
 /// challenge length. A read path's challenge is [`CHALLENGE_MAX`] wide.
 const CHALLENGE_LEN: usize = 8;
@@ -699,7 +700,18 @@ impl<'a> OathApplet<'a> {
             };
             counter = *stored;
             *stored = u64::from_be_bytes(counter).wrapping_add(1).to_be_bytes();
-            if !self.store_cred(&dev, fs, fid, scratch.expose(), n) {
+            let published = counter::publish(
+                &dev,
+                fs,
+                &mut *self.rng.borrow_mut(),
+                KeyFid::new(fid),
+                stored,
+            );
+            if !match published {
+                Ok(true) => true,
+                Ok(false) => self.store_cred(&dev, fs, fid, scratch.expose(), n),
+                Err(_) => false,
+            } {
                 return Sw::MEMORY_FAILURE;
             }
         }
@@ -1927,6 +1939,7 @@ fn find_cred<S: Storage>(
                 .and_then(|b| find_tag(b, TAG_NAME as u16))
                 == Some(name)
         {
+            counter::apply(dev, fs, KeyFid::new(fid), buf, n).map_err(|_| Sw::MEMORY_FAILURE)?;
             found = Some((fid, n));
             break;
         }
@@ -2012,6 +2025,9 @@ fn reseal_if_plaintext<S: Storage>(
         && let Some(old) = dev.pre_otp_arm()
         && let Some(n) = seal::open(&old, blob, out)
     {
+        if counter::apply(&old, fs, fid, out, n).is_err() {
+            return true;
+        }
         // Ahead of the write and gating it, per `rsk_fs::request_rescrub`: the copy
         // it supersedes is the pre-OTP one. The `return` stays outside — falling
         // through would re-seal that ciphertext as if it were plaintext.

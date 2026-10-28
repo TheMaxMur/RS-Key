@@ -35,7 +35,7 @@ fn a_counter_snapshot_can_fill_the_whole_bank_and_recover_its_value() {
     assert_eq!(directory.entries(), &[entry]);
     let mut recovered = [0; SECTOR - CHECKPOINT_BYTES - ENTRY_BYTES];
     assert_eq!(
-        bank.read_value(scan, &JOURNAL_KEY, CTR, &mut recovered),
+        bank.read_value(&scan, &JOURNAL_KEY, CTR, &mut recovered),
         Ok(Some(value.len()))
     );
     assert_eq!(recovered, value);
@@ -57,7 +57,7 @@ fn a_counter_tombstone_filling_the_last_header_window_advances_the_scan() {
     assert_eq!(scan.status, JournalStatus::Complete);
     assert_eq!(scan.next, u32::try_from(CHECKPOINT_BYTES).unwrap());
     let tombstone = Entry::deleted(COUNTER_ID, &JOURNAL_KEY, CTR, 1).unwrap();
-    bank.append(scan, &JOURNAL_KEY, tombstone, &[]).unwrap();
+    bank.append(&scan, &JOURNAL_KEY, tombstone, &[]).unwrap();
     let before = flash.inner.bytes.borrow().clone();
     flash.arm(&[]);
     let recovered = bank.scan(&JOURNAL_KEY, &mut directory).unwrap();
@@ -248,7 +248,7 @@ fn counter_scan_rejects_signed_snapshot_contradictions_and_non_erased_padding() 
         let scan = bank.scan(&JOURNAL_KEY, &mut directory).unwrap();
         assert_eq!(scan.status, JournalStatus::Dirty, "case {case}");
         assert_eq!(
-            bank.read_value(scan, &JOURNAL_KEY, CTR, &mut [0; 5]),
+            bank.read_value(&scan, &JOURNAL_KEY, CTR, &mut [0; 5]),
             Err(Error::MemoryFatal)
         );
         assert_eq!(*flash.inner.bytes.borrow(), before);
@@ -270,7 +270,7 @@ fn counter_scan_rejects_malformed_foreign_and_skipped_generation_append_descript
         .unwrap();
         let scan = bank.scan(&JOURNAL_KEY, &mut directory).unwrap();
         let entry = Entry::live(COUNTER_ID, &JOURNAL_KEY, CTR, 1, b"value").unwrap();
-        bank.append(scan, &JOURNAL_KEY, entry, b"value").unwrap();
+        bank.append(&scan, &JOURNAL_KEY, entry, b"value").unwrap();
         let at = usize::try_from(COUNTER.start + scan.next).unwrap();
         let changed = match case {
             1 => Entry::live(COUNTER_ID, &JOURNAL_KEY, CRED, 1, b"value")
@@ -313,17 +313,17 @@ fn counter_direct_scan_arguments_refuse_before_mutating_a_healthy_bank() {
     for status in [JournalStatus::Empty, JournalStatus::Dirty] {
         let wrong = crate::authenticated::CounterScan { status, ..scan };
         assert_eq!(
-            bank.append(wrong, &JOURNAL_KEY, entry, b"value"),
+            bank.append(&wrong, &JOURNAL_KEY, entry, b"value"),
             Err(Error::MemoryFatal)
         );
         assert_eq!(
-            bank.read_value(wrong, &JOURNAL_KEY, CTR, &mut [0; 5]),
+            bank.read_value(&wrong, &JOURNAL_KEY, CTR, &mut [0; 5]),
             Err(Error::MemoryFatal)
         );
     }
     let old = Entry::live(COUNTER_ID, &JOURNAL_KEY, CTR, 0, b"value").unwrap();
     assert_eq!(
-        bank.append(scan, &JOURNAL_KEY, old, b"value"),
+        bank.append(&scan, &JOURNAL_KEY, old, b"value"),
         Err(Error::MemoryFatal)
     );
     let full = crate::authenticated::CounterScan {
@@ -331,11 +331,11 @@ fn counter_direct_scan_arguments_refuse_before_mutating_a_healthy_bank() {
         ..scan
     };
     assert_eq!(
-        bank.append(full, &JOURNAL_KEY, entry, b"value"),
+        bank.append(&full, &JOURNAL_KEY, entry, b"value"),
         Err(Error::NoMemory)
     );
     assert_eq!(
-        bank.read_value(scan, &JOURNAL_KEY, CRED, &mut [0; 5]),
+        bank.read_value(&scan, &JOURNAL_KEY, CRED, &mut [0; 5]),
         Err(Error::MemoryFatal)
     );
     let mut wrong = scan;
@@ -344,7 +344,7 @@ fn counter_direct_scan_arguments_refuse_before_mutating_a_healthy_bank() {
         value_offset: 0,
     });
     assert_eq!(
-        bank.read_value(wrong, &JOURNAL_KEY, CTR, &mut [0; 5]),
+        bank.read_value(&wrong, &JOURNAL_KEY, CTR, &mut [0; 5]),
         Err(Error::MemoryFatal)
     );
     assert_eq!(*flash.inner.bytes.borrow(), before);

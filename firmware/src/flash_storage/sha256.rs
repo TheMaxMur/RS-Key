@@ -34,6 +34,25 @@ impl Engine {
 const READY_POLLS: usize = 1024;
 const CHUNK: usize = 4096;
 
+pub(super) fn erased(flash: &mut SharedFlash, range: Range<u32>) -> Result<bool> {
+    if range.start > range.end || !range.start.is_multiple_of(4) || !range.end.is_multiple_of(4) {
+        return Err(Error::MemoryFatal);
+    }
+    let mut at = range.start;
+    while at < range.end {
+        flash.quad.borrow_mut().ensure_mode();
+        let _owner = flash.inner.borrow_mut();
+        let count = usize::try_from(range.end - at)
+            .map_err(|_| Error::MemoryFatal)?
+            .min(CHUNK);
+        if !super::stream::read_erased(at, count).map_err(|_| Error::MemoryFatal)? {
+            return Ok(false);
+        }
+        at += u32::try_from(count).map_err(|_| Error::MemoryFatal)?;
+    }
+    Ok(true)
+}
+
 #[inline(always)]
 fn ready() -> bool {
     for _ in 0..READY_POLLS {

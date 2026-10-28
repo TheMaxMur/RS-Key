@@ -92,9 +92,10 @@ pub struct SeqStorage<
 
 /// Route the hot per-operation counters to the dedicated counter partition so their
 /// churn never reclaims a credential/key page in the main partition. The set is
-/// [`rsk_fs::counter::COUNTER_FIDS`], the one place it is written.
+/// [`rsk_fs::counter::COUNTER_FIDS`] plus the authenticated backend's private buckets.
 pub fn is_counter_fid(fid: u16) -> bool {
     rsk_fs::counter::COUNTER_FIDS.iter().any(|c| c.get() == fid)
+        || authenticated::bound_counter::bucket_index(fid).is_some()
 }
 
 impl<F: NorFlash + MultiwriteNorFlash + Clone, CM: CacheImpl<u16>, CC: CacheImpl<u16>>

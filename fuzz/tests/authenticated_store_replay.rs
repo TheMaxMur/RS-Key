@@ -16,3 +16,16 @@ mod authenticated_store;
 fn contract_cut_artifact_replays_to_acknowledged_state() {
     authenticated_store::run(&[0x04, 0x01, 0x01, 0x00, 0x00]);
 }
+
+#[cfg(not(miri))]
+#[test]
+fn bound_pin_and_hotp_cuts_cover_append_rollover_and_live_replay() {
+    for kind in [16, 48] {
+        for warm in [0, 80] {
+            for cut in [0, 1, 255, 256, 257, 1023, 1024, 16384] {
+                let [lo, hi] = u16::try_from(cut).unwrap().to_le_bytes();
+                authenticated_store::run(&[lo, hi, 1, 0, kind, 0, warm]);
+            }
+        }
+    }
+}
