@@ -85,11 +85,42 @@ fn sign_is_deterministic_and_verifies() {
 
 #[test]
 fn out_of_range_scalar_rejected() {
+    use p256::elliptic_curve::PrimeField;
+    let mut order: [u8; 32] = (-p256::Scalar::ONE).to_repr().into();
+    for byte in order.iter_mut().rev() {
+        let (next, carry) = byte.overflowing_add(1);
+        *byte = next;
+        if !carry {
+            break;
+        }
+    }
+    assert!(P256Key::from_scalar(&order).is_none());
     // n < this < 2^256: the group order's high bytes are 0xFFFF…, so all-FF
     // is above n and must be rejected.
     assert!(P256Key::from_scalar(&[0xFFu8; 32]).is_none());
     // Zero is not a valid private scalar either.
     assert!(P256Key::from_scalar(&[0u8; 32]).is_none());
+}
+
+#[test]
+fn p256_lazy_public_and_signature_match_upstream() {
+    use p256::ecdsa::signature::Signer;
+    use p256::elliptic_curve::PrimeField;
+    let order_minus_one: [u8; 32] = (-p256::Scalar::ONE).to_repr().into();
+    let one: [u8; 32] = p256::Scalar::ONE.to_repr().into();
+    for scalar in [one, [1; 32], [0x7f; 32], order_minus_one] {
+        let expected = p256::ecdsa::SigningKey::from_bytes(&scalar.into()).unwrap();
+        let key = P256Key::from_scalar(&scalar).unwrap();
+        let message = b"lazy P-256 signing and public-point derivation";
+        let signature: Signature = expected.sign(message);
+        let mut actual = [0; MAX_DER_SIG];
+        let length = key.sign_der(message, &mut actual);
+        assert_eq!(&actual[..length], signature.to_der().as_bytes());
+        let point = expected.verifying_key().to_sec1_point(false);
+        let (x, y) = key.public_xy();
+        assert_eq!(&x, point.x().unwrap().as_slice());
+        assert_eq!(&y, point.y().unwrap().as_slice());
+    }
 }
 
 #[test]

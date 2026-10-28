@@ -38,6 +38,11 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ## [Unreleased]
 
+- **bcdDevice → 0x0BB6:** derive U2F and attestation public points only when
+  needed, using the existing constant-time P-256 comb. Authentication and
+  attestation signing no longer calculate an unused public key. Credential
+  formats, signatures, presence checks and counter publication are unchanged.
+
 - **bcdDevice → 0x0BB0:** append each counter record's header and value together,
   and end raw-bank write chunks at physical page boundaries, reducing repeated
   flash programming during PIN retry and HOTP updates. The

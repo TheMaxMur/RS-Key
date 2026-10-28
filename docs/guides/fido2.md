@@ -1,5 +1,9 @@
 # FIDO2 / WebAuthn / U2F
 
+Build `0x0BB6` avoids an unused public-point calculation during U2F
+authentication and attestation signing. Existing credentials work across the
+upgrade; presence checks and durable U2F counters are unchanged.
+
 Build `0x0B45` sizes the TrustZone CCID reply scratch buffer to the existing
 CCID response limit, reducing initialization and cleanup work on each APDU.
 Maximum response sizes and complete buffer cleanup are unchanged.

@@ -12,7 +12,6 @@ use alloc::boxed::Box;
 use minicbor::Encoder;
 use minicbor::encode::{Error as CborError, Write};
 use p256::FieldBytes;
-use p256::ecdsa::SigningKey;
 use rsk_secret::Secret;
 use zeroize::Zeroize;
 
@@ -81,9 +80,9 @@ fn sign_k256_comb(d: &k256::Scalar, msg: &[u8], out: &mut [u8]) -> usize {
     b.len()
 }
 
-/// A P-256 signing keypair derived from a 32-byte scalar.
+/// A P-256 signing scalar with public-point derivation on demand.
 pub struct P256Key {
-    signing: SigningKey,
+    scalar: Secret<p256::NonZeroScalar>,
 }
 
 impl P256Key {
@@ -92,26 +91,25 @@ impl P256Key {
     /// the caller treats that as a derivation failure.
     pub fn from_scalar(scalar: &[u8; 32]) -> Option<Self> {
         let fb = Secret::new(FieldBytes::from(*scalar));
-        SigningKey::from_bytes(fb.expose())
+        p256::SecretKey::from_bytes(fb.expose())
             .ok()
-            .map(|signing| Self { signing })
+            .map(|key| Self {
+                scalar: Secret::new(key.to_nonzero_scalar()),
+            })
     }
 
     /// Uncompressed public point as `(x, y)`, each 32 bytes — the COSE key coords.
     pub fn public_xy(&self) -> ([u8; 32], [u8; 32]) {
-        let pt = self.signing.verifying_key().to_sec1_point(false);
-        let mut x = [0u8; 32];
-        let mut y = [0u8; 32];
-        x.copy_from_slice(pt.x().expect("uncompressed point has x"));
-        y.copy_from_slice(pt.y().expect("uncompressed point has y"));
-        (x, y)
+        use p256::elliptic_curve::point::AffineCoordinates;
+        let point = rsk_ec::comb_mul_p256(self.scalar.expose()).to_affine();
+        (point.x().into(), point.y().into())
     }
 
     /// Deterministic ECDSA-SHA256 over `msg`, DER-encoded into `out`; returns the
     /// signature length. `out` must hold at least [`MAX_DER_SIG`] bytes. Signs via the
     /// fixed-base comb (`sign_p256_comb`) — byte-identical to the crate's signer.
     pub fn sign_der(&self, msg: &[u8], out: &mut [u8]) -> usize {
-        sign_p256_comb(self.signing.as_nonzero_scalar(), msg, out)
+        sign_p256_comb(self.scalar.expose(), msg, out)
     }
 }
 
