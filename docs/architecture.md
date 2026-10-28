@@ -293,6 +293,16 @@ entries use an unaligned byte representation for their generation in RAM to
 make room for the larger counter index; the 32-byte on-flash entry is unchanged.
 The original four-counter legacy import manifest also remains unchanged.
 
+From `0x0BB0`, raw-bank writes end each chunk at a 256-byte page boundary,
+avoiding overlapping physical page programs on byte-writable flash drivers.
+Counter appends gather the header, value and erased padding directly into
+the raw bank's page buffer, without a full-record staging buffer. Their on-flash
+bytes are unchanged, so `0x0BA8` can still reopen the store. The scanner advances
+its authenticated sequence only after verifying
+the complete value MAC; a complete header over a torn value stays dirty and
+retains the previous authenticated floor. Both banks are still published and
+checked before success. Checkpoint construction keeps its existing ordering.
+
 The private on-flash FIDs and value layouts are fixed:
 
 | FID | Value |

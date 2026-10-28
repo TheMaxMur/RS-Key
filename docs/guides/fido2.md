@@ -154,6 +154,9 @@ to the current PIN record. The upgrade preserves the remaining attempts and
 the per-power-cycle limit. After the first update, earlier v2 firmware refuses the
 store; reinstall this build or later to resume it without a factory reset.
 
+Build `0x0BB0` combines counter header and value programming. It preserves
+retry charging before PIN comparison and the existing `0x0BA8` storage format.
+
 When the policy requires a PIN change, the replacement must differ from the
 current PIN. If its verifier cannot be read, the change returns
 `CTAP2_ERR_OTHER` (`0x7F`) and remains pending; retry with a different PIN once

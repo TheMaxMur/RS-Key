@@ -68,6 +68,9 @@ verifiers stay in their original records. Existing remaining attempts migrate
 on the first update. Earlier v2 firmware then refuses the store; reinstalling this
 build or later resumes it. No PIN or key reset is needed for the upgrade.
 
+Build `0x0BB0` combines counter header and value programming for PIN retries
+and signature counters. It preserves the `0x0BA8` format and durability checks.
+
 From build `0x0AD1`, key information reads the shared origin record once per
 response. Later responses read it again; an unreadable or unrecorded slot still
 reports imported.

@@ -38,6 +38,12 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ## [Unreleased]
 
+- **bcdDevice → 0x0BB0:** append each counter record's header and value together,
+  and end raw-bank write chunks at physical page boundaries, reducing repeated
+  flash programming during PIN retry and HOTP updates. The
+  record encoding, MAC checks, mirrored publication and rollback floors are
+  unchanged. Existing `0x0BA8` stores remain compatible in both directions.
+
 - **bcdDevice → 0x0BA8:** move PIN retry updates and encrypted HOTP moving
   factors into the mirrored counter journal. Verifier-bearing PIN records and
   HOTP credentials bind counters to their main publication generation; public

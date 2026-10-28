@@ -88,6 +88,75 @@ fn an_unaligned_bank_program_crosses_scratch_windows_without_growing_them() {
 }
 
 #[test]
+fn byte_writable_flash_programs_each_physical_page_once_per_record() {
+    let flash = FaultFlash::new();
+    let mut bank = RawBank::new(Geometry::<1, 1, SECTOR>(flash.clone()), MAIN).unwrap();
+    let data = [0x5A; 416];
+    bank.program(96, &data).unwrap();
+    let writes: Vec<_> = flash
+        .events()
+        .into_iter()
+        .filter(|(io, _, _)| *io == Io::Program)
+        .map(|(_, address, len)| (address - MAIN.start, len))
+        .collect();
+    assert_eq!(writes, [(96, 160), (256, 256)]);
+    let mut output = [0; 516];
+    bank.read(0, &mut output).unwrap();
+    assert_eq!(output[..96], [0xFF; 96]);
+    assert_eq!(output[96..512], data);
+    assert_eq!(output[512..], [0xFF; 4]);
+}
+
+#[test]
+fn bank_program_parts_cross_pages_without_intermediate_value_copies() {
+    let flash = FaultFlash::new();
+    let mut bank = RawBank::new(flash.clone(), MAIN).unwrap();
+    let header = [0xA5; 17];
+    let value = [0x5A; 384];
+    let tail = [0x69; 16];
+    bank.program_parts(95, &[&[], &header, &value, &[], &tail])
+        .unwrap();
+    let writes: Vec<_> = flash
+        .events()
+        .into_iter()
+        .filter(|(io, _, _)| *io == Io::Program)
+        .map(|(_, address, len)| (address - MAIN.start, len))
+        .collect();
+    assert_eq!(writes, [(92, 164), (256, 256)]);
+    let mut expected = vec![0xFF; 95];
+    expected.extend_from_slice(&header);
+    expected.extend_from_slice(&value);
+    expected.extend_from_slice(&tail);
+    expected.extend_from_slice(&[0xFF; 4]);
+    let mut output = vec![0; expected.len()];
+    bank.read(0, &mut output).unwrap();
+    assert_eq!(output, expected);
+}
+
+#[test]
+fn invalid_parts_refuse_before_programming_any_part_of_the_page() {
+    let flash = FaultFlash::new();
+    let mut bank = RawBank::new(flash.clone(), MAIN).unwrap();
+    bank.program(96, &[0; 64]).unwrap();
+    let before = flash.image();
+    flash.arm(&[]);
+    assert_eq!(
+        bank.program_parts(96, &[&[0; 16], &[1; 48]]),
+        Err(Error::MemoryFatal)
+    );
+    assert!(flash.events().iter().all(|event| event.0 == Io::Read));
+    assert_eq!(flash.image(), before);
+    flash.arm(&[]);
+    assert_eq!(
+        bank.program_parts(bank.capacity() - 4, &[&[1; 4], &[2; 4]]),
+        Err(Error::MemoryFatal)
+    );
+    assert_eq!(bank.program_parts(bank.capacity(), &[&[], &[]]), Ok(()));
+    assert!(flash.events().is_empty());
+    assert_eq!(flash.image(), before);
+}
+
+#[test]
 #[expect(
     clippy::reversed_empty_ranges,
     reason = "An inverted bank window must be refused before any flash access."

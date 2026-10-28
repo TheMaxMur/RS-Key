@@ -106,6 +106,10 @@ deleting an account starts a new owner. OATH PIN retries use the same journal.
 After migration, earlier v2 firmware refuses the store. Reinstall this build or
 later to resume it without resetting accounts.
 
+Build `0x0BB0` combines counter header and value programming to shorten HOTP
+updates. Both copies remain durable before a code is returned; the `0x0BA8`
+format and existing accounts need no further migration.
+
 The **Yubico Authenticator** GUI shows all TOTP codes live and re-derives them
 each period. Touch and HOTP entries get a tap-to-reveal button instead.
 

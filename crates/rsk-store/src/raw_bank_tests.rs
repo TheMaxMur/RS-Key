@@ -22,6 +22,9 @@ mod journal_api;
 #[path = "counter_bank_api_tests.rs"]
 mod counter_api;
 
+#[path = "counter_append_tests.rs"]
+mod counter_append;
+
 #[test]
 fn raw_bank_preserves_adjacent_bytes_during_unaligned_programs() {
     let flash = FaultFlash::new();

@@ -226,16 +226,27 @@ impl<F: NorFlash + MultiwriteNorFlash> RawBank<F> {
     }
 
     pub fn program(&mut self, offset: u32, data: &[u8]) -> Result<()> {
-        let span = self.span(offset, data.len())?;
+        self.program_parts(offset, &[data])
+    }
+
+    pub fn program_parts(&mut self, offset: u32, parts: &[&[u8]]) -> Result<()> {
+        let length = parts.iter().try_fold(0usize, |length, part| {
+            length.checked_add(part.len()).ok_or(Error::MemoryFatal)
+        })?;
+        let span = self.span(offset, length)?;
         let write_size = u32::try_from(F::WRITE_SIZE).map_err(|_| Error::MemoryFatal)?;
+        let chunk_size = u32::try_from(IO_CHUNK).map_err(|_| Error::MemoryFatal)?;
         let mut scratch = Secret::new(FlashBuf::<IO_CHUNK>::new());
         let mut at = span.start;
-        let mut copied = 0;
+        let mut input = parts.iter().flat_map(|part| part.iter().copied());
         while at < span.end {
             let aligned = at - at % write_size;
             let prefix = usize::try_from(at - aligned).map_err(|_| Error::MemoryFatal)?;
             let remaining = usize::try_from(span.end - at).map_err(|_| Error::MemoryFatal)?;
-            let count = remaining.min(IO_CHUNK - prefix);
+            // A byte-writable backend can still program whole physical pages.
+            // End each chunk at a page boundary to avoid programming one twice.
+            let chunk_offset = usize::try_from(at % chunk_size).map_err(|_| Error::MemoryFatal)?;
+            let count = remaining.min(IO_CHUNK - chunk_offset);
             let write_count = (prefix + count).div_ceil(F::WRITE_SIZE) * F::WRITE_SIZE;
             let buffer = scratch
                 .expose_mut()
@@ -243,23 +254,19 @@ impl<F: NorFlash + MultiwriteNorFlash> RawBank<F> {
                 .ok_or(Error::MemoryFatal)?;
             buffer.fill(0xFF);
             self.read(aligned - self.range.start, buffer)?;
-            let input = data.get(copied..copied + count).ok_or(Error::MemoryFatal)?;
             let output = buffer
                 .get_mut(prefix..prefix + count)
                 .ok_or(Error::MemoryFatal)?;
-            if output
-                .iter()
-                .zip(input)
-                .any(|(&old, &new)| old & new != new)
-            {
-                return Err(Error::MemoryFatal);
+            for (old, new) in output.iter_mut().zip(input.by_ref()) {
+                if *old & new != new {
+                    return Err(Error::MemoryFatal);
+                }
+                *old = new;
             }
-            output.copy_from_slice(input);
             block_on(self.flash.write(aligned, buffer)).map_err(|_| Error::MemoryFatal)?;
             at = at
                 .checked_add(u32::try_from(count).map_err(|_| Error::MemoryFatal)?)
                 .ok_or(Error::MemoryFatal)?;
-            copied += count;
         }
         scratch.wipe();
         Ok(())

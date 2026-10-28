@@ -58,6 +58,9 @@ Existing PINs and remaining attempts are preserved during the first update.
 After this migration, earlier v2 firmware opens only recovery mode; reinstalling
 `0x0BA8` or later resumes the existing store without resetting the key.
 
+Build `0x0BB0` combines counter header and value programming to shorten PIN
+updates. Retry ordering and the existing `0x0BA8` storage format are unchanged.
+
 Change all three before real use:
 
 ```sh

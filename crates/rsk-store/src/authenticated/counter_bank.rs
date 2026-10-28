@@ -17,7 +17,7 @@ const RAW_DOMAIN: &[u8; 8] = b"RSKV2CTR";
 pub(super) const VALUE_ALIGNMENT: usize = 16;
 const VALUE_BUFFER: usize = crate::KV_BUF;
 
-/// The header precedes the complete value, although the value is programmed first.
+/// The header precedes the value; its MAC authenticates the complete record.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct CounterLocation {
     pub entry: Entry,
@@ -361,34 +361,17 @@ impl<F: NorFlash + MultiwriteNorFlash> CounterBank<F> {
         if end > self.bank.capacity() {
             return Err(Error::NoMemory);
         }
-        if padded <= VALUE_ALIGNMENT {
-            self.program_value::<VALUE_ALIGNMENT>(value_at, value, padded)?;
-        } else {
-            self.program_value::<VALUE_BUFFER>(value_at, value, padded)?;
-        }
-        self.bank.program(scan.next, &entry.encode()?)?;
-        Ok(())
-    }
-
-    #[inline(never)]
-    fn program_value<const N: usize>(
-        &mut self,
-        value_at: u32,
-        value: &[u8],
-        padded: usize,
-    ) -> Result<()> {
-        let mut scratch = Secret::<[u8; N]>::zeroed();
-        scratch.expose_mut().fill(0xFF);
-        scratch
-            .expose_mut()
-            .get_mut(..value.len())
-            .ok_or(Error::MemoryFatal)?
-            .copy_from_slice(value);
-        self.bank.program(
-            value_at,
-            scratch.expose().get(..padded).ok_or(Error::MemoryFatal)?,
-        )?;
-        scratch.wipe();
-        Ok(())
+        let header = entry.encode()?;
+        let padding = [0xFF; VALUE_ALIGNMENT];
+        let fill = padded.checked_sub(value.len()).ok_or(Error::MemoryFatal)?;
+        // A torn header cannot publish the generation without the full payload MAC.
+        self.bank.program_parts(
+            scan.next,
+            &[
+                &header,
+                value,
+                padding.get(..fill).ok_or(Error::MemoryFatal)?,
+            ],
+        )
     }
 }
