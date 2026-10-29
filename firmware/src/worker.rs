@@ -1001,7 +1001,7 @@ impl<'a> Worker<'a> {
         clippy::disallowed_methods,
         reason = "the one reset, and it comes after every scrub in this function"
     )]
-    async fn reboot(&mut self, mode: u8) -> ! {
+    pub(crate) async fn reboot(&mut self, mode: u8) -> ! {
         // Before the wait, not after: the wait yields to the display, whose ambient loop parks
         // on a reset under way.
         crate::vendor::begin_reset();

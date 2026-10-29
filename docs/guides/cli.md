@@ -111,7 +111,7 @@ The Nix shell stays the primary, reproducible path (it also carries `picotool`,
 | `lock` | at-rest soft-lock of the FIDO seed (`enable`/`unlock`/`disable`) | [Soft-lock](soft-lock.md) |
 | `flash` | check a release image (signature, checksum, provenance), then write it over BOOTSEL | [Supply chain](../supply-chain.md#verifying-a-download) |
 | `secure-boot` | secure-boot provisioning + key rotation **(irreversible)** | [Production](../production.md), [OTP fuses](../otp-fuses.md) |
-| `otp` | burn + lock the at-rest master key (MKEK) into OTP **(irreversible)** | [OTP fuses](../otp-fuses.md) |
+| `otp` | burn and verify keys, automatically seal at boot; `otp status` reads the result **(burn/seal irreversible)** | [OTP fuses](../otp-fuses.md) |
 | `fido` | FIDO2 management: `set-pin`, `list-passkeys`, `attestation` | [FIDO2](fido2.md), [Attestation](attestation.md) |
 | `led` | LED color / brightness per device state | [LED](led.md) |
 | `openpgp` | OpenPGP applet utilities (e.g. `reset` to factory PINs) | [OpenPGP card](openpgp.md) |

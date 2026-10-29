@@ -59,6 +59,13 @@ fn recovery_serves_its_status_and_bootsel_but_refuses_other_storage_and_time_acc
     });
     fs.scan();
     assert_eq!(run(&mut app, &mut fs, &status), (Sw::OK, vec![2, 0]));
+    platform.borrow_mut().seal_status = seal::Status::Incomplete;
+    platform.borrow_mut().pre_otp_left = Some(otp_lock::PRE_OTP_KEY_UNREADABLE);
+    assert_eq!(
+        run(&mut app, &mut fs, &apdu(0x80, INS_READ, 0x09, 0, &[])),
+        (Sw::OK, vec![1, seal::Status::Incomplete as u8, 0xFF, 0xFE])
+    );
+    assert_eq!(platform.borrow().lock_writes, 0);
     assert_eq!(
         run(&mut app, &mut fs, &apdu(0x80, INS_READ, 0x01, 0, &[])),
         (Sw::MEMORY_FAILURE, vec![])

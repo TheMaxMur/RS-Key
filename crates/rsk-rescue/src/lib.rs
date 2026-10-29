@@ -11,6 +11,7 @@
 pub mod keydev;
 pub mod otp_lock;
 pub mod rollback;
+pub mod seal;
 
 use core::cell::RefCell;
 
@@ -71,6 +72,10 @@ pub trait Platform {
     /// `otp_lock::PRE_OTP_*` bits; `None` when they ran without the fused key and
     /// so checked nothing. [`otp_lock`]'s page-58 burn waits for `Some(0)`.
     fn pre_otp_left(&self) -> Option<u16>;
+    /// Result of the boot-only automatic page-58 seal, without performing I/O.
+    fn auto_seal_status(&self) -> seal::Status {
+        seal::Status::Unchecked
+    }
     /// Burn the page-58 access lock and fuse latch ([`otp_lock::PAGE58_LATCH_VALUE`]
     /// into [`otp_lock::PAGE58_LOCK1_ROW`], over a blank row or an older build's
     /// lock). The implementation fixes both the row and the value, so a caller can
@@ -359,6 +364,20 @@ impl<'a> RescueApplet<'a> {
                 res.extend(&[2, u8::from(ready)]);
                 Sw::OK
             }
+            0x09 => {
+                if apdu.p2 != 0 {
+                    return Sw::INCORRECT_P1P2;
+                }
+                let platform = self.platform.borrow();
+                res.extend(&[1, platform.auto_seal_status() as u8]);
+                res.extend(
+                    &platform
+                        .pre_otp_left()
+                        .unwrap_or(otp_lock::PRE_OTP_UNCHECKED)
+                        .to_be_bytes(),
+                );
+                Sw::OK
+            }
             _ => Sw::INCORRECT_P1P2,
         }
     }
@@ -404,7 +423,7 @@ impl<'a> RescueApplet<'a> {
     /// page would only hide nothing while blinding BOOTSEL); and it waits for a
     /// boot that left nothing under the pre-burn key ([`Platform::pre_otp_left`]).
     /// Idempotent: a row already holding the latch returns OK; a subset of it (an
-    /// older build's lock, a torn burn) is completed under the same guards; a bit
+    /// older build's lock, a torn burn) is attempted under the same guards; a bit
     /// outside it is refused rather than clobbered. See [`otp_lock`].
     fn lock_page58(&mut self, apdu: &Apdu) -> Sw {
         if apdu.data != OTP_LOCK_MAGIC {
@@ -511,7 +530,8 @@ impl<S: Storage> Applet<Fs<S>> for RescueApplet<'_> {
         if fs.storage_state() == rsk_fs::storage::StorageState::Recovery
             && !(apdu.ins == INS_STORAGE
                 || apdu.ins == INS_REBOOT_BOOTSEL
-                || apdu.ins == INS_READ && matches!(apdu.p1, 0x03 | 0x04 | 0x06 | 0x07 | 0x08))
+                || apdu.ins == INS_READ
+                    && matches!(apdu.p1, 0x03 | 0x04 | 0x06 | 0x07 | 0x08 | 0x09))
         {
             return Sw::MEMORY_FAILURE;
         }

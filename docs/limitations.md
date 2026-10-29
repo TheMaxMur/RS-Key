@@ -184,23 +184,23 @@ Other workloads and the physical flash's endurance need separate measurements.
   over BOOTSEL from planting a record either: the pre-OTP key base derives from
   the public chip serial, and those arms stay readable after the burn so an
   already-provisioned device survives the upgrade. The latch closes them for
-  every device-sealed record: `rsk otp lock-page58` burns it only over a device
+  every device-sealed record: automatic boot sealing burns it only over a device
   whose boot read every such record and left none on the pre-burn key (READ
   `1E/07`), and from the next boot on none opens under that key or in the clear.
   PIN verifiers are the exception, in the next item. A legacy RP record an older
   build stored in the clear still opens too, so a flash writer can also rename
   the domain the credential manager lists for a credential the device holds.
-  *Status: shipped in 0x0A67, for a device locked by it; one an older build
-  locked takes the latch at a second `lock-page58`. The latch is read once per
-  boot, and a lock row that boot cannot read counts as no latch: closing on a
-  fault could strand a record a device never latched still holds. A latched
+  *Status: latch shipped in 0x0A67; automatic completion in 0x0BD7. A fresh
+  flash scrub must succeed before the burn. Boot validates the latch together
+  with provisioning before mounting storage; an unreadable lock or invalid
+  provisioning blocks root reads and migration. A latched
   device whose fused key does not read at a command opens and seals nothing
   rather than fall back to the chip-serial arm: most commands refuse (`6400`,
   CTAP `0x7F`), and the OTP applet answers as if its slots were empty. The next
   command reads the key again.*
 - **A PIN verifier is not authenticated against a flash writer, even past the
   latch.** A verifier written under the pre-burn key still verifies after
-  `lock-page58`. That holds for the FIDO PIN and the display build's device PIN,
+  sealing. That holds for the FIDO PIN and the display build's device PIN,
   the PIV PIN and PUK, OpenPGP's PW1, PW3 and resetting code with the DEK copy
   each one wraps, and the OATH OTP PIN, whose legacy format is keyed from the chip
   serial alone. A verifier is an opaque hash, so the device cannot tell one

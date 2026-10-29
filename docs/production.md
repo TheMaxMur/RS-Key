@@ -56,7 +56,7 @@ order to run them in if you are doing all three.
 | # | Command | Stage | What it writes | Undo |
 |---|---|---|---|---|
 | 1 | `rsk otp burn` | 1 | random MKEK + DEVK into OTP page 58 | **never** |
-| 2 | `rsk otp lock-page58` | 1 | the page-58 read lock | **never** |
+| 2 | automatic firmware boot step | 1 | the page-58 read lock and migration latch | **never** |
 | 3 | `picotool seal --sign …` | 2b | nothing — host-only, and it produces the `otp.json` step 4 needs | re-run it |
 | 4 | `rsk secure-boot load-key <otp.json>` | 2c | boot-key fingerprint + `KEY_VALID` | **never** |
 | 5 | `rsk secure-boot harden` | 2c | `DEBUG_DISABLE` + glitch detectors | **never** |
@@ -77,24 +77,26 @@ Every burning command takes `--dry-run` and a typed confirmation.
   the board for *new* firmware. Decide now where you'll keep it durably.
 - **Understand the substrate.** These stages write OTP fuses.
   [otp-fuses.md](otp-fuses.md) explains what is irreversible and why.
-- **Rehearse.** Every step supports `--dry-run`, which prints the exact
-  `picotool` commands without touching anything.
+- **Rehearse.** The host provisioning commands support `--dry-run` without
+  writes. Automatic firmware boot sealing has no dry-run mode.
 
 ## Stage 1 — OTP master key
 
 What it does: writes a random DEVK (device attestation key) and MKEK (master
-sealing key) plus anti-imaging chaff into OTP page 58, ECC-verified, then
-locks the page. On the next boot the firmware notices the provisioned key and
+sealing key) plus anti-imaging chaff into OTP page 58, independently verified,
+then restarts into firmware. Boot notices the provisioned key and
 **migrates what it can reach** (FIDO seed, attestation key, the persistent
 `pcmr` grant, PIV keys) under the new root. Anything keyed by a PIN is the
 exception — re-keying it needs the secret — so each PIN verifier and the DEK copy
 behind it moves at that reference's own next VERIFY. OpenPGP's private keys are
-sealed under that DEK and never move. **After the burn, present every PIN once,
-before `lock-page58`** (the list is below the commands). Ordinary use presents
+sealed under that DEK and never move. **After the burn, present every PIN once**
+(the list is below the commands). Ordinary use presents
 most of them, but PW3, the PIV PUK and an OpenPGP resetting code may never come
 up, and until one is presented it stays on the pre-burn root
 ([limitations](limitations.md)). Your enrolled credentials survive. That is the
 point of the migration layer.
+After the required device-sealed records migrate and flash is scrubbed, that
+boot automatically locks the page and restarts with the migration arms closed.
 
 > **At-rest hardening pass.** The migration re-seals each secret under the new
 > root. But the flash store is append-only, so the old chip-serial-sealed
@@ -114,10 +116,9 @@ point of the migration layer.
 ```sh
 rsk reboot bootsel               # picotool needs the chip in BOOTSEL
 rsk otp burn --dry-run           # preview every step
-rsk otp burn                     # typed confirmation; keys are generated and FORGOTTEN
-picotool reboot -a               # back to the app; migration runs at boot
-# present every PIN once (the list below), then unplug and replug the key
-rsk otp lock-page58              # firmware applies the page-58 hard lock (typed confirm)
+rsk otp burn                     # confirms, verifies all rows, then reboots automatically
+rsk otp status                   # read-only: sealed, or why sealing is still pending
+# If status requests a FIDO/OATH PIN, present it, restart, then repeat status.
 ```
 
 Presenting a PIN moves its verifier to the fused root, and OpenPGP's DEK copy
@@ -151,25 +152,31 @@ Facts to internalize first:
   attestation key does not. That is expected, not data loss. If you use audit
   or fleet verification, re-record the device's fingerprint afterward
   ([guides/fleet.md](guides/fleet.md)).
-- **The lock is the half that matters for at-rest.** Burning the MKEK without
-  `lock-page58` leaves the key fused but still readable over BOOTSEL. The flash
-  dump is not yet worthless. Run `lock-page58` to actually close it.
-- After `lock-page58`, `picotool otp get` on page 58 fails with a permission
-  error forever. Only the secure-mode firmware can read the keys. That failure
-  is the lock working.
-- The lock is also a latch. From the next boot on, the firmware opens no
-  device-sealed record under the pre-burn key or in the clear, so one planted
-  over BOOTSEL stays shut. A device locked by a build before 0x0A67 has the lock
-  without the latch: update it, then run `lock-page58` again, which checks the
-  same migration first.
-- `lock-page58` waits for the migration. The firmware refuses the burn (`6985`,
-  before any touch) until a boot has moved every device-sealed record to the
-  fused key, and the tool says which are left. A replug is the usual fix; a FIDO
-  seed a PIN wrapped before the burn moves at that PIN's first use, and a legacy
-  OATH OTP-PIN at its next VERIFY, each followed by a replug. A key that already
-  carries the latch needs none of that: the tool asks the firmware, says so and
-  exits 0. The one exception is a fused key the firmware cannot read (`FFFE`),
-  which still gets its remedy.
+- **Firmware completes the lock automatically**, after migration and a fresh
+  successful flash scrub. It verifies every BOOTSEL/Non-secure access-lock bit
+  before setting Secure read-only, so a cut cannot leave those bits unwritable.
+  No second confirmation or touch is needed. Until
+  `rsk otp status` says `sealed`, page 58 may still be readable from BOOTSEL.
+- **An upgrade also seals previously fused devices.** Build 0x0BD7 and later
+  completes an unlocked page, a legacy `0x3C3C3C` lock, or a torn latch. This
+  operation is permanent. If a torn latch already has a closed majority, ROM
+  refuses further writes: status reports sealed access with incomplete redundancy
+  instead of claiming a fully completed latch. Do not repeat `otp burn`.
+  A previously torn burn that closed Secure writes before the access lock was
+  complete cannot be repaired through ROM; it enters recovery without migration.
+  Empty OTP and fake-key builds never trigger it;
+  incomplete keys/chaff, read errors and foreign lock bits refuse sealing.
+- After sealing, `picotool otp get` on page 58 fails with a permission error.
+  Secure firmware retains read access. The firmware performs a scrubbed restart
+  before serving commands with the newly closed migration arms.
+- PIN-dependent migration can delay sealing: use a FIDO PIN that wrapped the
+  seed before provisioning, or VERIFY a legacy OATH OTP-PIN, then restart.
+  `rsk otp status` identifies the remaining migration. Other PIN verifiers and
+  OpenPGP DEK copies still migrate at their own next use; their documented
+  pre-burn compatibility is unchanged.
+- `lock-page58` is retained for servicing older firmware. A normal provisioning
+  or upgrade on current firmware does not require it. The automatic result is
+  available over CCID, including storage recovery mode, without burning anything.
 - A seed backup (`rsk backup`) made before or after is unaffected. Backups
   carry the seed value, which gets re-sealed under whatever root the device
   has.
@@ -418,7 +425,7 @@ moving to a new board lives in [anti-rollback.md](anti-rollback.md).
 | `rsk-wipe` won't boot after enabling anti-rollback | Re-seal it at your current floor — the recovery image must carry a version too. |
 | `picotool save`/`load`/`erase` over the store answers `permission failure` | Expected: the partition table denies the bootloader there ([build.md](build.md#the-partition-table)). Erase from the running side instead — `rsk-wipe` and the rescue applet execute as secure code, which the table leaves `rw`. |
 | 48-step rollback budget exhausted | Key rotation, or a new board — see [anti-rollback.md](anti-rollback.md#when-the-48-budget-is-exhausted--the-ladder). |
-| Page 58 read fails after `lock-page58` | That's the lock working — only secure firmware can read the keys now. |
+| Page 58 read fails after automatic sealing | That's the lock working — only secure firmware can read the keys now. |
 | Replacing the board entirely | Provision the new chip with a **new** signing key; restore your FIDO identity with `rsk backup restore`. Resident passkeys / OpenPGP / PIV don't migrate — see [anti-rollback.md](anti-rollback.md#moving-to-a-new-board). |
 
 ## Deliberate choices

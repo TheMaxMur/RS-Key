@@ -3,18 +3,10 @@
 
 """rsk otp — OTP-MKEK provisioning. IRREVERSIBLE; explicit go required.
 
-burn:        write DEVK@0xE80 + MKEK@0xE90 + chaff into OTP page 58 from BOOTSEL
-             (picotool ritual). The host generates, verifies, and forgets the keys.
-lock-page58: apply the permanent BL/NS access lock from secure firmware (rescue
-             INS 0x1B) — the half picotool cannot do (the lock row lives in OTP
-             page 63, bootloader-read-only). After it lands, `picotool otp get`
-             can no longer read the page-58 keys; the firmware still can. The
-             firmware burns only once a boot has moved every device-sealed record
-             off the pre-burn key (READ 1E/07); this reads that first. What it
-             burns is also the migration latch: from the next boot on no
-             device-sealed record opens under the pre-burn key, and on a device
-             an older build locked, running it again adds the latch. A device
-             whose lock row already holds the latch exits 0 whatever 1E/07 says.
+burn:        write and independently verify DEVK, MKEK and chaff in BOOTSEL,
+             then reboot. Firmware completes migration, scrubbing and sealing.
+status:      read the boot result without changing OTP or storage.
+lock-page58: legacy service command for firmware without automatic sealing.
 rollback-require: fuse BOOT_FLAGS0.ROLLBACK_REQUIRED from secure firmware
              (rescue INS 0x1B, P1=0x48) — after `rsk secure-boot lock` the flag
              row is bootloader-read-only, so only the firmware can. From then
@@ -32,10 +24,10 @@ import tempfile
 from . import ccid
 from .common import confirm, die, picotool
 from .status import RESCUE_AID, rescue_read, rescue_serial
+from .otp_status import run as seal_status
 
 DEVK_ROW, MKEK_ROW, KEY_ROWS, CHAFF_OFFSET = 0xE80, 0xE90, 16, 0x20
-# The ritual's lock leaves LOCK_S read-write: the firmware's latch (0x3D3D3D) must
-# wait for the boot that migrates, so it is never burnt from here.
+# The old lock is recognised for diagnostics; the host never writes the latch.
 LOCK1_ROW, LOCK_VALUE = 0xFF5, 0x3C3C3C
 K256_N = 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141
 
@@ -98,7 +90,9 @@ def register(sub):
     b = g.add_parser("burn", help="burn DEVK+MKEK+chaff into OTP page 58 (BOOTSEL)")
     b.add_argument("--dry-run", action="store_true", help="preflight only, no writes")
     b.set_defaults(func=burn)
-    lk = g.add_parser("lock-page58", help="apply the page-58 hard-lock from firmware (CCID)")
+    state = g.add_parser("status", help="read automatic page-58 sealing status")
+    state.set_defaults(func=seal_status)
+    lk = g.add_parser("lock-page58", help="legacy service command; new firmware seals automatically")
     lk.add_argument("--dry-run", action="store_true", help="connect + SELECT only")
     lk.set_defaults(func=lock_page58)
     rb = g.add_parser("rollback-require",
@@ -107,14 +101,21 @@ def register(sub):
     rb.set_defaults(func=rollback_require)
 
 
-def _read_raw_row(row):
-    r = picotool("otp", "get", "-r", "-n", f"{row:#x}", check=False)
+def _read_row(row, *, ecc=False):
+    r = picotool("otp", "get", "-e" if ecc else "-r", "-n", f"{row:#x}", check=False)
     if r.returncode != 0:
         return None
     m = re.search(r"VALUE\s+(0x[0-9a-fA-F]+)", r.stdout)
     if not m:
-        die(f"unparseable otp get output for row {row:#x}: {r.stdout!r}")
-    return int(m.group(1), 16) & 0xFFFFFF
+        die(f"unparseable OTP readback at row {row:#x}")
+    value = int(m.group(1), 16)
+    if value > (0xFFFF if ecc else 0xFFFFFF):
+        die(f"out-of-range OTP readback at row {row:#x}")
+    return value
+
+
+def _read_raw_row(row):
+    return _read_row(row)
 
 
 def burn(args):
@@ -129,7 +130,7 @@ def burn(args):
         if v is None:
             die(f"row {row:#x} unreadable — page already locked?")
         if v != 0:
-            die(f"row {row:#x} = {v:#08x}, not blank — board already provisioned?")
+            die(f"row {row:#x} is not blank — board already provisioned; do not repeat burn")
     print(f"preflight: {len(rows)} rows blank ✓")
 
     mkek = secrets.token_bytes(32)
@@ -141,7 +142,7 @@ def burn(args):
         print("dry-run: would write DEVK@0xE80 + MKEK@0xE90 (ECC) + chaff; no OTP touched")
         return
 
-    print("This PERMANENTLY burns the MKEK + DEVK into OTP page 58. No undo.")
+    print("This PERMANENTLY burns MKEK + DEVK; firmware then seals page 58 automatically. No undo.")
     confirm("BURN-OTP-PAGE58")
     with tempfile.TemporaryDirectory(dir=_scratch_dir()) as td:
         def write_scratch(name, data):
@@ -167,6 +168,7 @@ def burn(args):
             p = write_scratch(name, key)
             try:
                 picotool("otp", "load", "-e", "-s", f"{row:#x}", p)
+                _verify_rows(row, key, ecc=True)
             finally:
                 shred(p)
             print(f"{name} @ {row:#x} written + verified ✓")
@@ -174,29 +176,38 @@ def burn(args):
         burn_key(DEVK_ROW, devk, "devk")
         burn_key(MKEK_ROW, mkek, "mkek")
         for base, name in ((DEVK_ROW, "devk_chaff"), (MKEK_ROW, "mkek_chaff")):
-            raw = [(_read_raw_row(base + i) or 0) ^ 0xFFFFFF for i in range(KEY_ROWS)]
+            raw = []
+            for i in range(KEY_ROWS):
+                value = _read_raw_row(base + i)
+                if value is None:
+                    die(f"cannot read key row {base + i:#x}; provisioning stopped")
+                raw.append(value ^ 0xFFFFFF)
             # The chaff is the per-row complement of the key just burned, so it is
             # key-equivalent and gets the same handling.
             blob = b"".join(v.to_bytes(3, "little") + b"\x00" for v in raw)
             p = write_scratch(name, blob)
             try:
                 picotool("otp", "load", "-r", "-s", f"{base + CHAFF_OFFSET:#x}", p)
+                _verify_rows(base + CHAFF_OFFSET, blob, ecc=False)
             finally:
                 shred(p)
             print(f"{name} @ {base + CHAFF_OFFSET:#x} written ✓")
-        lock = picotool("otp", "set", "-r", f"{LOCK1_ROW:#x}", f"{LOCK_VALUE:#x}", check=False)
-    locked = lock.returncode == 0 and _read_raw_row(MKEK_ROW) is None
-    print("\nkeys + chaff burned ✓" + ("" if locked else
-          " — BL/NS hard-lock NOT applied (OTP page 63 is bootloader-read-only;\n"
-          "run `rsk otp lock-page58` from the firmware). Page-58 keys stay readable\n"
-          "via `picotool otp get` from BOOTSEL until then."))
-    print(
-        "\nNext boot migrates your secrets under the fused root, then runs a\n"
-        "one-shot at-rest hardening pass that physically scrubs the old\n"
-        "chip-serial-sealed copies from flash. That first boot stays dark a few\n"
-        "seconds longer than usual (the scrub runs before USB attach) — do NOT\n"
-        "cut power during it. It runs once and re-runs if interrupted."
-    )
+    print("\nkeys + chaff independently read back and verified ✓")
+    print("Restarting into firmware for migration, scrubbing and automatic page-58 sealing.")
+    picotool("reboot", "-a")
+    print("The first boot may take longer and restart once after sealing. Wait for USB.")
+    print("Check `rsk otp status`: it reports sealed, or the migration/error that prevents it.")
+    print("Older firmware without automatic sealing must be upgraded to finish this step.")
+
+
+def _verify_rows(row, data, *, ecc):
+    size = 2 if ecc else 4
+    for offset in range(0, len(data), size):
+        address = row + offset // size
+        value = _read_row(address, ecc=ecc)
+        expected = int.from_bytes(data[offset:offset + size], "little")
+        if value is None or value != expected:
+            die(f"OTP readback failed at row {address:#x}; provisioning stopped, no reboot")
 
 
 def _scratch_dir():

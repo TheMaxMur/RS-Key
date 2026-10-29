@@ -7,28 +7,24 @@
 //!   MKEK @ rows 0xE90..=0xE9F — the kbase root (`Device.otp_key`)
 //!   chaff complements @ 0xEA0 / 0xEB0, hard page lock = PAGE58_LOCK1
 //!
-//! Key provisioning is a deliberate host-side picotool ritual; blank rows (the
-//! factory state) read as `None` → the pre-OTP kbase arm, so this build is safe
-//! on every board. The only things the firmware ever writes to OTP are the two
-//! one-way fuses the host ritual cannot reach from BOOTSEL — the page-58
-//! access lock ([`apply_page58_lock`], bootloader-read-only OTP page 63) and
-//! BOOT_FLAGS0.ROLLBACK_REQUIRED ([`apply_rollback_required`], page 1 once
-//! `rsk secure-boot lock` has made it bootloader-read-only) — each triggered
-//! explicitly via the rescue applet, never at boot. `FAKE_MKEK` / `FAKE_DEVK`
-//! (build.rs env) bake a fake key into the image INSTEAD of reading OTP — test
-//! builds only.
+//! Keys are provisioned by the host; boot validates them before storage migration.
+//! After migration and a successful scrub, boot seals page 58 automatically.
+//! ROLLBACK_REQUIRED remains an explicit rescue operation. Fake-key builds never
+//! write real OTP fuses.
 
+use core::sync::atomic::{AtomicBool, Ordering};
 use embassy_rp::otp;
-use rsk_rescue::otp_lock::{KeyRows, PAGE58_LATCH_VALUE, PAGE58_LOCK1_ROW, key_rows};
+use rsk_rescue::otp_lock::{
+    KeyRows, PAGE58_LATCH_VALUE, PAGE58_LOCK_VALUE, PAGE58_LOCK1_ROW, key_rows,
+};
 use rsk_rescue::rollback::{
     BOOT_FLAGS0_ROW, DEFAULT_BOOT_VERSION0_ROW, DEFAULT_BOOT_VERSION1_ROW, ROLLBACK_REQUIRED_BIT,
     RollbackRaw,
 };
+use rsk_rescue::seal::{self, Otp};
+use rsk_rescue::seal::{DEVK_ROW, KEY_ROWS, MKEK_ROW};
 
-const DEVK_ROW: usize = 0xE80;
-const MKEK_ROW: usize = 0xE90;
-/// 32 bytes = 16 ECC rows of 16 data bits.
-const KEY_ROWS: usize = 16;
+static PROVISIONING_BLOCKED: AtomicBool = AtomicBool::new(false);
 /// The OTP page holding both keys and their chaff (0xE80 >> 6).
 const KEY_PAGE: usize = 58;
 
@@ -48,11 +44,52 @@ pub fn read_mkek(out: &mut [u8; 32]) -> bool {
 /// passes only over a page it could read, since a blank one is a board never
 /// provisioned and an unreadable one is not.
 pub fn read_boot_mkek(out: &mut [u8; 32]) -> KeyRows {
+    if PROVISIONING_BLOCKED.load(Ordering::Relaxed) {
+        return KeyRows::Unreadable;
+    }
     match option_env!("PK_FAKE_MKEK") {
         Some(hex) if parse_hex32(hex, out) => KeyRows::Fused,
         Some(_) => KeyRows::Blank,
         None => read_key(MKEK_ROW, out),
     }
+}
+
+pub struct Page58;
+
+impl Otp for Page58 {
+    fn test_keys(&self) -> bool {
+        faked_keys()
+    }
+    fn read_raw(&mut self, row: usize) -> Option<u32> {
+        otp::read_raw_word(row).ok()
+    }
+    fn read_ecc(&mut self, row: usize) -> Option<u16> {
+        otp::read_ecc_word(row).ok()
+    }
+    fn burn_lock(&mut self, value: u32) -> bool {
+        !faked_keys()
+            && value & !PAGE58_LATCH_VALUE == 0
+            && value & PAGE58_LOCK_VALUE == PAGE58_LOCK_VALUE
+            && otp::write_raw_word(PAGE58_LOCK1_ROW, value).is_ok()
+    }
+}
+
+/// A torn provisioning must not migrate flash under a partially written root.
+pub fn check_boot_provisioning() -> Result<Option<u32>, seal::Status> {
+    let result = seal::check_provisioning(&mut Page58);
+    match result {
+        Err(seal::Status::TestKeys) => Ok(None),
+        Err(_) => {
+            quarantine_provisioning();
+            result
+        }
+        Ok(_) => result,
+    }
+}
+
+/// An unreadable post-burn latch cannot leave the old open root usable.
+pub fn quarantine_provisioning() {
+    PROVISIONING_BLOCKED.store(true, Ordering::Relaxed);
 }
 
 /// Read the provisioned DEVK into `out`. `false` when unprovisioned.
@@ -116,15 +153,9 @@ pub fn read_page58_lock() -> Option<u32> {
         .map(|w| w & 0x00FF_FFFF)
 }
 
-/// Burn the permanent page-58 access lock and fuse latch (PAGE58_LATCH_VALUE →
-/// PAGE58_LOCK1, over a blank row or a subset of the latch)
-/// from secure firmware — the half the host burn ritual cannot do, since that
-/// lock row lives in bootloader-read-only OTP page 63 (page 63 `LOCK_S` = rw, so
-/// secure code can). The row and value are fixed constants here, so this call
-/// can only ever write that one lock; it is reached only after the rescue applet
-/// has confirmed the row is blank or a subset of the latch, the keys are
-/// provisioned and the migration is finished. IRREVERSIBLE.
-/// Returns whether the bootrom write succeeded.
+/// Burn only the fixed page-58 latch. Boot or the legacy rescue handler must
+/// first validate provisioning, migration and the existing lock. Page 63 is
+/// BOOTSEL-read-only, but secure firmware can write this row. Irreversible.
 pub fn apply_page58_lock() -> bool {
     if faked_keys() {
         return false;

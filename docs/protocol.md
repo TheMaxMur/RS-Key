@@ -1002,7 +1002,8 @@ firmware predates the rescue applet.
 | `1E` | `04` | `02` | — | epoch seconds (BE4) | READ RTC (Unix); `6985` if unset |
 | `1E` | `06` | `00` | — | `required(1) ‖ version(1) ‖ capacity(1)` | READ anti-rollback state |
 | `1E` | `07` | `00` | — | `left(2)` BE16 | READ what this boot's seal passes left under the pre-burn key or could not read: `01` FIDO seed/attestation key/grant, `02` device key, `04` PIV, `08` OATH (a legacy OTP-PIN too), `10` OTP; `FFFF` when the boot had no fused key to check with; `FFFE` when it could not read the fused key and so ran no seal pass (a page closed even to secure code; a replug reopens it) |
-| `1B` | `58` | `00` | `"LOCK58"` | — | ⚠️ **IRREVERSIBLE** — burn the page-58 access lock and migration latch, `3D3D3D` into row `0xFF5`, over a blank row or one whose every set bit is the latch's (an older build's `3C3C3C` lock, or a burn a power cut tore), which it completes; `9000` with nothing burnt when the latch is there, `6985` over a value with a bit outside it (user-presence-gated; `6985` before the touch while `1E/07` is not `0000`, whatever the row holds short of the latch). From the next boot on no device-sealed record opens under the pre-burn key or in the clear |
+| `1E` | `09` | `00` | — | `version(1) ‖ status(1) ‖ left(2)` BE16 | Read-only automatic page-58 seal result; version `01`, status values below |
+| `1B` | `58` | `00` | `"LOCK58"` | — | ⚠️ **IRREVERSIBLE** legacy service command — attempt `3D3D3D` into page-58 lock row `0xFF5`, over a blank row or a subset of the latch. ROM refuses completion once the Secure read-only majority is set (`6400`). `9000` with nothing burnt when the full latch is there; `6985` over foreign bits, unfinished migration (`1E/07 != 0000`), or declined presence. From the next boot on no device-sealed record opens under the pre-burn key or in the clear |
 | `1B` | `48` | `00` | `"ROLLBK"` | — | ⚠️ **IRREVERSIBLE** — set ROLLBACK_REQUIRED fuse (user-presence-gated) |
 | `1F` | `00` | `00` | — | — | REBOOT (warm; device drops off bus) |
 | `1F` | `01` | `00` | — | — | REBOOT to BOOTSEL bootloader |
@@ -1011,7 +1012,7 @@ firmware predates the rescue applet.
 | `20` | `01` | `00` | `"IMPORTV2"` | — | Explicitly trust and import readable legacy records; physical confirmation required; success queues a warm restart |
 
 Storage recovery mode exposes CCID with the Rescue AID only. It permits READ
-selectors `03`, `04`, `06`, `07`, `08`, reboot and storage setup.
+selectors `03`, `04`, `06`, `07`, `08`, `09`, reboot and storage setup.
 Normal boot automatically initializes wholly blank
 media or migrates readable legacy storage; neither setup command nor physical
 confirmation is required for a firmware upgrade. Other rescue
@@ -1021,6 +1022,30 @@ confirmation or incompatible state, `6581` for a storage failure, `6A86` for
 invalid selectors and `6A80` for a wrong magic payload. READ `1E/07` includes
 bit `0020` while storage authority remains under the pre-OTP root. Storage
 setup performs no OTP operation.
+
+Build `0x0BD7` automatically completes page-58 sealing at boot, including devices
+previously fused without locking. Secure code validates keys/chaff, waits for
+`left=0000` and performs a fresh successful flash scrub. It first completes and
+reads back every `0x3C3C3C` access-lock bit, preserving any existing latch bits,
+then burns `0x3D3D3D`. This ordering keeps the first step resumable and prevents
+a torn latch from stranding an unfinished BOOTSEL/Non-secure access lock.
+A newly closed latch causes a scrubbed restart before command dispatch; TrustZone
+has not started Non-secure code yet. No APDU or physical touch is required for
+this boot step. Explicit `1B/58` keeps its existing presence and migration guards
+for compatibility; READ `1E/09` performs no writes and needs no presence.
+
+`1E/09` status: `00` unchecked, `01` unprovisioned, `02` sealed,
+`03` migration pending, `04` scrub incomplete, `05` incomplete/invalid provisioning,
+`06` OTP read failure, `07` foreign lock bits, `08` lock write/readback failure,
+`09` fake-key firmware (real sealing disabled), `0A` majority already seals access
+but the raw latch has incomplete redundancy. For `0A`, ROM refuses further
+writes because Secure is already read-only; boot keeps the migration arms closed
+and does not retry the burn. `0B` means Secure writes closed before the access
+lock was complete: ROM cannot repair it, root reads and migration are blocked,
+and storage stays in recovery. `left` has the `1E/07` meaning.
+Status is this boot's result: after a required PIN use, restart to retry migration
+and sealing. Only `02` confirms a complete latch; unknown versions/statuses must
+not be interpreted as sealed.
 
 Build `0x0BA8` extends v2 with private, owner-bound PIN/HOTP counter records;
 APDUs and the `02 01` state response are unchanged. Migration occurs on the

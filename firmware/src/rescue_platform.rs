@@ -10,7 +10,17 @@
 
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
+use rsk_rescue::seal::Status;
 use rsk_rescue::{Platform, SecureBootStatus};
+
+static AUTO_SEAL: embassy_sync::blocking_mutex::Mutex<
+    embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex,
+    core::cell::Cell<Status>,
+> = embassy_sync::blocking_mutex::Mutex::new(core::cell::Cell::new(Status::Unchecked));
+
+pub fn record_auto_seal(status: Status) {
+    AUTO_SEAL.lock(|state| state.set(status));
+}
 
 static TIME_SET: AtomicBool = AtomicBool::new(false);
 /// What this boot's seal passes left under the pre-burn key; above `u16::MAX` until
@@ -102,6 +112,10 @@ impl Platform for RescuePlatform {
 
     fn pre_otp_left(&self) -> Option<u16> {
         u16::try_from(PRE_OTP_LEFT.load(Ordering::Relaxed)).ok()
+    }
+
+    fn auto_seal_status(&self) -> Status {
+        AUTO_SEAL.lock(core::cell::Cell::get)
     }
 
     fn lock_page58(&mut self) -> bool {

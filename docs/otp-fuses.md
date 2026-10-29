@@ -56,9 +56,10 @@ Two paths write OTP, and the difference is central to how RS-Key stays safe:
   the running, secure-boot-validated firmware, not from BOOTSEL. Two cases:
   - rows that are made **bootloader-read-only** by a page lock (so BOOTSEL can no
     longer write them) but stay **secure-writable**. The page-58 lock and the
-    `ROLLBACK_REQUIRED` flag are applied this way, by `rsk otp lock-page58` /
-    `rsk otp rollback-require`, each guarded by an exact magic payload so a
-    stray APDU can never trigger them.
+    `ROLLBACK_REQUIRED` flag are applied this way. Boot seals page 58 only after
+    validating the keys, migrating records and scrubbing flash. The separate
+    `rsk otp rollback-require` operation remains guarded by an exact magic payload
+    and presence; ordinary APDUs never trigger boot sealing.
 
 Each OTP page lock is a byte encoding three independent levels: `LOCK_BL`
 (bootloader), `LOCK_NS` (non-secure), `LOCK_S` (secure), each of `read-write` /
@@ -75,7 +76,7 @@ authoritative source is the code (`tools/rsk/otp.py`, `tools/rsk/secureboot.py`,
 | Region | Rows | What it holds | Written by |
 |---|---|---|---|
 | **Page 58** | `0xE80…` | `DEVK` (device attestation key), `MKEK` (master sealing key), anti-imaging chaff | `rsk otp burn` (BOOTSEL) |
-| Page-58 lock | `0xFF5` | makes page 58 **BOOTSEL-unreadable, secure read-only**, and latches the migration shut | `rsk otp lock-page58` (firmware; only once a boot migrated every device-sealed record) |
+| Page-58 lock | `0xFF5` | makes page 58 **BOOTSEL-unreadable, secure read-only**, and latches the migration shut | automatic Secure boot step, after migration and a successful scrub |
 | **Boot key** | `0x80…` | `SHA-256` fingerprint of your secure-boot public key (slot 0 of 4) | `rsk secure-boot load-key <otp.json>` |
 | `BOOT_FLAGS1` | `0x4B` | `KEY_VALID` / `KEY_INVALID` (which key slots are live / revoked) | `load-key`, `lock` |
 | `CRIT1` | `0x40` | `SECURE_BOOT_ENABLE`, `DEBUG_DISABLE`, `GLITCH_DETECTOR_ENABLE/SENS` | `harden`, `enable` |
@@ -93,8 +94,14 @@ A few notes that matter:
   record under the pre-burn key or in the clear, so a record planted there over
   BOOTSEL stays shut ([threat model](threat-model.md)). A lock burnt by a build
   before 0x0A67, or by the host ritual, is `0x3C3C3C` (S *read-write*) and
-  carries no latch: run `rsk otp lock-page58` again to add it. The same run
-  completes a latch a power cut tore, whose row holds only some of its bits.
+  carries no latch: firmware 0x0BD7 and later completes it automatically after
+  migration and scrubbing. It first completes and verifies all `0x3C3C3C` bits,
+  then writes the latch. It resumes a torn latch while Secure remains writable.
+  If its majority already closed Secure writes, ROM refuses to complete the third
+  copy; status reports protected access with incomplete redundancy. Check
+  `rsk otp status`; PIN-dependent migration may need a PIN use and restart.
+  An older torn burn with Secure read-only but an incomplete access lock enters
+  recovery instead: ROM cannot repair it and firmware refuses storage migration.
 - **The MKEK/DEVK are generated randomly and forgotten.** `rsk otp burn` does not
   keep a copy. The fuses *are* the key. There is nothing to back up and nothing
   to lose.

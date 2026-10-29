@@ -684,21 +684,24 @@ async fn main(spawner: Spawner) {
 
     let serial_id = embassy_rp::otp::get_chipid().unwrap_or(0).to_le_bytes();
     let serial_hash = rsk_crypto::sha256(&serial_id);
-
-    // The fuse latch: a page-58 lock burnt over a finished migration closes the
-    // arms below the OTP root. A row that will not read counts as open: closed, the
-    // passes would call an unlatched device's pre-burn records gone and free the burn.
-    let latched = otp_keys::read_page58_lock().is_some_and(rsk_rescue::otp_lock::arms_closed);
+    // Use the validated latch snapshot: a second failed read must not reopen arms.
+    let provisioning = otp_keys::check_boot_provisioning();
+    let latched = provisioning.map_or(true, |raw| {
+        raw.is_some_and(rsk_rescue::otp_lock::arms_closed)
+    });
+    let seal_pending =
+        matches!(provisioning, Ok(Some(raw)) if !rsk_rescue::otp_lock::arms_closed(raw));
     // The applets carry these readers, not the keys: a fused key exists in RAM only
     // for the operation that asked for it, so a bug that discloses adjacent memory
     // has nothing to disclose — the OTP window is not RAM.
-    let mkek_source: Option<FusedKey> = Some(if latched {
+    let mut mkek_source: Option<FusedKey> = Some(if latched {
         FusedKey::latched(otp_keys::read_mkek)
     } else {
         FusedKey::open(otp_keys::read_mkek)
     });
     let devk_source: Option<FusedKey> = Some(FusedKey::open(otp_keys::read_devk));
     otp_keys::sw_lock_key_page();
+    let seal_restart;
 
     let mut trng_cfg = TrngConfig::default();
     // The default sample_count (25) is too low for some RP2350 ROSC units: the
@@ -836,6 +839,7 @@ async fn main(spawner: Spawner) {
                 let _ = rsk_fido::seed::ensure_seed(&dev, &mut fs, &mut rng);
                 let _ = rsk_openpgp::scan_files(&dev, &mut fs, &mut rng);
             }
+            let mut scrub_ready = true;
             if storage_ready {
                 let _ = rsk_devconf::scrub_legacy_lock(&mut fs);
                 let _ = rsk_fido::credmgmt::settle_rp_records(&mut fs);
@@ -854,8 +858,30 @@ async fn main(spawner: Spawner) {
                 // record finds the lap gated shut for the life of the key. The re-arm costs
                 // nothing at this position: it clears the marker the lap below re-latches.
                 if mkek.is_some() {
-                    rsk_fs::run_at_rest_lap(&mut fs);
+                    if seal_pending && rescue_platform::RescuePlatform.pre_otp_left() == Some(0) {
+                        scrub_ready = rsk_rescue::seal::scrub_before_seal(&mut fs);
+                    } else {
+                        rsk_fs::run_at_rest_lap(&mut fs);
+                    }
                 }
+            }
+            use rsk_rescue::Platform;
+            let mut marker = [0; 1];
+            let scrubbed = scrub_ready
+                && fs.read(rsk_fs::EF_HARDENED, &mut marker) == Some(1)
+                && marker == [1];
+            let outcome = rsk_rescue::seal::seal_at_boot(
+                &mut otp_keys::Page58,
+                rescue_platform::RescuePlatform.pre_otp_left(),
+                scrubbed,
+                latched,
+            );
+            rescue_platform::record_auto_seal(outcome.status);
+            seal_restart = outcome.restart;
+            if outcome.quarantine {
+                otp_keys::quarantine_provisioning();
+                mkek_source = Some(FusedKey::latched(otp_keys::read_mkek));
+                let _ = fs.mount_storage();
             }
         }
         // PHY carries the boot-default LED brightness + steady (PicoForge's global LED
@@ -898,7 +924,7 @@ async fn main(spawner: Spawner) {
     let phy = _phy;
     let rng_ref = RNG_CELL.init(RefCell::new(rng));
 
-    let device_release: u16 = 0x0BD6;
+    let device_release: u16 = 0x0BD7;
     #[cfg(rsk_trustzone_prototype)]
     {
         let (manufacturer, product) = if usb_vid == YUBICO_VID {
@@ -1427,6 +1453,9 @@ async fn main(spawner: Spawner) {
             openpgp_mfr,
         )
     });
+    if seal_restart {
+        worker.reboot(1).await;
+    }
     #[cfg(not(rsk_trustzone_prototype))]
     spawner.spawn(worker_task(worker).unwrap());
     #[cfg(rsk_trustzone_prototype)]

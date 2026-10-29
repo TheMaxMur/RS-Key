@@ -64,6 +64,7 @@ impl UserPresence for DenyPresence {
 }
 
 struct FakePlatform {
+    seal_status: seal::Status,
     time: Option<u32>,
     reboots: Vec<bool>,
     status: (bool, bool, u8),
@@ -83,6 +84,7 @@ struct FakePlatform {
 impl Default for FakePlatform {
     fn default() -> Self {
         FakePlatform {
+            seal_status: seal::Status::Unchecked,
             time: None,
             reboots: Vec::new(),
             status: (false, false, 0xFF),
@@ -122,6 +124,9 @@ impl Platform for FakePlatform {
     }
     fn pre_otp_left(&self) -> Option<u16> {
         self.pre_otp_left
+    }
+    fn auto_seal_status(&self) -> seal::Status {
+        self.seal_status
     }
     fn lock_page58(&mut self) -> bool {
         // OTP bits only go 0→1; model the fuse burning our value into the row.
@@ -1463,3 +1468,35 @@ mod restarts;
 
 #[path = "storage_admin_tests.rs"]
 mod storage_admin;
+
+#[test]
+fn automatic_seal_report_is_read_only_and_preserves_migration_bits() {
+    let rng = RefCell::new(LcgRng(7));
+    let platform = RefCell::new(FakePlatform {
+        seal_status: seal::Status::MigrationPending,
+        pre_otp_left: Some(otp_lock::PRE_OTP_FIDO | otp_lock::PRE_OTP_OATH),
+        ..Default::default()
+    });
+    let presence = RefCell::new(DenyPresence);
+    let mut app = RescueApplet::new(
+        SERIAL_ID,
+        SERIAL_HASH,
+        Some(FusedKey::open(test_mkek)),
+        None,
+        &rng,
+        &platform,
+        &presence,
+        KV_TOTAL,
+        FLASH_SIZE,
+    );
+    let mut fs = Fs::new(RamStorage::new());
+    assert_eq!(
+        run(&mut app, &mut fs, &apdu(0x80, INS_READ, 0x09, 0, &[])),
+        (Sw::OK, vec![1, seal::Status::MigrationPending as u8, 0, 9])
+    );
+    assert_eq!(platform.borrow().lock_writes, 0);
+    assert_eq!(
+        run(&mut app, &mut fs, &apdu(0x80, INS_READ, 0x09, 1, &[])).0,
+        Sw::INCORRECT_P1P2
+    );
+}

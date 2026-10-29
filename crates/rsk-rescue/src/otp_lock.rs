@@ -3,12 +3,12 @@
 
 //! Page-58 hard-lock decision. The MKEK/DEVK live in OTP page 58; their lock row
 //! PAGE58_LOCK1 (0xFF5) is in page 63, which RP2350 ships bootloader-read-only, so
-//! only secure firmware can write it — one idempotent, guarded fuse write, never at boot.
+//! only secure firmware can write it, after migration and the at-rest scrub.
 
 /// OTP row of PAGE58_LOCK1 (= PAGE0_LOCK0 0xF80 + 58*2 + 1).
 pub const PAGE58_LOCK1_ROW: usize = 0xFF5;
 
-/// The lock an older build burnt, and the host ritual still tries: byte 0x3C in
+/// The access lock completed before the migration latch: byte 0x3C in
 /// each of the row's three majority-vote copies. 0x3C = LOCK_S 0 (secure
 /// read-write — the firmware keeps reading the keys), LOCK_NS 3 and LOCK_BL 3
 /// (inaccessible). Once it lands, `picotool otp get` can no longer read the keys.
@@ -25,7 +25,7 @@ pub enum LockDecision {
     /// Row is blank — write the latch.
     Write,
     /// Row holds a subset of the latch — an older build's lock, or a burn a power
-    /// cut tore — and a burn completes it, under the same guards as a first lock.
+    /// cut tore. ROM can complete it only while Secure writes remain open.
     Latch,
     /// Row already holds the latch — idempotent no-op.
     AlreadyLocked,

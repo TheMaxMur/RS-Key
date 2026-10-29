@@ -293,14 +293,15 @@ bulk stream, ISO-7816 APDUs, CTAP2 CBOR. Defenses:
   upgrade. So until the latch an attacker who can *write* flash (BOOTSEL) can
   forge a record that opens under one, and the boot migration then re-seals it
   under the fused root. Reading the flash still tells them nothing. Audit run-27
-  #8 has the analysis. `rsk otp lock-page58` burns only once a boot has moved
-  every device-sealed record off the pre-burn key, and a record a pass could not
+  #8 has the analysis. Firmware automatically burns the latch only once a boot has moved
+  every device-sealed record off the pre-burn key and completed a fresh flash
+  scrub. A record a pass could not
   read counts as not moved. What it burns is the latch: from the next boot on, no
   pass or command opens a FIDO seed, attestation key or grant, the device key, a
   PIV key, or an OATH or OTP record under the pre-burn key or in the clear, and a
   command that finds the fused key unreadable opens and seals nothing rather
   than fall back to that key. A device locked by a build before 0x0A67 has the lock without the
-  latch until `lock-page58` runs again. PIN verifiers keep their pre-burn arm, since
+  latch until a current firmware boot completes those checks. PIN verifiers keep their pre-burn arm, since
   their format does not say which key made them: the FIDO PIN and the display's
   device PIN, the PIV PIN and PUK, OpenPGP's PW1, PW3 and resetting code with their
   DEK copies, and the OATH OTP PIN. So a flash writer can still plant one for a PIN

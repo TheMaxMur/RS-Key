@@ -38,6 +38,24 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ## [Unreleased]
 
+- **bcdDevice → 0x0BD7: automatic OTP sealing.** Boot validates page-58 keys and chaff,
+  migrates device-sealed records, completes a fresh flash scrub, then permanently
+  closes BOOTSEL/non-secure key access and the pre-OTP migration arms. This also
+  runs on upgrades of already fused but unlocked devices, including legacy
+  `0x3C3C3C` locks. PIN-dependent migration delays sealing; invalid or incomplete
+  provisioning refuses it. TrustZone performs this in Secure code before
+  starting Non-secure transports. A scrubbed restart refreshes the latch bindings.
+  All access-lock copies are verified before the Secure read-only latch is burnt.
+  A torn latch whose majority already closes Secure writes is reported separately;
+  ROM cannot complete its remaining bits, and boot does not repeatedly try.
+  If that old tear left BOOTSEL/Non-secure access open, root reads and migration
+  are blocked in recovery instead of treating the device as sealed.
+- **CLI 0.3.52:** `rsk otp burn` independently reads back keys and chaff, then
+  reboots into automatic sealing. It no longer trusts picotool's exit status
+  alone. `rsk otp status` reports completion or the action still needed, and
+  discovers Linux readers by the rescue protocol. `lock-page58` remains only
+  for servicing older firmware.
+
 - **bcdDevice → 0x0BD6:** accelerate Brainpool signing and public-key generation
   with constant-time fixed-base tables, and ECDH with Jacobian mixed addition.
   Preserve deterministic signatures, scalar and peer validation, and stored keys.

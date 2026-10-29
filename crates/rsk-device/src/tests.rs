@@ -23,6 +23,9 @@ use super::*;
 #[path = "storage_recovery_tests.rs"]
 mod storage_recovery;
 
+#[path = "otp_seal_tests.rs"]
+mod otp_seal;
+
 pub const SERIAL_ID: [u8; 8] = [0xA1, 0xB2, 0xC3, 0xD4, 0xE5, 0xF6, 0x07, 0x18];
 pub const SERIAL_HASH: [u8; 32] = [0x5A; 32];
 const KV_TOTAL: u32 = 64 * 1024;

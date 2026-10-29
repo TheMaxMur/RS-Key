@@ -9,6 +9,13 @@ keeps the worker and applets Secure and moves transports to Non-secure. Its
 [TrustZone boundary](trustzone.md) records resource ownership and the chosen
 Secure USB lifecycle observer; the implementation is in place, with physical validation still required.
 
+OTP provisioning is checked before storage mounts. A boot with complete fused
+keys migrates the old records, scrubs flash, then seals page 58 automatically.
+If the latch closes, `Worker::reboot` clears RAM secrets and restarts before
+command dispatch. In TrustZone this happens in Secure code before launching
+Non-secure transports. Blank OTP remains unprovisioned; incomplete provisioning
+enters recovery. See [production](production.md) for PIN-dependent migration.
+
 ## The big picture
 
 A composite USB device with three interfaces, eight smart-card applets and
