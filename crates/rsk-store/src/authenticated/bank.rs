@@ -13,7 +13,7 @@ use super::append_proof::AppendProof;
 use crate::FlashBuf;
 use crate::verified_flash::VerifiedFlash;
 
-const IO_CHUNK: usize = 256;
+pub(super) const IO_CHUNK: usize = 256;
 
 /// Check every byte without a branch for each flash word.
 #[inline(always)]

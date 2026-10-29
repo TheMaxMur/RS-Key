@@ -19,6 +19,7 @@ pub fn configure(out: &Path, memory: &mut String, code_size: u32, flash_size: u3
     const SCRATCH_START: u32 = 0x2008_0100;
     const SCRATCH_END: u32 = 0x2008_2000;
     const XIP_WAY_BYTES: u32 = 8 * 1024;
+    const XIP_LINE_BYTES: u32 = 8;
     let ns_start = FLASH_BASE + code_size - NS_BYTES;
     let ns_end = ns_start + NS_BYTES;
     let nsc_start = ns_start - NSC_BYTES;
@@ -71,11 +72,62 @@ pub fn configure(out: &Path, memory: &mut String, code_size: u32, flash_size: u3
     memory.push_str(&format!(
         "SECTIONS {{ .rsk_curve25519 : ALIGN({XIP_WAY_BYTES}) {{\n\
          __rsk_curve25519_start = .;\n\
-         KEEP(*(.text.*FieldElement2625*Mul* .text.*FieldElement2625*Sub* .text.*FieldElement262512square_inner* .text._ZN12x25519_dalek6x255196x2551917h????????????????E))\n\
+         KEEP(*(.text.*FieldElement2625*Mul* .text.*FieldElement2625*Sub* .text.*FieldElement262512square_inner*))\n\
+         __rsk_curve25519_barrier_start = .;\n\
+         KEEP(*(.text._ZN6subtle9black_box17h????????????????E))\n\
+         __rsk_curve25519_barrier_end = .;\n\
+         __rsk_curve25519_field_end = .;\n\
+         KEEP(*(.text._ZN12x25519_dalek6x255196x2551917h????????????????E))\n\
+         . = ALIGN(4); __rsk_curve25519_aplus_start = .;\n\
+         KEEP(*(.rodata..Lanon.85af889235b8362dd68e687840cca964.16))\n\
+         __rsk_curve25519_aplus_end = .;\n\
          __rsk_curve25519_end = .;\n\
          }} > FLASH }} INSERT BEFORE .rodata;\n\
          ASSERT(SIZEOF(.rsk_curve25519) > 0, \"Curve25519 code is missing\")\n\
+         ASSERT(__rsk_curve25519_barrier_start > __rsk_curve25519_start, \"Curve25519 field code is missing\")\n\
+         ASSERT(__rsk_curve25519_barrier_end - __rsk_curve25519_barrier_start == 18, \"Constant-time barrier changed; review grouping\")\n\
+         ASSERT(__rsk_curve25519_aplus_end - __rsk_curve25519_aplus_start == 40, \"X25519 ladder multiplier changed; review grouping\")\n\
          ASSERT(SIZEOF(.rsk_curve25519) <= {XIP_WAY_BYTES}, \"Curve25519 code exceeds one XIP cache way\")\n",
+    ));
+    // Keep the Edwards loop off the field core's cache indices, leaving a way
+    // for its public basepoint table (RP2350 datasheet section 4.4.1).
+    memory.push_str(&format!(
+        "__rsk_ed25519_offset = ALIGN(__rsk_curve25519_field_end - __rsk_curve25519_start, {XIP_LINE_BYTES});\n\
+         SECTIONS {{ .rsk_ed25519 (ALIGN({XIP_WAY_BYTES}) + __rsk_ed25519_offset) : {{\n\
+         KEEP(*(.text._ZN16curve25519_dalek7backend6serial12curve_models172_$LT$impl$u20$core..ops..arith..Add$LT$$RF$curve25519_dalek..backend..serial..curve_models..AffineNielsPoint$GT$$u20$for$u20$$RF$curve25519_dalek..edwards..EdwardsPoint$GT$3add17h????????????????E))\n\
+         KEEP(*(.text._ZN16curve25519_dalek7edwards12EdwardsPoint8mul_base17h????????????????E))\n\
+         KEEP(*(.text._ZN16curve25519_dalek6window20LookupTable$LT$T$GT$6select17h????????????????E))\n\
+         KEEP(*(.text._ZN117_$LT$curve25519_dalek..backend..serial..curve_models..AffineNielsPoint$u20$as$u20$subtle..ConditionallySelectable$GT$18conditional_assign17h????????????????E))\n\
+         }} > FLASH }} INSERT BEFORE .rodata;\n\
+         ASSERT(SIZEOF(.rsk_ed25519) > 0, \"Ed25519 code is missing\")\n\
+         ASSERT(__rsk_ed25519_offset > 0 && ADDR(.rsk_ed25519) % {XIP_WAY_BYTES} == __rsk_ed25519_offset, \"Ed25519 cache offset differs from field span\")\n\
+         ASSERT(__rsk_ed25519_offset + SIZEOF(.rsk_ed25519) <= {XIP_WAY_BYTES}, \"Ed25519 code overlaps field cache indices\")\n",
+    ));
+    // Group the hot callees so the comb loop cannot introduce a third cache tag.
+    memory.push_str(&format!(
+        "SECTIONS {{ .rsk_k256_field : ALIGN({XIP_WAY_BYTES}) {{\n\
+         KEEP(*(.text._ZN4k25610arithmetic5field*))\n\
+         KEEP(*(.text._ZN4k25610arithmetic10projective15ProjectivePoint10add_assign17h????????????????E))\n\
+         KEEP(*(.text.*k256..arithmetic..affine..AffinePoint*18conditional_select17h????????????????E))\n\
+         }} > FLASH }} INSERT BEFORE .rodata;\n\
+         ASSERT(SIZEOF(.rsk_k256_field) > 0, \"secp256k1 field code is missing\")\n\
+         ASSERT(SIZEOF(.rsk_k256_field) <= {XIP_WAY_BYTES}, \"secp256k1 field code exceeds one XIP cache way\")\n",
+    ));
+    // The signed P-384 comb's tables are in RAM; its hot flash callees fit in
+    // one cache way without competing with each other for cache indices.
+    memory.push_str(&format!(
+        "SECTIONS {{ .rsk_p384_comb : ALIGN({XIP_WAY_BYTES}) {{\n\
+         KEEP(*(.text._ZN4p38410arithmetic5field12FieldElement3add17h????????????????E))\n\
+         KEEP(*(.text._ZN4p38410arithmetic5field12FieldElement3sub17h????????????????E))\n\
+         KEEP(*(.text._ZN4p38410arithmetic5field12FieldElement6double17h????????????????E))\n\
+         KEEP(*(.text._ZN4p38410arithmetic5field12montgomery326square17h????????????????E))\n\
+         KEEP(*(.text._ZN6rsk_ec9comb_p38413comb_mul_p38417h????????????????E))\n\
+         __rsk_p384_mixed_start = .;\n\
+         KEEP(*(.text._ZN134_$LT$primeorder..point_arithmetic..EquationAIsMinusThree$u20$as$u20$primeorder..point_arithmetic..sealed..PointArithmetic$LT$C$GT$$GT$16add_assign_mixed17h40a511cceca3a12cE))\n\
+         __rsk_p384_mixed_end = .;\n\
+         }} > FLASH }} INSERT BEFORE .rodata;\n\
+         ASSERT(__rsk_p384_mixed_end - __rsk_p384_mixed_start == 712, \"P-384 mixed addition monomorph changed; review placement\")\n\
+         ASSERT(SIZEOF(.rsk_p384_comb) <= {XIP_WAY_BYTES}, \"P-384 comb code exceeds one XIP cache way\")\n",
     ));
     // Keep the shared verifier and its memory helpers off the XIP path.
     // The P-256 addition monomorph's size check makes dependency drift explicit.
@@ -120,6 +172,9 @@ pub fn configure(out: &Path, memory: &mut String, code_size: u32, flash_size: u3
          KEEP(*(.text._ZN14num_bigint_dig10algorithms3mul4mul317h????????????????E))\n\
          KEEP(*(.text._ZN14num_bigint_dig10algorithms3mac9karatsuba17h????????????????E))\n\
          KEEP(*(.text._ZN14num_bigint_dig10algorithms3sub8sub_sign17h????????????????E))\n\
+         __rsk_flash_read_start = .;\n\
+         KEEP(*(.text._ZN104_$LT$firmware..flash_storage..SharedFlash$u20$as$u20$embedded_storage_async..nor_flash..ReadNorFlash$GT$4read28_$u7b$$u7b$closure$u7d$$u7d$17h????????????????E))\n\
+         __rsk_flash_read_end = .;\n\
          . = ALIGN(32); __rsk_exec_end = .;\n\
          } > RAM AT> FLASH\n\
          } INSERT BEFORE .data;\n\
@@ -127,6 +182,7 @@ pub fn configure(out: &Path, memory: &mut String, code_size: u32, flash_size: u3
          ASSERT(__rsk_sha256_initial_end - __rsk_sha256_initial_start == 32, \"SHA-256 initial vector is not 32 bytes\")\n\
          ASSERT(__rsk_p256_add_end - __rsk_p256_add_start == 1222, \"P-256 addition monomorph changed; review relocation\")\n\
          ASSERT(__rsk_memory_end > __rsk_memory_start, \"Memory helpers are missing from Secure SRAM\")\n\
+         ASSERT(__rsk_flash_read_end > __rsk_flash_read_start, \"Shared flash reader is missing from Secure SRAM\")\n\
          ASSERT(LOADADDR(.data) - LOADADDR(.rsk_exec) == ADDR(.data) - ADDR(.rsk_exec), \"RAM initialization is not contiguous\")\n",
     );
     // The first 256 bytes remain outside code for SRAM residue positive controls.

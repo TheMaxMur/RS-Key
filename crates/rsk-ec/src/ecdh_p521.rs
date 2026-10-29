@@ -16,8 +16,9 @@ type FieldElement = <p521::NistP521 as FieldArithmetic>::FieldElement;
 type Coordinates = [FieldElement; 2];
 const WIDTH: usize = 4;
 const ENTRIES: usize = 1 << (WIDTH - 1);
-// The 66-byte scalar encoding includes padding bits; recentering needs a carry digit.
-const DIGITS: usize = 66 * 2 + 1;
+// The highest nibble is at most one; an incoming carry makes it at most two.
+// Neither the encoding's padding nibble nor another carry digit is needed.
+const DIGITS: usize = (p521::Scalar::NUM_BITS as usize).div_ceil(WIDTH);
 type Table = [(Coordinates, Coordinates); ENTRIES];
 
 #[derive(Clone, Copy)]
@@ -130,7 +131,7 @@ fn table(peer: &p521::AffinePoint) -> Result<Table, EcError> {
     let base = p521::ProjectivePoint::from(*peer);
     let mut multiples = [base; 2 * ENTRIES];
     for i in 1..multiples.len() {
-        multiples[i] = multiples[i - 1] + base;
+        multiples[i] = multiples[i - 1] + *peer;
     }
     let affine = p521::ProjectivePoint::batch_normalize(&multiples);
     let mut table = [([FieldElement::ZERO; 2], [FieldElement::ZERO; 2]); ENTRIES];
@@ -158,10 +159,12 @@ pub(super) fn mul(
         .expose()
         .iter()
         .rev()
-        .zip(digits.expose_mut().chunks_exact_mut(2))
+        .zip(digits.expose_mut().chunks_mut(2))
     {
         pair[0] = i8::from_ne_bytes([byte & ((1 << WIDTH) - 1)]);
-        pair[1] = i8::from_ne_bytes([byte >> WIDTH]);
+        if let Some(high) = pair.get_mut(1) {
+            *high = i8::from_ne_bytes([byte >> WIDTH]);
+        }
     }
     for i in 0..DIGITS - 1 {
         let carry = (digits.expose()[i] + (1 << (WIDTH - 1))) >> WIDTH;

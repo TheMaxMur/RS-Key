@@ -11,6 +11,8 @@ use super::{MAX_COUNTER_ENTRIES, Partition, RawBank};
 
 #[path = "counter_scan.rs"]
 mod scan;
+#[path = "counter_snapshot.rs"]
+mod snapshot;
 
 const RAW_DOMAIN: &[u8; 8] = b"RSKV2CTR";
 
@@ -268,7 +270,7 @@ impl<F: NorFlash + MultiwriteNorFlash> CounterBank<F> {
         checkpoint: Checkpoint,
         key: &[u8; 32],
         directory: &Directory<MAX_COUNTER_ENTRIES>,
-        mut load: impl FnMut(Entry, &mut [u8]) -> Result<()>,
+        load: impl FnMut(Entry, &mut [u8]) -> Result<()>,
     ) -> Result<()> {
         if checkpoint.identity.partition != Partition::Counter
             || usize::try_from(checkpoint.entries).map_err(|_| Error::MemoryFatal)?
@@ -297,31 +299,7 @@ impl<F: NorFlash + MultiwriteNorFlash> CounterBank<F> {
         }
         let header = checkpoint.encode(key)?;
         self.bank.erase()?;
-        let mut scratch = Secret::<[u8; VALUE_BUFFER]>::zeroed();
-        let mut at = u32::try_from(CHECKPOINT_BYTES).map_err(|_| Error::MemoryFatal)?;
-        for entry in directory.entries() {
-            let length = entry.length().ok_or(Error::MemoryFatal)?;
-            let padded = Self::padded_length(*entry)?;
-            scratch.expose_mut().fill(0xFF);
-            let value = scratch
-                .expose_mut()
-                .get_mut(..length)
-                .ok_or(Error::MemoryFatal)?;
-            load(*entry, value)?;
-            entry.verify(checkpoint.identity, key, value)?;
-            let value_at = at
-                .checked_add(u32::try_from(ENTRY_BYTES).map_err(|_| Error::MemoryFatal)?)
-                .ok_or(Error::MemoryFatal)?;
-            self.bank.program(
-                value_at,
-                scratch.expose().get(..padded).ok_or(Error::MemoryFatal)?,
-            )?;
-            self.bank.program(at, &entry.encode()?)?;
-            at = value_at
-                .checked_add(u32::try_from(padded).map_err(|_| Error::MemoryFatal)?)
-                .ok_or(Error::MemoryFatal)?;
-        }
-        scratch.wipe();
+        snapshot::write_entries(self, checkpoint, key, directory, load)?;
         self.bank
             .program(0, header.get(..80).ok_or(Error::MemoryFatal)?)?;
         self.bank

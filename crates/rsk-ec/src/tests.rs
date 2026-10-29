@@ -193,6 +193,44 @@ fn comb_matches_generator_all_curves() {
     );
 }
 
+macro_rules! comb_boundaries {
+    ($name:ident, $curve:ident, $multiply:ident) => {
+        #[test]
+        fn $name() {
+            use $curve::elliptic_curve::PrimeField;
+            let check = |scalar| {
+                assert_eq!(
+                    $multiply(&scalar).to_affine(),
+                    ($curve::ProjectivePoint::GENERATOR * scalar).to_affine()
+                );
+            };
+            check($curve::Scalar::ZERO);
+            check($curve::Scalar::ONE);
+            for value in 1..=16u64 {
+                check(-$curve::Scalar::from(value));
+            }
+            for bit in 0..256 {
+                let mut bytes = [0; 32];
+                bytes[31 - bit / 8] = 1 << (bit % 8);
+                check($curve::Scalar::from_repr(bytes.into()).unwrap());
+            }
+            for round in [0, 63] {
+                for digit in 0..16u8 {
+                    let mut bytes = [0; 32];
+                    for column in 0..4 {
+                        let bit = column * 64 + round;
+                        bytes[31 - bit / 8] |= ((digit >> column) & 1) << (bit % 8);
+                    }
+                    check($curve::Scalar::from_repr(bytes.into()).unwrap());
+                }
+            }
+        }
+    };
+}
+
+comb_boundaries!(p256_comb_doubling_boundaries, p256, comb_mul_p256);
+comb_boundaries!(k256_comb_doubling_boundaries, k256, comb_mul_k256);
+
 #[test]
 fn sign_p256_byte_identical_to_crate() {
     use p256::ecdsa::signature::hazmat::PrehashSigner;

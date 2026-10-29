@@ -221,6 +221,52 @@ def test_a_module_declared_over_a_file_that_is_not_there(tree):
     assert only(tree.problems(), "declared as a module but does not exist")
 
 
+def test_a_literal_include_reaches_the_same_production_source(tree):
+    tree.edit("lib.rs", "pub mod thing;", 'include!("thing.rs");')
+    assert tree.problems() == []
+    assert dict(tree.roster()) == {("rsk-x", "thing.rs", "BUF"): 1}
+
+
+def test_a_literal_include_does_not_hide_an_unrostered_shrink(tree):
+    tree.edit("lib.rs", "pub mod thing;", 'include!(\n    "thing.rs"\n);')
+    tree.append("thing.rs", REASON + "#[cfg(kani)]\nconst INCLUDED: usize = 4;\n")
+    assert only(tree.problems(), "has no row for `rsk-x` `thing.rs` `INCLUDED`")
+
+
+@pytest.mark.parametrize("text", [
+    '// include!("orphan.rs");\n',
+    'const TEXT: &str = r#"include!("orphan.rs");"#;\n',
+])
+def test_a_literal_include_in_text_cannot_classify_an_orphan(tree, text):
+    tree.write("orphan.rs", "const ORPHAN: usize = 1;\n")
+    tree.append("lib.rs", text)
+    assert only(tree.problems(), "orphan.rs")
+
+
+def test_a_verification_file_keeps_its_literal_include_in_verification(tree):
+    tree.append("thing_tests.rs", 'include!("included_tests.rs");\n')
+    tree.write("included_tests.rs", "#[cfg(kani)]\nconst TEST_WIDTH: usize = 1;\n")
+    assert tree.problems() == []
+
+
+def test_a_literal_include_requires_its_source_to_exist(tree):
+    tree.append("lib.rs", 'include!("absent.rs");\n')
+    assert only(tree.problems(), "absent.rs")
+
+
+def test_a_nonroot_include_resolves_beside_its_including_file(tree):
+    tree.write("shared.rs", REASON + "#[cfg(kani)]\nconst SHARED: usize = 4;\n")
+    tree.append("thing.rs", 'include!("shared.rs");\n')
+    assert only(tree.problems(), "has no row for `rsk-x` `shared.rs` `SHARED`")
+
+
+def test_a_shared_include_still_counts_when_one_caller_is_verification(tree):
+    tree.write("shared.rs", REASON + "#[cfg(kani)]\nconst SHARED: usize = 4;\n")
+    for caller in ("thing.rs", "thing_tests.rs"):
+        tree.append(caller, 'include!("shared.rs");\n')
+    assert only(tree.problems(), "has no row for `rsk-x` `shared.rs` `SHARED`")
+
+
 def test_all_kani_and_a_feature_is_still_a_shrink(tree):
     """`all(kani, …)` is false without kani, so it is a condition of its own —
     the fail-closed direction, since nobody has decided what it should mean."""

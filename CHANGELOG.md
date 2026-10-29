@@ -38,6 +38,25 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ## [Unreleased]
 
+- **bcdDevice → 0x0BD6:** accelerate Brainpool signing and public-key generation
+  with constant-time fixed-base tables, and ECDH with Jacobian mixed addition.
+  Preserve deterministic signatures, scalar and peer validation, and stored keys.
+  Pack counter snapshots into body pages before checkpoint publication, reducing
+  repeated flash programs during PIN/HOTP rotation. Stored bytes, capacity,
+  full-bank authentication, mirrored acknowledgment and rollback floors are unchanged.
+  Use the complete doubling formula in the secp256k1 comb and group hot
+  secp256k1 callees within one XIP cache way.
+  Reuse mixed addition for the public P-521 ECDH table, removing a duplicate
+  full-projective formula; keep the complete doubling formula outside the hot
+  fixed-base selection loop. Keep the Ed25519 loop and shared field arithmetic
+  on disjoint XIP cache indices. Skip two always-zero leading radix-16 digits
+  in P-521 ECDH and execute the checked storage reader from existing Secure RX SRAM.
+  Group the P-384 comb with its hot field callees.
+  Keep X25519's constant-time barrier and public ladder multiplier in its code
+  group. Precompute only the public `NO-OTP` HMAC pad states, preserving fresh
+  OTP reads and the fused-key path. Poll USB writes directly without an extra
+  async adapter; USB reset handling, cleanup and retry bounds are unchanged.
+
 - **bcdDevice → 0x0BB6:** derive U2F and attestation public points only when
   needed, using the existing constant-time P-256 comb. Authentication and
   attestation signing no longer calculate an unused public key. Credential

@@ -37,7 +37,8 @@ Every item in production source whose `cfg` mentions `kani`, less two kinds:
   exactly as much as `#[cfg(kani)]` does.
 
 Which files are production is walked, not listed: from each crate's `lib.rs`
-through its `mod` declarations, and a module reached only through a cfg naming
+through its `mod` declarations and literal `include!` sources. Includes inherit
+their containing file's classification. A module reached only through a cfg naming
 `kani` or `test` is verification source along with everything below it. Every
 `.rs` under `crates/*/src` has to be reached by that walk — one that is not is a
 file this guard cannot classify, so it is a failure rather than a skip.
@@ -136,6 +137,7 @@ KEYWORD = re.compile(
 NAME = re.compile(r"\s*([A-Za-z_][A-Za-z0-9_]*)")
 PATH_ATTR = re.compile(r'^\s*path\s*=\s*"([^"]+)"\s*$')
 MOD_DECL = re.compile(r"(?m)^[ \t]*(?:pub(?:\([^)]*\))?\s+)?mod\s+([A-Za-z_][A-Za-z0-9_]*)\s*;")
+INCLUDE_DECL = re.compile(r'(?<![\w:])include!\s*\(\s*"([^"\\]+)"\s*\)\s*;')
 CFG_BANG = re.compile(r"(?<![\w:])cfg!\s*\(")
 KANI_WORD = re.compile(r"(?<![\w:])kani(?![\w:])")
 
@@ -273,7 +275,7 @@ def child_dir(path):
 
 
 def module_targets(path, raw):
-    """(name, attribute bodies, file) for every non-inline `mod` declared here."""
+    """(name, attribute bodies, file) for declared modules and literal includes."""
     code = gate_lines.rust_code(raw)
     attributed = {}
     for group, start, inner, _above in attribute_groups(code):
@@ -299,12 +301,15 @@ def module_targets(path, raw):
             if not target.is_file() and (below / name / "mod.rs").is_file():
                 target = below / name / "mod.rs"
         out.append((name, bodies, target))
+    for found in INCLUDE_DECL.finditer(raw):
+        if code.startswith("include!", found.start()):
+            out.append(("include!", [], path.parent / found.group(1)))
     return out
 
 
 def classify_files(root):
     """(production, verification, problems) over `crates/*/src`, walked from each
-    crate root through its `mod` declarations."""
+    crate root through its declarations and literal includes."""
     production, verification, problems, seen = set(), set(), [], set()
     for crate_root in sorted((root / CRATES).glob(f"*/{CRATE_ROOT}")):
         pending = [(crate_root, True)]

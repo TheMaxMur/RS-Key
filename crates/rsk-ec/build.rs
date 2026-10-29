@@ -17,6 +17,16 @@ mod comb_p521_params;
 
 const W: usize = 4;
 
+mod brainpool256 {
+    pub use bp256::elliptic_curve;
+    pub use bp256::r1::ProjectivePoint;
+}
+
+mod brainpool384 {
+    pub use bp384::elliptic_curve;
+    pub use bp384::r1::ProjectivePoint;
+}
+
 macro_rules! gen_comb {
     ($curve:ident, $d:expr, $coord:expr, $constname:literal, $file:literal) => {
         gen_comb!($curve, $d, $coord, $constname, $file, 0);
@@ -129,6 +139,8 @@ fn main() {
     gen_comb!(p256, 64, 32, "GEN_COMB_P256", "gen_comb_p256.rs"); // ceil(256/4) = 64
     gen_signed_p384();
     gen_comb!(k256, 64, 32, "GEN_COMB_K256", "gen_comb_k256.rs"); // ceil(256/4) = 64
+    gen_comb!(brainpool256, 64, 32, "TABLE", "gen_comb_bp256.rs");
+    gen_comb!(brainpool384, 96, 48, "TABLE", "gen_comb_bp384.rs");
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed=src/comb_p384_params.rs");
     println!("cargo:rerun-if-changed=src/comb_p521_params.rs");

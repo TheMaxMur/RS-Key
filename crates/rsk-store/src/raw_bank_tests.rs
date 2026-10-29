@@ -24,6 +24,8 @@ mod counter_api;
 
 #[path = "counter_append_tests.rs"]
 mod counter_append;
+#[path = "counter_snapshot_tests.rs"]
+mod counter_snapshot;
 
 #[test]
 fn raw_bank_preserves_adjacent_bytes_during_unaligned_programs() {

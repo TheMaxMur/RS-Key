@@ -2201,6 +2201,7 @@ dependencies = [
  "p256",
  "p384",
  "p521",
+ "primeorder",
  "rfc6979",
  "rsk-secret",
  "x25519-dalek",

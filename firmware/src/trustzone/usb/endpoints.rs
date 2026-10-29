@@ -145,7 +145,8 @@ pub(super) fn operate(state: &mut Controller, operation: u32, data: &mut [u8]) -
                         if zlp && request_waiting {
                             return 0;
                         }
-                        let value = outcome(once(async { endpoint.write(data).await.map(|()| 0) }));
+                        let value =
+                            outcome(once(endpoint.write(data)).map(|result| result.map(|()| 0)));
                         if zlp && value == 0 {
                             state.bulk_zlp |= 1 << index;
                         }

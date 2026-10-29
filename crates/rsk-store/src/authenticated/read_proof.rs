@@ -12,8 +12,26 @@ const MOUNT_DOMAIN: &[u8; 8] = b"RSKV2RM1";
 const FRAME_BYTES: usize = 204;
 const MOUNT_FRAME_BYTES: usize = 140;
 
+pub(super) enum ReadMac {
+    PreOtp,
+    Otp(HmacSha256),
+}
+
+impl ReadMac {
+    fn tag(&self, msg: &[u8]) -> [u8; 32] {
+        match self {
+            Self::PreOtp => rsk_crypto::mac::hmac_sha256_public_pads(
+                super::keys::NO_OTP_INNER,
+                super::keys::NO_OTP_OUTER,
+                msg,
+            ),
+            Self::Otp(mac) => mac.tag(msg),
+        }
+    }
+}
+
 pub(super) struct ReadProof {
-    pub(super) mac: HmacSha256,
+    pub(super) mac: ReadMac,
     pub(super) key: Option<Secret<[u8; 32]>>,
     pub(super) serial_hash: [u8; 32],
 }

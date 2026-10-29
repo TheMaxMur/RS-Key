@@ -10,13 +10,13 @@ build = "build.rs"
 # The elliptic-curve layer: the private key both card applets seal (`PrivKey`
 # over `Curve`, the persisted `[curve_id] ‖ scalar` blob) with its signing /
 # public-point / ECDH operations and the `7F49 { 86 }` public-key DO, over
-# fixed-base Lim–Lee comb scalar multiplication for the NIST/secp Weierstrass
+# fixed-base comb scalar multiplication for the NIST/secp/Brainpool Weierstrass
 # curves — shared by every applet that signs on the generator: FIDO credentials,
 # PIV GENERAL AUTHENTICATE, OpenPGP PSO:CDS. `k·G` (ECDSA nonce commitment) and
 # `d·G` (public-key derivation) both run through a width-4 comb — several× faster
 # than the crate's generic `mul_by_generator` on the in-order Cortex-M33, and
-# bit-identical to it (KAT-checked). P-384 and P-521 ECDH use Jacobian mixed
-# addition; the other variable-base curves keep their upstream multiplier.
+# bit-identical to it (KAT-checked). P-384, P-521 and Brainpool ECDH use Jacobian
+# mixed addition; the other variable-base curves keep their upstream multiplier.
 [lints]
 workspace = true
 
@@ -25,8 +25,8 @@ p256 = { workspace = true }
 p384 = { workspace = true }
 p521 = { workspace = true }
 k256 = { workspace = true }
-# The curves `PrivKey` covers that the comb does not: brainpool P-256/P-384 (no
-# precomputed table) and the 25519 pair (Edwards signing / Montgomery ECDH).
+# Brainpool fixed-base tables and the 25519 pair
+# (Edwards signing / Montgomery ECDH) share the stored key type.
 # All four came down with the key type from `rsk-openpgp`, which no longer names
 # them — the device's trust base is unchanged, only which crate declares them.
 bp256 = { workspace = true }
@@ -37,12 +37,17 @@ x25519-dalek = { workspace = true }
 ecdsa = { workspace = true, features = ["algorithm"] }
 # `elliptic-curve` for brainpool ECDH, which bp256/bp384 leave generic there.
 elliptic-curve = { workspace = true }
+# Reuse the upstream Brainpool curve coefficients for Jacobian doubling.
+primeorder = { workspace = true }
 rfc6979 = { workspace = true }
 zeroize = { workspace = true }
 rsk-secret = { workspace = true }
 
 # The comb tables are precomputed at build time from each curve's generator.
 [build-dependencies]
+# Reuse the runtime Brainpool curves to derive public fixed-base tables.
+bp256 = { workspace = true }
+bp384 = { workspace = true }
 p256 = { workspace = true }
 p384 = { workspace = true }
 p521 = { workspace = true }

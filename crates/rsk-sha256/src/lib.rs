@@ -250,6 +250,18 @@ impl fmt::Debug for Sha256Core {
 }
 pub type Sha256 = CoreWrapper<Sha256Core>;
 
+/// Hash a suffix after one public 64-byte block whose chaining state is known.
+/// The prefix has not been padded; its length still counts in the final digest.
+pub fn digest_after_public_block(state: [u32; 8], suffix: &[u8]) -> [u8; 32] {
+    use sha2::Digest;
+    let mut hash = Sha256::from_core(Sha256Core {
+        state: Secret::new(state),
+        blocks: 1,
+    });
+    Digest::update(&mut hash, suffix);
+    hash.finalize().into()
+}
+
 #[cfg(test)]
 #[path = "tests.rs"]
 mod tests;

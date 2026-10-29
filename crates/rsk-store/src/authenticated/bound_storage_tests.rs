@@ -16,6 +16,8 @@ use sequential_storage::cache::{Cache, Uncached};
 
 #[path = "public_pin_tests.rs"]
 mod public_pin_tests;
+#[path = "bound_rollover_tests.rs"]
+mod rollover_tests;
 
 type Store = Authenticated<FaultFlash, Cache<Uncached, Uncached, Uncached, u16>>;
 const MAIN_END: u32 = 32768;

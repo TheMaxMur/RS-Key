@@ -74,6 +74,21 @@ fn matches_full_points_at_signed_window_carries_and_order_boundaries() {
 }
 
 #[test]
+fn carry_into_the_top_digit_preserves_the_full_point() {
+    let peer = p521::PublicKey::from_affine(p521::AffinePoint::GENERATOR).unwrap();
+    for byte in [0x80, 0x90, 0xf0] {
+        let mut repr = p521::FieldBytes::default();
+        repr[0] = 1;
+        repr[1] = byte;
+        let scalar = p521::Scalar::from_repr(repr).unwrap();
+        assert_eq!(
+            mul(&peer, &scalar).map(|point| *point.expose()),
+            Ok(reference(peer.as_affine(), &scalar))
+        );
+    }
+}
+
+#[test]
 fn negative_equal_point_fallback_preserves_y_as_well_as_shared_x() {
     let peer = p521::AffinePoint::GENERATOR;
     let public = p521::PublicKey::from_affine(peer).unwrap();

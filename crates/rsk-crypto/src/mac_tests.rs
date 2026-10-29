@@ -124,3 +124,25 @@ fn ct_eq_matches_slice_equality() {
     assert!(!ct_eq(b"xbc", b"abc")); // first byte differs
     assert!(!ct_eq(b"abc", b"ab")); // length mismatch
 }
+
+#[test]
+fn public_hmac_pads_match_independent_hmac_for_all_short_lengths() {
+    let inner = [
+        0x6d09e22e, 0x9f907107, 0x8bc4a120, 0xfa4f2121, 0x5aa096af, 0x45ea9241, 0xc498c7b0,
+        0xce3ccb21,
+    ];
+    let outer = [
+        0xe3b6250e, 0xcf4c54f2, 0xdec4e7fe, 0x6aecc3c3, 0x594e6fe9, 0x79de4b22, 0x72d45449,
+        0x4c6daa0a,
+    ];
+    for length in (0..=512).chain([1023, 1024, 1025, 4096]) {
+        let msg: std::vec::Vec<_> = (0..length).map(|i| (i * 73 + 19) as u8).collect();
+        let mut reference = Hmac::<sha2::Sha256>::new_from_slice(b"NO-OTP").unwrap();
+        reference.update(&msg);
+        assert_eq!(
+            hmac_sha256_public_pads(inner, outer, &msg).as_slice(),
+            reference.finalize().into_bytes().as_slice(),
+            "length={length}"
+        );
+    }
+}

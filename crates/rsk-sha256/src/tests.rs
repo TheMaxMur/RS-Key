@@ -79,3 +79,23 @@ fn long_hashes_preserve_block_counts_clones_and_reset() {
         assert_eq!(hash.finalize(), sha2::Sha256::digest(&message[..129]));
     }
 }
+
+#[test]
+fn public_block_suffix_counts_the_prefix_in_every_padding_boundary() {
+    for seed in [0u8, 0x36, 0x5c, 0xff] {
+        let block = core::array::from_fn::<_, 64, _>(|i| seed.wrapping_add(i as u8));
+        let mut state = INITIAL;
+        compress(&mut state, (&block).into());
+        for length in 0..=512 {
+            let suffix: std::vec::Vec<_> = (0..length).map(|i| (i * 73 + 19) as u8).collect();
+            let mut reference = sha2::Sha256::new();
+            Digest::update(&mut reference, block);
+            Digest::update(&mut reference, &suffix);
+            assert_eq!(
+                digest_after_public_block(state, &suffix).as_slice(),
+                reference.finalize().as_slice(),
+                "seed={seed} suffix={length}"
+            );
+        }
+    }
+}

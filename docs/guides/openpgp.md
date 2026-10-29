@@ -1,5 +1,8 @@
 # OpenPGP card
 
+Build `0x0BD6` reduces Brainpool arithmetic and counter-rotation work.
+Retry charging, durable restoration, migration and key cleanup are unchanged.
+
 Build `0x0B45` sizes the TrustZone CCID reply scratch buffer to the existing
 CCID response limit, reducing initialization and cleanup work on each APDU.
 Maximum response sizes and complete buffer cleanup are unchanged.
@@ -257,6 +260,13 @@ derivation before signing. RFC6979 nonce generation, raw signature encoding,
 PIN and touch requirements remain unchanged; existing keys need no migration.
 P-384 signing also omits the unused nonce-generator update after success; ECDH
 uses equivalent coordinate formulas with fewer field additions.
+
+From `0x0BD6`, Brainpool signing and public-key generation use constant-time
+fixed-base tables; ECDH uses Jacobian coordinates with the curve's original
+coefficient. Stored keys, deterministic signatures, peer-point validation and
+PIN/touch requirements are unchanged. Counter rotation writes complete body
+pages before publishing the checkpoint, reducing flash programs during PIN,
+HOTP and signature-counter updates without a storage migration.
 
 Changing a slot's algorithm after a key exists invalidates that slot's old
 private/public key pair. Re-select the intended attribute before generating or

@@ -53,6 +53,13 @@ impl HmacSha256 {
     }
 }
 
+/// HMAC-SHA256 from the unpadded chaining states of two public key-pad blocks.
+/// Only public, fixed keys may use this path; secret keys use `HmacSha256`.
+pub fn hmac_sha256_public_pads(inner: [u32; 8], outer: [u32; 8], msg: &[u8]) -> [u8; 32] {
+    let digest = rsk_secret::Secret::new(rsk_sha256::digest_after_public_block(inner, msg));
+    rsk_sha256::digest_after_public_block(outer, digest.expose())
+}
+
 /// HMAC-SHA512. Any key length is accepted.
 pub fn hmac_sha512(key: &[u8], msg: &[u8]) -> [u8; 64] {
     let mut mac = Hmac::<Sha512>::new_from_slice(key).expect("HMAC accepts any key length");

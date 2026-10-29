@@ -303,6 +303,13 @@ the complete value MAC; a complete header over a torn value stays dirty and
 retains the previous authenticated floor. Both banks are still published and
 checked before success. Checkpoint construction keeps its existing ordering.
 
+From `0x0BD6`, counter snapshots pack consecutive entries and padded values into
+256-byte body pages. Each value is authenticated before copying, and each page
+is read back before the checkpoint header and its final MAC are programmed.
+This reduces repeated programs during rotation without changing stored bytes,
+capacity, full-bank erasure or either replica's publication checks. Existing
+`0x0BA8` and `0x0BB0` stores remain readable in both directions.
+
 The private on-flash FIDs and value layouts are fixed:
 
 | FID | Value |
@@ -340,6 +347,23 @@ neither SRAM nor cache-control permissions change. Ed25519 uses dalek's existing
 constant-time base-point tables, with `zeroize` retained and no heap required.
 The tables occupy 30 KiB of flash. The store crate uses speed optimization,
 as the shared SHA-256 core already does.
+From `0x0BD6`, the Ed25519 selection and addition loop uses cache indices after
+the shared field core, leaving the other way for its public table. Linker
+assertions keep both instruction spans disjoint. X25519's group includes its
+constant-time barrier and public ladder multiplier; secp256k1's hot callees
+occupy their own aligned cache way.
+The checked shared flash reader executes from the existing Secure RX SRAM
+region; startup copies it with the other RAM routines before enabling that
+mapping. Its reads, bounds and verification remain unchanged. P-521 ECDH uses
+131 fixed radix-16 rounds: the top digit including its carry is at most two,
+so the encoding's two leading zero digits need no rounds.
+P-384 groups its comb and hot field callees within one XIP
+cache way; the decoded public tables remain on the stack.
+
+Pre-OTP read proofs use precomputed SHA-256 states for the public `NO-OTP`
+key pads. Every backend operation still reads and classifies the OTP root
+afresh. Fused-root HMAC, record MACs, bank authentication and rollback checks
+are unchanged; no secret-derived state survives between operations.
 
 From build `0x0ACF`, Main keeps its complete authenticated version directory
 in protected RAM. A warm read freshly checks the root, verifies its binding to

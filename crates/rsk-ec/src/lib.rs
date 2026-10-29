@@ -8,22 +8,22 @@
 //! operations, the public-key DO they answer with ([`pubdo`]), and — underneath
 //! all of it — fixed-base Lim–Lee comb scalar multiplication and comb-based
 //! ECDSA signing for the NIST/secp Weierstrass curves (P-256, P-384, P-521,
-//! secp256k1), shared by every applet that signs on the generator `G`: FIDO
+//! secp256k1, brainpoolP256r1 and brainpoolP384r1), shared by every applet signing on `G`: FIDO
 //! credentials, PIV GENERAL AUTHENTICATE, OpenPGP PSO:CDS.
 //!
 //! The key type covers more curves than the comb does — Ed25519 (signing) and
-//! X25519 (ECDH) are Montgomery/Edwards and brainpool has no comb table — because
+//! X25519 (ECDH) are Montgomery/Edwards — because
 //! what the applets share is the *stored blob*, `[curve_id] ‖ scalar`, and that
 //! is one type or it is two copies. The comb is an implementation detail of the
-//! four curves that have one.
+//! Weierstrass curves.
 //!
 //! Nothing here names a status word or a filesystem; see [`EcError`].
 //!
 //! `k·G` (the ECDSA nonce commitment) and `d·G` (public-key derivation) are both
 //! *fixed-base* on `G`, so a width-4 comb over a `build.rs`-precomputed table runs
 //! them several× faster than the crate's generic `mul_by_generator` on the in-order
-//! Cortex-M33 — and **bit-identical** to it (KAT-checked in `tests`). P-384 ECDH
-//! and P-521 ECDH use constant-time Jacobian multipliers; other variable-base
+//! Cortex-M33 — and **bit-identical** to it (KAT-checked in `tests`). P-384,
+//! P-521 and Brainpool ECDH use constant-time Jacobian multipliers; other variable-base
 //! curves use their upstream multiplier.
 //!
 //! The ECDSA signers reproduce `ecdsa` 0.17's `sign_prehashed_rfc6979` body with the
@@ -33,11 +33,14 @@
 
 pub mod pubdo;
 
+mod comb_brainpool;
 mod comb_p384;
 mod comb_p384_params;
 mod comb_p521;
 mod comb_p521_params;
 mod curve;
+mod ecdh_bp256;
+mod ecdh_bp384;
 mod ecdh_p384;
 mod ecdh_p521;
 mod error;
@@ -71,7 +74,7 @@ const COMB_D_K256: usize = 64; // secp256k1: ceil(256 / 4)
 /// bit-identical to it (KAT-checked). `$rl` = the scalar's big-endian repr length,
 /// `$bits` = the field bit width.
 macro_rules! comb_mul_fn {
-    ($name:ident, $c:ident, $table:ident, $d:expr, $bits:expr, $rl:expr) => {
+    ($name:ident, $c:ident, $table:ident, $d:expr, $bits:expr, $rl:expr, $double:expr) => {
         pub fn $name(k: &$c::Scalar) -> $c::ProjectivePoint {
             use $c::elliptic_curve::PrimeField;
             use $c::elliptic_curve::sec1::FromSec1Point;
@@ -104,7 +107,7 @@ macro_rules! comb_mul_fn {
 
             let mut q = $c::ProjectivePoint::IDENTITY;
             for t in (0..$d).rev() {
-                q += q; // double
+                $double(&mut q);
                 let mut idx = 0u8;
                 for j in 0..COMB_W {
                     idx |= (bit(j * $d + t) as u8) << j;
@@ -125,9 +128,27 @@ macro_rules! comb_mul_fn {
     };
 }
 
-comb_mul_fn!(comb_mul_p256, p256, GEN_COMB_P256, COMB_D_P256, 256, 32);
+// Sharing the doubling helper with the comb pulls it out of the P-256 ECDH
+// loop; keep that loop's existing inlined formula in Secure SRAM.
+comb_mul_fn!(
+    comb_mul_p256,
+    p256,
+    GEN_COMB_P256,
+    COMB_D_P256,
+    256,
+    32,
+    |q: &mut p256::ProjectivePoint| *q += *q
+);
 
-comb_mul_fn!(comb_mul_k256, k256, GEN_COMB_K256, COMB_D_K256, 256, 32);
+comb_mul_fn!(
+    comb_mul_k256,
+    k256,
+    GEN_COMB_K256,
+    COMB_D_K256,
+    256,
+    32,
+    k256::elliptic_curve::ops::Double::double_in_place
+);
 
 /// A prehash as `N`-byte field bytes, exactly as `ecdsa`'s `bits2field` for a
 /// byte-aligned order (P-256/384, secp256k1): the leftmost `N` bytes of a longer

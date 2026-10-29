@@ -8,6 +8,14 @@ use rsk_secret::Secret;
 const STORE_DOMAIN: &[u8] = b"STORE/V2/ROOT";
 const NO_OTP_SALT: &[u8] = b"NO-OTP";
 
+// States after the public NO_OTP_SALT key pads, before SHA-256 padding.
+pub(super) const NO_OTP_INNER: [u32; 8] = [
+    0x6d09e22e, 0x9f907107, 0x8bc4a120, 0xfa4f2121, 0x5aa096af, 0x45ea9241, 0xc498c7b0, 0xce3ccb21,
+];
+pub(super) const NO_OTP_OUTER: [u32; 8] = [
+    0xe3b6250e, 0xcf4c54f2, 0xdec4e7fe, 0x6aecc3c3, 0x594e6fe9, 0x79de4b22, 0x72d45449, 0x4c6daa0a,
+];
+
 #[cfg(test)]
 std::thread_local! {
     pub(super) static DERIVATIONS: core::cell::Cell<usize> = const { core::cell::Cell::new(0) };
@@ -122,10 +130,12 @@ impl KeySource {
         let mut root = Secret::<[u8; 32]>::zeroed();
         let rows = (self.read)(root.expose_mut());
         self.validate_arm(arm, rows)?;
-        let mac = rsk_crypto::mac::HmacSha256::new(match arm {
-            RootArm::PreOtp => NO_OTP_SALT,
-            RootArm::Otp => root.expose(),
-        });
+        let mac = match arm {
+            RootArm::PreOtp => super::read_proof::ReadMac::PreOtp,
+            RootArm::Otp => {
+                super::read_proof::ReadMac::Otp(rsk_crypto::mac::HmacSha256::new(root.expose()))
+            }
+        };
         let key = needs_key
             .then(|| self.derive_key(arm, root.expose()))
             .transpose()?;

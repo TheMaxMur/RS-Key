@@ -497,7 +497,7 @@ fn ecdh_k256(scalar: &[u8; 32], peer_point: &[u8], out: &mut [u8]) -> Result<usi
     Ok(z.len())
 }
 
-// brainpoolP256r1 / brainpoolP384r1 (bp256/bp384 0.14, fiat-crypto backend). These
+// brainpoolP256r1 / brainpoolP384r1 (bp256/bp384 0.14). These
 // crates leave `SigningKey`/`VerifyingKey` generic in `ecdsa`, so name them there;
 // signing is deterministic RFC 6979 (bp `sha256`/`sha384` feature) like P-256/P-384.
 
@@ -509,11 +509,7 @@ fn sign_bp256(s: &[u8; 32], prehash: &[u8], out: &mut [u8]) -> Result<usize, EcE
             .map_err(|_| EcError::Failed)?;
         key.to_nonzero_scalar()
     });
-    let sig = ecdsa::hazmat::sign_prehashed_rfc6979::<
-        bp256::BrainpoolP256r1,
-        <bp256::BrainpoolP256r1 as ecdsa::DigestAlgorithm>::Digest,
-    >(d.expose(), prehash, &[])
-    .0;
+    let sig = crate::comb_brainpool::p256::sign(d.expose(), prehash);
     let b = sig.to_bytes();
     out[..b.len()].copy_from_slice(b.as_slice());
     Ok(b.len())
@@ -527,11 +523,7 @@ fn sign_bp384(s: &[u8; 48], prehash: &[u8], out: &mut [u8]) -> Result<usize, EcE
             .map_err(|_| EcError::Failed)?;
         key.to_nonzero_scalar()
     });
-    let sig = ecdsa::hazmat::sign_prehashed_rfc6979::<
-        bp384::BrainpoolP384r1,
-        <bp384::BrainpoolP384r1 as ecdsa::DigestAlgorithm>::Digest,
-    >(d.expose(), prehash, &[])
-    .0;
+    let sig = crate::comb_brainpool::p384::sign(d.expose(), prehash);
     let b = sig.to_bytes();
     out[..b.len()].copy_from_slice(b.as_slice());
     Ok(b.len())
@@ -539,10 +531,12 @@ fn sign_bp384(s: &[u8; 48], prehash: &[u8], out: &mut [u8]) -> Result<usize, EcE
 
 /// brainpoolP256r1 public point: SEC1 uncompressed `04 ‖ x ‖ y` (65 bytes).
 fn pubkey_bp256(s: &[u8; 32], out: &mut [u8]) -> Result<usize, EcError> {
-    let k =
-        ecdsa::SigningKey::<bp256::BrainpoolP256r1>::from_bytes(&bp256::r1::FieldBytes::from(*s))
-            .map_err(|_| EcError::Failed)?;
-    let pt = k.verifying_key().to_sec1_point(false);
+    let k = bp256::r1::SecretKey::from_bytes(&bp256::r1::FieldBytes::from(*s))
+        .map_err(|_| EcError::Failed)?;
+    let d = Secret::new(k.to_nonzero_scalar());
+    let pt = crate::comb_brainpool::p256::mul(d.expose())
+        .to_affine()
+        .to_sec1_point(false);
     let b = pt.as_bytes();
     out[..b.len()].copy_from_slice(b);
     Ok(b.len())
@@ -550,37 +544,45 @@ fn pubkey_bp256(s: &[u8; 32], out: &mut [u8]) -> Result<usize, EcError> {
 
 /// brainpoolP384r1 public point: SEC1 uncompressed `04 ‖ x ‖ y` (97 bytes).
 fn pubkey_bp384(s: &[u8; 48], out: &mut [u8]) -> Result<usize, EcError> {
-    let k =
-        ecdsa::SigningKey::<bp384::BrainpoolP384r1>::from_bytes(&bp384::r1::FieldBytes::from(*s))
-            .map_err(|_| EcError::Failed)?;
-    let pt = k.verifying_key().to_sec1_point(false);
+    let k = bp384::r1::SecretKey::from_bytes(&bp384::r1::FieldBytes::from(*s))
+        .map_err(|_| EcError::Failed)?;
+    let d = Secret::new(k.to_nonzero_scalar());
+    let pt = crate::comb_brainpool::p384::mul(d.expose())
+        .to_affine()
+        .to_sec1_point(false);
     let b = pt.as_bytes();
     out[..b.len()].copy_from_slice(b);
     Ok(b.len())
 }
 
 /// brainpoolP256r1 ECDH — SEC1 peer point, 32-byte shared x-coordinate.
+#[inline(never)]
 fn ecdh_bp256(scalar: &[u8; 32], peer_point: &[u8], out: &mut [u8]) -> Result<usize, EcError> {
     let sk = bp256::r1::SecretKey::from_bytes(&bp256::r1::FieldBytes::from(*scalar))
         .map_err(|_| EcError::Failed)?;
     let pk = sec1_peer::<bp256::BrainpoolP256r1>(peer_point)?;
-    let shared =
-        bp256::elliptic_curve::ecdh::diffie_hellman(sk.to_nonzero_scalar(), pk.as_affine());
-    let z = shared.raw_secret_bytes();
-    out[..z.len()].copy_from_slice(z.as_slice());
-    Ok(z.len())
+    let scalar = Secret::new(sk.to_nonzero_scalar());
+    let point = crate::ecdh_bp256::mul(&pk, scalar.expose())?;
+    let z = Secret::new(bp256::elliptic_curve::point::AffineCoordinates::x(
+        point.expose(),
+    ));
+    out[..z.expose().len()].copy_from_slice(z.expose().as_slice());
+    Ok(z.expose().len())
 }
 
 /// brainpoolP384r1 ECDH — SEC1 peer point, 48-byte shared x-coordinate.
+#[inline(never)]
 fn ecdh_bp384(scalar: &[u8; 48], peer_point: &[u8], out: &mut [u8]) -> Result<usize, EcError> {
     let sk = bp384::r1::SecretKey::from_bytes(&bp384::r1::FieldBytes::from(*scalar))
         .map_err(|_| EcError::Failed)?;
     let pk = sec1_peer::<bp384::BrainpoolP384r1>(peer_point)?;
-    let shared =
-        bp384::elliptic_curve::ecdh::diffie_hellman(sk.to_nonzero_scalar(), pk.as_affine());
-    let z = shared.raw_secret_bytes();
-    out[..z.len()].copy_from_slice(z.as_slice());
-    Ok(z.len())
+    let scalar = Secret::new(sk.to_nonzero_scalar());
+    let point = crate::ecdh_bp384::mul(&pk, scalar.expose())?;
+    let z = Secret::new(bp384::elliptic_curve::point::AffineCoordinates::x(
+        point.expose(),
+    ));
+    out[..z.expose().len()].copy_from_slice(z.expose().as_slice());
+    Ok(z.expose().len())
 }
 
 /// X25519 ECDH (OpenPGP Cv25519, PIV X25519): the big-endian MPI scalar reversed

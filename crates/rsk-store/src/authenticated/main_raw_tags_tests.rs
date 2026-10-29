@@ -509,3 +509,59 @@ fn several_record_hits_retain_their_proofs_without_repeating_hkdf() {
     assert_eq!(DERIVATIONS.with(core::cell::Cell::get), 0);
     assert_eq!(READ_MAC_PROOFS.with(core::cell::Cell::get), 0);
 }
+
+#[test]
+fn pre_otp_read_tags_match_the_original_hmac_and_read_fresh_otp() {
+    use crate::authenticated::read_proof::{ReadMac, ReadProof};
+    MODE.with(|mode| mode.set(RootRead::Blank));
+    CHANGE_AFTER_READ.with(|change| change.set(false));
+    RESTORE_AFTER_READ.with(|change| change.set(false));
+    let mut main = main();
+    main.arm = RootArm::PreOtp;
+    let key = source().key(RootArm::PreOtp).unwrap();
+    main.initialize(key.expose(), 0, &Directory::new()).unwrap();
+    main.write(key.expose(), 0xB000, Some(b"owner")).unwrap();
+    let bound = main.authority.read_bound(main.identity, main.arm).unwrap();
+    let entry = main.directory.find(0xB000).unwrap();
+    let reference = ReadProof {
+        mac: ReadMac::Otp(rsk_crypto::mac::HmacSha256::new(b"NO-OTP")),
+        key: None,
+        serial_hash: [0x43; 32],
+    };
+    READS.with(|count| count.set(0));
+    for (index, mode) in [RootRead::Blank, RootRead::Fused].into_iter().enumerate() {
+        MODE.with(|current| current.set(mode));
+        let proof = source().prepare_read(RootArm::PreOtp, false).unwrap();
+        assert_eq!(READS.with(core::cell::Cell::get), index + 1);
+        assert_eq!(proof.mount_tag(bound), reference.mount_tag(bound));
+        for digest in [[0; 32], [0x37; 32], [0xff; 32]] {
+            assert_eq!(
+                proof.payload_tag(bound, entry, &digest),
+                reference.payload_tag(bound, entry, &digest)
+            );
+        }
+    }
+    MODE.with(|mode| mode.set(RootRead::Blank));
+    READS.with(|count| count.set(0));
+    for index in 0..3 {
+        let mut out = [0; 5];
+        assert_eq!(
+            main.read_with_source(source(), RootArm::PreOtp, 0xB000, &mut out),
+            Ok(Some(5))
+        );
+        assert_eq!(&out, b"owner");
+        assert_eq!(READS.with(core::cell::Cell::get), index + 1);
+    }
+    MODE.with(|mode| mode.set(RootRead::Unreadable));
+    let mut out = [0xA5; 5];
+    assert_eq!(
+        main.read_with_source(source(), RootArm::PreOtp, 0xB000, &mut out),
+        Err(Error::MemoryFatal)
+    );
+    assert_eq!(out, [0xA5; 5]);
+    assert_eq!(READS.with(core::cell::Cell::get), 4);
+    MODE.with(|mode| mode.set(RootRead::Fused));
+    let latched = KeySource::new([0x43; 32], root_read, true);
+    assert!(latched.prepare_read(RootArm::PreOtp, false).is_err());
+    assert_eq!(READS.with(core::cell::Cell::get), 5);
+}

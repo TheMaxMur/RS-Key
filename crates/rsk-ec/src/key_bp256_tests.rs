@@ -72,3 +72,36 @@ fn bp256_private_sign_rejects_zero_and_out_of_range_scalars_without_output() {
         }
     }
 }
+
+#[test]
+fn bp256_public_points_match_upstream_and_reject_invalid_scalars() {
+    let mut one = [0; 32];
+    one[31] = 1;
+    let mut high = [0; 32];
+    high[0] = 0x80;
+    let last: [u8; 32] = (-bp256::r1::Scalar::ONE).to_repr().into();
+    for scalar in [one, high, last] {
+        let reference = SigningKey::from_bytes(&scalar.into()).unwrap();
+        let expected = reference.verifying_key().to_sec1_point(false);
+        let mut out = [0x5a; MAX_EC_POINT + 4];
+        let used = PrivKey::Bp256(scalar).public_point(&mut out).unwrap();
+        assert_eq!(&out[..used], expected.as_bytes());
+        assert!(out[used..].iter().all(|byte| *byte == 0x5a));
+    }
+    let mut order = last;
+    for byte in order.iter_mut().rev() {
+        let (next, carry) = byte.overflowing_add(1);
+        *byte = next;
+        if !carry {
+            break;
+        }
+    }
+    for scalar in [[0; 32], order, [0xff; 32]] {
+        let mut out = [0x5a; MAX_EC_POINT];
+        assert_eq!(
+            PrivKey::Bp256(scalar).public_point(&mut out),
+            Err(EcError::Failed)
+        );
+        assert_eq!(out, [0x5a; MAX_EC_POINT]);
+    }
+}

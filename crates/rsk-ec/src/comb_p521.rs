@@ -20,6 +20,12 @@ fn decode((x, y): &([u8; 66], [u8; 66])) -> p521::AffinePoint {
     .expect("valid comb point")
 }
 
+// Keep the large complete double out of the repeated four-group selection loop.
+#[inline(never)]
+fn double(point: &mut p521::ProjectivePoint) {
+    point.double_in_place();
+}
+
 /// Fixed-base P-521 multiplication with four signed width-four groups.
 pub fn comb_mul_p521(k: &p521::Scalar) -> p521::ProjectivePoint {
     let mut tables = [[p521::AffinePoint::IDENTITY; ENTRIES]; GROUPS];
@@ -38,7 +44,7 @@ pub fn comb_mul_p521(k: &p521::Scalar) -> p521::ProjectivePoint {
     };
     let mut q = Secret::new(p521::ProjectivePoint::IDENTITY);
     for t in (0..ROUNDS).rev() {
-        q.expose_mut().double_in_place();
+        double(q.expose_mut());
         for (group, table) in tables.iter().enumerate() {
             let mut index = 0u8;
             for j in 0..WIDTH {

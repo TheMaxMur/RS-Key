@@ -1576,6 +1576,23 @@ whether the median moved by more than the pooled noise. Always compare in one
 sitting; comparing raw numbers across sessions or builds reads cache-layout luck
 as a real change.
 
+The TrustZone code-placement assertions were falsified through the
+`check.sh` firmware-image row on 2026-10-29:
+
+| Deliberate linker change | Observed build refusal |
+|---|---|
+| Remove all three secp256k1 section selectors | `secp256k1 field code is missing` |
+| Add 8192 bytes to the grouped section | `secp256k1 field code exceeds one XIP cache way` |
+| Remove all four Ed25519 section selectors | `Ed25519 code is missing` |
+| Add 8192 bytes to the Ed25519 section | `Ed25519 code overlaps field cache indices` |
+| Move the Ed25519 section by one cache line | `Ed25519 cache offset differs from field span` |
+| Remove the shared Curve25519 field selectors | `Curve25519 field code is missing` |
+| Remove the constant-time barrier selector | `Constant-time barrier changed; review grouping` |
+| Remove the X25519 public ladder multiplier selector | `X25519 ladder multiplier changed; review grouping` |
+| Remove the shared flash reader selector | `Shared flash reader is missing from Secure SRAM` |
+| Remove the P-384 mixed-addition selector | `P-384 mixed addition monomorph changed; review placement` |
+| Add 8192 bytes to the P-384 section | `P-384 comb code exceeds one XIP cache way` |
+
 ## FIDO conformance
 
 The latest complete run against the **FIDO Alliance Conformance Tools**
