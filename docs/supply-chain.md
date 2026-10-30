@@ -344,8 +344,9 @@ What `nix build .#<flavor>` runs, out of `nix/firmware.nix`:
 # buildPhase
 export PATH="${toolchain}/lib/rustlib/$(rustc -vV | sed -n 's/^host: //p')/bin:$PATH"
 export CARGO_NET_OFFLINE=true
-export RSK_TZ_CARGO_CONFIG="target.${target}.rustflags=[\"--remap-path-prefix=$NIX_BUILD_TOP=/build\",\"--remap-path-prefix=${toolchain}=/toolchain\"]"
-bash firmware/trustzone/build.sh ${lib.escapeShellArgs buildFlags}
+export RSK_TZ_OUT="$PWD/target/trustzone"
+remap_config="target.${target}.rustflags=[\"--remap-path-prefix=$NIX_BUILD_TOP=/build\",\"--remap-path-prefix=${toolchain}=/toolchain\"]"
+bash scripts/build.sh --config "$remap_config" ${lib.escapeShellArgs buildFlags}
 # installPhase
 mkdir -p "$out"
 cp "target/trustzone/combined.elf" "$out/${name}.elf"
@@ -360,7 +361,7 @@ The files that decide what a release is. A digest here covers the parts the tabl
 |---|---|
 | `.github/workflows/release.yml` | `9f4218cfb9869bc458be8076f2185af6bdb734598db9b49167557dca30324a05` |
 | `.github/workflows/release-build.yml` | `f4b514f89c593def72b9800914d54295f3a29d51ec45bde50fe06ef29c80fb27` |
-| `nix/firmware.nix` | `79041337af6c02ed2c2559090df6b234da4e364e1283dfb8df87c7575b8a6b32` |
+| `nix/firmware.nix` | `05d41a72010d485828612f4ee1d86b4a360f6b467d0656c376555d713711d936` |
 | `scripts/pt.sh` | `c55ba6255421a664c13ba8b1e3b05b01af842d3ba8e95cd986a7a46005c877ed` |
 
 The CI code that runs them, pinned by commit:

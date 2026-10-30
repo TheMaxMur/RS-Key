@@ -202,7 +202,7 @@ CONTRIBUTING.md → "Code".
   reaches the firmware image, so moving it is not a behaviour change (no
   `bcdDevice` bump).
 - **Use the combined TrustZone image.** `nix build .#firmware` and
-  `nix develop -c bash firmware/trustzone/build.sh` build S and NS together,
+  `nix develop -c bash scripts/build.sh` build S and NS together,
   including the partition table. Rebuild without `no-touch` or diagnostic
   features before flashing; sign the combined ELF. `check.sh` leaves a combined
   **no-touch** image at `target/trustzone/combined.elf`. TrustZone is mandatory;
@@ -215,7 +215,7 @@ CONTRIBUTING.md → "Code".
 | Path | What |
 |---|---|
 | `firmware/` | The binary: boot, USB, the worker's sequencing, LED, presence, and the board halves of `rsk-device`'s `Hooks` / `rsk-vendor`'s `Platform`. `no_std`, embedded-only. |
-| `firmware/trustzone/nonsecure/` | `firmware-ns`, the TrustZone USB classes/framing and TIMER1 binary; it shares the root workspace and is built with the Secure half by `firmware/trustzone/build.sh`. |
+| `firmware/trustzone/nonsecure/` | `firmware-ns`, the TrustZone USB classes/framing and TIMER1 binary; it shares the root workspace and is built with the Secure half by `scripts/build.sh`. |
 | `crates/rsk-*` | The libraries, and the one thing that separates them from `firmware/`: they are **host-tested**, so host-testable logic belongs here. Which crates exist is [`docs/architecture.md`](docs/architecture.md#crates) — `scripts/crate_graph.py` holds that table to the workspace members, so it is the list that cannot go stale. Naming them here instead is what drifted across four refactors. |
 | `tools/rsk/` | The Python host CLI (`rsk …`). Match the neighbouring modules: `register(sub)`, `die()`, flake-provided deps (no pip). |
 | `tools/tui/` | The Rust TUI cockpit — **its own workspace** (build/clippy/test via its own manifest). |

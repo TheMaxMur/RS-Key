@@ -122,7 +122,7 @@ def main():
                 needle = "grant(access.usbctrl(), SECURE_CORES);"
                 assert body.count(needle) == 1
                 policy.write_text(body.replace(needle, "grant(access.usbctrl(), SECURE_CORE0);"))
-            subprocess.run(["bash", "firmware/trustzone/build.sh"], cwd=tree, env=env, check=True)
+            subprocess.run(["bash", "scripts/build.sh"], cwd=tree, env=env, check=True)
             probe(tree, args.emulator.resolve(), args.base_port, fenced)
     print("PASS: Core1 cleanup works; removing only its USB grant leaves the fence incomplete.", flush=True)
 

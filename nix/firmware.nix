@@ -210,8 +210,9 @@ let
           # on the same nested TOML key the repo config uses — a quoted
           # "thumbv8m.main-none-eabihf" is a different key and merges nothing.
           export CARGO_NET_OFFLINE=true
-          export RSK_TZ_CARGO_CONFIG="target.${target}.rustflags=[\"--remap-path-prefix=$NIX_BUILD_TOP=/build\",\"--remap-path-prefix=${toolchain}=/toolchain\"]"
-          bash firmware/trustzone/build.sh ${lib.escapeShellArgs buildFlags}
+          export RSK_TZ_OUT="$PWD/target/trustzone"
+          remap_config="target.${target}.rustflags=[\"--remap-path-prefix=$NIX_BUILD_TOP=/build\",\"--remap-path-prefix=${toolchain}=/toolchain\"]"
+          bash scripts/build.sh --config "$remap_config" ${lib.escapeShellArgs buildFlags}
           runHook postBuild
         '';
         installPhase = ''

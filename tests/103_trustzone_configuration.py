@@ -135,7 +135,7 @@ def main():
         fixture(root, tree)
         env = os.environ | {"RSK_TZ_NO_TOUCH": "1", "LED_KIND": "none", "FLASH_SIZE": "4M",
                             "CARGO_BUILD_JOBS": "2"}
-        subprocess.run(["bash", "firmware/trustzone/build.sh"], cwd=tree, env=env, check=True)
+        subprocess.run(["bash", "scripts/build.sh"], cwd=tree, env=env, check=True)
         image = tree / "target/trustzone/combined.elf"
         probe(image, emulator, args.base_port, next_setup=False, accepted=True)
         probe(image, emulator, args.base_port, next_setup=True, accepted=True)
@@ -148,7 +148,7 @@ def main():
         needle = "    for _ in 0..4 {"
         assert body.count(needle) == 1
         usb.write_text(body.replace(needle, acknowledgement + needle))
-        subprocess.run(["bash", "firmware/trustzone/build.sh"], cwd=tree, env=env, check=True)
+        subprocess.run(["bash", "scripts/build.sh"], cwd=tree, env=env, check=True)
         probe(image, emulator, args.base_port, next_setup=False, accepted=True)
         probe(image, emulator, args.base_port, next_setup=True, accepted=False)
     print("PASS: ACK-before-SETUP preserves HID; reversed ordering fails only the raced case.", flush=True)

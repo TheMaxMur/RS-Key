@@ -460,7 +460,7 @@ def trustzone_default(root):
     )
     found = re.search(r"\btrustzone\s*\?\s*([^,}\n]+)", code)
     if found is None:
-        if "bash firmware/trustzone/build.sh" not in code:
+        if "bash scripts/build.sh" not in code:
             raise ValueError(f"{FLAKE}: mandatory TrustZone builder is missing")
         return True
     if found.group(1).strip() not in ("true", "false"):
@@ -533,7 +533,7 @@ def check_sh_rows(root):
         label, command = found.groups()
         features = frozenset(
             feature
-            for group in FEATURE_FLAG.findall(command if "bash firmware/trustzone/build.sh" in command else cargo_part(command))
+            for group in FEATURE_FLAG.findall(command if "bash scripts/build.sh" in command else cargo_part(command))
             for feature in group.split(",")
         )
         # The knobs sit in the `env …` prefix, ahead of the cargo they wrap.
@@ -560,7 +560,7 @@ def check_sh_firmware_features(root):
         feature
         for features, _env, command in check_sh_rows(root).values()
         if ("cargo " in command and "firmware" in gate_lines.packages(command))
-        or "bash firmware/trustzone/build.sh" in command
+        or "bash scripts/build.sh" in command
         for feature in features
     }
 

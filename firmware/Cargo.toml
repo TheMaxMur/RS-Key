@@ -103,10 +103,10 @@ no-touch = []
 # Advertise ML-DSA-44 in getInfo `algorithms` — OFF by default because shipped
 # Firefoxes reject the whole getInfo on an unknown COSE id (see rsk-fido). The
 # PQC capability works either way; this only changes the advertisement:
-# `bash firmware/trustzone/build.sh --features advertise-pqc`.
+# `bash scripts/build.sh --features advertise-pqc`.
 advertise-pqc = ["rsk-fido/advertise-pqc"]
 # FIPS-style policy profile, OFF by default (the default image is unchanged).
-# Opt-in: `bash firmware/trustzone/build.sh --features fips-profile` bakes the
+# Opt-in: `bash scripts/build.sh --features fips-profile` bakes the
 # locked algorithm policy into the image — and secure boot seals it there.
 # What it locks: docs/guides/fips.md. A profile, not a FIPS validation.
 fips-profile = ["rsk-fido/fips-profile", "rsk-piv/fips-profile", "rsk-display?/fips-profile"]
@@ -174,7 +174,7 @@ strict-config = ["rsk-mgmt/strict-config", "rsk-fido/strict-config", "rsk-otp/st
 # screen compiles NONE of it — the shipped image is byte-identical (the gate
 # asserts `rsk-ui` is absent from the default firmware dependency tree). Build the
 # display flavor with `LED_KIND=none FLASH_SIZE=16M bash
-# firmware/trustzone/build.sh --features display` (the panel is the status indicator, so there is no
+# scripts/build.sh --features display` (the panel is the status indicator, so there is no
 # addressable LED, which also frees GPIO16 for the backlight).
 display = ["rsk-device/display", "dep:rsk-display", "dep:rsk-ui", "dep:rsk-bip39", "dep:rsk-slip39", "dep:mipidsi", "dep:embedded-graphics"]
 # Serve Yubico's experimental `previewSign` WebAuthn extension (see rsk-fido's

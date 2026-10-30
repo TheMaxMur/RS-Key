@@ -55,7 +55,7 @@ deps from `flake.nix`.
 
 ```sh
 nix develop                                  # first run downloads the toolchain
-bash firmware/trustzone/build.sh
+bash scripts/build.sh
 cp target/trustzone/combined.uf2 firmware.uf2
 ```
 

@@ -59,20 +59,20 @@ three compile-time knobs usually cover it:
 
 ```sh
 # example: an 8 MB board with a plain LED on GPIO25
-env FLASH_SIZE=8M LED_KIND=gpio LED_PIN=25 bash firmware/trustzone/build.sh
+env FLASH_SIZE=8M LED_KIND=gpio LED_PIN=25 bash scripts/build.sh
 
 # example: a 16 MB TenStar RP2350-USB — WS2812 on GP22, standard GRB order
-env FLASH_SIZE=16M LED_PIN=22 LED_ORDER=grb bash firmware/trustzone/build.sh
+env FLASH_SIZE=16M LED_PIN=22 LED_ORDER=grb bash scripts/build.sh
 
 # example: a Seeed XIAO RP2350 — WS2812 on GP22, GRB, power-gated by GP23 (driven high),
 # its active-low USR LED on GP25 parked off, and its 2 MB flash (smaller KVMAIN)
-env FLASH_SIZE=2M KVMAIN=896K LED_PIN=22 LED_ORDER=grb LED_POWER_PIN=23 USR_LED_PIN=25 bash firmware/trustzone/build.sh
+env FLASH_SIZE=2M KVMAIN=896K LED_PIN=22 LED_ORDER=grb LED_POWER_PIN=23 USR_LED_PIN=25 bash scripts/build.sh
 
 # example: WS2812 on GP22 and a button-to-GND on GP0 (active-low)
-env LED_PIN=22 PRESENCE_PIN=0 bash firmware/trustzone/build.sh
+env LED_PIN=22 PRESENCE_PIN=0 bash scripts/build.sh
 
 # example: an active-high capacitive touch sensor on GP0
-env PRESENCE_PIN=0 PRESENCE_ACTIVE_HIGH=1 bash firmware/trustzone/build.sh
+env PRESENCE_PIN=0 PRESENCE_ACTIVE_HIGH=1 bash scripts/build.sh
 ```
 
 The four LED knobs (`LED_PIN` / `LED_KIND` / `LED_ORDER` / `MAX_LEDS`) set only the

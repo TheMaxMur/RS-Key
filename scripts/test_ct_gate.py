@@ -19,7 +19,7 @@ re-ran them. These do, every session. Neither half touches the working tree.
 
 Which image the second half reads is whichever `target/` holds — after
 `check.sh`'s later rows that is the no-touch build, and after
-`bash firmware/trustzone/build.sh` it is the default one. No case here reads a
+`bash scripts/build.sh` it is the default one. No case here reads a
 count off it, so both drive these arms; pinning the default image is the row's
 job, not this file's.
 
@@ -1132,7 +1132,7 @@ def whole_image():
     """
     elf = ROOT / ct_gate.ELF
     assert elf.is_file(), (
-        f"{ct_gate.ELF} is not there — `bash firmware/trustzone/build.sh`"
+        f"{ct_gate.ELF} is not there — `bash scripts/build.sh`"
         " first. The arms below prove a machine-code defect reddens the row, and"
         " they have no image to put a defect into."
     )

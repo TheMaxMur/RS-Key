@@ -38,6 +38,12 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ## [Unreleased]
 
+- Move the firmware entry point to `scripts/build.sh` (bcdDevice 0x0BDB;
+  build refactor, no applet behavior change). It inherits exported
+  environment variables, combines `FEATURES` with Cargo feature arguments,
+  forwards common Cargo options to all three TrustZone stages and supports
+  custom output directories without mixing Secure and Non-secure artifacts.
+
 - Fix picotool's ECDSA DER/RAW conversion for leading-zero scalars in the pinned
   Nix tool. Signing now verifies the bytes written to the image; the gate also
   reopens the sealed ELF and requires a verified hash and signature.

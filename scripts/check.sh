@@ -180,7 +180,7 @@ assurance_trace_is_image_neutral() {
     exit 1
   fi
 
-  RSK_TZ_OUT="$dir/target-before" bash "$src/firmware/trustzone/build.sh"
+  RSK_TZ_OUT="$dir/target-before" bash "$src/scripts/build.sh"
   elf_before="$dir/target-before/combined.elf"
   arm-none-eabi-objcopy -O binary "$elf_before" "$dir/before.bin"
 
@@ -189,7 +189,7 @@ assurance_trace_is_image_neutral() {
     printf '\ncompile_error!("assurance source reached production");\n' \
       >> "$src/crates/rsk-fido/src/$f"
   done
-  RSK_TZ_OUT="$dir/target-poison" bash "$src/firmware/trustzone/build.sh"
+  RSK_TZ_OUT="$dir/target-poison" bash "$src/scripts/build.sh"
   elf_poison="$dir/target-poison/combined.elf"
   arm-none-eabi-objcopy -O binary "$elf_poison" "$dir/poison.bin"
 
@@ -395,7 +395,7 @@ run "fmt"                      cargo fmt --all --check
 # `BOARD` because `rsk-wipe`'s build script refuses to guess a flash size (see
 # the rsk-wipe steps below); `waveshare-one` is the reference board, whose
 # values are the same defaults every other knob falls back to.
-run "TrustZone image" bash firmware/trustzone/build.sh
+run "TrustZone image" bash scripts/build.sh
 export RSK_TZ_IMPLIB="$PWD/target/trustzone/ns-import.a"
 export RSK_TZ_NS_MEMORY="$PWD/target/trustzone/nonsecure-memory.x"
 export RSK_TZ_SECURE_MEMORY="$PWD/target/trustzone/secure-memory.x"
@@ -577,7 +577,7 @@ run "clippy (display strong-pin)" env LED_KIND=none cargo clippy -p firmware --f
 run_tests "test (display wiring)"    cargo test -p rsk-device --features display --target "$HOST"
 run "clippy (display wiring)"  cargo clippy -p rsk-device --features display --target "$HOST" --all-targets -- -D warnings
 # Read the shipping combined TrustZone ELF; NS has its own ELF/DWARF audit.
-run "build firmware (release)" bash firmware/trustzone/build.sh
+run "build firmware (release)" bash scripts/build.sh
 run "assurance-trace image identity" assurance_trace_is_image_neutral
 run "firmware size budget"     firmware_size_budget
 run "firmware stack floor"     firmware_stack_floor
@@ -610,7 +610,7 @@ run "registered owners in the shipped image" python scripts/owner_binding_gate.p
 # the XIP window, where the bootrom's RP2350-E10 absolute block lives, and
 # `picotool partition create` refuses a table claiming it — a build the release
 # makes (display, 16mb) and the 4 MB gate above never exercised.
-run "build firmware (16M)"     env FLASH_SIZE=16M bash firmware/trustzone/build.sh
+run "build firmware (16M)"     env FLASH_SIZE=16M bash scripts/build.sh
 run "partition table fences the store (16M)" partition_table_fences_the_store
 # The trusted-display flavor must keep building from the same tree. Built
 # `LED_KIND=none` (the panel replaces the addressable LED and its backlight uses
@@ -625,7 +625,7 @@ run "partition table fences the store (16M)" partition_table_fences_the_store
 # column says so in as many words. It does not make the `SEC-DISP-*` rows
 # `covered`: this compiles the shipped image, and their EVIDENCE is still
 # produced at 4 MB.
-run "build firmware (display)" env LED_KIND=none FLASH_SIZE=16M bash firmware/trustzone/build.sh --features display
+run "build firmware (display)" env LED_KIND=none FLASH_SIZE=16M bash scripts/build.sh --features display
 run "firmware stack floor (display)" display_stack_floor
 # Machine-checked "no size cost for keys without a screen": the display UI crate
 # and its driver stack must be absent from the DEFAULT firmware dependency tree, so
@@ -636,7 +636,7 @@ run "display code absent from default image" sh -c '
     echo "FAIL: display code (rsk-ui/rsk-bip39/rsk-slip39/mipidsi) leaked into the default (no-display) firmware image"; exit 1
   fi'
 # The test build: no BOOTSEL presence, so the automated suites don't hang on a touch.
-run "build firmware (test, --features no-touch)" bash firmware/trustzone/build.sh --features no-touch
+run "build firmware (test, --features no-touch)" bash scripts/build.sh --features no-touch
 # rsk-wipe bakes its erase length AND its LED wiring in at build time, and it is
 # the signed recovery hatch: build it for every board, so a change that stops
 # `BOARD` reaching it (which once left a 16 MB board's whole KV store intact behind

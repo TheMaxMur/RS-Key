@@ -132,12 +132,12 @@ def main():
         usb.write_text(body)
         env = os.environ | {"RSK_TZ_NO_TOUCH": "1", "LED_KIND": "none", "FLASH_SIZE": "4M",
                             "CARGO_BUILD_JOBS": "2"}
-        subprocess.run(["bash", "firmware/trustzone/build.sh"], cwd=tree, env=env, check=True)
+        subprocess.run(["bash", "scripts/build.sh"], cwd=tree, env=env, check=True)
         probe(tree, args.emulator.resolve(), args.base_port, revoked=True)
         needle = "if state.observer.observe_hal(Revocation::Reset)"
         assert body.count(needle) == 1
         usb.write_text(body.replace(needle, "if false && state.observer.observe_hal(Revocation::Reset)"))
-        subprocess.run(["bash", "firmware/trustzone/build.sh"], cwd=tree, env=env, check=True)
+        subprocess.run(["bash", "scripts/build.sh"], cwd=tree, env=env, check=True)
         probe(tree, args.emulator.resolve(), args.base_port, revoked=False)
     print("PASS: a post-snapshot HAL reset revokes auth; removing its fallback retains PIN authority.", flush=True)
 

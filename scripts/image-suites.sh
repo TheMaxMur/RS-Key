@@ -14,9 +14,9 @@ mkdir "$WORK"
 WORK="$(cd "$WORK" && pwd)"
 echo "image suites: logs and reports in $WORK"
 
-bash firmware/trustzone/build.sh --features no-touch
-cp "${RSK_TZ_OUT:-target/trustzone}/combined.elf" "$WORK/firmware-pt.elf"
-cp "${RSK_TZ_OUT:-target/trustzone}/import.elf" "$WORK/import.elf"
+bash scripts/build.sh --features no-touch
+cp "${RSK_TZ_OUT:-${CARGO_TARGET_DIR:-target}/trustzone}/combined.elf" "$WORK/firmware-pt.elf"
+cp "${RSK_TZ_OUT:-${CARGO_TARGET_DIR:-target}/trustzone}/import.elf" "$WORK/import.elf"
 CARGO_PROFILE_RELEASE_DEBUG_ASSERTIONS=true CARGO_PROFILE_RELEASE_OVERFLOW_CHECKS=true \
   cargo build --locked --release --manifest-path tools/emu/Cargo.toml --target "$HOST_TARGET"
 

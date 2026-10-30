@@ -182,7 +182,7 @@ rec {
       echo "  target:   ${target}"
       echo "  picotool: $(picotool version 2>/dev/null | head -1 || echo 'n/a')"
       echo
-      echo "Build:  bash firmware/trustzone/build.sh [--features ...]"
+      echo "Build:  bash scripts/build.sh [--features ...]"
       echo "  (or:  nix build .#firmware                 # hermetic → result/firmware.uf2)"
       echo "Image:  target/trustzone/combined.uf2       # includes the KV partition fence"
       echo "Flash:  hold BOOTSEL, plug in the RP2350, drag firmware.uf2 to the RP2350 drive"

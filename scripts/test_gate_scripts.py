@@ -108,6 +108,7 @@ GATES = sorted(p.name for p in HERE.glob("*_gate.py") if not p.name.startswith("
 #: `kani.sh` are additionally not `check.sh` rows at all, so a rule that assumed
 #: they were would be satisfied by the comments that name them.
 NAMED = {
+    "build.sh": ("test_trustzone_build.py", "check.sh"),
     "../formal/run-tlc.sh": ("test_run_tlc.py", "../.github/workflows/deep-checks.yml"),
     # The config generator: `config_gen_gate.py` is only as good as the script it
     # re-runs, and nothing else in `scripts/` names it — that guard IS its runner.

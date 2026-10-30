@@ -72,7 +72,7 @@
 subject = "owner->image"
 method = "BINARY-CHECKED"
 artifact = "target/trustzone/combined.elf"
-build = "bash firmware/trustzone/build.sh"
+build = "bash scripts/build.sh"
 statement = "Every (file, function) assurance/token_refinement.toml owns is bound to this ELF: it defines a symbol for it, or the image's DWARF carries it as an abstract instance with at least one inlined call site, or it is registered absent below with a basis this gate re-derives. The artifact is held against assurance/image.toml's `elf` so the two registries cannot name different binaries."
 
 [[claim]]

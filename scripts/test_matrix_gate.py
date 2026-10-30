@@ -1967,6 +1967,6 @@ def test_mandatory_builder_refuses_an_explicit_legacy_override(tree):
 
 def test_trustzone_wrapper_features_are_checked_by_the_matrix_row(tree, capsys):
     path = tree.root / "scripts/check.sh"
-    path.write_text(path.read_text() + '\nrun "TrustZone" bash firmware/trustzone/build.sh --features stale-tz-feature\n')
+    path.write_text(path.read_text() + '\nrun "TrustZone" bash scripts/build.sh --features stale-tz-feature\n')
     assert 'stale-tz-feature' in matrix_gate.check_sh_firmware_features(tree.root)
     assert 'a stale row' in red(tree, capsys)

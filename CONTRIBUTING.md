@@ -65,7 +65,7 @@ The default host target is `aarch64-apple-darwin` because that's where
 development happens; on Linux run `HOST_TARGET=x86_64-unknown-linux-gnu
 ./scripts/check.sh`.
 
-The standard firmware build is `bash firmware/trustzone/build.sh` inside the
+The standard firmware build is `bash scripts/build.sh` inside the
 dev shell, or `nix build .#firmware`. Both produce a combined Secure/Non-secure
 image with the partition table. TrustZone is mandatory: bare Cargo refuses to
 build the authenticator outside the S/NS link stages. `check.sh` leaves a

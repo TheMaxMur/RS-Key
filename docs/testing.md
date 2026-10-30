@@ -1411,7 +1411,7 @@ enumerates the image and carries the sockets over its endpoints, so what answers
 is the board's `main.rs`, worker, USB stack and flash driver, not a second copy:
 
 ```sh
-nix develop -c bash firmware/trustzone/build.sh --features no-touch
+nix develop -c bash scripts/build.sh --features no-touch
 nix develop -c cargo run --release --manifest-path tools/emu/Cargo.toml \
   --target "$HOST" -- --image target/trustzone/combined.elf \
   --store ./image.store
@@ -1565,7 +1565,7 @@ host-side.
 
 ```sh
 # build + flash a bench image (it is a --features bench build, so never ship it)
-bash firmware/trustzone/build.sh --features bench,no-touch
+bash scripts/build.sh --features bench,no-touch
 # then, from the dev shell or the venv that has pyscard:
 rsk bench ecdh                 # variable-base P-256 ECDH (the layout-sensitive one)
 rsk bench sign                 # P-256 comb sign (the getAssertion hot path)

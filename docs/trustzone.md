@@ -24,7 +24,7 @@ nix build .#firmware
 # result/firmware.elf and result/firmware.uf2
 
 nix develop -c env BOARD=waveshare-one \
-  bash firmware/trustzone/build.sh --features strong-pin,advertise-pqc
+  bash scripts/build.sh --features strong-pin,advertise-pqc
 # target/trustzone/combined.elf and combined.uf2
 ```
 

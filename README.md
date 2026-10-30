@@ -167,7 +167,7 @@ The release images are reproducible, so you can rebuild any of them bit for bit
 git clone https://github.com/TheMaxMur/RS-Key && cd RS-Key
 nix develop                       # toolchain, picotool, host tools, everything
 
-bash firmware/trustzone/build.sh
+bash scripts/build.sh
 # combined Secure + Non-secure image, with the storage partition fence
 cp target/trustzone/combined.uf2 firmware.uf2
 

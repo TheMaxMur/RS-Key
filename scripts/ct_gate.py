@@ -515,7 +515,7 @@ def disassembly(root: pathlib.Path) -> list[str]:
     elf = root / ELF
     if not elf.is_file():
         raise FileNotFoundError(
-            f"{ELF} — build it first: bash firmware/trustzone/build.sh"
+            f"{ELF} — build it first: bash scripts/build.sh"
         )
     out = subprocess.run(
         [OBJDUMP, "-d", "-l", "--inlines", str(elf)],

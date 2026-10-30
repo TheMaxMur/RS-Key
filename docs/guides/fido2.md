@@ -336,7 +336,7 @@ to true once an org key is installed. See [attestation.md](attestation.md).
 A build option, not part of the default image:
 
 ```sh
-bash firmware/trustzone/build.sh --features preview-sign
+bash scripts/build.sh --features preview-sign
 ```
 
 The default image carries none of it, and its getInfo does not list it.

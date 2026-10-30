@@ -5,12 +5,14 @@ The builder links Secure, links Non-secure against its gateways, then embeds
 Non-secure in the final Secure image. It adds the storage partition fence and
 produces one flashable ELF/UF2 pair. Always sign the combined ELF.
 
+## Local build
+
 Set environment variables and firmware features on the builder. They are
 compile-time defaults, except for fields explicitly supported by the phy record.
 
 ```sh
 # the general shape
-nix develop -c env KNOB=value bash firmware/trustzone/build.sh [--features ...]
+nix develop -c env KNOB=value bash scripts/build.sh [--features ...]
 # target/trustzone/combined.elf and target/trustzone/combined.uf2
 ```
 
@@ -18,10 +20,11 @@ Both this command and `nix build .#firmware` include the
 [partition table](#the-partition-table). Bare Cargo refuses to build the
 authenticator outside the S/NS link stages. Neither `--no-default-features` nor
 environment overrides can select a monolithic image.
-`--features a,b` and `FEATURES=a,b` compose; unsupported builder arguments fail
-before compilation. Features are identical across both Secure links. The NS
-image receives its transport policy (`strict-config`), while applet policy
-features remain in Secure.
+`--features a,b`, `-F a,b`, `-Fa,b` and `FEATURES=a,b` compose, including repeated
+options and lists separated by spaces. Both Secure links receive the same
+features. Cargo's resolved feature graph determines the shared transport policy
+(`strict-config`) passed to Non-secure, including conditional dependency features;
+applet features belong to Secure. `--no-default-features` applies to both worlds.
 
 The embedded target selects RustCrypto 0.11's compact SHA-2 backend in
 `.cargo/config.toml`. Looped rounds fit the Cortex-M33 XIP cache better than
@@ -40,6 +43,52 @@ flowchart TD
     sconv -.-> signed["firmware-signed.uf2"]
     signed -.-> flash
 ```
+
+### Environment and Cargo arguments
+
+The script inherits **every exported environment variable**, including board
+knobs, `CARGO_*`, `RUSTFLAGS`, `CARGO_ENCODED_RUSTFLAGS`, compiler wrappers and
+variables added by future build scripts. Values retain spaces and shell
+metacharacters. A variable only affects the image if Cargo or a build script
+reads it. The builder owns the `RSK_TZ_*` stage/layout/import/image variables and
+sets a separate Cargo target directory for each world.
+
+Common Cargo options reach all three builds: `--config`, `--jobs`/`-j`,
+`--offline`, `--frozen`, `--locked`, `--verbose`/`-v`/`-vv`, `--quiet`/`-q`,
+`--color`, `--message-format`, `--timings`, `--keep-going` and
+`--future-incompat-report`. `--release`/`-r` is accepted and already the default.
+The builder fixes the RP2350 target, release profile and package sequence;
+package/manifest/target/profile selectors, `--all-features` and unknown arguments
+fail before compilation. `scripts/build.sh --help` lists the interface.
+
+```sh
+nix develop -c env BOARD=waveshare-one USB_PRODUCT="RS-Key local build" \
+  FEATURES=strong-pin scripts/build.sh -F strict-config --offline --jobs 4
+
+# Append Rust flags to the checked-in target configuration.
+nix develop -c scripts/build.sh \
+  --config 'target.thumbv8m.main-none-eabihf.rustflags=["--cfg=local_build"]'
+```
+
+Cargo gives `RUSTFLAGS` and `CARGO_ENCODED_RUSTFLAGS` their usual precedence:
+they replace the configured flags, including required linker arguments. Use
+`--config` as above to append flags. Repeated `--config` options are preserved;
+a config file path is resolved from the calling directory.
+
+### Output directories
+
+`--target-dir DIR` writes the final pair to `DIR/trustzone/combined.{elf,uf2}`.
+Without that option, the output directory is selected in this order:
+`RSK_TZ_OUT`, `CARGO_TARGET_DIR/trustzone`, then `<repo>/target/trustzone`.
+Relative paths use the calling directory. Secure and Non-secure Cargo outputs
+always stay in separate `secure/` and `nonsecure/` subdirectories; the builder
+converts their paths to absolute paths before passing them to Rust build scripts.
+
+```sh
+nix develop -c scripts/build.sh --target-dir /tmp/rs-key-build
+# /tmp/rs-key-build/trustzone/combined.elf and combined.uf2
+```
+
 
 ## Cargo features
 
@@ -166,25 +215,25 @@ updates; the public builder requires and embeds both worlds.
 
 ```sh
 # default: touch build, RS-Key identity (0x1209:0xF1D2), fw 5.8.0
-bash firmware/trustzone/build.sh
+bash scripts/build.sh
 
 # opt-in Yubico interop flavor (so ykman / Yubico Authenticator see the device)
-env VIDPID=Yubikey5 bash firmware/trustzone/build.sh
+env VIDPID=Yubikey5 bash scripts/build.sh
 
 # no-touch test build (for the automated suites)
-bash firmware/trustzone/build.sh --features no-touch
+bash scripts/build.sh --features no-touch
 
 # Nitrokey FIDO2 identity with its own version number
-env VIDPID=NitroFIDO2 FW_VERSION=1.4.0 bash firmware/trustzone/build.sh
+env VIDPID=NitroFIDO2 FW_VERSION=1.4.0 bash scripts/build.sh
 
 # advertise PQC in getInfo (breaks released Firefox — see above)
-bash firmware/trustzone/build.sh --features advertise-pqc
+bash scripts/build.sh --features advertise-pqc
 
 # ship with CTAP 2.1 alwaysUv enabled by default (set a PIN after flashing)
-bash firmware/trustzone/build.sh --features always-uv
+bash scripts/build.sh --features always-uv
 
 # strict admin-write posture (the historical default; config writes stay gated)
-bash firmware/trustzone/build.sh --features strict-config
+bash scripts/build.sh --features strict-config
 ```
 
 ## `nix build` (hermetic, no dev shell)
@@ -353,7 +402,7 @@ For a local throwaway build:
 ```sh
 BOARD=waveshare-one FEATURES=strong-pin,advertise-pqc nix build --impure .#firmware
 nix develop -c env BOARD=waveshare-one USB_PRODUCT="RS-Key test" \
-  bash firmware/trustzone/build.sh --features strong-pin,advertise-pqc
+  bash scripts/build.sh --features strong-pin,advertise-pqc
 ```
 
 Pure `nix build` ignores ambient variables. Use explicit Nix arguments for CI

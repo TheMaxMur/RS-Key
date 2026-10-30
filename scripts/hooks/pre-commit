@@ -22,8 +22,9 @@ cargo fmt --all --check
 cargo clippy --workspace --exclude firmware --exclude firmware-ns --exclude rsk-wipe -- -D warnings
 # The two worlds select incompatible critical-section state types. NS also
 # needs the Secure-generated layout and gateway import library before linting.
-bash firmware/trustzone/build.sh
-tz_out="${RSK_TZ_OUT:-$PWD/target/trustzone}"
+bash scripts/build.sh
+tz_out="${RSK_TZ_OUT:-${CARGO_TARGET_DIR:-$PWD/target}/trustzone}"
+tz_out=$(cd "$tz_out" && pwd)
 export RSK_TZ_IMPLIB="$tz_out/ns-import.a"
 export RSK_TZ_NS_MEMORY="$tz_out/nonsecure-memory.x"
 export RSK_TZ_SECURE_MEMORY="$tz_out/secure-memory.x"

@@ -45,8 +45,8 @@ CARGO_PROFILE_RELEASE_DEBUG_ASSERTIONS=true CARGO_PROFILE_RELEASE_OVERFLOW_CHECK
   cargo build --locked --release --manifest-path tools/emu/Cargo.toml --target "$HOST_TARGET"
 
 echo "== building the partitioned no-touch image"
-bash firmware/trustzone/build.sh --features no-touch
-cp "${RSK_TZ_OUT:-target/trustzone}/combined.elf" "$WORK/firmware-pt.elf"
+bash scripts/build.sh --features no-touch
+cp "${RSK_TZ_OUT:-${CARGO_TARGET_DIR:-target}/trustzone}/combined.elf" "$WORK/firmware-pt.elf"
 
 echo "== building the guest"
 nix build .#usbip-vm --no-link --print-out-paths >"$WORK/vm-path"

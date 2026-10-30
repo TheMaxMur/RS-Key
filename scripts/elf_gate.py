@@ -212,7 +212,7 @@ def audit(root: pathlib.Path, image=None, linker=None, raw=None):
         return findings, ""
     elf = pathlib.Path(image["elf"])
     if raw is None and not (root / elf).is_file():
-        return [f"{elf} — build it first: bash firmware/trustzone/build.sh"], ""
+        return [f"{elf} — build it first: bash scripts/build.sh"], ""
 
     try:
         where = regions(root, linker)

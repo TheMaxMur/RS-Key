@@ -232,7 +232,7 @@ board**, rotation, and recovery.
 ```sh
 # 1. an image to sign. The partition table has to be in it BEFORE sealing, or
 #    the signature does not cover the fence (build.md#the-partition-table).
-bash firmware/trustzone/build.sh
+bash scripts/build.sh
 cp target/trustzone/combined.elf firmware-pt.elf
 #    (or a single `nix build .#firmware`, whose result/firmware.elf already has it)
 
@@ -346,7 +346,7 @@ Re-drag the signed one to recover.
 ### The new flash workflow (forever)
 
 ```sh
-bash firmware/trustzone/build.sh
+bash scripts/build.sh
 cp target/trustzone/combined.elf firmware-pt.elf
 # seal the ELF, convert after — a UF2 in leaves the unsigned IMAGE_DEF first (2b)
 picotool seal --sign --hash firmware-pt.elf -t elf firmware-signed.elf -t elf \

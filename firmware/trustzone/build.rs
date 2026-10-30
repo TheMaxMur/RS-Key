@@ -24,7 +24,7 @@ pub fn validate_stage() {
         }
         _ => panic!(
             "RS-Key requires Secure + Non-secure firmware; build with \
-             `bash firmware/trustzone/build.sh` or `nix build .#firmware`"
+             `bash scripts/build.sh` or `nix build .#firmware`"
         ),
     }
 }

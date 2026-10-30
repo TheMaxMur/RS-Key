@@ -311,7 +311,7 @@ jobs:
           restore-keys: cargo-flavor-${{ matrix.name }}-${{ runner.os }}-
 
       - name: build (${{ matrix.name }})
-        run: nix develop -c env ${{ matrix.env }} bash firmware/trustzone/build.sh ${{ matrix.args }}
+        run: nix develop -c env ${{ matrix.env }} bash scripts/build.sh ${{ matrix.args }}
 
       - name: package firmware-${{ matrix.name }}.uf2
         run: |

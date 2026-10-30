@@ -170,10 +170,10 @@ test("the preview workflow grants OIDC and PR comment access with no upload secr
 
 test("CI adds the partition table before UF2 conversion", async () => {
   const workflow = await readFile(new URL("../workflows/ci.yml", import.meta.url), "utf8");
-  const builder = await readFile(new URL("../../firmware/trustzone/build.sh", import.meta.url), "utf8");
+  const builder = await readFile(new URL("../../scripts/build.sh", import.meta.url), "utf8");
   const buildStep = workflow.slice(workflow.indexOf("- name: build (${{ matrix.name }})"), workflow.indexOf("- name: package firmware-"));
   const packageStep = workflow.slice(workflow.indexOf("- name: package firmware-"), workflow.indexOf("- uses: actions/upload-artifact", workflow.indexOf("- name: package firmware-")));
-  assert.match(buildStep, /bash firmware\/trustzone\/build\.sh/);
+  assert.match(buildStep, /bash scripts\/build\.sh/);
   assert.match(packageStep, /cp target\/trustzone\/combined\.uf2 firmware-\$\{\{ matrix\.name \}\}\.uf2/);
   assert.ok(builder.indexOf('bash scripts/pt.sh "$out/combined.elf"') >= 0);
   assert.ok(builder.indexOf("bash scripts/pt.sh") < builder.indexOf("picotool uf2 convert"));
