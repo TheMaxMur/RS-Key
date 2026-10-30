@@ -8,7 +8,7 @@ the only bricking step is the single SECURE_BOOT_ENABLE bit:
 
   status    read the current secure-boot OTP state (always safe)
   load-key  A: bootkey fingerprint + KEY_VALID (slot 0 by default). non-enforcing
-  harden    B: DEBUG_DISABLE + GLITCH_DETECTOR_ENABLE/SENS=3.   non-enforcing
+  harden    B: both debug disables + GLITCH_DETECTOR_ENABLE/SENS=3.
   enable    C: SECURE_BOOT_ENABLE = 1.                          the brick bit
   lock      D: revoke every untrusted key slot + PAGE1/PAGE2 bootloader-read-only.
 
@@ -39,6 +39,9 @@ import tempfile
 from .common import confirm, die, picotool
 
 CRIT1_ROW, BOOT_FLAGS1_ROW, BOOTKEY0_0_ROW = 0x40, 0x4B, 0x80
+CRIT1_COPIES, CRIT1_THRESHOLD = 8, 3
+SECURE_DEBUG_DISABLE_BIT, DEBUG_DISABLE_BIT = 1 << 1, 1 << 2
+HARDEN_MASK = SECURE_DEBUG_DISABLE_BIT | DEBUG_DISABLE_BIT | (1 << 4) | (3 << 5)
 # Four boot-key slots: BOOTKEY{n}_0 = 0x80 + n*0x10 (0x80/0x90/0xa0/0xb0), each a
 # 16-row ECC block holding the SHA-256 fingerprint of one signing public key.
 N_KEY_SLOTS, BOOTKEY_STRIDE = 4, 0x10
@@ -176,12 +179,20 @@ def _lock_invalid_mask(key_valid, key_invalid):
 
 
 def pages_locked(s):
-    """Key/flag pages bootloader-read-only (after `lock`) ⇒ BOOTSEL can't write keys.
-    Only LOCK_BL (bits 4-5 of each RBIT-3 byte, mask 0x303030) blocks bootloader
-    writes; a pre-existing LOCK_NS/LOCK_S in the row does not, so mask to LOCK_BL
-    rather than testing the whole row (else a chip with LOCK_NS set false-positives)."""
-    bl = 0x303030
-    return bool((s["page1_lock"] or 0) & bl) or bool((s["page2_lock"] or 0) & bl)
+    """Either key/flag page has an effective bootloader write lock."""
+    return any(page_write_locked(s[key] or 0) for key in ("page1_lock", "page2_lock"))
+
+
+def page_write_locked(raw):
+    """LOCK_BL uses 2-of-3 bytes within one physical lock row."""
+    a, b, c = (raw >> shift for shift in (0, 8, 16))
+    return bool(((a & b) | (a & c) | (b & c)) & 0x30)
+
+
+def pages_sealed(s):
+    """All copies contain the BL/NS read-only policy written by `lock`."""
+    return all((s[key] or 0) & PAGE_LOCK_BL_RO == PAGE_LOCK_BL_RO
+               for key in ("page1_lock", "page2_lock"))
 
 
 # --- device state -------------------------------------------------------------
@@ -203,12 +214,19 @@ def read_bootkey(n):
 
 
 def read_state():
-    crit1, flags1 = _raw(CRIT1_ROW) or 0, _raw(BOOT_FLAGS1_ROW) or 0
+    copies = tuple(_raw(CRIT1_ROW + i) for i in range(CRIT1_COPIES))
+    # CRIT1 uses a 3-of-8 threshold, not the RBIT-3 majority used below.
+    crit1 = sum(1 << bit for bit in range(24)
+                if sum(bool(row & (1 << bit)) for row in copies) >= CRIT1_THRESHOLD)
+    flags1 = _majority3(BOOT_FLAGS1_ROW)
     version = (bin(_majority3(BOOT_VERSION0_ROW)).count("1")
                + bin(_majority3(BOOT_VERSION1_ROW)).count("1"))
     slots = [slot_present(n) for n in range(N_KEY_SLOTS)]
     return {
-        "secure_boot_enable": bool(crit1 & 1), "debug_disable": bool(crit1 & (1 << 2)),
+        "secure_boot_enable": bool(crit1 & 1), "debug_disable": bool(crit1 & DEBUG_DISABLE_BIT),
+        "secure_debug_disable": bool(crit1 & SECURE_DEBUG_DISABLE_BIT),
+        "crit1_copies": copies,
+        "harden_complete": all(row & HARDEN_MASK == HARDEN_MASK for row in copies),
         "glitch_enable": bool(crit1 & (1 << 4)), "glitch_sens": (crit1 >> 5) & 3,
         "key_valid": flags1 & 0xF, "key_invalid": (flags1 >> 8) & 0xF,
         "slots_present": slots, "bootkey0_present": slots[0],
@@ -219,10 +237,9 @@ def read_state():
 
 
 def print_state(s):
-    # The lock's own evidence is the fused key pages, not a particular KEY_INVALID
-    # value — that depends on which slot the board boots from.
-    locked = (s["secure_boot_enable"] and pages_locked(s)
-              and s["debug_disable"] and s["glitch_enable"] and s["glitch_sens"] == 3)
+    trusted = _trusted_slots(s["key_valid"], s["key_invalid"])
+    locked = (s["secure_boot_enable"] and s["harden_complete"] and pages_sealed(s)
+              and trusted.bit_count() == 1 and (trusted | s["key_invalid"]) == 0xF)
     slotmap = "  ".join(
         f"[{n}]{'K' if s['slots_present'][n] else '.'}"
         f"{'V' if s['key_valid'] & (1 << n) else '.'}"
@@ -231,6 +248,8 @@ def print_state(s):
     print(f"  boot-key slots  : {slotmap}   (K=key V=valid X=revoked)")
     print(f"  KEY_VALID/INVALID : {s['key_valid']:#x} / {s['key_invalid']:#x}")
     print(f"  DEBUG_DISABLE   : {s['debug_disable']}")
+    print(f"  SECURE_DEBUG_DISABLE: {s['secure_debug_disable']}")
+    print(f"  hardening copies complete: {s['harden_complete']}")
     print(f"  GLITCH enable/sens: {s['glitch_enable']} / {s['glitch_sens']}")
     print(f"  SECURE_BOOT_ENABLE: {s['secure_boot_enable']}   <-- enforcement")
     print(f"  ROLLBACK_REQUIRED : {s['rollback_required']}   boot version {s['boot_version']}/48")
@@ -366,19 +385,28 @@ def cmd_rotate(args):
 
 def cmd_harden(args):
     require_bootsel()
-    if not read_state()["bootkey0_present"]:
+    before = read_state()
+    if not any(before["slots_present"]):
         die("no bootkey present — run `load-key` first.")
-    print("Stage B — DEBUG_DISABLE + GLITCH_DETECTOR (non-enforcing; kills SWD — fine, BOOTSEL-only):")
+    if not before["harden_complete"] and page_write_locked(before["page1_lock"] or 0):
+        die("page 1 is bootloader-locked — BOOTSEL cannot complete hardening; "
+            "do not report this device as fully hardened")
+    print("Stage B — DEBUG_DISABLE + SECURE_DEBUG_DISABLE + GLITCH_DETECTOR "
+          "(non-enforcing; disables debug; BOOTSEL stays enabled):")
     confirm("HARDEN-SECURE-BOOT") if not args.dry_run else None
-    _set(["set", "OTP_DATA_CRIT1.DEBUG_DISABLE", "1"], args.dry_run)
-    _set(["set", "OTP_DATA_CRIT1.GLITCH_DETECTOR_ENABLE", "1"], args.dry_run)
-    _set(["set", "OTP_DATA_CRIT1.GLITCH_DETECTOR_SENS", "3"], args.dry_run)
+    for i, current in enumerate(before["crit1_copies"]):
+        target = current | HARDEN_MASK
+        if current != target:
+            row = CRIT1_ROW + i
+            _set(["set", "-r", f"{row:#x}", f"{target:#x}"], args.dry_run)
+            if not args.dry_run and _raw(row) != target:
+                die(f"verify failed: hardening row {row:#x} did not take; rerun `harden`")
     if not args.dry_run:
         s = read_state()
-        if not (s["debug_disable"] and s["glitch_enable"] and s["glitch_sens"] == 3):
+        if not s["harden_complete"]:
             die("verify failed: hardening fuses did not take")
         print_state(s)
-    print("\nNEXT: reboot, confirm the board still boots, then `rsk secure-boot enable`")
+    print("\nNEXT: power-cycle, confirm boot and debug denial, then `rsk secure-boot enable`")
 
 
 def cmd_enable(args):
@@ -410,6 +438,9 @@ def cmd_lock(args):
     s = read_state()
     if not s["secure_boot_enable"]:
         die("SECURE_BOOT_ENABLE not set — run `enable` and verify it first.")
+    if not s["harden_complete"]:
+        die("hardening incomplete — run `harden` and verify both debug disables "
+            "before making page 1 read-only")
     # Which slot the board actually boots on decides the mask; `lock` used to burn a
     # constant and silently revoke a rotated-to key (audit run-32).
     trusted = _trusted_slots(s["key_valid"], s["key_invalid"])
@@ -435,6 +466,8 @@ def cmd_lock(args):
             die("verify failed: KEY_INVALID did not take")
         if _trusted_slots(s["key_valid"], s["key_invalid"]) == 0:
             die("verify failed: no trusted boot key survived the lock")
+        if not pages_sealed(s):
+            die("verify failed: page locks are incomplete — do not report this device as LOCKED")
         print_state(s)
     print("\nDONE. Every future reflash must be a `picotool seal --sign`-ed UF2. Back up the key.")
     print("Optional next: anti-rollback — seal with `--rollback`, then `rsk otp rollback-require`")

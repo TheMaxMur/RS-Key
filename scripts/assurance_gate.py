@@ -237,9 +237,10 @@ MOD_DECL = re.compile(
     r"(?:pub(?:[ \t\r\n]*\([^)]*\))?[ \t\r\n]+)?(?:unsafe[ \t\r\n]+)?"
     r"mod[ \t\r\n]+(?P<name>[A-Za-z_][A-Za-z0-9_]*)[ \t\r\n]*(?P<end>[;{])"
 )
+INCLUDE_DECL = re.compile(r'include\s*!\s*\(\s*"(?P<rel>[^"\\]+)"\s*\)\s*;')
 #: What a scan stops on: an attribute, the `mod` keyword, and the braces that say
 #: which inline block a declaration sits in.
-STRUCTURE = re.compile(r"\#!?\[|\bmod\b|[{}]")
+STRUCTURE = re.compile(r"\#!?\[|\bmod\b|\binclude\b|[{}]")
 ATTR_OPEN = re.compile(r"\#(?P<inner>!?)\[")
 SPACE = re.compile(r"[ \t\r\n]*")
 CFG_ATTR = re.compile(r"(?s)\Acfg\((?P<expr>.*)\)\Z")
@@ -492,6 +493,17 @@ def _scan(text: str) -> tuple[tuple[str, ...], tuple[dict, ...]]:
             rel = named.group("rel") if named else rel
             cursor = SPACE.match(deep, stop).end()
         declaration = MOD_DECL.match(deep, cursor)
+        included = INCLUDE_DECL.match(plain, cursor) if deep.startswith("include", cursor) else None
+        module_depth = blocks[-1]["depth"] if blocks else 0
+        if included is not None and depth == module_depth:
+            records.append({
+                "name": "include",
+                "cfgs": tuple([c for b in blocks for c in b["cfgs"]] + cfgs),
+                "rel": included.group("rel"),
+                "dirs": (),
+            })
+            pos = included.end()
+            continue
         if declaration is None:
             # Not a module. Step past the FIRST attribute only, so the braces of
             # whatever it does gate still move `depth`.
@@ -604,7 +616,7 @@ def rust_sources(root: pathlib.Path) -> list[pathlib.Path]:
 
 
 def declared_targets(root: pathlib.Path):
-    """(declaring file, the file it names, the record) for every `mod NAME;`.
+    """Resolve module declarations and literal file-relative `include!` calls.
 
     Separate from [`cfg_excluded`] because the ORPHAN census reads it too, and a
     census that re-derived the resolution rule would be asserting its own copy.

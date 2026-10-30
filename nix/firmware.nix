@@ -52,6 +52,45 @@ let
     in
     if v == "" then default else v;
 
+  # Only documented firmware knobs enter the derivation; toolchain and secret
+  # signing-key environment variables are deliberately not forwarded.
+  firmwareKnobs = [
+    "BOARD"
+    "VIDPID"
+    "USB_VID"
+    "USB_PID"
+    "USB_MANUFACTURER"
+    "USB_PRODUCT"
+    "FW_VERSION"
+    "XOSC_DELAY_MULT"
+    "FLASH_SIZE"
+    "KVMAIN"
+    "LED_PIN"
+    "LED_KIND"
+    "LED_ORDER"
+    "LED_POWER_PIN"
+    "MAX_LEDS"
+    "USR_LED_PIN"
+    "USR_LED_ACTIVE_HIGH"
+    "PRESENCE_PIN"
+    "PRESENCE_ACTIVE_HIGH"
+    "WAKE_PIN"
+    "WAKE_ACTIVE_HIGH"
+    "FAKE_MKEK"
+    "FAKE_DEVK"
+    "PK_DISPLAY_SPI_FREQ_HZ"
+    "PK_DISPLAY_CS"
+    "PK_DISPLAY_DC"
+    "PK_DISPLAY_RST"
+    "PK_DISPLAY_BL_PIN"
+    "PK_DISPLAY_BL_PWM_SLICE"
+    "PK_DISPLAY_BL_PWM_CHANNEL"
+    "PK_DISPLAY_TP_RST"
+    "PK_DISPLAY_I2C_FREQ_HZ"
+    "PK_DISPLAY_INVERT_COLORS"
+    "PK_DISPLAY_COLOR_ORDER"
+  ];
+
   # Whole workspace minus build/VCS dirs (Cargo.lock + every crate source).
   firmwareSrc = lib.cleanSourceWith {
     src = ../.;
@@ -79,25 +118,27 @@ let
     {
       name,
       cargoFlags ? [ ],
-      trustzone ? false,
-      board ? envOr "BOARD" null,
-      vidpid ? envOr "VIDPID" null, # VIDPID preset (Yubikey5, Pico, Nitro3, …)
-      usbVid ? envOr "USB_VID" null, # 0xHHHH raw VID override
-      usbPid ? envOr "USB_PID" null, # 0xHHHH raw PID override
-      fwVersion ? envOr "FW_VERSION" null, # X.Y.Z reported everywhere
-      xoscDelayMult ? envOr "XOSC_DELAY_MULT" null, # 1..1024 crystal settle
-      flashSize ? envOr "FLASH_SIZE" null, # bytes / 0xHEX / <n>K|M (default 4M)
-      kvmain ? envOr "KVMAIN" null, # KV main-partition size (default 1408K; shrink for 2 MB boards)
-      ledPin ? envOr "LED_PIN" null, # WS2812 data GPIO 0..=29 (default 16)
-      ledKind ? envOr "LED_KIND" null, # ws2812 | gpio | pimoroni | none (default ws2812)
-      presencePin ? envOr "PRESENCE_PIN" null, # BOOTSEL or GPIO 0..=29
-      fakeMkek ? envOr "FAKE_MKEK" null, # 64 hex — TEST builds only
-      fakeDevk ? envOr "FAKE_DEVK" null, # 64 hex — TEST builds only
+      features ? envOr "FEATURES" "",
+      env ? { },
+      trustzone ? true,
+      board ? null,
+      vidpid ? null, # VIDPID preset (Yubikey5, Pico, Nitro3, …)
+      usbVid ? null, # 0xHHHH raw VID override
+      usbPid ? null, # 0xHHHH raw PID override
+      fwVersion ? null, # X.Y.Z reported everywhere
+      xoscDelayMult ? null, # 1..1024 crystal settle
+      flashSize ? null, # bytes / 0xHEX / <n>K|M (default 4M)
+      kvmain ? null, # KV main-partition size (default 1408K; shrink for 2 MB boards)
+      ledPin ? null, # WS2812 data GPIO 0..=29 (default 16)
+      ledKind ? null, # ws2812 | gpio | pimoroni | none (default ws2812)
+      presencePin ? null, # BOOTSEL or GPIO 0..=29
+      fakeMkek ? null, # 64 hex — TEST builds only
+      fakeDevk ? null, # 64 hex — TEST builds only
     }:
     let
       # Non-null knobs become build-time env vars build.rs reads; each is part
       # of the derivation, so changing one rebuilds (just that crate).
-      knobEnv = lib.filterAttrs (_: v: v != null) {
+      explicitKnobs = lib.filterAttrs (_: v: v != null) {
         BOARD = board;
         VIDPID = vidpid;
         USB_VID = usbVid;
@@ -112,8 +153,22 @@ let
         FAKE_MKEK = fakeMkek;
         FAKE_DEVK = fakeDevk;
       };
+      knobEnv = lib.mapAttrs (_: toString) (
+        (lib.filterAttrs (_: v: v != null) (lib.genAttrs firmwareKnobs (k: envOr k null)))
+        // env
+        // explicitKnobs
+      );
+      buildFlags =
+        cargoFlags
+        ++ lib.optionals (features != "") [
+          "--features"
+          features
+        ];
+      imageVersion = knobEnv.FW_VERSION or null;
     in
-    assert !trustzone || cargoFlags == [ ];
+    assert lib.assertMsg (lib.all (k: lib.elem k firmwareKnobs) (
+      builtins.attrNames env
+    )) "mkFirmware.env contains an unsupported firmware knob";
     pkgs.stdenv.mkDerivation (
       {
         pname = name;
@@ -124,14 +179,14 @@ let
         # here — typed, it is a second copy of it, and it stayed at 5.7.4 through
         # the whole 5.8.0 bump while every image built from it reported 5.8.0.
         version =
-          if fwVersion == null then
+          if imageVersion == null then
             builtins.head (
               builtins.match ''.*unwrap_or_else\(\|_\| "([0-9.]+)"\.into\(\)\).*'' (
                 builtins.readFile ../crates/rsk-sdk/build.rs
               )
             )
           else
-            fwVersion;
+            imageVersion;
         src = firmwareSrc;
         inherit cargoDeps;
         nativeBuildInputs = [
@@ -160,14 +215,14 @@ let
               ''
                 export CARGO_NET_OFFLINE=true
                 export RSK_TZ_CARGO_CONFIG="target.${target}.rustflags=[\"--remap-path-prefix=$NIX_BUILD_TOP=/build\",\"--remap-path-prefix=${toolchain}=/toolchain\"]"
-                bash firmware/trustzone/build.sh
+                bash firmware/trustzone/build.sh ${lib.escapeShellArgs buildFlags}
               ''
             else
               ''
                 cargo build --release --offline --frozen \
                   -p firmware --target ${target} \
                   --config "target.${target}.rustflags=[\"--remap-path-prefix=$NIX_BUILD_TOP=/build\",\"--remap-path-prefix=${toolchain}=/toolchain\"]" \
-                  ${lib.escapeShellArgs cargoFlags}
+                  ${lib.escapeShellArgs buildFlags}
               ''
           }
           runHook postBuild
@@ -208,6 +263,10 @@ in
   packages = {
     default = mkFirmware { name = "firmware"; };
     firmware = mkFirmware { name = "firmware"; };
+    firmware-legacy = mkFirmware {
+      name = "firmware-legacy";
+      trustzone = false;
+    };
     firmware-trustzone = mkFirmware {
       name = "firmware-trustzone";
       trustzone = true;

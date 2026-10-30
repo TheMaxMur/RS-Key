@@ -1,19 +1,26 @@
 # Build options
 
-Every knob is compile-time. Set environment variables and cargo features at
-`cargo build` and they bake into the image. Nothing here changes at runtime
-(except where noted for the phy record).
+TrustZone is the default for local builds, Nix packages and release images.
+The builder links Secure, links Non-secure against its gateways, then embeds
+Non-secure in the final Secure image. It adds the storage partition fence and
+produces one flashable ELF/UF2 pair. Always sign the combined ELF.
+
+Set environment variables and firmware features on the builder. They are
+compile-time defaults, except for fields explicitly supported by the phy record.
 
 ```sh
 # the general shape
-nix develop -c env KNOB=value cargo build --release -p firmware [--features ...]
-nix develop -c scripts/pt.sh target/thumbv8m.main-none-eabihf/release/firmware firmware-pt.elf
-picotool uf2 convert firmware-pt.elf -t elf firmware.uf2
+nix develop -c env KNOB=value bash firmware/trustzone/build.sh [--features ...]
+# target/trustzone/combined.elf and target/trustzone/combined.uf2
 ```
 
-The middle step embeds the [partition table](#the-partition-table); skip it and
-the key ships with its storage exposed to the bootloader. `nix build .#firmware`
-folds all three together.
+Both this command and `nix build .#firmware` include the
+[partition table](#the-partition-table). A bare Cargo invocation is a component
+or legacy diagnostic build, not the supported way to produce a deployable image.
+`--features a,b` and `FEATURES=a,b` compose; unsupported builder arguments fail
+before compilation. Features are identical across both Secure links. The NS
+image receives its transport policy (`strict-config`), while applet policy
+features remain in Secure.
 
 The embedded target selects RustCrypto 0.11's compact SHA-2 backend in
 `.cargo/config.toml`. Looped rounds fit the Cortex-M33 XIP cache better than
@@ -21,8 +28,8 @@ unrolled SHA-512, reducing P-384 signing latency and image size.
 
 ```mermaid
 flowchart TD
-    knobs["env knobs + cargo features"] --> build["cargo build (or nix build)"]
-    build --> elf["firmware.elf"]
+    knobs["env knobs + firmware features"] --> build["TrustZone builder (or nix build)"]
+    build --> elf["combined Secure + Non-secure ELF"]
     elf --> pt["scripts/pt.sh<br/>embed partition table"]
     pt --> conv["picotool uf2 convert"]
     conv --> uf2["firmware.uf2"]
@@ -83,14 +90,14 @@ else is a `rsk hw` call away ([guides/led.md](guides/led.md)).
 Verify what got baked without flashing:
 
 ```sh
-rg PK_USB_VID  target/thumbv8m.main-none-eabihf/release/build/firmware-*/output   # decimal: 4617 = 0x1209
-rg PK_FW_VERSION target/thumbv8m.main-none-eabihf/release/build/rsk-sdk-*/output
-rg PK_XOSC_DELAY_MULT target/thumbv8m.main-none-eabihf/release/build/firmware-*/output
+rg PK_USB_VID  target/trustzone/secure/thumbv8m.main-none-eabihf/release/build/firmware-*/output   # decimal: 4617 = 0x1209
+rg PK_FW_VERSION target/trustzone/secure/thumbv8m.main-none-eabihf/release/build/rsk-sdk-*/output
+rg PK_XOSC_DELAY_MULT target/trustzone/secure/thumbv8m.main-none-eabihf/release/build/firmware-*/output
 ```
 
 The `firmware-*` glob matches one build dir per feature combination you have
 built, so a stale entry can show an old value. Read the freshest one (or
-`cargo clean -p firmware` first) if the output looks doubled.
+`CARGO_TARGET_DIR=target/trustzone/secure cargo clean -p firmware` first) if the output looks doubled.
 
 ## Flash size and the memory map
 
@@ -116,8 +123,11 @@ provisioned key needs only a few hundred KB, so 896K is ample.
 
 ![4 MB vs 16 MB flash layout: the KV store is identical on both; only the code region and the KV origin move with FLASH_SIZE](images/flash-map-sizes.svg)
 
-At the `4M` default the code region is `2560K`; the shipping image uses roughly a
-third of it. `check.sh` enforces a *ratchet* well under that: a ceiling that
+At the `4M` default the code region is `2560K`. `check.sh` retains the size and
+stack ratchets for the explicit legacy diagnostic image. The combined TrustZone
+image has separate S/NS reservations; its linker bounds and image-suite stack
+checks apply to that layout. Legacy thresholds are not TrustZone measurements.
+The legacy size ratchet is a ceiling that
 hugs the current image, so a runaway dependency (a whole extra EC curve is
 ~150 KiB) or any surprise growth trips it long before the linker's hard limit.
 Lower `FIRMWARE_FLASH_BUDGET_KIB` when the image shrinks; raise it in the same
@@ -150,40 +160,35 @@ to keep in step. `check.sh` asserts the emitted table back against those symbols
 because a table that misses the store still links, still boots, and then loses the
 firmware's writes at runtime.
 
-> ⚠️ **A bare `cargo build` does not produce it.** The table is added after
-> linking, so `target/…/release/firmware` carries none and a key flashed straight
-> from that ELF is unfenced. `nix build .#firmware` applies it; for a local cargo
-> build, apply it yourself:
->
-> ```sh
-> cargo build --release -p firmware
-> scripts/pt.sh target/thumbv8m.main-none-eabihf/release/firmware firmware-pt.elf
-> picotool load firmware-pt.elf -t elf
-> ```
+The standard TrustZone builder and all Nix firmware packages already include
+this table. `cargo build --release -p firmware` alone is retained only for
+legacy diagnostic checks; it has neither the combined S/NS build nor the
+post-link table. The explicit `firmware-legacy` Nix package includes the table
+but has no TrustZone isolation and is not published as a release asset.
 
 ## Examples
 
 ```sh
 # default: touch build, RS-Key identity (0x1209:0xF1D2), fw 5.8.0
-cargo build --release -p firmware
+bash firmware/trustzone/build.sh
 
 # opt-in Yubico interop flavor (so ykman / Yubico Authenticator see the device)
-env VIDPID=Yubikey5 cargo build --release -p firmware
+env VIDPID=Yubikey5 bash firmware/trustzone/build.sh
 
 # no-touch test build (for the automated suites)
-cargo build --release -p firmware --features no-touch
+bash firmware/trustzone/build.sh --features no-touch
 
 # Nitrokey FIDO2 identity with its own version number
-env VIDPID=NitroFIDO2 FW_VERSION=1.4.0 cargo build --release -p firmware
+env VIDPID=NitroFIDO2 FW_VERSION=1.4.0 bash firmware/trustzone/build.sh
 
 # advertise PQC in getInfo (breaks released Firefox — see above)
-cargo build --release -p firmware --features advertise-pqc
+bash firmware/trustzone/build.sh --features advertise-pqc
 
 # ship with CTAP 2.1 alwaysUv enabled by default (set a PIN after flashing)
-cargo build --release -p firmware --features always-uv
+bash firmware/trustzone/build.sh --features always-uv
 
 # strict admin-write posture (the historical default; config writes stay gated)
-cargo build --release -p firmware --features strict-config
+bash firmware/trustzone/build.sh --features strict-config
 ```
 
 ## `nix build` (hermetic, no dev shell)
@@ -197,7 +202,7 @@ nix build .#firmware                 # default touch image
 ls result/                           # firmware.elf  firmware.uf2
 ```
 
-`result/firmware.uf2` is functionally the image the dev-shell `cargo build`
+`result/firmware.uf2` is the same TrustZone configuration the local builder
 produces. Unlike the dev-shell build, it is **bit-for-bit
 reproducible**: the derivation remaps the two absolute build inputs out of
 the binary (the per-build sandbox dir and the toolchain store path; both
@@ -291,7 +296,8 @@ packages (`nix build .#rsk-tui`).
 (signs) an unsigned image, reboots the device into BOOTSEL, loads it, then
 reboots. With no argument it seals the reproducible default firmware
 (`.#firmware`); pass a path to seal a flavor you built yourself
-(`nix run .#flash -- firmware-no-touch.uf2`). It reads the signing key from the
+(`nix run .#flash -- target/trustzone/combined.elf`). It signs the partitioned
+combined ELF and converts the signed result to UF2. It reads the signing key from the
 host (`~/.rs-key-secrets/{secure_boot_key.pem,otp_secureboot.json}` by default,
 override the directory with `RS_KEY_SECRETS`) and stamps `--rollback 1` into the
 seal (set `RSK_ROLLBACK` to change). It prompts before flashing (`-y` skips). The
@@ -329,12 +335,37 @@ flowchart TD
   identity-independent and work on either build.
 - `bcdDevice` (USB device release) is an internal build counter, not the
   firmware version.
-- The two UF2 flavors on a release build of this repo:
-  `firmware.uf2` (touch) and `firmware-test.uf2` (no-touch). `scripts/check.sh`
-  builds both.
+- Published firmware requires touch. `firmware-no-touch` is a test package;
+  `scripts/image-suites.sh` also builds a combined no-touch image for emulation.
+  Rebuild without test features before deploying a device for normal use.
 
-## TrustZone transport prototype
+## TrustZone boundary
 
-The [TrustZone page](trustzone.md#prototype-build-and-measurements) contains the
-prototype's build commands, scope and recorded checks. Ordinary firmware builds
-do not enable the experimental split.
+The [TrustZone page](trustzone.md#build-and-update) describes the default
+combined-image build, resource ownership and verification scope. Direct Cargo
+builds remain legacy diagnostics.
+
+### Reproducible configuration and environment overrides
+
+`mkFirmware` accepts `features = "fips-profile,advertise-pqc"` and
+`env = { PRESENCE_PIN = "0"; PRESENCE_ACTIVE_HIGH = "1"; }`, including the
+documented LED, display, USB-string and flash-layout knobs. Unknown `env` keys
+are rejected. Explicit named arguments such as `board` and `ledPin` take
+precedence over `env`; both take precedence over ambient environment values.
+
+For a local throwaway build:
+
+```sh
+BOARD=waveshare-one FEATURES=strong-pin,advertise-pqc nix build --impure .#firmware
+nix develop -c env BOARD=waveshare-one USB_PRODUCT="RS-Key test" \
+  bash firmware/trustzone/build.sh --features strong-pin,advertise-pqc
+```
+
+Pure `nix build` ignores ambient variables. Use explicit Nix arguments for CI
+and releases. Signing keys and the internal `RSK_TZ_*` diagnostic controls are
+not forwarded into Nix packages. Existing direct-script test controls remain
+available for image tests; `no-touch` must never be shipped.
+
+The TUI development environment is separate: `nix develop .#tui -c rsk-tui`.
+The main shell provides firmware/CLI tools; the full gate enters the TUI shell
+for its checks without dropping them.

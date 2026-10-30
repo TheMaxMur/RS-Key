@@ -50,7 +50,7 @@ name: ci
 
 on:
   push:
-    branches: [main]
+    branches: [main, develop]
   pull_request:
 
 permissions:
@@ -311,16 +311,11 @@ jobs:
           restore-keys: cargo-flavor-${{ matrix.name }}-${{ runner.os }}-
 
       - name: build (${{ matrix.name }})
-        run: nix develop -c env ${{ matrix.env }} cargo build --release -p firmware ${{ matrix.args }}
+        run: nix develop -c env ${{ matrix.env }} bash firmware/trustzone/build.sh ${{ matrix.args }}
 
       - name: package firmware-${{ matrix.name }}.uf2
         run: |
-          nix develop -c ./scripts/pt.sh \
-            target/thumbv8m.main-none-eabihf/release/firmware \
-            firmware-${{ matrix.name }}.elf
-          nix develop -c picotool uf2 convert \
-            firmware-${{ matrix.name }}.elf -t elf \
-            firmware-${{ matrix.name }}.uf2
+          cp target/trustzone/combined.uf2 firmware-${{ matrix.name }}.uf2
           sha256sum firmware-${{ matrix.name }}.uf2
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

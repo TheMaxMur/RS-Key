@@ -78,8 +78,8 @@ import token_refinement_gate as refinement  # noqa: E402  the roster and its spl
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 
 REGISTRY = pathlib.Path("assurance/owner_binding.toml")
-#: The image crate, whose feature closure decides what "the default build"
-#: means for every other crate in it.
+#: Cargo-default legacy diagnostic; the shipping TrustZone boundary needs its
+#: own binding evidence and is not discharged by this reader.
 IMAGE_MANIFEST = pathlib.Path("firmware/Cargo.toml")
 
 #: Each subject and the ONE status word it may carry. Source→binary and

@@ -183,6 +183,12 @@ jobs:
           fi
           if [ ! -f "$sbom" ]; then echo "no SBOM produced" >&2; exit 1; fi
           cp "$sbom" "dist/rs-key-${tag}-sbom.cdx.json"
+          # The combined image also executes the independently linked NS graph.
+          nix develop -c cargo cyclonedx \
+            --manifest-path firmware/trustzone/nonsecure/Cargo.toml \
+            --target thumbv8m.main-none-eabihf --format json
+          cp firmware/trustzone/nonsecure/firmware-ns.cdx.json \
+            "dist/rs-key-${tag}-sbom-nonsecure.cdx.json"
 
       - name: checksums
         run: |

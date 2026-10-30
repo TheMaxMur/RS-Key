@@ -997,7 +997,7 @@ firmware predates the rescue applet.
 | `1C` | `02` | `02` | epoch seconds (BE4) | — | SET RTC (Unix) |
 | `1E` | `01` | `00` | — | phy TLV blob (§7.1) | READ phy record; `6581` if the record cannot be read (never the never-written default — the host RMWs on this answer) |
 | `1E` | `02` | `00` | — | `free ‖ used ‖ kv_total ‖ nfiles ‖ flash_size` (5×BE4 = 20 B) | READ flash usage |
-| `1E` | `03` | `00` | — | `enabled(1) ‖ locked(1) ‖ bootkey_slot(1)` (`FF` = none) | READ secure-boot status |
+| `1E` | `03` | `00` | — | `enabled(1) ‖ locked(1) ‖ bootkey_slot(1)` (`FF` = none) | READ secure-boot status; `locked` requires one trusted key, all other slots revoked, both debug disables, complete hardening and page-1/2 BL/NS lock copies |
 | `1E` | `04` | `01` | — | `YYYY(BE2) Mon Day Wday Hour Min Sec` (8 B) | READ RTC (civil); `6985` if unset |
 | `1E` | `04` | `02` | — | epoch seconds (BE4) | READ RTC (Unix); `6985` if unset |
 | `1E` | `06` | `00` | — | `required(1) ‖ version(1) ‖ capacity(1)` | READ anti-rollback state |

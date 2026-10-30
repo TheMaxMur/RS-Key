@@ -84,9 +84,13 @@ Root inputs of `flake.lock` deliberately outside this TCB:
 | `__kvmain_end` | import | `firmware/src/main.rs, extern "C", unconditional` | `rust-lld` |
 | `__kvmain_start` | import | `firmware/src/main.rs, extern "C", unconditional` | `rust-lld` |
 | `_stack_end` | import | `firmware/src/main.rs, extern "C", unconditional` | `flip-link` |
+| `__rsk_scratch_exec_end` | import | `firmware/src/trustzone/mod.rs, extern "C", unconditional` | `rust-lld` |
+| `__rsk_scratch_exec_load` | import | `firmware/src/trustzone/mod.rs, extern "C", unconditional` | `rust-lld` |
+| `__rsk_scratch_exec_start` | import | `firmware/src/trustzone/mod.rs, extern "C", unconditional` | `rust-lld` |
 | `rsk_tz_enter_ns` | import | `firmware/src/trustzone/mod.rs, extern "C", unconditional` | `arm-none-eabi-gcc` |
 | `__rsk_exec_end` | import | `firmware/src/trustzone/mpu.rs, extern "C", unconditional` | `rust-lld` |
 | `__rsk_exec_start` | import | `firmware/src/trustzone/mpu.rs, extern "C", unconditional` | `rust-lld` |
+| `__rsk_scratch_exec_start` | import | `firmware/src/trustzone/mpu.rs, extern "C", unconditional` | `rust-lld` |
 | `rsk_tz_control` | import | `firmware/trustzone/nonsecure/src/main.rs, extern "C", unconditional` | `arm-none-eabi-gcc` |
 | `rsk_tz_poll` | import | `firmware/trustzone/nonsecure/src/main.rs, extern "C", unconditional` | `arm-none-eabi-gcc` |
 | `rsk_tz_submit` | import | `firmware/trustzone/nonsecure/src/main.rs, extern "C", unconditional` | `arm-none-eabi-gcc` |
@@ -98,7 +102,7 @@ Root inputs of `flake.lock` deliberately outside this TCB:
 
 - **assembler** — `arm-none-eabi-as`, `cortex-m`
 - **compiler** — `arm-none-eabi-gcc`, `rustc`
-- **ffi** — the 28 boundary(s) in the table above, each joined to the pinned tool that produces its foreign half
+- **ffi** — the 32 boundary(s) in the table above, each joined to the pinned tool that produces its foreign half
 - **linker** — `flip-link`, `rust-lld`
 
 Not enumerated by this generator at all, and not by any other:
@@ -243,6 +247,8 @@ done
 fi
 if [ ! -f "$sbom" ]; then echo "no SBOM produced" >&2; exit 1; fi
 cp "$sbom" "dist/rs-key-${tag}-sbom.cdx.json"
+nix develop -c cargo cyclonedx --manifest-path firmware/trustzone/nonsecure/Cargo.toml --target thumbv8m.main-none-eabihf --format json
+cp firmware/trustzone/nonsecure/firmware-ns.cdx.json "dist/rs-key-${tag}-sbom-nonsecure.cdx.json"
 # 10. checksums
 cd dist
 sha256sum ./*.uf2 ./*.cdx.json > SHA256SUMS
@@ -341,11 +347,11 @@ if trustzone then
 ''
 export CARGO_NET_OFFLINE=true
 export RSK_TZ_CARGO_CONFIG="target.${target}.rustflags=[\"--remap-path-prefix=$NIX_BUILD_TOP=/build\",\"--remap-path-prefix=${toolchain}=/toolchain\"]"
-bash firmware/trustzone/build.sh
+bash firmware/trustzone/build.sh ${lib.escapeShellArgs buildFlags}
 ''
 else
 ''
-cargo build --release --offline --frozen -p firmware --target ${target} --config "target.${target}.rustflags=[\"--remap-path-prefix=$NIX_BUILD_TOP=/build\",\"--remap-path-prefix=${toolchain}=/toolchain\"]" ${lib.escapeShellArgs cargoFlags}
+cargo build --release --offline --frozen -p firmware --target ${target} --config "target.${target}.rustflags=[\"--remap-path-prefix=$NIX_BUILD_TOP=/build\",\"--remap-path-prefix=${toolchain}=/toolchain\"]" ${lib.escapeShellArgs buildFlags}
 ''
 }
 # installPhase
@@ -366,8 +372,8 @@ The files that decide what a release is. A digest here covers the parts the tabl
 | File | sha256 |
 |---|---|
 | `.github/workflows/release.yml` | `9f4218cfb9869bc458be8076f2185af6bdb734598db9b49167557dca30324a05` |
-| `.github/workflows/release-build.yml` | `54923e1ab4639d62d8a23220abd0c064e462d3806e45f812b8e62f61570a449a` |
-| `nix/firmware.nix` | `d64ca23022f6d397ccb696e74ee3ebece9c1df229644560a6540cbbabc646339` |
+| `.github/workflows/release-build.yml` | `f4b514f89c593def72b9800914d54295f3a29d51ec45bde50fe06ef29c80fb27` |
+| `nix/firmware.nix` | `ba3d68d5bb884402a57b986156e4f229681813836c7406523403840eb664b1e5` |
 | `scripts/pt.sh` | `c55ba6255421a664c13ba8b1e3b05b01af842d3ba8e95cd986a7a46005c877ed` |
 
 The CI code that runs them, pinned by commit:
@@ -383,7 +389,7 @@ The CI code that runs them, pinned by commit:
 
 The toolchain closure — `flake.lock`, `Cargo.lock` and the tools they pin — is the table above this section, and is deliberately not restated here: one copy, one place it can rot.
 
-Published assets: `SHA256SUMS`, `SHA256SUMS.sigstore.json`, `rs-key-<tag>-16mb.uf2`, `rs-key-<tag>-2mb.uf2`, `rs-key-<tag>-always-uv-pqc.uf2`, `rs-key-<tag>-always-uv.uf2`, `rs-key-<tag>-default.uf2`, `rs-key-<tag>-display.uf2`, `rs-key-<tag>-fips-pqc.uf2`, `rs-key-<tag>-fips.uf2`, `rs-key-<tag>-pqc.uf2`, `rs-key-<tag>-sbom.cdx.json`, `rs-key-<tag>-strict-config.uf2`, `rs-key-<tag>-strict-up-pqc.uf2`, `rs-key-<tag>-strict-up.uf2`, `rs-key-<tag>-strong-pin-pqc.uf2`, `rs-key-<tag>-strong-pin.uf2`, `rs-key-<tag>.intoto.jsonl`.
+Published assets: `SHA256SUMS`, `SHA256SUMS.sigstore.json`, `rs-key-<tag>-16mb.uf2`, `rs-key-<tag>-2mb.uf2`, `rs-key-<tag>-always-uv-pqc.uf2`, `rs-key-<tag>-always-uv.uf2`, `rs-key-<tag>-default.uf2`, `rs-key-<tag>-display.uf2`, `rs-key-<tag>-fips-pqc.uf2`, `rs-key-<tag>-fips.uf2`, `rs-key-<tag>-pqc.uf2`, `rs-key-<tag>-sbom-nonsecure.cdx.json`, `rs-key-<tag>-sbom.cdx.json`, `rs-key-<tag>-strict-config.uf2`, `rs-key-<tag>-strict-up-pqc.uf2`, `rs-key-<tag>-strict-up.uf2`, `rs-key-<tag>-strong-pin-pqc.uf2`, `rs-key-<tag>-strong-pin.uf2`, `rs-key-<tag>.intoto.jsonl`.
 
 ### What this table does not read
 

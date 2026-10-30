@@ -1,14 +1,14 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # Copyright (C) 2026 RS-Key contributors
 #
-# What the linked DEFAULT image may contain, for `scripts/elf_gate.py`.
+# What the linked legacy Cargo-default image may contain, for `scripts/elf_gate.py`.
 # HAND-WRITTEN FIELDS ONLY: which ELF, which sections may be writable AND
 # executable, which allocator symbols the image is allowed to define, and which
 # section carries the vector table. Where the segments land, whether they fit the
 # `firmware/memory.x` regions, whether any of them overlaps the KV store and what
 # the image actually links are DERIVED and printed, never stored.
 #
-# Scope, said here rather than discovered later: the DEFAULT profile only.
+# Scope: the explicit firmware-legacy baseline, not the shipping TrustZone image.
 # `scripts/check.sh` rebuilds this path three more times below the row — 16 MB,
 # display, no-touch — so a second profile needs its own build and its own row,
 # and the four `no-touch` images are the ones that remove the physical consent

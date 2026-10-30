@@ -67,6 +67,7 @@
 
 - [Architecture](architecture.md)
   - [TrustZone boundary](trustzone.md)
+    - [TrustZone engineering history](trustzone-history.md)
 - [Host protocol](protocol.md)
 - [Testing](testing.md)
   - [Testing roadmap](testing-roadmap.md)

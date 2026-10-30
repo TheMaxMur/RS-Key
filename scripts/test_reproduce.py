@@ -121,6 +121,26 @@ def test_rows_defect_a_row_that_needs_a_board_is_unclaimed(tree):
     assert "whether a clean checkout can" in out
 
 
+@pytest.mark.parametrize("command", ["cargo fmt", "cargo clippy", "cargo test", "cargo audit", "cargo doc"])
+def test_separate_tui_shell_rows_need_their_own_claim(tree, command):
+    lines = (tree / SCRIPT).read_text().splitlines()
+    claim = next(line for line in lines if '"^nix develop ' in line and command in line)
+    edit(tree, claim, "")
+    rc, out = self_test(tree)
+    assert rc == 1
+    assert "a shape no claim here recognises" in out
+    assert "tui" in out
+
+
+def test_tui_shell_does_not_make_a_board_command_reproducible(tree):
+    edit(tree, 'run "fmt"',
+         'run "board smoke" nix develop .#tui -c python tests/10_fido_getinfo.py\nrun "fmt"',
+         path="scripts/check.sh")
+    rc, out = self_test(tree)
+    assert rc == 1
+    assert 'row "board smoke"' in out
+
+
 def test_rows_defect_the_second_runner_is_read_too(tree):
     """The same board row landing in `check-assurance.sh`: its rows are claimed
     the way `check.sh`'s are, or that runner could grow one unseen."""

@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # Copyright (C) 2026 RS-Key contributors
 #
-# What links a REGISTERED SOURCE OWNER to the shipped binary, for
+# What links a REGISTERED SOURCE OWNER to the legacy diagnostic binary, for
 # scripts/owner_binding_gate.py. Stage 11A work 4: a δC/Step owner named in
 # assurance/token_refinement.toml is a claim about a function; until something
 # reads the image, nothing says that function is in the firmware that ships.
@@ -150,4 +150,4 @@ why = "a `const fn` reached only by `const _: () = assert!(round_trips(..))` ite
 file = "crates/rsk-device/src/ctap.rs"
 function = "reset_transport_session"
 basis = "cfg-gated"
-why = "the trustzone feature is selected by the separate Secure build; the ordinary firmware dependency does not enable it. This absence is for the default ELF, not the combined TrustZone image"
+why = "the explicit firmware-legacy diagnostic uses Cargo default features, which exclude trustzone. This absence is for that legacy ELF, not the shipping combined TrustZone image"

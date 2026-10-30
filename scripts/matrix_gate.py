@@ -124,7 +124,8 @@ CRATE_ABSENT = "crate-absent"
 #: (a `no-touch` presence auto-confirm, say) is the `why`'s job; that the switch
 #: exists, is thrown here, and is THIS property's is this one's.
 GATE_COMPILED_OUT = "gate-compiled-out"
-#: This column IS the default build: no cargo features, no knobs.
+#: The historical evidence baseline: legacy firmware, no cargo features or knobs.
+#: Changing the shipping default must not transfer this evidence to another mode.
 DEFAULT_BUILD = "default-build"
 #: The cell names `evidence`: `check.sh` rows that PRODUCED the registry's
 #: evidence for this property, on THIS configuration — same cargo features, same
@@ -180,7 +181,7 @@ ROW_TRANCHES = ("p0-launch", "p0b")
 #: catches only the collapse, never the slide, and losing four boards one at a
 #: time is how an axis quietly stops being an axis. Shrinking one for real is
 #: then a deliberate edit here, in the same diff as the shrink.
-FLOOR_PACKAGES = 20
+FLOOR_PACKAGES = 21
 FLOOR_BOARDS = 6
 FLOOR_ROWS = 41
 #: A `why` or a settling question shorter than this is a placeholder rather than
@@ -416,6 +417,7 @@ def packages(root):
         gate_lines.split_at_comment(body)[0] for _indent, body in gate_lines.logical_lines(text)
     )
     out = {}
+    default_mode = trustzone_default(root) if INVOCATION.search(code) else False
     for _attr, body in _nix_blocks(text):
         name = re.search(r'name\s*=\s*"([^"]+)"', body).group(1)
         features, residual = cargo_flags(name, body)
@@ -426,6 +428,10 @@ def packages(root):
         }
         if residual:
             knobs["cargoFlags"] = residual
+        mode = knobs.get("trustzone", "true" if default_mode else "false")
+        if mode not in ("true", "false"):
+            raise ValueError(f"{FLAKE}: `{name}` has a non-literal trustzone mode: {mode}")
+        knobs["trustzone"] = mode
         derived = (frozenset(features), knobs)
         if out.setdefault(name, derived) != derived:
             raise ValueError(
@@ -442,6 +448,18 @@ def packages(root):
             " a column that never exists"
         )
     return out
+
+
+def trustzone_default(root):
+    """The builder's literal mode default, not a second hand-written default."""
+    code = "\n".join(
+        gate_lines.split_at_comment(body)[0]
+        for _indent, body in gate_lines.logical_lines((root / FLAKE).read_text())
+    )
+    found = re.search(r"\btrustzone\s*\?\s*([^,}\n]+)", code)
+    if found is None or found.group(1).strip() not in ("true", "false"):
+        raise ValueError(f"{FLAKE}: mkFirmware's trustzone default is not a literal boolean")
+    return found.group(1).strip() == "true"
 
 
 def published(root):
@@ -572,8 +590,8 @@ def workspace(root):
     return out
 
 
-def resolve(manifests, extra):
-    """(crates compiled in, crate -> its enabled features) for `firmware` + `extra`.
+def resolve(manifests, extra, root="firmware"):
+    """(crates compiled in, crate -> features) for one binary root and `extra`.
 
     Cargo's own resolution, over workspace members only: an external crate cannot
     own a property, so its features would be a column nothing reads. Weak
@@ -592,8 +610,11 @@ def resolve(manifests, extra):
                 add(name)
         queue.append((crate, "default"))
 
-    add("firmware")
-    queue.extend(("firmware", feature) for feature in extra)
+    add(root)
+    for feature in extra:
+        crate, name = feature.split("/", 1) if "/" in feature else (root, feature)
+        add(crate)
+        queue.append((crate, name))
 
     seen = set()
     while True:
@@ -647,34 +668,51 @@ class Column:
         self.name = name
         self.kind = kind
         self.features = frozenset(features)
-        self.knobs = knobs
+        self.trustzone = knobs.get("trustzone", "false") == "true"
+        self.knobs = {key: value for key, value in knobs.items() if key != "trustzone"}
         self.published = is_published
-        self.present, self.closure = resolve(manifests, sorted(self.features))
+        secure = sorted(self.features)
+        self.ns_present, self.ns_closure = frozenset(), {}
+        if self.trustzone:
+            if not {"rsk-device", "firmware-ns"} <= manifests.keys():
+                raise ValueError(
+                    "TrustZone columns require rsk-device and firmware-ns workspace members"
+                )
+            secure.append("rsk-device/trustzone")
+            ns = ["strict-config"] if self.features & {
+                "strict-config", "firmware/strict-config"
+            } else []
+            self.ns_present, self.ns_closure = resolve(manifests, ns, root="firmware-ns")
+        self.secure_present, self.closure = resolve(manifests, secure)
+        self.present = self.secure_present | self.ns_present
 
     @property
     def default(self):
-        return not self.features and not self.knobs
+        return not self.trustzone and not self.features and not self.knobs
 
 
 def columns(root, manifests):
     """Every column, derived from the three axes, in a stable order."""
     out, loops = [], published(root)
+    packages_by_name = packages(root)
+    default_mode = trustzone_default(root) if packages_by_name else False
+    mode = {"trustzone": "true" if default_mode else "false"}
     shipped = frozenset.union(*loops) if loops else frozenset()
-    for name, (features, knobs) in packages(root).items():
+    for name, (features, knobs) in packages_by_name.items():
         out.append(Column(name, "package", features, knobs, name in shipped, manifests))
     expressed = {f for _c in out for f in _c.features}
     for feature in manifest_features(root):
         if feature not in expressed:
-            out.append(Column(feature, "feature", [feature], {}, False, manifests))
+            out.append(Column(feature, "feature", [feature], mode, False, manifests))
     for preset, knobs in boards(root).items():
-        out.append(Column(preset, "board", [], knobs, False, manifests))
+        out.append(Column(preset, "board", [], knobs | mode, False, manifests))
     return out
 
 
 def reference_column(cols):
-    """The default build: the column every closure delta is measured against.
+    """The legacy evidence baseline, independent of the shipping default.
 
-    Derived (no cargo feature, no build knob) rather than named, so a renamed
+    Derived (legacy mode, no cargo feature or build knob) rather than named, so a renamed
     `firmware` cannot leave the page silently measuring against nothing. Picking
     the first of several is not a choice: two columns with no feature and no knob
     resolve the same workspace, so they are one image under two names.
@@ -1185,6 +1223,11 @@ def check_cell(root, pid, column, entry, by_name, own, names):
             problems.append(f"{where}: basis `{basis}` names no column in `same_as`")
         elif other.name == column.name:
             problems.append(f"{where}: `same_as` names its own column")
+        elif column.trustzone != other.trustzone:
+            problems.append(
+                f"{where}: TrustZone and legacy builds are different execution modes"
+                " — an equivalence the tree refutes"
+            )
         elif closure_delta(column, other):
             problems.append(
                 f"{where}: claims to compile like {other.name}, and"
@@ -1209,7 +1252,7 @@ def check_cell(root, pid, column, entry, by_name, own, names):
     if basis == DEFAULT_BUILD and not column.default:
         problems.append(
             f"{where}: basis `{basis}` on a column that enables {sorted(column.features)}"
-            f" and sets {sorted(column.knobs)}"
+            f" and sets {sorted(column.knobs)} — this basis is legacy-only"
         )
     if basis == CHECK_SH_ROWS:
         problems.extend(check_evidence(root, where, pid, column, entry, own, names))
@@ -1431,6 +1474,11 @@ def check_evidence(root, where, pid, column, entry, own, names):
     reads every knob — and both were then caught one clause down for naming no
     owner crate, which is a different sentence and only accidentally true.
     """
+    if column.trustzone:
+        return [
+            f"{where}: `{CHECK_SH_ROWS}` reads direct Cargo evidence, not the composed"
+            " Secure/Non-secure build context — TrustZone coverage needs scoped evidence"
+        ]
     named = entry.get("evidence") or []
     if not named:
         return [
@@ -1766,11 +1814,16 @@ def closure_delta(column, other):
     image — the one delta of the three that reaches a crate boundary.
     """
     out = {}
-    for crate in sorted(column.present | other.present):
-        here = column.closure.get(crate, frozenset()) if crate in column.present else None
-        there = other.closure.get(crate, frozenset()) if crate in other.present else None
+    for crate in sorted(column.secure_present | other.secure_present):
+        here = column.closure.get(crate, frozenset()) if crate in column.secure_present else None
+        there = other.closure.get(crate, frozenset()) if crate in other.secure_present else None
         if here != there:
             out[crate] = (here, there)
+    for crate in sorted(column.ns_present | other.ns_present):
+        here = column.ns_closure.get(crate, frozenset()) if crate in column.ns_present else None
+        there = other.ns_closure.get(crate, frozenset()) if crate in other.ns_present else None
+        if here != there:
+            out[f"NS:{crate}"] = (here, there)
     return out
 
 
@@ -1906,7 +1959,7 @@ def render(root):
         "| Disposition | Code | Means |",
         "|---|---|---|",
         "| `covered` | `cov` | the evidence the registry records was produced on"
-        " this configuration; on any column but the default build the cell names the"
+        " this configuration; outside the legacy evidence baseline the cell names the"
         " `check.sh` rows, and the gate re-derives both that they build THIS image"
         " and that they ran evidence the registry actually derives for the property —"
         " a Kani harness, a fuzz target or a `tests/*.py`, never a crate's unit tests |",
@@ -1914,6 +1967,14 @@ def render(root):
         "| `conditional` | `cnd` | claimed only under a stated condition |",
         "| `out-of-scope` | `oos` | the claim is not made here — the code it is about is absent, or the gate it is about is compiled out |",
         "| `gap` | `gap` | nobody has decided yet; the column's settling question is below |",
+        "",
+        "The retained `default-build` basis refers to the featureless **legacy evidence",
+        "baseline**, now named `firmware-legacy`; it does not mean the shipping default.",
+        "TrustZone is the shipping default. Its Secure closure includes",
+        "`rsk-device/trustzone`, and its independently built Non-secure closure is",
+        "compared separately (`NS:` below), including the OTP `strict-config` policy.",
+        "Changing the default does not promote earlier legacy evidence to TrustZone.",
+        "The direct-Cargo evidence reader cannot establish a composed TrustZone run.",
         "",
         "## The axes",
         "",
@@ -1931,14 +1992,14 @@ def render(root):
         "## Columns",
         "",
         "The last cell is DERIVED, not declared: the per-crate cargo-feature"
-        " closure this column resolves to, against the default build's. It is the"
+        " closure this column resolves to, against the legacy evidence baseline's. It is the"
         " same derivation the `equivalent` rule refuses a cell on, so a column"
-        " reading `—` there compiles the workspace exactly as the default build"
+        " reading `—` there compiles the workspace exactly as the legacy baseline"
         " does and its whole delta is knobs — and a column that names a crate has"
         " that crate's code moving under every row of its column, which is the"
         " fact a `gap` there is about.",
         "",
-        "| # | Configuration | Kind | Published | Cargo features | Knobs | Compiles unlike the default build |",
+        "| # | Configuration | Kind | Published | Cargo features | Build mode / knobs | Compiles unlike the legacy evidence baseline |",
         "|---|---|---|---|---|---|---|",
     ]
     index = {column.name: f"{n:02d}" for n, column in enumerate(cols, 1)}
@@ -1948,7 +2009,10 @@ def render(root):
     reference = reference_column(cols)
     for column in cols:
         feats = ", ".join(f"`{f}`" for f in sorted(column.features)) or "—"
-        knobs = ", ".join(f"`{k}={v}`" for k, v in sorted(column.knobs.items())) or "—"
+        knobs = ", ".join(
+            [f"`trustzone={'true' if column.trustzone else 'false'}`"]
+            + [f"`{k}={v}`" for k, v in sorted(column.knobs.items())]
+        )
         flag = "yes" if column.published else ("n/a" if column.kind != "package" else "no")
         if reference is None:
             delta = "n/a — no column derives as the default build"
@@ -2024,7 +2088,7 @@ def render(root):
         "The middle column is derived, and it is what a `gap` here costs: the open"
         " rows whose OWNING crates — the ones whose production Rust carries the"
         " property's tag — are among the crates the column compiles unlike the"
-        " default build, above. Outside it, the code the statement is about did not"
+        " legacy evidence baseline, above. Outside it, the code the statement is about did not"
         " move and the question is whether the rest of the image reaches it; inside"
         " it, the statement is about a different compilation. " + blind,
         "",
@@ -2044,7 +2108,9 @@ def render(root):
     for column in cols:
         open_rows = [pid for pid in rows if (pid, column.name) not in placed]
         if open_rows:
-            moved = set(closure_delta(column, reference)) if reference else set()
+            moved = {
+                crate.removeprefix("NS:") for crate in closure_delta(column, reference)
+            } if reference else set()
             reaches = sum(1 for pid in open_rows if own.get(pid, frozenset()) & moved)
             asked = questions.get(column.name, {})
             out.append(

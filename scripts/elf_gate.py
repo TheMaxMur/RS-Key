@@ -31,7 +31,8 @@ Three facts this measured that the tree's prose does not carry:
   held the whole set while this file had no producer code at all, so a THIRD
   compiler arriving through a dependency was invisible to both.
 
-The scope is the DEFAULT image and it says so: `check.sh` rebuilds this path
+The scope is the legacy Cargo-default diagnostic, not the shipping TrustZone
+image. `check.sh` rebuilds this path
 three more times below this row (16 MB, display, no-touch), so a row placed with
 the other Python gates would audit the no-touch binary. The other profiles are a
 named gap in `assurance/image.toml`, not a silent one.

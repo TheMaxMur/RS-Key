@@ -2,7 +2,7 @@
 # Copyright (C) 2026 RS-Key contributors
 #
 # The dev shells: `default` (toolchain + picotool + security tooling + the host
-# `rsk`/`rsk-tui` commands) and `fuzz` (nightly for cargo-fuzz).
+# `rsk` command), `tui` (host dashboard) and `fuzz` (nightly for cargo-fuzz).
 {
   pkgs,
   sdl2,
@@ -13,7 +13,7 @@
   rskBin,
   rskTui,
 }:
-{
+rec {
   default = pkgs.mkShell {
     packages = [
       toolchain
@@ -76,12 +76,9 @@
       pkgs.mdbook-mermaid
       pkgs.lychee
 
-      # Host-side tooling: the `rsk` CLI (tools/rsk) + the `rsk-tui` dashboard
-      # (tools/tui) + the CTAPHID/FIDO device tests (tests/). See host-tools.nix
-      # for the Python deps.
+      # Host CLI and device tests; the dashboard lives in the tui shell.
       rskPython
       rskBin
-      rskTui
 
       # Host-only inputs for scripts/generate_ui_fonts.py. The generated 4-bit
       # coverage data is committed, so neither package enters the firmware.
@@ -93,16 +90,7 @@
       sdl2
     ];
 
-    # tools/tui links the host PC/SC and HID stacks. On Linux the pcsc-sys and
-    # hidapi build scripts resolve libpcsclite/libudev via pkg-config (the gate
-    # clippies the TUI, so CI needs them); darwin uses the system frameworks.
-    buildInputs = [
-      sdl2
-    ]
-    ++ pkgs.lib.optionals pkgs.stdenv.isLinux [
-      pkgs.pcsclite
-      pkgs.systemd # libudev, for the hidapi crate's hidraw backend
-    ];
+    buildInputs = [ sdl2 ];
 
     shellHook = ''
       # flip-link (the embedded linker in .cargo/config.toml) shells out to
@@ -115,9 +103,7 @@
       export DYLD_FALLBACK_LIBRARY_PATH="${pkgs.lib.getLib pkgs.libgcrypt}/lib''${DYLD_FALLBACK_LIBRARY_PATH:+:$DYLD_FALLBACK_LIBRARY_PATH}"
       export IBM_PLEX_SANS_DIR="${pkgs.ibm-plex}/share/fonts/truetype"
       export IBM_PLEX_MONO_DIR="${pkgs.ibm-plex}/share/fonts/truetype"
-      # The dev-shell `rsk-tui` and `rsk-emu` are bare `cargo run`s (no nix
-      # RPATH), so their DT_NEEDED libudev/libpcsclite/libSDL2 must be on the
-      # loader path at run time — `LIBRARY_PATH` above only satisfies the linker.
+      # The emulator needs a runtime loader path as well as LIBRARY_PATH.
       #
       # SDL2 belongs here even though nothing in CI opens a window: `tools/emu`
       # links `embedded-graphics-simulator` unconditionally, so EVERY run of the
@@ -132,8 +118,6 @@
             sdl2
           ]
           ++ pkgs.lib.optionals pkgs.stdenv.isLinux [
-            pkgs.systemd
-            pkgs.pcsclite
             # check.sh's fuzz-liveness row executes the libFuzzer binaries, whose
             # runtime is C++, and this shell — not `.#fuzz`, which already names
             # it — is where that row runs. Without it every target dies on
@@ -177,16 +161,33 @@
       echo "  target:   ${target}"
       echo "  picotool: $(picotool version 2>/dev/null | head -1 || echo 'n/a')"
       echo
-      echo "Build:  cargo build --release -p firmware   # pick the target crate"
+      echo "Build:  bash firmware/trustzone/build.sh [--features ...]"
       echo "  (or:  nix build .#firmware                 # hermetic → result/firmware.uf2)"
-      echo "PT:     scripts/pt.sh target/${target}/release/firmware fw-pt.elf   # fence the KV store"
-      echo "UF2:    picotool uf2 convert fw-pt.elf -t elf firmware.uf2"
+      echo "Image:  target/trustzone/combined.uf2       # includes the KV partition fence"
       echo "Flash:  hold BOOTSEL, plug in the RP2350, drag firmware.uf2 to the RP2350 drive"
       echo "Check:  ./scripts/check.sh        # fmt + clippy + test + audit + deny + gitleaks"
       echo "Fuzz:   nix develop .#fuzz -c cargo fuzz run <target>"
       echo "CLI:    rsk status | rsk backup … | rsk secure-boot … | rsk otp … (rsk --help)"
-      echo "TUI:    rsk-tui                    # live device dashboard"
+      echo "TUI:    nix develop .#tui -c rsk-tui       # separate dashboard shell"
       echo "Docs:   ./scripts/docs.sh serve    # preview the docs site (build|check)"
+    '';
+  };
+
+  tui = pkgs.mkShell {
+    inputsFrom = [ default ];
+    packages = [ rskTui ];
+    buildInputs = pkgs.lib.optionals pkgs.stdenv.isLinux [
+      pkgs.pcsclite
+      pkgs.udev
+    ];
+    RSK_TUI_SHELL = "1";
+    shellHook = pkgs.lib.optionalString pkgs.stdenv.isLinux ''
+      export LD_LIBRARY_PATH="${
+        pkgs.lib.makeLibraryPath [
+          pkgs.pcsclite
+          pkgs.udev
+        ]
+      }''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
     '';
   };
 

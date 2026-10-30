@@ -201,14 +201,13 @@ CONTRIBUTING.md → "Code".
   private items, which a plain sibling `mod` would lose. cfg-gated code never
   reaches the firmware image, so moving it is not a behaviour change (no
   `bcdDevice` bump).
-- **`check.sh` leaves the *no-touch* test image** at
-  `target/.../release/firmware`. Anything meant to be flashed must be rebuilt
-  with `cargo build --release -p firmware` first — flag this if your change
-  affects which image is produced. A bare `cargo build` also carries **no
-  partition table** (it is applied after linking), so a key flashed straight from
-  that ELF has an unfenced KV store: run `scripts/pt.sh <elf> <out>` over it
-  first, or build with `nix build .#firmware`, which does it for you
-  ([docs/build.md](docs/build.md#the-partition-table)).
+- **Use the combined TrustZone image.** `nix build .#firmware` and
+  `nix develop -c bash firmware/trustzone/build.sh` build S and NS together,
+  including the partition table. Rebuild without `no-touch` or diagnostic
+  features before flashing; sign the combined ELF. `check.sh` also leaves a
+  **legacy no-touch** ELF at `target/.../release/firmware`; that path is not the
+  standard deployable image. TUI development uses `nix develop .#tui`; the full
+  gate invokes that environment for its TUI rows.
 
 ## Layout
 

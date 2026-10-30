@@ -51,8 +51,8 @@ step 3).
 - **`rs-key-<tag>.intoto.jsonl`**: the build-provenance attestation, as a file.
   The authoritative copy stays in GitHub's attestation API and in Rekor; this one
   is for checking a download offline.
-- **`rs-key-<tag>-sbom.cdx.json`**: a CycloneDX software bill of materials for the
-  firmware's dependency tree.
+- **`rs-key-<tag>-sbom.cdx.json`** and **`rs-key-<tag>-sbom-nonsecure.cdx.json`**:
+  CycloneDX bills of materials for the Secure and Non-secure dependency trees.
 
 > **The images are UNSIGNED for secure boot.** The cosign signature attests *who
 > built them*, not the boot seal. On a secure-boot device you seal an image with

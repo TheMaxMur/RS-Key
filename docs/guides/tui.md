@@ -28,7 +28,7 @@ flowchart LR
 In the dev shell `rsk-tui` is on `PATH`:
 
 ```sh
-nix develop
+nix develop .#tui
 rsk-tui              # interactive cockpit
 ```
 

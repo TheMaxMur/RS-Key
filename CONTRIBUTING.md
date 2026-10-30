@@ -65,14 +65,17 @@ The default host target is `aarch64-apple-darwin` because that's where
 development happens; on Linux run `HOST_TARGET=x86_64-unknown-linux-gnu
 ./scripts/check.sh`.
 
-One trap worth knowing: check.sh builds the firmware twice into the *same
-path* — the real (touch-enabled) image first, then the no-touch test image
-that the automated suites need. After a check.sh run,
-`target/.../release/firmware` holds the **no-touch** build. Rebuild with
-`cargo build --release -p firmware` before flashing anything you intend to
-use. Yes, this has bitten us; the touch and no-touch images are otherwise
-indistinguishable until a credential gets minted without anyone touching the
-button.
+The standard firmware build is `bash firmware/trustzone/build.sh` inside the
+dev shell, or `nix build .#firmware`. Both produce a combined Secure/Non-secure
+image with the partition table. `check.sh` also builds legacy diagnostic
+variants and leaves a no-touch legacy ELF at `target/.../release/firmware`.
+Do not flash that path as the default image. Rebuild with the TrustZone builder
+and no test features before flashing; its outputs are
+`target/trustzone/combined.elf` and `combined.uf2`.
+
+The TUI has a separate shell: `nix develop .#tui`. The full gate enters it for
+TUI checks. CI runs the main gate and image suites on pushes to `develop` and
+`main`, as well as on pull requests.
 
 ## Code
 

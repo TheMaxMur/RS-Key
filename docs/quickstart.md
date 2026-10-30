@@ -55,15 +55,13 @@ deps from `flake.nix`.
 
 ```sh
 nix develop                                  # first run downloads the toolchain
-cargo build --release -p firmware
-scripts/pt.sh target/thumbv8m.main-none-eabihf/release/firmware firmware-pt.elf
-picotool uf2 convert firmware-pt.elf -t elf firmware.uf2
+bash firmware/trustzone/build.sh
+cp target/trustzone/combined.uf2 firmware.uf2
 ```
 
-`pt.sh` embeds the partition table that keeps the USB bootloader out of the key's
-storage — `cargo build` cannot, since it is added after linking
-([build.md](build.md#the-partition-table)). `nix build .#firmware` does it for
-you.
+The builder runs `pt.sh` to embed the partition table that keeps the USB
+bootloader out of the key's storage. `nix build .#firmware` includes the same
+step ([build.md](build.md#the-partition-table)).
 
 Set `PRESENCE_PIN=<gpio>` for a dedicated presence button instead of BOOTSEL.
 For a no-touch build (needed by the automated test suites, or if your board is

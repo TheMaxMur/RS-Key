@@ -4,10 +4,13 @@ What RS-Key defends against, what it deliberately does not, and the honest
 residuals in between. The defenses compose in tiers: each one assumes the
 ones before it.
 
-The [TrustZone boundary](trustzone.md) defines the separate design target for a
-compromised Non-secure transport. The current experiment still relies on its
-reset callbacks; complete hardware isolation and independent reset observation
-are pending. This page does not claim those defenses for the ordinary build.
+The standard build uses the [TrustZone boundary](trustzone.md): USB classes
+and transports run Non-secure, while the controller, lifecycle observer,
+worker, applets, storage and private keys stay Secure. Secure code observes
+USB resets independently of Non-secure callbacks. This separation does not
+protect against compromised Secure code, physical fault injection or a
+replacement firmware image on a device without enforced Secure Boot.
+The boundary's verification record distinguishes image tests from silicon checks.
 
 ![What RS-Key defends and what is out of scope — attacker-controlled USB bytes enter the RP2350 and pass through three composing tiers: memory-safe parsers (safe Rust plus fuzzing), then protocol gates (PIN/UV, touch, management key), then the key material, which is additionally protected by an at-rest seal meaningful after the OTP master-key burn; physical and lab attacks and a compromised, unlocked host are explicitly out of scope and reach the device undefended, since the RP2350 is not a secure element](images/threat-tiers.svg)
 

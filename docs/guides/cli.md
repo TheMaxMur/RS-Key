@@ -194,6 +194,12 @@ exact token (e.g. `LOCK-SEED`) rather than pressing a single key. Anything else
 aborts. The OTP and secure-boot rituals burn one-time-programmable fuses and
 cannot be undone. Read [Production setup](../production.md) before running them.
 
+`secure-boot harden` programs both `DEBUG_DISABLE` and
+`SECURE_DEBUG_DISABLE`, plus the glitch policy, and verifies all eight CRIT1
+copies. Interrupted writes can be retried while page 1 remains writable.
+`secure-boot lock` refuses incomplete hardening; cold-boot and debug-denial
+checks on the board still precede enforcement and page locking.
+
 ### Errors and exit codes
 
 On failure `rsk` prints `error: <message>` to stderr and exits non-zero (`1`),

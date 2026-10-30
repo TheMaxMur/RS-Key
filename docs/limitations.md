@@ -278,14 +278,14 @@ Other workloads and the physical flash's endurance need separate measurements.
   and tested on external-flash RP2350 boards, so RP2354 is a recommendation here,
   not a configuration the project has validated. *Status: never on an
   external-flash board; decap-class effort on RP2354.*
-- **The ordinary build has no TrustZone-M split.** An experimental dual
-  image runs USB/transports Non-secure and the worker/applets Secure. Its
-  [boundary contract](trustzone.md) assigns production resource owners and
-  requires a Secure USB hardware observer: the current Non-secure reset
-  callback cannot establish revocation against compromised NS. Peripheral/DMA
-  enforcement, hostile-NS tests and production integration remain unfinished.
-  TrustZone adds no physical fault-injection defense. *Status: experimental;
-  the production boundary is a design decision, not an implemented guarantee.*
+- **TrustZone isolates transports, not the Secure applets from one another.**
+  The default combined image keeps the USB controller and lifecycle observer,
+  worker, crypto, storage and OTP in Secure; USB classes and framing run
+  Non-secure. Plain PINs and payloads crossing NS remain visible to compromised
+  NS code. TrustZone adds no physical fault-injection defense and does not
+  replace Secure Boot or OTP provisioning. The [boundary contract](trustzone.md)
+  lists the image evidence and remaining board validation; the explicit legacy
+  diagnostic image provides no S/NS isolation.
 - **Anti-rollback is opt-in and coarse**: `picotool seal --rollback`
   plus the `ROLLBACK_REQUIRED` fuse ([anti-rollback.md](anti-rollback.md)). The
   OTP thermometer has 48 steps for the board's life, so the rollback floor is

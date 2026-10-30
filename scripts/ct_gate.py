@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: AGPL-3.0-only
 # Copyright (C) 2026 RS-Key contributors
-"""Constant-time sites, read out of the shipped ELF instead of asserted in prose.
+"""Constant-time sites, read out of the legacy diagnostic ELF.
+
+This Cargo-default path does not audit the shipping combined TrustZone image.
 
 `docs/ct-audit.md` says the canonical comparator's inlined copies "lower to a
 loop whose only branch is governed by the *public* length counter", and that
@@ -358,7 +360,7 @@ REGISTER = re.compile(r"\b(r\d+|sl|fp|ip|sp|lr|pc)\b")
 BASE = re.compile(r"\[(r\d+|sl|fp|ip|sp|pc)")
 
 #: Predication. `IT` makes the next instructions conditional, and the shipped
-#: comparator uses it: `crates/rsk-crypto/src/mac.rs:71`'s public length-equality early return lowers
+#: comparator uses it: `crates/rsk-crypto/src/mac.rs:78`'s public length-equality early return lowers
 #: to `cmp r0,#1 / it eq / cmpeq fp,r1 / beq`. A blanket refusal of any run
 #: containing an `IT` was the first rule here and it reported that as a finding —
 #: the DOCUMENTED public early return, called secret-dependent. The rule instead

@@ -26,12 +26,13 @@ A third, optional stage builds on those: **anti-rollback**, so that *old*
 images you signed (with bugs you have since fixed) stop booting too. It has
 its own page: [anti-rollback.md](anti-rollback.md).
 
-Each stage is usable alone. Together they are the full story. All are driven
-from the host. The firmware never burns a fuse behind your back. The two
-exceptions are rows that physically cannot be written from BOOTSEL
-(bootloader-read-only OTP pages): the page-58 *lock* and the
-`ROLLBACK_REQUIRED` flag, each applied by the firmware on explicit command. The
-fuses these stages write are explained in [otp-fuses.md](otp-fuses.md).
+The standard firmware uses TrustZone before any fuse is programmed. Secure
+Boot prevents replacement of that firmware; OTP provisioning protects its
+storage roots. These are independent steps, not implicit effects of enabling
+TrustZone. After a successful master-key burn, Secure boot code automatically
+migrates and seals page 58 before launching Non-secure. PIN-dependent migration
+may require presenting the relevant PIN and rebooting. `ROLLBACK_REQUIRED`
+remains a separate explicit operation. See [otp-fuses.md](otp-fuses.md).
 
 ```mermaid
 flowchart TD
@@ -59,7 +60,7 @@ order to run them in if you are doing all three.
 | 2 | automatic firmware boot step | 1 | the page-58 read lock and migration latch | **never** |
 | 3 | `picotool seal --sign …` | 2b | nothing — host-only, and it produces the `otp.json` step 4 needs | re-run it |
 | 4 | `rsk secure-boot load-key <otp.json>` | 2c | boot-key fingerprint + `KEY_VALID` | **never** |
-| 5 | `rsk secure-boot harden` | 2c | `DEBUG_DISABLE` + glitch detectors | **never** |
+| 5 | `rsk secure-boot harden` | 2c | `DEBUG_DISABLE` + `SECURE_DEBUG_DISABLE` + glitch detectors | **never** |
 | 6 | `rsk secure-boot enable` | 2c | `SECURE_BOOT_ENABLE` — **the brick bit** | **never** |
 | 7 | `rsk secure-boot lock` | 2c | revokes unused key slots, locks the fuse pages | **never** |
 | 8 | `rsk otp rollback-require` | 3 | `ROLLBACK_REQUIRED` | **never** |
@@ -198,7 +199,9 @@ can always drag a correctly-signed UF2 (recovery path).
   build → `picotool seal --sign` → flash.
 - **Losing the signing key bricks the board for new firmware** (the current
   signed image keeps booting). Back the key up before enabling enforcement.
-- `DEBUG_DISABLE` is burned along the way. SWD is gone (flashing is BOOTSEL
+- Both `DEBUG_DISABLE` and `SECURE_DEBUG_DISABLE` are required by `harden`
+  and verified in all eight CRIT1 copies. Confirm debug denial after a cold
+  power cycle (flashing is BOOTSEL
   anyway), for anyone short of a lab: a laser on a decapped A4 turns it back on
   ([threat model](threat-model.md)).
 
@@ -229,8 +232,8 @@ board**, rotation, and recovery.
 ```sh
 # 1. an image to sign. The partition table has to be in it BEFORE sealing, or
 #    the signature does not cover the fence (build.md#the-partition-table).
-cargo build --release -p firmware
-scripts/pt.sh target/thumbv8m.main-none-eabihf/release/firmware firmware-pt.elf
+bash firmware/trustzone/build.sh
+cp target/trustzone/combined.elf firmware-pt.elf
 #    (or a single `nix build .#firmware`, whose result/firmware.elf already has it)
 
 # 2. sign the ELF — NOT the UF2, and convert afterwards. `seal` retires the
@@ -320,7 +323,7 @@ bit:
 ```sh
 rsk secure-boot status      # read the current fuse state any time
 rsk secure-boot load-key ~/.rs-key-secrets/otp_secureboot.json   # 1. boot-key fingerprint + KEY_VALID (non-enforcing)
-rsk secure-boot harden      # 2. DEBUG_DISABLE + glitch detectors   (non-enforcing)
+rsk secure-boot harden      # 2. DEBUG_DISABLE + SECURE_DEBUG_DISABLE + glitch detectors   (non-enforcing)
 rsk secure-boot enable      # 3. SECURE_BOOT_ENABLE = 1  ← the brick bit
 rsk secure-boot lock        # 4. revoke unused key slots + lock the fuse pages
 ```
@@ -343,8 +346,8 @@ Re-drag the signed one to recover.
 ### The new flash workflow (forever)
 
 ```sh
-cargo build --release -p firmware
-scripts/pt.sh target/thumbv8m.main-none-eabihf/release/firmware firmware-pt.elf
+bash firmware/trustzone/build.sh
+cp target/trustzone/combined.elf firmware-pt.elf
 # seal the ELF, convert after — a UF2 in leaves the unsigned IMAGE_DEF first (2b)
 picotool seal --sign --hash firmware-pt.elf -t elf firmware-signed.elf -t elf \
     ~/.rs-key-secrets/secure_boot_key.pem ~/.rs-key-secrets/otp_secureboot.json \
@@ -354,10 +357,10 @@ picotool uf2 convert firmware-signed.elf -t elf firmware-signed.uf2
 picotool load -v firmware-signed.uf2 && picotool reboot   # or drag it onto the RP2350 drive
 ```
 
-**The `pt.sh` line is not optional here, and its position is the point.** It
-embeds the partition table that fences the KV store off from the bootloader
+**The builder's partition-table step must precede signing.** It embeds the
+partition table that fences the KV store off from the bootloader
 ([build.md](build.md#the-partition-table)); `cargo build` alone never produces
-one. Running it *before* `seal` is what puts the table under the signature —
+one. Running the builder *before* `seal` puts the table under the signature —
 which is the only thing that stops an attacker flashing a permissive table of
 their own. Seal a table-less image and you have signed away the fence without
 any error telling you so.
@@ -454,3 +457,16 @@ moving to a new board lives in [anti-rollback.md](anti-rollback.md).
   version axis is what answers it: raise your rollback floor past your pre-table
   builds ([anti-rollback.md](anti-rollback.md)). Until you do, the fence is worth
   exactly as much as your oldest signed artifact.
+
+### Completing older debug hardening
+
+CLI 0.3.53 requires both debug-disable flags. `rsk secure-boot status` shows
+their effective values and whether all eight hardening copies are complete.
+On a board whose page 1 remains BOOTSEL-writable, rerun `harden`: it preserves
+each row's existing bits and writes only missing hardening bits. A failed
+readback stops the process; do not proceed to `lock`.
+
+If page 1 was already made bootloader-read-only, BOOTSEL cannot complete the
+missing bit. The CLI reports that limitation instead of claiming `LOCKED`;
+this update does not automatically burn CRIT1 from firmware. Power-cycle and
+physically verify debug denial before accepting a production device.

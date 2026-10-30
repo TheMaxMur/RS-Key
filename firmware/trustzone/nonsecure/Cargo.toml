@@ -12,6 +12,7 @@ publish = false
 workspace = true
 
 [features]
+strict-config = ["rsk-otp/strict-config"]
 test-hostile-access = []
 test-gateway-probes = []
 

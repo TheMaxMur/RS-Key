@@ -985,7 +985,7 @@ def test_a_disposed_inverse_kill_is_admitted_and_counted_apart(tmp_path, disposi
      ("gate_ledger", "walk=4", "walk=5"),
      ("gate_assumption", "FALSE=91", "FALSE=90"),
      ("gate_ghost", "24 route(s)", "25 route(s)"),
-     ("gate_matrix", "1353 cells", "1354 cells")],
+     ("gate_matrix", "1394 cells", "1395 cells")],
 )
 def test_a_transcribed_gate_line_that_the_gate_does_not_derive(tmp_path, key, old, new):
     """The second half of the hole `35afe59` named and did not close: editing
@@ -1088,12 +1088,12 @@ def test_the_assumption_total_read_is_the_line_s_first():
 
 @pytest.mark.parametrize(
     "key,old,new,says",
-    [("gate_matrix", "(38 covered", "(109 covered", "109 covered"),
+    [("gate_matrix", "(38 covered", "(115 covered", "115 covered"),
      ("gate_ghost", "21 action(s)", "24 action(s)", "24 action(s) record"),
-     ("gate_matrix", "1060 gap", "109 gap", "109 gap"),
+     ("gate_matrix", "1241 gap", "115 gap", "115 gap"),
      ("gate_ghost", "11 guard(s)", "21 guard(s)", "21 guard(s)"),
      ("gate_matrix", "0 conditional", "38 conditional", "38 conditional"),
-     ("gate_matrix", "41 P0-family", "33 P0-family", "33 P0-family properties")],
+     ("gate_matrix", "41 P0-family", "34 P0-family", "34 P0-family properties")],
 )
 def test_a_transcribed_unit_count_is_the_one_that_noun_was_written_for(
     tmp_path, key, old, new, says
@@ -1103,8 +1103,8 @@ def test_a_transcribed_unit_count_is_the_one_that_noun_was_written_for(
     bare-integer rule — "do these digits stand somewhere in the derived line".
 
     Every swap here takes its digits off a SIBLING count of the very line it
-    falsifies (`109` off `109 out-of-scope`, `24` off `24 route(s)`, `21` off `21
-    action(s)`, `38` off `38 covered`, `32` off `32 build`), so the old rules are
+    falsifies (`115` off `115 out-of-scope`, `24` off `24 route(s)`, `21` off `21
+    action(s)`, `38` off `38 covered`, `34` off `34 build`), so the old rules are
     all satisfied and only [`bundle_gate.CLAIMED_UNIT`] can speak: measured, every
     one was exit 0 before it. A swap onto a number the line NO LONGER carries is
     a case the bare-integer rule answers as well, which is how `(139 covered`
@@ -1117,7 +1117,7 @@ def test_a_transcribed_unit_count_is_the_one_that_noun_was_written_for(
 
     The READING is asserted too, and two of them are two words long. Each claim
     position is reported once, on the LONGEST spelling the gate wrote a count
-    for, so `41 P0-family properties → 33` is one finding about `P0-family
+    for, so `41 P0-family properties → 34` is one finding about `P0-family
     properties` rather than two about the same drift. Typed out rather than
     derived for the reason every count here is: it is the third copy that fails
     loudly instead of the one that agrees with itself.
@@ -1153,13 +1153,13 @@ def test_a_unit_count_the_gate_line_quotes_again_is_prose(tmp_path):
     before it and 0 written after — measured end to end, both ways. Both halves
     are here, because a carve-out with no negative arm is a rule switched off.
 
-    `109` is a number the derived line HAS — off `109 out-of-scope` — so the
+    `115` is a number the derived line HAS — off `115 out-of-scope` — so the
     bare-integer rule stays quiet and this case is about the carve-out and nothing
     else."""
     root = tree(tmp_path)
 
     def quote(doc):
-        doc["result"]["gate_matrix"] += " The tier this replaced read `109 covered`."
+        doc["result"]["gate_matrix"] += " The tier this replaced read `115 covered`."
 
     rewrite(root, quote)
     assert findings(root) == [], findings(root)
@@ -1173,20 +1173,20 @@ def test_a_unit_count_the_gate_line_restates_unquoted_is_a_transcription(tmp_pat
     root = tree(tmp_path)
 
     def restate(doc):
-        doc["result"]["gate_matrix"] += " The tier this replaced read 109 covered."
+        doc["result"]["gate_matrix"] += " The tier this replaced read 115 covered."
 
     rewrite(root, restate)
     problems = findings(root)
-    assert [p for p in problems if "says `109 covered`" in p], problems
+    assert [p for p in problems if "says `115 covered`" in p], problems
     assert len(problems) == 1, problems
 
 
 @pytest.mark.parametrize(
     "key,old,new,says",
-    [("gate_matrix", "33 build configurations", "38 build-configurations",
+    [("gate_matrix", "34 build configurations", "38 build-configurations",
       "38 build-configurations"),
-     ("gate_matrix", "1060 gap)", "109 gaps)", "109 gaps"),
-     ("gate_matrix", "1353 cells", "109 cell", "109 cell"),
+     ("gate_matrix", "1241 gap)", "115 gaps)", "115 gaps"),
+     ("gate_matrix", "1394 cells", "115 cell", "115 cell"),
      ("gate_ghost", "11 guard(s)", "24 guards", "24 guards"),
      ("gate_ghost", "21 action(s) record", "24 actions record", "24 actions")],
 )

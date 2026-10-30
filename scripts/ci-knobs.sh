@@ -24,7 +24,7 @@ build() { # <label> <env…> -- <cargo args…>
   local label="$1"
   shift
   echo "::group::$label"
-  env "$@" cargo build --release -p firmware
+  env "$@" bash firmware/trustzone/build.sh
   echo "::endgroup::"
 }
 
@@ -39,9 +39,9 @@ identity() {
   # be opt-in: the vendor-mimicking ids are local interop only and never ship as
   # a default. build.rs writes what it chose to `output`, which is where a swap
   # would show up.
-  local o=target/thumbv8m.main-none-eabihf/release/build/firmware-*/output
-  cargo clean -p firmware
-  cargo build --release -p firmware >/dev/null
+  local o=target/trustzone/secure/thumbv8m.main-none-eabihf/release/build/firmware-*/output
+  CARGO_TARGET_DIR=target/trustzone/secure cargo clean -p firmware
+  bash firmware/trustzone/build.sh >/dev/null
   # shellcheck disable=SC2086 # the glob is the point: one build dir, unknown hash
   grep -qx "cargo:rustc-env=PK_USB_VID=4617" $o
   # shellcheck disable=SC2086
@@ -50,7 +50,7 @@ identity() {
   grep -qx "cargo:rustc-env=PK_USB_MANUFACTURER=RS-Key" $o
   # shellcheck disable=SC2086
   grep -qx "cargo:rustc-env=PK_USB_PRODUCT=RS-Key Security Key" $o
-  env VIDPID=Yubikey5 cargo build --release -p firmware >/dev/null
+  env VIDPID=Yubikey5 bash firmware/trustzone/build.sh >/dev/null
   # shellcheck disable=SC2086
   grep -qx "cargo:rustc-env=PK_USB_VID=4176" $o
   # shellcheck disable=SC2086

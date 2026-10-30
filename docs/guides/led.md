@@ -19,7 +19,7 @@ number of connected LEDs is configured at **runtime** via `rsk hw --led-num` (or
 
 ```sh
 # example: build for a 4-LED board with standard GRB order
-env MAX_LEDS=4 LED_ORDER=grb cargo build --release -p firmware
+env MAX_LEDS=4 LED_ORDER=grb bash firmware/trustzone/build.sh
 # then set the runtime count (persists across reboots):
 rsk hw --led-num 4
 ```

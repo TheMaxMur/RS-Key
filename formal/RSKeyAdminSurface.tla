@@ -57,7 +57,7 @@ CONSTANTS
     \* admin channel to the mask being non-empty, the shape a naive
     \* "nothing selectable when all disabled" would take.
     BugAdminGateable,
-    \* crates/rsk-rescue/src/lib.rs:143-145 -- `require_presence` gates every
+    \* crates/rsk-rescue/src/lib.rs:149-151 -- `require_presence` gates every
     \* privileged runtime command (keydev sign, cert/config write, BOOTSEL
     \* reboot, fuse burns) so a USB host alone cannot drive them. The switch
     \* removes the gate.

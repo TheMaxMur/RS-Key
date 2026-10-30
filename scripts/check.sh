@@ -416,8 +416,8 @@ run "clippy (host tests)"      cargo clippy --workspace --exclude firmware --exc
 # tools/tui is its own workspace (host-only), so the --all/--workspace runs
 # above never see it — gate it explicitly. Its lockfile was scanned by nobody
 # until Dependabot flagged a transitive advisory from the GitHub side.
-run "fmt (tui)"                cargo fmt --manifest-path tools/tui/Cargo.toml --check
-run "clippy (tui)"             cargo clippy --manifest-path tools/tui/Cargo.toml --target "$HOST" --all-targets -- -D warnings
+run "fmt (tui)"                nix develop .#tui -c cargo fmt --manifest-path tools/tui/Cargo.toml --check
+run "clippy (tui)"             nix develop .#tui -c cargo clippy --manifest-path tools/tui/Cargo.toml --target "$HOST" --all-targets -- -D warnings
 # …and its tests, which nothing ran either. Both host suites belong in the same
 # gate as the firmware's. Gating them was necessary and not sufficient: the three
 # checks named as the reason — the typed confirmations, the refuse-to-guess device
@@ -426,7 +426,7 @@ run "clippy (tui)"             cargo clippy --manifest-path tools/tui/Cargo.toml
 # green (audit run-34 #9 proved it by mutation). They are asserted at the callers
 # now: `rsk/test_refuse_to_guess.py`, `rsk/test_secureboot.py`'s stage commands,
 # and `device_tests.rs`'s `every_hid_open_site_is_classified`.
-run_tests "test (tui)"               cargo test --manifest-path tools/tui/Cargo.toml --target "$HOST"
+run_tests "test (tui)"               nix develop .#tui -c cargo test --manifest-path tools/tui/Cargo.toml --target "$HOST"
 # tools/emu is the third host-only workspace (the software emulator) — same
 # reason it is gated here: nothing in the --workspace runs above can see it, and
 # an emulator that stops compiling is found when someone tries to run the
@@ -501,7 +501,7 @@ run "rustdoc (host private)"   env RUSTDOCFLAGS="-D warnings" cargo doc --worksp
 # features, so only the firmware needs the second permutation.
 run "rustdoc (embedded)"       env BOARD=waveshare-one RUSTDOCFLAGS="-D warnings" cargo doc -p firmware -p rsk-wipe --no-deps
 run "rustdoc (firmware all-feat)" env BOARD=waveshare-one LED_KIND=none RUSTDOCFLAGS="-D warnings" cargo doc -p firmware --no-deps --all-features
-run "rustdoc (tui)"            env RUSTDOCFLAGS="-D warnings" cargo doc --manifest-path tools/tui/Cargo.toml --no-deps --target "$HOST"
+run "rustdoc (tui)"            nix develop .#tui -c env RUSTDOCFLAGS="-D warnings" cargo doc --manifest-path tools/tui/Cargo.toml --no-deps --target "$HOST"
 run "rustdoc (emu)"            env RUSTDOCFLAGS="-D warnings" cargo doc --manifest-path tools/emu/Cargo.toml --no-deps --target "$HOST"
 # `--bins` is load-bearing: cargo-fuzz writes `doc = false` on every target, so
 # a plain `cargo doc` here documents nothing, prints no `Documenting` line and
@@ -581,6 +581,8 @@ run "clippy (display strong-pin)" env LED_KIND=none cargo clippy -p firmware --f
 # no gate at all until audit run-36, so it does not go back to having no test.
 run_tests "test (display wiring)"    cargo test -p rsk-device --features display --target "$HOST"
 run "clippy (display wiring)"  cargo clippy -p rsk-device --features display --target "$HOST" --all-targets -- -D warnings
+# These direct-Cargo image checks retain the explicit legacy baseline.
+# The shipping combined TrustZone ELF is built above and run by image-suites.sh.
 run "build firmware (release)" cargo build --release -p firmware
 run "assurance-trace image identity" assurance_trace_is_image_neutral
 run "firmware size budget"     firmware_size_budget
@@ -676,7 +678,7 @@ run "vendored fork linked"     python scripts/vendored_fork_gate.py
 # No `--ignore`: the tree carries no vulnerability advisory. RUSTSEC-2023-0071
 # (the `rsa` crate, no fixed release) was the last one and left with the crate.
 run "cargo-audit (SCA)"        cargo audit
-run "cargo-audit (tui SCA)"    cargo audit --file tools/tui/Cargo.lock
+run "cargo-audit (tui SCA)"    nix develop .#tui -c cargo audit --file tools/tui/Cargo.lock
 # The emulator's own host tests — today the USB/IP codec, whose struct layouts are
 # the Linux kernel's and whose framing rule decides how many bytes come off the
 # socket next; both fail silently on the wire rather than loudly.

@@ -1482,3 +1482,28 @@ def test_an_orphan_owns_its_tag_and_the_shipped_tree_has_none(tree, capsys):
         if f.resolve() not in reached and f.resolve() not in roots
     ]
     assert not orphans, [str(f) for f in orphans]
+
+
+@pytest.mark.parametrize("prefix", ["", "#[cfg(test)]", "mod inner { #[cfg(test)]"])
+def test_literal_include_inherits_cfg_and_resolves_beside_its_file(tree, prefix):
+    suffix = "}" if prefix.startswith("mod ") else ""
+    src = _rewrite(tree, f'{prefix} include!("shared.rs"); {suffix}\n')
+    leaf = src / "shared.rs"
+    leaf.write_text(TAGGED)
+    reached = {target.resolve() for _, target, _ in assurance_gate.declared_targets(tree)}
+    assert leaf.resolve() in reached
+    assert (leaf.resolve() in assurance_gate.cfg_excluded(tree)) == bool(prefix)
+
+
+@pytest.mark.parametrize("source", [
+    '// include!("shared.rs");',
+    'const TEXT: &str = "include!(\\\"shared.rs\\\");";',
+    '#[cfg(test)] fn helper() { include!("shared.rs"); }',
+    'macro_rules! unused { () => { include!("shared.rs"); } }',
+])
+def test_non_module_include_does_not_connect_a_file(tree, source):
+    src = _rewrite(tree, source)
+    leaf = src / "shared.rs"
+    leaf.write_text(TAGGED)
+    reached = {target.resolve() for _, target, _ in assurance_gate.declared_targets(tree)}
+    assert leaf.resolve() not in reached

@@ -46,45 +46,9 @@ fn uptime_secs() -> u32 {
 pub struct RescuePlatform;
 
 impl Platform for RescuePlatform {
-    /// The BOOT_FLAGS1 valid-key flags are authoritative for "enabled" (the
-    /// bootrom ignores a KEY_VALID bit without a real key). "Locked" additionally
-    /// requires every other boot key invalidated, debug disabled, and the glitch
-    /// detectors enabled at full sensitivity.
+    /// Read physical reliability copies before claiming completed hardening.
     fn secure_boot_status(&self) -> SecureBootStatus {
-        use rp_pac::otp_data_raw::regs::{BootFlags1, Crit1};
-        use rsk_rescue::rollback::majority;
-        // Read the two gating OTP rows three times and 2-of-3 majority-vote each
-        // bit. `locked`/`enabled` gate the irreversible fuse burns (page-58 lock,
-        // ROLLBACK_REQUIRED), yet were decided from a single read of crit1 +
-        // boot_flags1; a transient read fault on debug_disable / glitch_detector_*
-        // could flip the verdict. Voting brings this read up to the RBIT-3 standard
-        // the anti-rollback path already trusts (`rsk_rescue::rollback::majority`).
-        let crit1 = Crit1(majority([
-            rp_pac::OTP_DATA_RAW.crit1().read().0,
-            rp_pac::OTP_DATA_RAW.crit1().read().0,
-            rp_pac::OTP_DATA_RAW.crit1().read().0,
-        ]));
-        let flags1 = BootFlags1(majority([
-            rp_pac::OTP_DATA_RAW.boot_flags1().read().0,
-            rp_pac::OTP_DATA_RAW.boot_flags1().read().0,
-            rp_pac::OTP_DATA_RAW.boot_flags1().read().0,
-        ]));
-        let valid = flags1.key_valid() & 0x0F;
-        let bootkey = (0..4u8).find(|i| valid & (1 << i) != 0);
-        let enabled = crit1.secure_boot_enable() && bootkey.is_some();
-        let locked = enabled && {
-            let bk = bootkey.unwrap();
-            let others = 0x0F & !(1 << bk);
-            (flags1.key_invalid() & others) == others
-                && crit1.debug_disable()
-                && crit1.glitch_detector_enable()
-                && crit1.glitch_detector_sens() == 3
-        };
-        SecureBootStatus {
-            enabled,
-            locked,
-            bootkey: bootkey.unwrap_or(0xFF),
-        }
+        rsk_rescue::boot_status::read_status(|row| embassy_rp::otp::read_raw_word(row).ok())
     }
 
     fn now(&self) -> Option<u32> {

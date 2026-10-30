@@ -259,8 +259,8 @@ fn the_secret_sweep_is_where_a_seed_the_medium_kept_stops_the_wipe() {
 /// 3 of 3 runs. And the one test that states the defect behaviourally,
 /// `reset_tests.rs::a_seed_the_medium_kept_stops_the_wipe_before_the_gates`, is a
 /// COIN FLIP: `RamStorage` is a `HashMap`
-/// (`crates/rsk-fs/src/storage.rs:109`) and `for_each_key` iterates it
-/// (`crates/rsk-fs/src/storage.rs:136`), so whether the aborted sweep reaches
+/// (`crates/rsk-fs/src/storage.rs:119`) and `for_each_key` iterates it
+/// (`crates/rsk-fs/src/storage.rs:146`), so whether the aborted sweep reaches
 /// 0xCC02 before it stops on the refused 0xCC00 is a fresh permutation per
 /// process — 167 of 400 fixtures lose the marker.
 ///

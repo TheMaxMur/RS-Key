@@ -126,6 +126,8 @@ def _state(**kw):
     provisioned and valid, hardened, enforcement not yet enabled, pages open."""
     valid = kw.pop("key_valid", 0b0001)
     s = {"secure_boot_enable": False, "debug_disable": True, "glitch_enable": True,
+         "secure_debug_disable": True, "harden_complete": True,
+         "crit1_copies": (sb.HARDEN_MASK,) * sb.CRIT1_COPIES,
          "glitch_sens": 3, "key_valid": valid, "key_invalid": 0,
          "slots_present": [bool(valid & (1 << n)) for n in range(sb.N_KEY_SLOTS)],
          "page1_lock": None, "page2_lock": None,
@@ -234,13 +236,26 @@ def test_lock_burns_the_derived_mask_and_both_page_locks(monkeypatch):
     writes = _stage(
         monkeypatch, _state(secure_boot_enable=True, key_valid=0b0011, key_invalid=0b0001),
         typed="LOCK-SECURE-BOOT",
-        after=_state(secure_boot_enable=True, key_valid=0b0011, key_invalid=0b1101))
+        after=_state(secure_boot_enable=True, key_valid=0b0011, key_invalid=0b1101,
+                     page1_lock=sb.PAGE_LOCK_BL_RO, page2_lock=sb.PAGE_LOCK_BL_RO))
     sb.cmd_lock(_args())
     assert writes == [
         ("set", "OTP_DATA_BOOT_FLAGS1.KEY_INVALID", "0xd"),
         ("set", "-r", "OTP_DATA_PAGE1_LOCK1", f"{sb.PAGE_LOCK_BL_RO:#x}"),
         ("set", "-r", "OTP_DATA_PAGE2_LOCK1", f"{sb.PAGE_LOCK_BL_RO:#x}"),
     ]
+
+
+@pytest.mark.parametrize("page", ["page1_lock", "page2_lock"])
+def test_lock_refuses_incomplete_page_readback(monkeypatch, page, capsys):
+    after = _state(secure_boot_enable=True, key_valid=1, key_invalid=0xE,
+                   page1_lock=sb.PAGE_LOCK_BL_RO, page2_lock=sb.PAGE_LOCK_BL_RO)
+    after[page] = 0x1414
+    _stage(monkeypatch, _state(secure_boot_enable=True),
+           typed="LOCK-SECURE-BOOT", after=after)
+    with pytest.raises(SystemExit):
+        sb.cmd_lock(_args())
+    assert "page locks are incomplete" in capsys.readouterr().err
 
 
 def test_load_key_refuses_a_revoked_slot(monkeypatch, tmp_path):

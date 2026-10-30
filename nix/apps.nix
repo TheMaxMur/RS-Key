@@ -85,15 +85,15 @@ let
       otp="$keys_dir/otp_secureboot.json"
       rollback="''${RSK_ROLLBACK:-1}"
       assume_yes=0
-      uf2=""
+      elf=""
 
       usage() {
         cat <<'EOF'
       rsk-flash — build, sign and flash an RS-Key firmware image (secure boot).
 
-      Usage: nix run .#flash -- [options] [UNSIGNED.uf2]
+      Usage: nix run .#flash -- [options] [UNSIGNED.elf]
 
-      With no UF2 the reproducible default firmware is sealed and flashed.
+      With no ELF the reproducible combined firmware is sealed and flashed.
 
       Options:
         -y, --yes      skip the confirmation prompt
@@ -114,15 +114,20 @@ let
           -h | --help) usage; exit 0 ;;
           --) shift; break ;;
           -*) echo "rsk-flash: unknown option: $1" >&2; usage >&2; exit 2 ;;
-          *) uf2="$1"; shift ;;
+          *) elf="$1"; shift ;;
         esac
       done
-      [ $# -gt 0 ] && [ -z "$uf2" ] && uf2="$1"
+      [ $# -gt 0 ] && [ -z "$elf" ] && elf="$1"
 
       # Default unsigned image: the reproducible nix-built firmware.
-      [ -z "$uf2" ] && uf2="${firmwarePackage}/firmware.uf2"
+      [ -z "$elf" ] && elf="${firmwarePackage}/firmware.elf"
 
-      [ -f "$uf2" ] || { echo "rsk-flash: unsigned image not found: $uf2" >&2; exit 1; }
+      case "$elf" in
+        *.elf) ;;
+        *) echo "rsk-flash: signing requires the partitioned combined ELF, not UF2" >&2; exit 2 ;;
+      esac
+
+      [ -f "$elf" ] || { echo "rsk-flash: unsigned image not found: $elf" >&2; exit 1; }
       [ -f "$key" ] || { echo "rsk-flash: signing key not found: $key (set RS_KEY_SECRETS)" >&2; exit 1; }
       [ -f "$otp" ] || { echo "rsk-flash: OTP seal json not found: $otp (set RS_KEY_SECRETS)" >&2; exit 1; }
 
@@ -131,12 +136,13 @@ let
       signed="$workdir/firmware-signed.uf2"
 
       echo "==> sealing (signing) the image"
-      echo "    image:    $uf2"
+      echo "    image:    $elf"
       echo "    key:      $key"
       echo "    otp json: $otp"
       echo "    rollback: $rollback"
-      picotool seal --sign --hash "$uf2" "$signed" "$key" "$otp" \
+      picotool seal --sign --hash "$elf" "$workdir/firmware-signed.elf" "$key" "$otp" \
         --major 1 --minor 0 --rollback "$rollback"
+      picotool uf2 convert "$workdir/firmware-signed.elf" -t elf "$signed"
 
       if [ "$assume_yes" -ne 1 ]; then
         printf '==> flash this signed image to the connected RS-Key? [y/N] '

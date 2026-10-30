@@ -41,9 +41,14 @@ depend on are stored redundantly:
 
 - **RBIT-3**: the value is written into **three consecutive rows**, and the
   reader takes the **bitwise 2-of-3 majority**. An interrupted burn that set
-  only one copy doesn't count. Two copies do. The secure-boot flags, the
-  boot-key fingerprints, and the rollback rows are all RBIT-3.
-- **ECC**: other pages store an error-correcting code alongside the data.
+  only one copy does not count. Two copies do. BOOT_FLAGS and rollback rows
+  use this encoding. Page-lock rows instead repeat their byte three times.
+- **RBIT-8**: CRIT1 occupies rows `0x40..0x47`. Each flag becomes effective
+  with at least three of eight copies set. `harden` requires the hardening bits
+  in all eight copies before reporting completion; a partial burn can be
+  effective without being complete.
+- **ECC**: boot-key fingerprints and secret key rows store error-correcting
+  parity alongside their data.
 
 ## Who can write OTP, and when
 
@@ -79,7 +84,7 @@ authoritative source is the code (`tools/rsk/otp.py`, `tools/rsk/secureboot.py`,
 | Page-58 lock | `0xFF5` | makes page 58 **BOOTSEL-unreadable, secure read-only**, and latches the migration shut | automatic Secure boot step, after migration and a successful scrub |
 | **Boot key** | `0x80…` | `SHA-256` fingerprint of your secure-boot public key (slot 0 of 4) | `rsk secure-boot load-key <otp.json>` |
 | `BOOT_FLAGS1` | `0x4B` | `KEY_VALID` / `KEY_INVALID` (which key slots are live / revoked) | `load-key`, `lock` |
-| `CRIT1` | `0x40` | `SECURE_BOOT_ENABLE`, `DEBUG_DISABLE`, `GLITCH_DETECTOR_ENABLE/SENS` | `harden`, `enable` |
+| `CRIT1` | `0x40` | `SECURE_BOOT_ENABLE`, `DEBUG_DISABLE`, `SECURE_DEBUG_DISABLE`, `GLITCH_DETECTOR_ENABLE/SENS` | `harden`, `enable` |
 | `BOOT_FLAGS0` | `0x48` | `ROLLBACK_REQUIRED` (bit 11) | `rsk otp rollback-require` (firmware) |
 | `DEFAULT_BOOT_VERSION` | `0x4E`, `0x51` | the **48-bit rollback thermometer** (two 24-bit rows) | the bootrom, on boot |
 | Page 1/2 locks | `0xF83`, `0xF85` | make the flag + key pages **bootloader-read-only** | `rsk secure-boot lock` |

@@ -167,9 +167,9 @@ The release images are reproducible, so you can rebuild any of them bit for bit
 git clone https://github.com/TheMaxMur/RS-Key && cd RS-Key
 nix develop                       # toolchain, picotool, host tools, everything
 
-cargo build --release -p firmware
-scripts/pt.sh target/thumbv8m.main-none-eabihf/release/firmware firmware-pt.elf   # fence the key's storage off the bootloader
-picotool uf2 convert firmware-pt.elf -t elf firmware.uf2
+bash firmware/trustzone/build.sh
+# combined Secure + Non-secure image, with the storage partition fence
+cp target/trustzone/combined.uf2 firmware.uf2
 
 # hold BOOTSEL, plug the board in, then flash, either way:
 cp firmware.uf2 /Volumes/RP2350/                    # macOS drag-and-drop; Linux: the mounted RP2350 volume
@@ -177,7 +177,7 @@ picotool load -v firmware.uf2 && picotool reboot    # more robust; verifies the 
 ```
 
 Re-plug the board and it enumerates as a composite USB authenticator. The default
-build requires a **physical touch** (the BOOTSEL button) for FIDO operations;
+TrustZone build requires a **physical touch** (the BOOTSEL button) for FIDO operations;
 build with `--features no-touch` for a no-touch build (the automated test
 suites need it). Every compile-time knob, including the flash size, LED pin and
 USB identity, is in [docs/build.md](docs/build.md).

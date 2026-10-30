@@ -4,10 +4,10 @@ How the firmware is put together, for contributors and the curious. For what
 the design does and does not defend against, see the
 [threat model](threat-model.md).
 
-The ordinary firmware architecture is described below. The experimental split
-keeps the worker and applets Secure and moves transports to Non-secure. Its
-[TrustZone boundary](trustzone.md) records resource ownership and the chosen
-Secure USB lifecycle observer; the implementation is in place, with physical validation still required.
+The standard build combines a Secure firmware and Non-secure transport image.
+The worker, applets, storage and USB hardware observer stay Secure; USB classes
+and framing run Non-secure. The [TrustZone boundary](trustzone.md) specifies
+resource ownership and the verification scope, including remaining silicon checks.
 
 OTP provisioning is checked before storage mounts. A boot with complete fused
 keys migrates the old records, scrubs flash, then seals page 58 automatically.
@@ -24,7 +24,7 @@ second wakes only to parallelize RSA keygen (below):
 
 ```mermaid
 flowchart TD
-    subgraph irq["Interrupt executor"]
+    subgraph irq["Non-secure transports"]
       fido["FIDO HID<br/>(0xF1D0, CTAPHID)"]
       ccid["CCID<br/>(class 0x0B, APDU)"]
       kbd["Boot keyboard<br/>(OTP typing)"]
@@ -32,20 +32,20 @@ flowchart TD
     fido --> worker
     ccid --> worker
     kbd --> worker
-    subgraph thread["Thread executor"]
+    subgraph thread["Secure worker executor"]
       worker["worker task<br/>owns flash + TRNG"]
       worker --> applets["Applets<br/>FIDO2/U2F · OpenPGP · PIV · OATH<br/>OTP · mgmt · vendor + rescue"]
     end
     applets --> fs["flash KV store<br/>(rsk-fs over sequential-storage)"]
 ```
 
-**Two executors.** USB and the transports live on a high-priority
-`InterruptExecutor`. The applet dispatch lives on the low-priority thread
-executor, in a single *worker* task that owns the flash and the TRNG outright.
-Long synchronous work (on-card RSA generation, flash compaction, a touch
-wait) blocks only the worker, while the interrupt executor keeps the bus
-enumerated, streams CCID/CTAPHID keepalives, and animates the LED. No
-mutexes: ownership does the synchronization.
+**Separate execution domains.** The Secure worker runs on SWI_IRQ_0 and owns
+flash, TRNG, applets and authorization. Non-secure USB classes and transports
+run their own executor and use bounded CMSE gateways. Secure owns the low-level
+USB driver and observes lifecycle events independently. Requests and replies
+are copied across the boundary; Rust references and secret-bearing state are
+not shared. The interrupt priorities preserve keepalives during Secure crypto.
+The legacy diagnostic build retains the former thread-worker/USB-IRQ arrangement.
 
 **Why (mostly) one core.** The async executor provides the *concurrency* that
 the upstream design used a second core and hand-rolled queues for. Core 1 is

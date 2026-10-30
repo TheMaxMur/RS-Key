@@ -43,6 +43,7 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 #: second pinned one is there so an `equivalent` CHAIN exists to follow.
 FLAKE = """\
 {
+  mkFirmware = { trustzone ? false, ... }: null;
   packages = {
     default = mkFirmware { name = "firmware"; };
     firmware = mkFirmware { name = "firmware"; };
@@ -1293,7 +1294,7 @@ def test_a_cargoflags_spelling_nixfmt_does_not_write_is_still_read(tree, spellin
         f'      name = "firmware-no-touch";\n      {spelling}',
     )
     derived = matrix_gate.packages(tree.root)["firmware-no-touch"]
-    assert derived == (frozenset({"no-touch"}), {}), derived
+    assert derived == (frozenset({"no-touch"}), {"trustzone": "false"}), derived
     assert tree.run() == 0
 
 
@@ -1384,6 +1385,120 @@ def test_a_weak_feature_edge_fires_whatever_order_it_is_offered_in(tree, capsys)
             for order in (["loud", "screen"], ["screen", "loud"])]
     assert both[0] == both[1] == frozenset({"loud"}), both
     assert matrix_gate.resolve(manifests, ["loud"])[1].get("rsk-screen") is None
+
+
+def tz_members(tree):
+    tree.edit("Cargo.toml", '"crates/rsk-screen"]',
+              '"crates/rsk-screen", "crates/rsk-device", "firmware/trustzone/nonsecure"]')
+    tree.edit("firmware/Cargo.toml", '[dependencies]\n',
+              '[dependencies]\nrsk-device = { path = "../crates/rsk-device" }\n')
+    tree.edit("firmware/Cargo.toml", 'loud = []',
+              'loud = []\nstrict-config = ["rsk-core/strict-config"]')
+    tree.write("crates/rsk-device/Cargo.toml",
+               '[package]\nname = "rsk-device"\n[features]\ntrustzone = []\n')
+    tree.write("crates/rsk-core/Cargo.toml",
+               CORE + '\n[features]\nstrict-config = []\nns-policy = []\n')
+    tree.write("firmware/trustzone/nonsecure/Cargo.toml",
+               '[package]\nname = "firmware-ns"\n[dependencies]\n'
+               'rsk-core = { path = "../../../crates/rsk-core" }\n'
+               '[features]\nstrict-config = ["rsk-core/strict-config"]\n')
+
+
+def test_trustzone_inherits_the_literal_builder_default_with_explicit_legacy_override(tree):
+    tz_members(tree)
+    tree.edit("nix/firmware.nix", 'trustzone ? false', 'trustzone ? true')
+    tree.edit("nix/firmware.nix", '    firmware-pinned = mkFirmware {',
+              '    firmware-legacy = mkFirmware { name = "firmware-legacy"; trustzone = false; };\n'
+              '    firmware-pinned = mkFirmware {')
+    cols = {c.name: c for c in matrix_gate.columns(tree.root, matrix_gate.workspace(tree.root))}
+    assert cols["firmware"].trustzone and not cols["firmware"].default
+    assert cols["firmware-legacy"].default and not cols["firmware-legacy"].trustzone
+    assert cols["loud"].trustzone and cols["board-a"].trustzone
+    assert matrix_gate.reference_column(list(cols.values())).name == "firmware-legacy"
+    assert cols["firmware"].closure["rsk-device"] == frozenset({"trustzone"})
+    assert "firmware-ns" in cols["firmware"].ns_present
+    assert "firmware-ns" not in cols["firmware-legacy"].present
+    assert "TRUSTZONE" not in matrix_gate.knob_pins(cols["firmware"])
+
+
+def test_a_trustzone_default_cannot_inherit_the_legacy_covered_cell(tree, capsys):
+    tz_members(tree)
+    tree.edit("nix/firmware.nix", 'trustzone ? false', 'trustzone ? true')
+    assert "legacy-only" in red(tree, capsys)
+
+
+def test_a_trustzone_package_cannot_claim_legacy_equivalence(tree, capsys):
+    tz_members(tree)
+    tree.edit("nix/firmware.nix", '      vidpid = "Pico";',
+              '      vidpid = "Pico";\n      trustzone = true;')
+    said = red(tree, capsys)
+    assert "different execution modes" in said
+    assert "an equivalence the tree refutes" in said
+
+
+def test_direct_cargo_evidence_does_not_establish_trustzone_composition(tree, capsys):
+    tz_members(tree)
+    tree.edit("nix/firmware.nix", 'trustzone ? false', 'trustzone ? true')
+    tree.edit("assurance/configurations.toml", 'basis = "default-build"',
+              'basis = "check-sh-rows"\nevidence = ["test (core)"]')
+    assert "not the composed Secure/Non-secure build context" in red(tree, capsys)
+
+
+def test_non_literal_trustzone_builder_default_is_refused(tree, capsys):
+    tree.edit("nix/firmware.nix", 'trustzone ? false', 'trustzone ? inheritedMode')
+    assert "trustzone default is not a literal boolean" in red(tree, capsys)
+
+
+def test_non_literal_trustzone_package_override_is_refused(tree, capsys):
+    tree.edit("nix/firmware.nix", '      vidpid = "Pico";',
+              '      vidpid = "Pico";\n      trustzone = inheritedMode;')
+    assert "non-literal trustzone mode" in red(tree, capsys)
+
+
+def test_duplicate_package_names_must_agree_on_execution_mode(tree, capsys):
+    tree.edit("nix/firmware.nix", '    default = mkFirmware { name = "firmware"; };',
+              '    default = mkFirmware { name = "firmware"; trustzone = true; };')
+    assert "builds `firmware` from two mkFirmware blocks" in red(tree, capsys)
+
+
+def test_trustzone_requires_its_independently_built_workspace_members(tree, capsys):
+    tree.edit("nix/firmware.nix", 'trustzone ? false', 'trustzone ? true')
+    assert "require rsk-device and firmware-ns workspace members" in red(tree, capsys)
+
+
+def test_qualified_features_reach_the_named_dependency(tree):
+    tz_members(tree)
+    present, closure = matrix_gate.resolve(matrix_gate.workspace(tree.root), ["rsk-device/trustzone"])
+    assert "rsk-device" in present
+    assert closure["rsk-device"] == frozenset({"trustzone"})
+    assert "firmware-ns" not in present
+
+
+def test_strict_config_is_resolved_in_both_worlds_without_merging_their_features(tree):
+    tz_members(tree)
+    manifests = matrix_gate.workspace(tree.root)
+    before = matrix_gate.Column("strict", "package", ["strict-config"],
+                                {"trustzone": "true"}, False, manifests)
+    assert before.closure["rsk-core"] == before.ns_closure["rsk-core"] == frozenset({"strict-config"})
+    tree.edit("firmware/trustzone/nonsecure/Cargo.toml",
+              'strict-config = ["rsk-core/strict-config"]',
+              'strict-config = ["rsk-core/strict-config", "rsk-core/ns-policy"]')
+    after = matrix_gate.Column("strict", "package", ["strict-config"],
+                               {"trustzone": "true"}, False, matrix_gate.workspace(tree.root))
+    delta = matrix_gate.closure_delta(after, before)
+    assert "NS:rsk-core" in delta and "rsk-core" not in delta
+    assert "ns-policy" not in after.closure["rsk-core"]
+    assert "ns-policy" in after.ns_closure["rsk-core"]
+
+
+def test_current_shipping_trustzone_columns_do_not_claim_historical_coverage():
+    cols = {c.name: c for c in matrix_gate.columns(ROOT, matrix_gate.workspace(ROOT))}
+    doc = matrix_gate.ledger(ROOT)
+    placed = dict(matrix_gate.expand(doc, []))
+    covered = {name for (_pid, name), cell in placed.items() if cell["disposition"] == "covered"}
+    assert covered == {"firmware-legacy"}
+    assert cols["firmware-legacy"].default
+    assert all(cols[name].trustzone for name in cols if name != "firmware-legacy")
 
 
 def test_a_hand_edited_matrix_is_rejected(tree, capsys):

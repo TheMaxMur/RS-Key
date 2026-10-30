@@ -8,6 +8,7 @@
 
 #![cfg_attr(not(test), no_std)]
 
+pub mod boot_status;
 pub mod keydev;
 pub mod otp_lock;
 pub mod rollback;

@@ -1408,9 +1408,9 @@ enumerates the image and carries the sockets over its endpoints, so what answers
 is the board's `main.rs`, worker, USB stack and flash driver, not a second copy:
 
 ```sh
-nix develop -c cargo build --release -p firmware --features no-touch
+nix develop -c bash firmware/trustzone/build.sh --features no-touch
 nix develop -c cargo run --release --manifest-path tools/emu/Cargo.toml \
-  --target "$HOST" -- --image target/thumbv8m.main-none-eabihf/release/firmware \
+  --target "$HOST" -- --image target/trustzone/combined.elf \
   --store ./image.store
 ```
 
@@ -1510,7 +1510,7 @@ crate workspace alone.
 Measured on 2026-10-15 on macOS (`aarch64-apple-darwin`):
 
 ```sh
-nix develop -c cargo test --manifest-path tools/tui/Cargo.toml --target aarch64-apple-darwin
+nix develop .#tui -c cargo test --manifest-path tools/tui/Cargo.toml --target aarch64-apple-darwin
 nix develop -c cargo test --manifest-path tools/emu/Cargo.toml --target aarch64-apple-darwin
 nix develop -c python -m pytest tools/rsk -q
 ```
@@ -1562,7 +1562,7 @@ host-side.
 
 ```sh
 # build + flash a bench image (it is a --features bench build, so never ship it)
-cargo build --release -p firmware --features bench,no-touch
+bash firmware/trustzone/build.sh --features bench,no-touch
 # then, from the dev shell or the venv that has pyscard:
 rsk bench ecdh                 # variable-base P-256 ECDH (the layout-sensitive one)
 rsk bench sign                 # P-256 comb sign (the getAssertion hot path)
@@ -3081,9 +3081,10 @@ source byte-identically passes. That dated `rsk-store` run covered 215 tests.
 The test slice left device behavior unchanged; its later build-counter chore
 assigned `0x0AA8` before integration with the newer TrustZone build.
 
-## TrustZone prototype keepalive
+## TrustZone keepalive history
 
-The [TrustZone page](trustzone.md#prototype-build-and-measurements) contains the
+The [engineering history](trustzone-history.md#prototype-build-and-measurements) contains the
 image-backend commands and recorded keepalive, crypto and session-boundary
-checks. These tests exercise the experiment, separately from the ordinary
-applet-backend sweep; they require explicit emulator ports.
+checks from the initial prototype. The current combined image is exercised by
+`scripts/image-suites.sh`, separately from the native applet-backend sweep.
+Manual image commands still require explicit emulator ports.

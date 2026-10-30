@@ -88,9 +88,9 @@ The panel takes over the addressable-LED pin, so the display flavor is built
 assets want:
 
 ```sh
-env LED_KIND=none FLASH_SIZE=16M cargo build --release -p firmware --features display
+env LED_KIND=none FLASH_SIZE=16M bash firmware/trustzone/build.sh --features display
 # or the hermetic package:
-nix build .#firmware-display        # → result/firmware.uf2
+nix build .#firmware-display        # → result/firmware-display.uf2
 ```
 
 `GPIO16` (the WS2812 pin on a standard board) drives the backlight here.

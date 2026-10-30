@@ -38,6 +38,19 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ## [Unreleased]
 
+### bcdDevice → 0x0BD8: TrustZone by default and complete debug hardening
+
+- Standard Nix packages, CI artifacts and local build recipes now use the
+  combined Secure/Non-secure image. Firmware features and documented environment
+  knobs reach both Secure links; NS receives its `strict-config` transport policy.
+- CLI 0.3.53 hardens both `DEBUG_DISABLE` and `SECURE_DEBUG_DISABLE`, verifies
+  all eight CRIT1 copies, resumes partial writes and refuses to lock incomplete
+  hardening. CLI and firmware status decode physical OTP copies and require
+  complete debug and page-lock copies before reporting `LOCKED`.
+- CI and image suites run on pushes to `develop` as well as `main` and PRs.
+  The TUI development command and native libraries live in `nix develop .#tui`;
+  the full gate retains its TUI checks in that environment.
+
 - **bcdDevice → 0x0BD7: automatic OTP sealing.** Boot validates page-58 keys and chaff,
   migrates device-sealed records, completes a fresh flash scrub, then permanently
   closes BOOTSEL/non-secure key access and the pre-OTP migration arms. This also

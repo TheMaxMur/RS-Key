@@ -9,7 +9,7 @@ runs nothing but that signed image: a policy you cannot toggle off at
 runtime, because there is no runtime knob to toggle.
 
 ```sh
-cargo build --release -p firmware --features fips-profile
+bash firmware/trustzone/build.sh --features fips-profile
 # or the reproducible Nix target (same flag):
 nix build .#firmware-fips
 # then sign + flash as usual (production.md)
