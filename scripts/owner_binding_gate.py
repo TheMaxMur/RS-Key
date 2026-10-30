@@ -47,9 +47,9 @@ specification references in this image, and reading the instances alone finds
 Two readers are imported rather than rewritten: `elf_gate` for which ELF, which
 tools, and the `DW_AT_producer` parser — a STRIPPED image would otherwise read
 as 45 absent owners and this gate would be decorative, so no producers is
-refused before anything else is judged — and `ct_gate.demangle` for the legacy
-`_ZN…` scheme 1332 of this image's symbols use, so a finding names a function
-and not a mangling. The roster and its production/test split come from
+refused before anything else is judged — and `ct_gate.demangle_names` for Rust
+legacy and v0 linkage names, so a finding names a function and not a mangling.
+The roster and its production/test split come from
 `token_refinement_gate`, which derives both from the tree.
 
 Scope is the DEFAULT image and the row's POSITION is what makes that true:
@@ -328,6 +328,30 @@ def relative(path: str, comp_dir: str) -> str:
     return path.removeprefix("./")
 
 
+def definition_path(path: str) -> str:
+    """Count source owners, not instantiations, keeping self/trait distinctions."""
+    # v0 inherent/trait methods wrap the owner in `<...>`; only those outer
+    # brackets are syntax, while nested arguments describe instantiations.
+    if path.startswith("<"):
+        depth = 0
+        for index, char in enumerate(path):
+            depth += (char == "<") - (char == ">" and path[index - 1] != "-")
+            if depth == 0:
+                path = path[1:index] + path[index + 1 :]
+                break
+    parts, depth = [], 0
+    for index, char in enumerate(path):
+        if char == "<":
+            depth += 1
+        elif char == ">" and path[index - 1] != "-":
+            depth -= 1
+        elif depth == 0:
+            parts.append(char)
+    if depth != 0:
+        raise ValueError("unbalanced generic arguments in owner linkage name")
+    return "".join(parts).replace("::::", "::").removesuffix("::")
+
+
 def instances(dwarf: str, tables: dict[int, dict[int, str]]):
     """({(file, function): [DIE, …]}, {DIE offset: inlined call sites}).
 
@@ -376,18 +400,26 @@ def instances(dwarf: str, tables: dict[int, dict[int, str]]):
         elif key in ("DW_AT_low_pc", "DW_AT_inline", "DW_AT_declaration"):
             current[key] = value
 
+    decoded = ct_gate.demangle_names(
+        die["DW_AT_linkage_name"] for die in subprograms.values()
+        if "DW_AT_linkage_name" in die
+    )
+    for die in subprograms.values():
+        if "DW_AT_linkage_name" in die:
+            die["linkage_path"] = decoded[die["DW_AT_linkage_name"]]
+
     def qualify(die: dict, fallback: str) -> str:
         """`FidoState::reset`, not `reset` — the KEY, and the whole of this bug.
 
-        Keeps `fallback` when the mangling is one `ct_gate` does not read (the v0
-        scheme, a C name): a wrong path would attribute a symbol to the wrong
-        function, and the collapse a fallback causes is caught downstream by the
-        source-anchored count.
+        An unqualified C name or a mismatched function keeps `fallback`; the
+        source-anchored count still catches a collapse of distinct owners.
         """
         mangled = die.get("DW_AT_linkage_name")
         if not mangled:
             return fallback
-        path = ct_gate.demangle(mangled)
+        path = die["linkage_path"]
+        if mangled.startswith("_R"):
+            path = definition_path(path)
         return path if path.rsplit("::", 1)[-1] == fallback.rsplit("::", 1)[-1] else fallback
 
     def identity(die: dict, depth: int = 0):
@@ -710,14 +742,16 @@ def bind(site, dies, inlined, defined):
     """
     concrete = [d for d in dies if "DW_AT_low_pc" in d]
     abstract = [d for d in dies if "DW_AT_inline" in d]
-    names = sorted({d["DW_AT_linkage_name"] for d in dies if "DW_AT_linkage_name" in d})
+    decoded = {d["DW_AT_linkage_name"]: d["linkage_path"]
+               for d in dies if "DW_AT_linkage_name" in d}
+    names = sorted(decoded)
     if concrete:
         shipped = [n for n in names if n in defined]
         if not shipped:
             return "unsymbolised", names[0] if names else "(no linkage name)"
-        return "symbol", ct_gate.demangle(shipped[0])
+        return "symbol", decoded[shipped[0]]
     if abstract and inlined.get(site, 0):
-        return "inlined", f"{inlined[site]} call site(s), {ct_gate.demangle(names[0]) if names else site[1]}"
+        return "inlined", f"{inlined[site]} call site(s), {decoded[names[0]] if names else site[1]}"
     return "absent", f"{len(dies)} DIE(s), {inlined.get(site, 0)} call site(s)"
 
 

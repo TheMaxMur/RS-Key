@@ -43,6 +43,10 @@ impl RebootSlot {
 
     /// The queued reboot, for the worker to carry out: `Some(1)` warm, `Some(2)` BOOTSEL.
     /// Taking it begins the reset, so the slot stays pending.
+    #[allow(
+        deprecated,
+        reason = "the pinned Kani compiler predates Atomic::try_update"
+    )]
     pub fn take(&self) -> Option<u8> {
         self.state
             .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |state| {

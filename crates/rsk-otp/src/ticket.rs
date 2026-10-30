@@ -37,7 +37,7 @@ pub struct Typed {
 
 fn encode_modhex(input: &[u8], out: &mut [u8]) -> usize {
     let mut n = 0;
-    for (&b, pair) in input.iter().zip(out.chunks_exact_mut(2)) {
+    for (&b, pair) in input.iter().zip(out.as_chunks_mut::<2>().0.iter_mut()) {
         let digit = |nibble: u8| MODHEX.get(usize::from(nibble)).copied().unwrap_or_default();
         pair.copy_from_slice(&[digit(b >> 4), digit(b & 0xF)]);
         n += 2;

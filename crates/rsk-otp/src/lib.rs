@@ -392,7 +392,11 @@ impl<'a> OtpApplet<'a> {
         const HEX: &[u8; 16] = b"0123456789ABCDEF";
         let mut out = [0u8; 10];
         let digit = |nibble: u8| HEX.get(usize::from(nibble)).copied().unwrap_or_default();
-        for (&b, pair) in self.serial_id.iter().zip(out.chunks_exact_mut(2)) {
+        for (&b, pair) in self
+            .serial_id
+            .iter()
+            .zip(out.as_chunks_mut::<2>().0.iter_mut())
+        {
             pair.copy_from_slice(&[digit(b >> 4), digit(b & 0xF)]);
         }
         out

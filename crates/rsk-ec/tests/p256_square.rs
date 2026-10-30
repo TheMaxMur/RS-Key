@@ -39,7 +39,7 @@ fn square_matches_multiply_at_boundaries_and_dense_values() {
     let mut accepted = 0;
     for _ in 0..2048 {
         let mut bytes = [0; 32];
-        for chunk in bytes.chunks_exact_mut(8) {
+        for chunk in bytes.as_chunks_mut::<8>().0.iter_mut() {
             state ^= state << 13;
             state ^= state >> 7;
             state ^= state << 17;

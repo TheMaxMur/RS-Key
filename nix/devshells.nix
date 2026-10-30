@@ -13,6 +13,24 @@
   rskBin,
   rskTui,
 }:
+let
+  llvmBin = "${toolchain}/lib/rustlib/${pkgs.stdenv.hostPlatform.rust.rustcTarget}/bin";
+  # Keep the coverage test compiler and LLVM tools together. The nixpkgs
+  # Rust 1.99.0 package crashes its instrumented test binaries on Darwin.
+  cargoLlvmCov =
+    (pkgs.cargo-llvm-cov.override {
+      rustPlatform = pkgs.makeRustPlatform {
+        cargo = toolchain;
+        rustc = toolchain;
+      };
+    }).overrideAttrs
+      (old: {
+        env = old.env // {
+          LLVM_COV = "${llvmBin}/llvm-cov";
+          LLVM_PROFDATA = "${llvmBin}/llvm-profdata";
+        };
+      });
+in
 rec {
   default = pkgs.mkShell {
     packages = [
@@ -35,7 +53,7 @@ rec {
       pkgs.cargo-deny # SCA: advisories + licenses + source/ban policy
       pkgs.cargo-cyclonedx # CycloneDX SBOM generation (release provenance)
       pkgs.cargo-vet # supply-chain: provenance-of-review (audited dependency set)
-      pkgs.cargo-llvm-cov # host-crate line-coverage floor for the daily deep-checks
+      cargoLlvmCov # host-crate line-coverage floor for the daily deep-checks
       # Mutation testing (scripts/mutants-all.sh, weekly + `--in-diff` by hand).
       # Coverage says a line ran; this says a test would notice if it changed —
       # which is the property the `require_pin_inputs` gap was invisible to.
@@ -91,6 +109,9 @@ rec {
     ];
 
     buildInputs = [ sdl2 ];
+
+    # Cargo may prefer rustup's subcommand shims in ~/.cargo/bin over PATH.
+    RUSTUP_TOOLCHAIN = "${toolchain}";
 
     shellHook = ''
       # flip-link (the embedded linker in .cargo/config.toml) shells out to
@@ -198,7 +219,7 @@ rec {
     packages = [
       fuzzToolchain
       pkgs.cargo-fuzz
-      pkgs.cargo-llvm-cov # branch and condition instrumentation require nightly
+      cargoLlvmCov # branch and condition instrumentation require nightly
       pkgs.git # coverage provenance must not depend on the host's Git installation
       rskPython # corpus preparation uses the same pinned stack as the host tests
     ];

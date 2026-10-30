@@ -52,7 +52,7 @@ vector_section = ".vector_table"
 # by is a fact worth re-reading, and the pin moving without this moving is the
 # case that would otherwise be silent.
 producers = [
-    "clang LLVM (rustc version 1.96.0 (ac68faa20 2026-05-25))",
+    "clang LLVM (rustc version 1.99.1 (58cf8f9c3 2026-10-13))",
     "clang LLVM (rustc version 1.59.0-nightly (c5ecc1570 2021-12-15))",
 ]
 note = "The partition table fences the KV store from BOOTSEL; nothing fenced it from the linker, which is the overlap rule here."

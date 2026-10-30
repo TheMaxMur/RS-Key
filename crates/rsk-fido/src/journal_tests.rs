@@ -501,8 +501,8 @@ fn read_exports_window_that_folds_to_head() {
     assert_eq!(start, 0);
     assert_eq!(seq_next, 12); // BOOT + eleven events
     assert_eq!(entries.len(), 12 * ENTRY_LEN);
-    for e in entries.chunks_exact(ENTRY_LEN) {
-        epoch = chain(&epoch, e.try_into().unwrap());
+    for e in entries.as_chunks::<ENTRY_LEN>().0.iter() {
+        epoch = chain(&epoch, e);
     }
     let (head, _) = chain_head(&dev(), &mut fs).unwrap();
     assert_eq!(epoch, head);

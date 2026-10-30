@@ -83,7 +83,7 @@ mechanics in [Build options](build.md)):
 
 The project tracks the latest stable Rust, pinned hermetically rather than to a
 declared MSRV. `nix develop` / `nix build` take the toolchain from the flake
-(fenix `stable`, frozen in `flake.lock`, currently rustc 1.96), on Rust edition
+(fenix `stable`, frozen in `flake.lock`, currently rustc 1.99.1), on Rust edition
 2024. `rust-toolchain.toml` (`channel = "stable"`) is only the fallback for the
 non-Nix rustup path. "Which Rust built this image" is answered by the committed
 `flake.lock`, so there is no separate minimum-version commitment to drift.

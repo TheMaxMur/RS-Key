@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 RS-Key contributors
 
-//! The hand-authored bitmap tables: one `GLYPH_*` per [`Glyph`](super::Glyph) variant,
-//! one [`Bitmap`](crate::glyph::Bitmap) per canonical render size. Pure data — the engine
+//! The hand-authored bitmap tables: one `GLYPH_*` per [`Glyph`] variant,
+//! one [`Bitmap`] per canonical render size. Pure data — the engine
 //! (`pick`/`draw`/`table`) lives in `glyph.rs`; a pixel is tweaked by editing a row here.
 
 use super::Bitmap;

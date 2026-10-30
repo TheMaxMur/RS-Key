@@ -740,6 +740,70 @@ def test_the_shipped_floors_are_parameters_and_not_globals():
         ct_gate.REASONED_FLOOR,
     ) == (30, 20, 20)
 
+# These linkage names are from the Rust 1.99.1 release ELF, including a generic
+# caller: v0's type arguments must remain distinct in the surface inventory.
+V0_CT_EQ = "_RNvNtCs10aTsSbtMDO_10rsk_crypto3mac5ct_eq"
+V0_CHECK_PIN = (
+    "_RINvNtCsc2sANF8lsBO_11rsk_openpgp3pin9check_pinINtNtNtCsk5waN0OSTRl_9rsk_st"
+    "ore13authenticated7managed7ManagedNtNtCs8dDKasuzl7Y_8firmware13flash_storage"
+    "11SharedFlashINtNtCs9QvSXyS3s5K_18sequential_storage5cache5CacheINtNtB2F_11p"
+    "age_states15ArrayPageStatesKj160_EINtNtB2F_13page_pointers17ArrayPagePointer"
+    "sKB45_EINtNtB2F_12key_pointers16ArrayKeyPointerstKj507_EtEEEB1N_"
+)
+V0_PIN_NAME = (
+    "rsk_openpgp::pin::check_pin::<rsk_store::authenticated::managed::Managed<fir"
+    "mware::flash_storage::SharedFlash, sequential_storage::cache::Cache<sequenti"
+    "al_storage::cache::page_states::ArrayPageStates<352>, "
+    "sequential_storage::cache::page_pointers::ArrayPagePointers<352>, "
+    "sequential_storage::cache::key_pointers::ArrayKeyPointers<u16, 1287>, u16>>>"
+)
+V0_VERIFY = "_RNvNtCs10aTsSbtMDO_10rsk_crypto8pinproto6verify"
+V0_METHOD = "_RNvMCs7xlDB4uee5x_8rsk_oathNtB2_10OathApplet15otp_pin_matches"
+
+
+def v0_chain(text):
+    return text.replace(
+        "_ZN10rsk_crypto3mac5ct_eq17h0000000000000000E", V0_CT_EQ
+    ).replace("_ZN11rsk_openpgp3pin9check_pin17h0000000000000001E", V0_CHECK_PIN)
+
+
+@pytest.mark.parametrize("fixture,leaks", [(CLEAN, False), (LEAKY, True)])
+def test_v0_frames_keep_the_comparator_taint_and_exact_caller(fixture, leaks):
+    violations, _, _, callers, _ = observed(v0_chain(fixture))
+    assert bool(violations) == leaks
+    assert callers == {V0_PIN_NAME}
+
+
+def test_v0_inherent_method_is_a_first_party_frame():
+    chain = v0_chain(CLEAN).replace(V0_CHECK_PIN, V0_METHOD)
+    assert observed(chain)[3] == {"<rsk_oath::OathApplet>::otp_pin_matches"}
+    assert not ct_gate.FIRST_PARTY.match(
+        "<core::option::Option<rsk_oath::OathApplet>>::is_some"
+    )
+
+
+def test_v0_frame_batch_keeps_plain_and_legacy_names():
+    lines = [
+        f"{V0_CT_EQ}():", f"{V0_VERIFY}():", "Reset():",
+        "_ZN10rsk_crypto3mac5ct_eq17h0000000000000000E():",
+    ]
+    names = ct_gate.frame_names(lines)
+    assert names[V0_CT_EQ] == "rsk_crypto::mac::ct_eq"
+    assert names[V0_VERIFY] == "rsk_crypto::pinproto::verify"
+    assert names["Reset"] == "Reset"
+    assert names["_ZN10rsk_crypto3mac5ct_eq17h0000000000000000E"] == names[V0_CT_EQ]
+
+
+@pytest.mark.parametrize("output", ["", "_Rinvalid\n", "decoded\nextra\n"])
+def test_v0_demangling_failure_reddens_audit(monkeypatch, output):
+    monkeypatch.setattr(
+        ct_gate.subprocess, "run",
+        lambda *args, **kwargs: subprocess.CompletedProcess(args, 0, output, ""),
+    )
+    findings, _ = ct_gate.audit(ROOT, lines=[f"{V0_CT_EQ}():"], **NO_FLOORS)
+    assert len(findings) == 1
+    assert "Rust v0 frame demangling failed" in findings[0]
+
 
 def test_an_unregistered_inliner_is_a_finding():
     """The caller set is held BOTH ways; this is the direction that catches a new
@@ -751,13 +815,23 @@ def test_an_unregistered_inliner_is_a_finding():
     assert any("says which protocol surface" in f for f in findings), findings
 
 
+def test_an_unregistered_v0_generic_inliner_is_a_finding():
+    stranger = v0_chain(CLEAN).replace("3pin9check_pin", "3pin9check_pix")
+    findings, _ = ct_gate.audit(ROOT, lines=stranger.splitlines(), **NO_FLOORS)
+    assert any("says which protocol surface" in f for f in findings), findings
+
+
 def test_a_surface_that_stopped_routing_through_it_is_a_finding():
     """The direction that catches the defect `docs/ct-audit.md` records twice: a
     compare that BYPASSED the comparator. The registry entry survives; the ELF
     stops naming it. Keyed on the OUTERMOST frame this could not see a bypass
     added beside a surviving call in the same function — the review drove that on
     `cmd_update` and the row stayed green."""
-    findings, _ = ct_gate.audit(ROOT, lines=CLEAN.splitlines(), **NO_FLOORS)
+    # This non-generic caller keeps the same identity in both mangling schemes.
+    present = CLEAN.replace(
+        "_ZN11rsk_openpgp3pin9check_pin17h0000000000000001E", V0_VERIFY
+    )
+    findings, _ = ct_gate.audit(ROOT, lines=present.splitlines(), **NO_FLOORS)
     stale = [f for f in findings if "inlines no site in the image" in f]
     _, callers = ct_gate.registry(ROOT, [])
     assert len(stale) == len(callers) - 1, stale
@@ -1022,11 +1096,6 @@ def test_the_image_arms_were_driven_by_hand():
 #: function, and cutting at those would cut a run in half.
 FUNCTION = re.compile(r"^[0-9a-f]{8} <")
 
-#: `ct_eq` as the disassembly SPELLS it, hash suffix excluded. `ct_gate.demangle`
-#: is what turns this into `SYMBOL`; deciding which functions survive the cut is
-#: a grep over the text, before any parse has happened.
-MANGLED = "_ZN10rsk_crypto3mac5ct_eq"
-
 SYMBOL = SITE["CT-CMP-001"]["symbol"]
 
 #: The half of a finding that says THE DEFECT. A row that goes red on a floor, on
@@ -1103,12 +1172,22 @@ def inlining_functions(whole_image):
         else:
             prologue.append(line)
     blocks.append(current)
-    kept = [b for b in blocks if b and any(MANGLED in line for line in b)]
+    names = ct_gate.frame_names(whole_image)
+    spellings = {name for name, plain in names.items() if plain == SYMBOL}
+    assert spellings, "no linkage spelling resolved to the comparator"
+    markers = tuple(
+        marker for name in spellings for marker in (f"({name})", f"{name}():")
+    )
+
+    def attributed(line):
+        return line.endswith(markers)
+
+    kept = [b for b in blocks if b and any(attributed(line) for line in b)]
     cut = prologue + [line for block in kept for line in block]
     # Whole blocks are kept, so an attributed line falling outside the cut is the
     # one way it could lose a run before any case has looked at it.
-    assert sum(MANGLED in line for line in cut) == sum(
-        MANGLED in line for line in whole_image
+    assert sum(attributed(line) for line in cut) == sum(
+        attributed(line) for line in whole_image
     ), "the cut dropped a line the site is attributed to"
     return cut
 

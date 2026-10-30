@@ -35,8 +35,8 @@ const ROUND: [u32; 64] = [
 fn compress(state: &mut [u32; 8], block: &Block<Sha256Core>) {
     let mut schedule = Secret::new([0u32; 64]);
     let w = schedule.expose_mut();
-    for (word, bytes) in w.iter_mut().zip(block.chunks_exact(4)) {
-        *word = u32::from_be_bytes(bytes.try_into().expect("SHA-256 word is four bytes"));
+    for (word, bytes) in w.iter_mut().zip(block.as_chunks::<4>().0.iter()) {
+        *word = u32::from_be_bytes(*bytes);
     }
     // Literal indices expose complete initialization to the optimizer.
     macro_rules! expand {
@@ -228,7 +228,12 @@ impl FixedOutputCore for Sha256Core {
     fn finalize_fixed_core(&mut self, buffer: &mut Buffer<Self>, out: &mut Output<Self>) {
         let bits = 8 * (buffer.get_pos() as u64 + 64 * self.blocks);
         buffer.len64_padding_be(bits, |block| compress(self.state.expose_mut(), block));
-        for (bytes, word) in out.chunks_exact_mut(4).zip(self.state.expose()) {
+        for (bytes, word) in out
+            .as_chunks_mut::<4>()
+            .0
+            .iter_mut()
+            .zip(self.state.expose())
+        {
             bytes.copy_from_slice(&word.to_be_bytes());
         }
     }

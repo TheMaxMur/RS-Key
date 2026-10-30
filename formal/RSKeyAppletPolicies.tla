@@ -228,7 +228,7 @@ OathCalculate(touched) ==
 (***************************************************************************)
 (* Yubico OTP. Existing-slot configure, update and swap each state the     *)
 (* stored-six-byte-code rule at their OWN gate, so the citation names all  *)
-(* three (crates/rsk-otp/src/lib.rs:486-504, 551-566, 657-665): a range    *)
+(* three (crates/rsk-otp/src/lib.rs:490-508, 555-570, 661-669): a range    *)
 (* resolving to a prologue reads as a gate nothing checks.                 *)
 (*                                                                         *)
 (* The position is a PAIR, per slot, because the two halves live in        *)
@@ -299,12 +299,12 @@ OtpMutate(k, codeMatches, keep) ==
 (***************************************************************************)
 (* SLOT_SWAP moves the record; the volatile half of the position has to    *)
 (* travel with it, or the moved record is re-paired with a session used    *)
-(* fewer times (crates/rsk-otp/src/lib.rs:701-709). The mark and the boot  *)
+(* fewer times (crates/rsk-otp/src/lib.rs:705-713). The mark and the boot  *)
 (* advance travel for the same reason: they are the RECORD's, not the      *)
 (* slot's. A                                                               *)
 (* programmed slot's stored code gates its move exactly as it gates an     *)
 (* overwrite, so an absent slot imposes no gate                            *)
-(* (crates/rsk-otp/src/lib.rs:661-665).                                    *)
+(* (crates/rsk-otp/src/lib.rs:665-669).                                    *)
 (***************************************************************************)
 OtpSwap(j, k, codeMatches) ==
     LET gated(s) == otpPresent[s] /\ otpProtected[s]

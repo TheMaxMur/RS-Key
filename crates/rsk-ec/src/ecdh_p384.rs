@@ -156,7 +156,7 @@ pub(super) fn mul(
         .expose()
         .iter()
         .rev()
-        .zip(digits.expose_mut().chunks_exact_mut(2))
+        .zip(digits.expose_mut().as_chunks_mut::<2>().0.iter_mut())
     {
         pair[0] = i8::from_ne_bytes([byte & ((1 << WIDTH) - 1)]);
         pair[1] = i8::from_ne_bytes([byte >> WIDTH]);

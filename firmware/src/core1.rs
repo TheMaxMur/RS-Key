@@ -126,7 +126,7 @@ pub fn stats() -> [u8; 32] {
     let counters = [
         &WAKES, &JOBS, &C1_TRIES, &C1_FINDS, &C0_TRIES, &C0_FINDS, &SOLO,
     ];
-    for (slot, c) in out.chunks_exact_mut(4).take(7).zip(counters) {
+    for (slot, c) in out.as_chunks_mut::<4>().0.iter_mut().take(7).zip(counters) {
         slot.copy_from_slice(&c.load(Ordering::Relaxed).to_le_bytes());
     }
     let flags = [&BUSY, &STOP, &JOB_PENDING];

@@ -426,7 +426,7 @@ the transport regression covers concurrent MSC/PICOBOOT-style bulk endpoints.
 Double-buffer completion status preserves both events and exposes the next
 buffer after the CPU clears the first, as RP2350 datasheet §12.7.3.8 specifies.
 The MSC runner invalidates its owned disk's cache before repeated file reads.
-The vendored picoem source also makes Non-secure RCP reads return zero and ignores writes
+The pinned external picoem fork also makes Non-secure RCP reads return zero and ignores writes
 to Secure RCP state (RP2350 datasheet §3.6.3.2), allowing BootROM's interrupted
 Non-secure memory routines to coexist with Secure buffer validation.
 

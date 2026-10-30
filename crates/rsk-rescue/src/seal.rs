@@ -44,7 +44,7 @@ pub trait Otp {
 
 fn read_key(otp: &mut impl Otp, row: usize, key: &mut [u8; 32]) -> Result<bool, Status> {
     let mut any = false;
-    for (i, bytes) in key.chunks_exact_mut(2).enumerate() {
+    for (i, bytes) in key.as_chunks_mut::<2>().0.iter_mut().enumerate() {
         let raw = otp.read_raw(row + i).ok_or(Status::ReadFailed)? & RAW_MASK;
         any |= raw != 0;
         let word = otp.read_ecc(row + i).ok_or(Status::ReadFailed)?;

@@ -252,7 +252,7 @@ impl Queued {
     /// leave every modal closing the moment it opened.
     fn release(&self, job: &Job) {
         if let Some(n) = self.slot(job) {
-            let _ = n.fetch_update(Ordering::Release, Ordering::Acquire, |n| {
+            let _ = n.try_update(Ordering::Release, Ordering::Acquire, |n| {
                 Some(n.saturating_sub(1))
             });
         }

@@ -108,7 +108,14 @@ fn one_rx_report_respects_sequence_bounds_and_release() {
     let mut rx = FrameRx::new();
     let mut out = Secret::new([0xA5; PAYLOAD_SIZE]);
     if flag & FLAG_WRITE != 0 && seq <= 9 {
-        assert!(rx.buf.expose().chunks_exact(REPORT_DATA).nth(seq).is_some());
+        assert!(
+            rx.buf
+                .expose()
+                .as_chunks::<REPORT_DATA>()
+                .0
+                .get(seq)
+                .is_some()
+        );
     }
     let result = rx.feed(&report, &mut out);
     if flag == FLAG_RESET || flag & FLAG_WRITE != 0 && seq > 9 {

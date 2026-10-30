@@ -47,8 +47,8 @@ fn two_visible_raster_rows_keep_their_columns_and_fill_the_whole_band() {
     scene.finalize(DAMAGE_KEY).unwrap();
     let mut out = [0; 12];
     scene.raster_band(Rect::new(0, 1, 3, 2), 1, 2, &mut out);
-    for color in out.chunks_exact(2) {
-        assert_eq!(color, [248, 0]);
+    for color in out.as_chunks::<2>().0.iter() {
+        assert_eq!(*color, [248, 0]);
     }
 }
 

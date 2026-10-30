@@ -180,7 +180,7 @@ pub(super) fn digest(
     }
     let sha = rp_pac::SHA256;
     let mut out = [0; 32];
-    for (bytes, register) in out.chunks_exact_mut(4).zip([
+    for (bytes, register) in out.as_chunks_mut::<4>().0.iter_mut().zip([
         sha.sum0(),
         sha.sum1(),
         sha.sum2(),

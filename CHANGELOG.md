@@ -38,6 +38,18 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ## [Unreleased]
 
+### bcdDevice → 0x0BD9: refreshed build environment
+
+- Refresh the Nix inputs and use Rust 1.99.1, with matching LLVM tools for the
+  coverage package's own test suite.
+- Align the legacy, Secure and wipe `.text` sections to their actual input
+  alignment after the boot block, fixing the linker warning reported in #136.
+- Preserve Secure SRAM placement and XIP cache groups with Rust v0 symbols.
+- Regenerate IBM Plex tables from the updated font and rasterizer packages;
+  glyph metrics and table sizes are unchanged.
+- Keep the picoem model and its TrustZone changes in the external fork, pinned
+  by Cargo Git revision. Image suites and model checks remain in the RS-Key gate.
+
 ### bcdDevice → 0x0BD8: TrustZone by default and complete debug hardening
 
 - Standard Nix packages, CI artifacts and local build recipes now use the

@@ -137,7 +137,7 @@ fn matches_every_single_bit_and_dense_scalar_on_multiple_peers() {
     let mut state = 0x5a17842fc3906be1u64;
     for _ in 0..128 {
         let mut repr = p384::FieldBytes::default();
-        for bytes in repr.chunks_exact_mut(8) {
+        for bytes in repr.as_chunks_mut::<8>().0.iter_mut() {
             state ^= state << 13;
             state ^= state >> 7;
             state ^= state << 17;

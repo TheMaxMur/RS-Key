@@ -75,42 +75,42 @@
 name = "rustc"
 role = "compiler"
 provenance = "flake.lock:fenix"
-pin = "3a556b6fbd42412b6f3f0ea8d35959b1826f86ff"
+pin = "cf57f8966c3c129e31caaf29790caf8a6a93e0a6"
 statement = "Compiles every first-party crate in the image. flake.nix:47-50 combines fenix's stable toolchain with the thumbv8m rust-std, so the fenix lock node is what fixes the compiler."
 
 [[tool]]
 name = "cargo"
 role = "packager"
 provenance = "flake.lock:fenix"
-pin = "3a556b6fbd42412b6f3f0ea8d35959b1826f86ff"
+pin = "cf57f8966c3c129e31caaf29790caf8a6a93e0a6"
 statement = "Chooses which crates and which features are compiled into the image (nix/firmware.nix:143-146). Ships in the same fenix toolchain as rustc."
 
 [[tool]]
 name = "rust-lld"
 role = "linker"
 provenance = "flake.lock:fenix"
-pin = "3a556b6fbd42412b6f3f0ea8d35959b1826f86ff"
+pin = "cf57f8966c3c129e31caaf29790caf8a6a93e0a6"
 statement = "The linker flip-link shells out to; it sits in the rustc sysroot rather than on PATH (nix/firmware.nix:131-133), so the toolchain that pins rustc pins it."
 
 [[tool]]
 name = "flip-link"
 role = "linker"
 provenance = "flake.lock:nixpkgs"
-pin = "331800de5053fcebacf6813adb5db9c9dca22a0c"
+pin = "31ecbaca1bdefa45dffc409f0250bd8039ea0010"
 statement = "The linker .cargo/config.toml names (nix/firmware.nix:127). It relocates the stack so an overflow faults instead of eating .bss, which is a property of the emitted image and not of the source."
 
 [[tool]]
 name = "arm-none-eabi-gcc"
 role = "compiler"
 provenance = "flake.lock:nixpkgs"
-pin = "331800de5053fcebacf6813adb5db9c9dca22a0c"
+pin = "31ecbaca1bdefa45dffc409f0250bd8039ea0010"
 statement = "Compiles rsk-rsa's C modexp core; ships in pkgs.gcc-arm-embedded (nix/firmware.nix:125). A second compiler in the image, which is why elf_gate.py holds a SET of DWARF producers rather than one."
 
 [[tool]]
 name = "arm-none-eabi-as"
 role = "assembler"
 provenance = "flake.lock:nixpkgs"
-pin = "331800de5053fcebacf6813adb5db9c9dca22a0c"
+pin = "31ecbaca1bdefa45dffc409f0250bd8039ea0010"
 statement = "Assembles rsk-rsa's hand-written ARM asm. Same gcc-arm-embedded package as the C compiler; a row of its own because the assembler is one of the criterion's six categories."
 
 [[tool]]
@@ -124,14 +124,14 @@ statement = "A PREBUILT asm blob, assembled by a 2021 nightly on someone else's 
 name = "picotool"
 role = "packager"
 provenance = "flake.lock:nixpkgs"
-pin = "331800de5053fcebacf6813adb5db9c9dca22a0c"
+pin = "31ecbaca1bdefa45dffc409f0250bd8039ea0010"
 statement = "Writes the partition table into the ELF (scripts/pt.sh:107) and converts it to the published UF2 (nix/firmware.nix:159). Both are shipped bytes, so it is a producer and not a viewer."
 
 [[tool]]
 name = "arm-none-eabi-nm"
 role = "packager"
 provenance = "flake.lock:nixpkgs"
-pin = "331800de5053fcebacf6813adb5db9c9dca22a0c"
+pin = "31ecbaca1bdefa45dffc409f0250bd8039ea0010"
 statement = "Reads the symbols the KV fence's start and end addresses are computed from (scripts/pt.sh:27-31). It is FIRST of three candidates there; llvm-nm and a host nm are fallbacks the flake does not pin, which is why this row names the one the dev shell guarantees."
 
 # ---- The verification TCB -----------------------------------------------------
@@ -157,14 +157,14 @@ statement = "The model checker cargo-kani downloads with its own bundle. Its ver
 name = "tlaplus"
 role = "checker"
 provenance = "flake.lock:nixpkgs"
-pin = "331800de5053fcebacf6813adb5db9c9dca22a0c"
+pin = "31ecbaca1bdefa45dffc409f0250bd8039ea0010"
 statement = "TLC, and the tla2tools.jar formal/run-tlc.sh runs (nix/devshells.nix:69). Every model verdict in assurance/configurations.toml is this tool's answer."
 
 [[tool]]
 name = "jre8"
 role = "runtime"
 provenance = "flake.lock:nixpkgs"
-pin = "331800de5053fcebacf6813adb5db9c9dca22a0c"
+pin = "31ecbaca1bdefa45dffc409f0250bd8039ea0010"
 statement = "The JVM TLC runs on (nix/devshells.nix:70). It was taken from the contributor's PATH before it was pinned, which made a prover's runtime differ per machine."
 
 # ---- Root inputs that are not in the TCB --------------------------------------

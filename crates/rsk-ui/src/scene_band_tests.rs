@@ -81,7 +81,7 @@ fn a_raster_record_returns_the_next_complete_record_offset() {
     scene.finalize(DAMAGE_KEY).unwrap();
     let mut out = [0; 12];
     assert_eq!(scene.raster_record(0, Rect::new(0, 1, 3, 2), &mut out), 17);
-    for color in out.chunks_exact(2) {
-        assert_eq!(color, [7, 224]);
+    for color in out.as_chunks::<2>().0.iter() {
+        assert_eq!(*color, [7, 224]);
     }
 }

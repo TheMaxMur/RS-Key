@@ -196,7 +196,12 @@ pub(super) fn assert_retained(data: &[u8], name: Label, domain: Label) {
     let y = u16::from(data.get(5).copied().unwrap_or(0));
     let mut band = [0; scene::BAND_BYTES];
     scene.raster_band(Rect::new(0, y, PANEL_W, 1), y, 1, &mut band);
-    for (x, bytes) in band[..usize::from(PANEL_W) * 2].chunks_exact(2).enumerate() {
+    for (x, bytes) in band[..usize::from(PANEL_W) * 2]
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .enumerate()
+    {
         assert_eq!(
             u16::from_be_bytes([bytes[0], bytes[1]]),
             direct.0[usize::from(y) * usize::from(PANEL_W) + x].into_storage()

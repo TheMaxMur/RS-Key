@@ -82,12 +82,12 @@ fn exported_head(fs: &mut Fs<TortureStorage>, identity: rsk_crypto::Device<'_>) 
     assert_eq!(decoder.u8().unwrap(), 4);
     let entries = decoder.bytes().unwrap();
     assert_eq!(entries.len(), next.wrapping_sub(start) as usize * ENTRY_LEN);
-    for (offset, raw) in entries.chunks_exact(ENTRY_LEN).enumerate() {
+    for (offset, raw) in entries.as_chunks::<ENTRY_LEN>().0.iter().enumerate() {
         assert_eq!(
             u32::from_le_bytes(raw[..4].try_into().unwrap()),
             start.wrapping_add(offset as u32)
         );
-        head = fold(&head, raw.try_into().unwrap());
+        head = fold(&head, raw);
     }
     assert_eq!(decoder.position(), n);
     assert_eq!(chain_head(&identity, fs).unwrap().0, head);

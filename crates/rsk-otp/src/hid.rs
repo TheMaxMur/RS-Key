@@ -98,7 +98,13 @@ impl FrameRx {
             self.scrub();
         }
         // `seq` is at most 9 by now, and the frame holds ten reports' data.
-        let Some(slice) = self.buf.expose_mut().chunks_exact_mut(REPORT_DATA).nth(seq) else {
+        let Some(slice) = self
+            .buf
+            .expose_mut()
+            .as_chunks_mut::<REPORT_DATA>()
+            .0
+            .get_mut(seq)
+        else {
             self.scrub();
             return RxOutcome::Reset;
         };
@@ -452,7 +458,7 @@ pub fn split_frame(payload: &[u8; PAYLOAD_SIZE], slot: u8) -> [[u8; REPORT_SIZE]
     let crc = crc16(payload);
     frame[FRAME_CRC_OFF..FRAME_CRC_OFF + 2].copy_from_slice(&crc.to_le_bytes());
     let mut reports = [[0u8; REPORT_SIZE]; 10];
-    let chunks = frame.chunks_exact(REPORT_DATA);
+    let chunks = frame.as_chunks::<REPORT_DATA>().0.iter();
     for ((rep, chunk), seq) in reports.iter_mut().zip(chunks).zip(0u8..) {
         rep[..REPORT_DATA].copy_from_slice(chunk);
         rep[REPORT_DATA] = FLAG_WRITE | seq;

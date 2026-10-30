@@ -119,8 +119,8 @@ fn a_checkpoint_band_starts_at_its_own_rows_for_an_inset_raster() {
     scene.finalize(DAMAGE_KEY).unwrap();
     let mut band = [0; 64];
     scene.raster_band(Rect::new(2, 8, 4, 8), 8, 8, &mut band);
-    for color in band.chunks_exact(2) {
-        assert_eq!(color, Rgb565::GREEN.into_storage().to_be_bytes());
+    for color in band.as_chunks::<2>().0.iter() {
+        assert_eq!(*color, Rgb565::GREEN.into_storage().to_be_bytes());
     }
 }
 

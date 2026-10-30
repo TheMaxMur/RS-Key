@@ -207,6 +207,7 @@ REGISTRY = pathlib.Path("assurance/ct_sites.toml")
 PAGE = pathlib.Path("docs/ct-audit.md")
 ELF = pathlib.Path("target/thumbv8m.main-none-eabihf/release/firmware")
 OBJDUMP = "arm-none-eabi-objdump"
+CXXFILT = "arm-none-eabi-c++filt"
 
 #: The region this script owns inside an otherwise hand-written page. NOT an
 #: `ARTIFACT`/`GENERATED_BY` pair: `claims_gate.generated_pages` reads that pair
@@ -297,7 +298,7 @@ SITE_ID = re.compile(r"^CT-[A-Z]+-\d{3}$")
 #: A first-party frame, by CRATE and not by path: the paths objdump prints are
 #: this machine's absolute build paths, and a rule keyed on them would answer
 #: differently on the runner.
-FIRST_PARTY = re.compile(r"^(rsk_[a-z0-9_]+|firmware)::")
+FIRST_PARTY = re.compile(r"^<*(rsk_[a-z0-9_]+|firmware)::")
 
 INSN = re.compile(r"^\s*([0-9a-f]+):\t[0-9a-f ]+\t(\S+)\s*(.*)$")
 FUNC_HEAD = re.compile(r"^(\S+)\(\):$")
@@ -432,9 +433,8 @@ REASONED_FLOOR = 20
 def demangle(symbol: str) -> str:
     """`_ZN10rsk_crypto3mac5ct_eq17h3eb6…E` -> `rsk_crypto::mac::ct_eq`.
 
-    The v0 scheme (`_R…`) and plain C names are returned unchanged: nothing this
-    gate registers is mangled that way, and a wrong guess would silently widen
-    attribution rather than narrow it.
+    Legacy fixtures retain their original spelling. `frame_names` resolves v0
+    names through the pinned Rust demangler without erasing generic types.
     """
     body = LEGACY.match(symbol)
     if not body:
@@ -526,6 +526,39 @@ def disassembly(root: pathlib.Path) -> list[str]:
     return out.stdout.splitlines()
 
 
+def frame_names(lines):
+    """Decode distinct DWARF names together; objdump's -C misses inline frames."""
+    names = set()
+    for line in lines:
+        head = FUNC_HEAD.match(line)
+        under = INLINED_BY.match(line)
+        if head or under:
+            names.add(head.group(1) if head else under.group(3))
+    return demangle_names(names)
+
+
+def demangle_names(names):
+    """Decode linkage names once while preserving v0 types and closure IDs."""
+    names = set(names)
+    decoded = {name: demangle(name) for name in names}
+    mangled = sorted(name for name in names if name.startswith("_R"))
+    if mangled:
+        done = subprocess.run(
+            [CXXFILT, "--format=rust", "--no-verbose"],
+            input="\n".join(mangled) + "\n",
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        plain = done.stdout.splitlines()
+        if len(plain) != len(mangled) or any(
+            name.startswith("_R") for name in plain
+        ):
+            raise ValueError("Rust v0 frame demangling failed")
+        decoded.update(zip(mangled, plain))
+    return decoded
+
+
 def instructions(lines):
     """(addr, mnemonic, operands, chain) per instruction, innermost frame first.
 
@@ -534,16 +567,18 @@ def instructions(lines):
     from scratch per instruction would attribute those to nothing — which is the
     silent-undercount direction, so it is done the other way.
     """
+    lines = list(lines)
+    names = frame_names(lines)
     chain, inner, outer, func = [], None, [], None
     fresh = False
     for line in lines:
         head = FUNC_HEAD.match(line)
         if head:
-            func, inner, outer, fresh = demangle(head.group(1)), None, [], True
+            func, inner, outer, fresh = names[head.group(1)], None, [], True
             continue
         under = INLINED_BY.match(line)
         if under:
-            outer.append(demangle(under.group(3)))
+            outer.append(names[under.group(3)])
             fresh = True
             continue
         source = SOURCE_LINE.match(line)
@@ -594,7 +629,7 @@ BARRIER = re.compile(r"^(bl|blx|bx|b|pop|cbz|cbnz)$")
 #: both rules stop there — so the whole behaviour change is the unsound half.
 #:
 #: What the finer rule is FOR, since a stop that reaches nothing is not one: an
-#: `OtpApplet` branch at `crates/rsk-otp/src/lib.rs:782` and the `CFG_HMAC_LT64`
+#: `OtpApplet` branch at `crates/rsk-otp/src/lib.rs:786` and the `CFG_HMAC_LT64`
 #: test below it were reported as reading the comparator's operand load, on the
 #: strength of a walk that crossed two `b.n` into `cmd_configure`'s inlined copy.
 #: Neither operand is a byte the comparator loaded. Nothing about `ct_eq` or its
@@ -1000,7 +1035,7 @@ def audit(
     loads: dict[str, tuple[int, int, int]] = {}
     try:
         seen = observe(root, sites, lines, loads)
-    except (OSError, subprocess.CalledProcessError) as error:
+    except (OSError, subprocess.CalledProcessError, ValueError) as error:
         return [f"{ELF}: {error}"], ""
 
     total_runs = total_branches = 0

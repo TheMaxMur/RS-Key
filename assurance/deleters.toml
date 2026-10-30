@@ -547,7 +547,7 @@ disposition = "must-read"
 why = "ACTIVATE FILE's last step: the terminate marker gates every OpenPGP command. A marker that survived an ACTIVATE answered 9000 would terminate the card again at the next boot, and the next ACTIVATE would wipe whatever the owner had set up since, so the refusal is 6581 and the card stays terminated for a retry. force_delete, not delete: a present-cache false absence must still reach the medium."
 [[site]]
 file = "crates/rsk-otp/src/lib.rs"
-line = 515
+line = 519
 call = "} else if fs.delete(fid).is_err() && slot_still_live(fs, fid) {"
 verb = "delete"
 answer = "read"
@@ -558,7 +558,7 @@ why = "the reply is status(), recomputed from flash in the same response — so 
 
 [[site]]
 file = "crates/rsk-otp/src/lib.rs"
-line = 681
+line = 685
 call = "if fs.delete(fid1).is_err() && slot_still_live(fs, fid1) {"
 verb = "delete"
 answer = "read"
@@ -569,7 +569,7 @@ why = "the swap's first half, under the same self-reporting status() reply. It s
 
 [[site]]
 file = "crates/rsk-otp/src/lib.rs"
-line = 696
+line = 700
 call = "if fs.delete(fid2).is_err() && slot_still_live(fs, fid2) {"
 verb = "delete"
 answer = "read"

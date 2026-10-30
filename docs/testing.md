@@ -1393,11 +1393,14 @@ lists the gaps). A green emulator run is a protocol result, not a device result.
 
 ### The image itself — `--image`
 
-The picoem pin includes an ARM Linux build fix: affinity helpers are compiled
-only on the x86_64 hosts supported by its threaded runtime. ARM hosts use the
-serial emulator. The local `9513634a` commit has passed picoem-common and
-rp2350-emu tests and Clippy on macOS arm64 and ARM Linux. It is not yet published;
-local consumers need that commit in their Cargo Git cache.
+The external picoem fork includes the TrustZone isolation model and the ARM
+Linux build fix: affinity helpers compile only on x86_64 hosts supported by its
+threaded runtime; ARM hosts use the serial emulator. `tools/emu/Cargo.toml` and
+`Cargo.lock` pin the exact fork commit. The gate resolves that checkout through
+Cargo metadata and runs both model libraries' formatting, Clippy and unit tests.
+Publish the pinned fork commit before publishing an RS-Key revision that uses it;
+unpublished local revisions need the corresponding fork objects in Cargo's Git
+cache.
 
 `--image <elf>` closes most of that gap: the same ports serve the firmware ELF,
 cold-booted through the real bootrom on an emulated RP2350

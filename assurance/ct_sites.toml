@@ -33,15 +33,275 @@ statement = "The canonical comparator's inlined copies lower to a loop whose onl
 # in the list for the same reason: they are frames the chains name.
 
 [[caller]]
+symbol = "<rsk_oath::OathApplet>::cmd_set_code::<rsk_store::authenticated::managed::Managed<firmware::flash_storage::SharedFlash, sequential_storage::cache::Cache<sequential_storage::cache::page_states::ArrayPageStates<352>, sequential_storage::cache::page_pointers::ArrayPagePointers<352>, sequential_storage::cache::key_pointers::ArrayKeyPointers<u16, 1287>, u16>>>"
+surface = "OATH SET CODE"
+
+[[caller]]
+symbol = "<rsk_oath::OathApplet>::cmd_validate::<rsk_store::authenticated::managed::Managed<firmware::flash_storage::SharedFlash, sequential_storage::cache::Cache<sequential_storage::cache::page_states::ArrayPageStates<352>, sequential_storage::cache::page_pointers::ArrayPagePointers<352>, sequential_storage::cache::key_pointers::ArrayKeyPointers<u16, 1287>, u16>>>"
+surface = "OATH VALIDATE"
+
+[[caller]]
+symbol = "<rsk_oath::OathApplet>::otp_pin_matches"
+surface = "OATH PIN match helper"
+
+[[caller]]
+symbol = "<rsk_oath::OathApplet>::spend_and_match_otp_pin::<rsk_store::authenticated::managed::Managed<firmware::flash_storage::SharedFlash, sequential_storage::cache::Cache<sequential_storage::cache::page_states::ArrayPageStates<352>, sequential_storage::cache::page_pointers::ArrayPagePointers<352>, sequential_storage::cache::key_pointers::ArrayKeyPointers<u16, 1287>, u16>>>"
+surface = "OATH PIN-gated code match"
+
+[[caller]]
+symbol = "<rsk_otp::OtpApplet as rsk_sdk::applet::Applet<rsk_fs::fs::Fs<rsk_store::authenticated::managed::Managed<firmware::flash_storage::SharedFlash, sequential_storage::cache::Cache<sequential_storage::cache::page_states::ArrayPageStates<352>, sequential_storage::cache::page_pointers::ArrayPagePointers<352>, sequential_storage::cache::key_pointers::ArrayKeyPointers<u16, 1287>, u16>>>>>::process"
+surface = "OTP applet APDU dispatch onto the access-code comparator"
+
+[[caller]]
+symbol = "<rsk_otp::OtpApplet>::cmd_configure::<rsk_store::authenticated::managed::Managed<firmware::flash_storage::SharedFlash, sequential_storage::cache::Cache<sequential_storage::cache::page_states::ArrayPageStates<352>, sequential_storage::cache::page_pointers::ArrayPagePointers<352>, sequential_storage::cache::key_pointers::ArrayKeyPointers<u16, 1287>, u16>>>"
+surface = "OTP slot configure access code"
+
+[[caller]]
+symbol = "<rsk_otp::OtpApplet>::cmd_otp::<rsk_store::authenticated::managed::Managed<firmware::flash_storage::SharedFlash, sequential_storage::cache::Cache<sequential_storage::cache::page_states::ArrayPageStates<352>, sequential_storage::cache::page_pointers::ArrayPagePointers<352>, sequential_storage::cache::key_pointers::ArrayKeyPointers<u16, 1287>, u16>>>"
+surface = "OTP command dispatch access code"
+
+[[caller]]
+symbol = "<rsk_otp::OtpApplet>::cmd_swap::<rsk_store::authenticated::managed::Managed<firmware::flash_storage::SharedFlash, sequential_storage::cache::Cache<sequential_storage::cache::page_states::ArrayPageStates<352>, sequential_storage::cache::page_pointers::ArrayPagePointers<352>, sequential_storage::cache::key_pointers::ArrayKeyPointers<u16, 1287>, u16>>>"
+surface = "OTP slot swap access code"
+
+[[caller]]
+symbol = "<rsk_otp::OtpApplet>::cmd_swap::<rsk_store::authenticated::managed::Managed<firmware::flash_storage::SharedFlash, sequential_storage::cache::Cache<sequential_storage::cache::page_states::ArrayPageStates<352>, sequential_storage::cache::page_pointers::ArrayPagePointers<352>, sequential_storage::cache::key_pointers::ArrayKeyPointers<u16, 1287>, u16>>>::{closure#1}"
+surface = "OTP slot swap access code, inner"
+
+[[caller]]
+symbol = "<rsk_otp::OtpApplet>::cmd_update::<rsk_store::authenticated::managed::Managed<firmware::flash_storage::SharedFlash, sequential_storage::cache::Cache<sequential_storage::cache::page_states::ArrayPageStates<352>, sequential_storage::cache::page_pointers::ArrayPagePointers<352>, sequential_storage::cache::key_pointers::ArrayKeyPointers<u16, 1287>, u16>>>"
+surface = "OTP slot update access code"
+
+[[caller]]
+symbol = "<rsk_otp::OtpApplet>::code_clears_every_slot::<rsk_store::authenticated::managed::Managed<firmware::flash_storage::SharedFlash, sequential_storage::cache::Cache<sequential_storage::cache::page_states::ArrayPageStates<352>, sequential_storage::cache::page_pointers::ArrayPagePointers<352>, sequential_storage::cache::key_pointers::ArrayKeyPointers<u16, 1287>, u16>>>"
+surface = "OTP access-code sweep"
+
+[[caller]]
+symbol = "<rsk_piv::PivApplet>::get_metadata::<rsk_store::authenticated::managed::Managed<firmware::flash_storage::SharedFlash, sequential_storage::cache::Cache<sequential_storage::cache::page_states::ArrayPageStates<352>, sequential_storage::cache::page_pointers::ArrayPagePointers<352>, sequential_storage::cache::key_pointers::ArrayKeyPointers<u16, 1287>, u16>>>"
+surface = "PIV slot metadata default-value check"
+
+[[caller]]
+symbol = "<rsk_piv::auth::GenAuth<rsk_store::authenticated::managed::Managed<firmware::flash_storage::SharedFlash, sequential_storage::cache::Cache<sequential_storage::cache::page_states::ArrayPageStates<352>, sequential_storage::cache::page_pointers::ArrayPagePointers<352>, sequential_storage::cache::key_pointers::ArrayKeyPointers<u16, 1287>, u16>>>>::mutual_auth"
+surface = "PIV mutual authenticate"
+
+[[caller]]
+symbol = "<rsk_piv::auth::GenAuth<rsk_store::authenticated::managed::Managed<firmware::flash_storage::SharedFlash, sequential_storage::cache::Cache<sequential_storage::cache::page_states::ArrayPageStates<352>, sequential_storage::cache::page_pointers::ArrayPagePointers<352>, sequential_storage::cache::key_pointers::ArrayKeyPointers<u16, 1287>, u16>>>>::single_auth_verify"
+surface = "PIV single authenticate"
+
+[[caller]]
+symbol = "<rsk_store::authenticated::append_proof::AppendProof>::extend"
+surface = "storage v2 root-bound SHA prefix before extending an authenticated append"
+
+[[caller]]
+symbol = "<rsk_store::authenticated::authority::Authority>::stage_replace"
+surface = "mounted storage root equality before same-arm snapshot replacement"
+
+[[caller]]
+symbol = "<rsk_store::authenticated::authority::Authority>::verify_read_with_mac"
+surface = "the mounted directory binding on a warm backend read"
+
+[[caller]]
+symbol = "<rsk_store::authenticated::authority::Bound>::same_context"
+surface = "the exact mounted context for volatile read-tag hints"
+
+[[caller]]
+symbol = "<rsk_store::authenticated::authority::Bound>::verify"
+surface = "fresh root binding for storage v2 cached main authority reads"
+
+[[caller]]
+symbol = "<rsk_store::authenticated::authority::Bound>::verify_with::<<rsk_store::authenticated::authority::Authority>::verify_read_with_mac::{closure#0}>"
+surface = "the full mounted directory binding with a command-local HMAC context"
+
+[[caller]]
+symbol = "<rsk_store::authenticated::authority::Bound>::verify_with::<<rsk_store::authenticated::authority::Bound>::verify::{closure#0}>"
+surface = "the full mounted directory binding with a command-local HMAC context"
+
+[[caller]]
+symbol = "<rsk_store::authenticated::bank::RawBank<firmware::flash_storage::SharedFlash>>::confirm_append"
+surface = "storage v2 freshly read complete journal against the exact expected append"
+
+[[caller]]
+symbol = "<rsk_store::authenticated::checkpoint::Checkpoint>::verify"
+surface = "storage v2 authority-header MAC at boot and before persistent operations"
+
+[[caller]]
+symbol = "<rsk_store::authenticated::counter_bank::CounterBank<firmware::flash_storage::SharedFlash>>::read_bound_frame"
+surface = "PIN/HOTP counter entry identity before copying its physical frame"
+
+[[caller]]
+symbol = "<rsk_store::authenticated::counter_bank::CounterBank<firmware::flash_storage::SharedFlash>>::scan"
+surface = "storage v2 complete counter-bank authentication before counter reads or updates"
+
+[[caller]]
+symbol = "<rsk_store::authenticated::counter_bank::CounterBank<firmware::flash_storage::SharedFlash>>::write_snapshot::<&mut <rsk_store::authenticated::import::Import<firmware::flash_storage::SharedFlash>>::resume<sequential_storage::cache::Cache<sequential_storage::cache::page_states::ArrayPageStates<352>, sequential_storage::cache::page_pointers::ArrayPagePointers<352>, sequential_storage::cache::key_pointers::ArrayKeyPointers<u16, 1287>, u16>>::{closure#8}>"
+surface = "storage v2 counter checkpoint publication and full-set digest validation"
+
+[[caller]]
+symbol = "<rsk_store::authenticated::counter_bank::CounterBank<firmware::flash_storage::SharedFlash>>::write_snapshot::<<rsk_store::authenticated::counters::Counters<firmware::flash_storage::SharedFlash>>::resolve_uncached::{closure#2}>"
+surface = "storage v2 counter checkpoint publication and full-set digest validation"
+
+[[caller]]
+symbol = "<rsk_store::authenticated::counter_bank::CounterBank<firmware::flash_storage::SharedFlash>>::write_snapshot::<<rsk_store::authenticated::counters::Counters<firmware::flash_storage::SharedFlash>>::write::{closure#1}>"
+surface = "storage v2 counter checkpoint publication and full-set digest validation"
+
+[[caller]]
+symbol = "<rsk_store::authenticated::counters::Counters<firmware::flash_storage::SharedFlash>>::read_mirrored::<416>"
+surface = "PIN/HOTP entry, payload and padding equality across both physical replicas"
+
+[[caller]]
+symbol = "<rsk_store::authenticated::counters::Counters<firmware::flash_storage::SharedFlash>>::read_mirrored::<48>"
+surface = "PIN/HOTP entry, payload and padding equality across both physical replicas"
+
+[[caller]]
+symbol = "<rsk_store::authenticated::counters::Counters<firmware::flash_storage::SharedFlash>>::read_proven"
+surface = "fresh-root counter proof and complete-bank equality for public counter reads"
+
+[[caller]]
+symbol = "<rsk_store::authenticated::counters::Counters<firmware::flash_storage::SharedFlash>>::read_proven::{closure#0}"
+surface = "PIN/HOTP mounted authority lookup before counter reads"
+
+[[caller]]
+symbol = "<rsk_store::authenticated::counters::Counters<firmware::flash_storage::SharedFlash>>::read_proven::{closure#7}"
+surface = "the fresh complete counter-bank fingerprint match before mounted-directory reuse"
+
+[[caller]]
+symbol = "<rsk_store::authenticated::counters::Counters<firmware::flash_storage::SharedFlash>>::read_with_source"
+surface = "fresh-root authenticated counter reads and failure invalidation"
+
+[[caller]]
+symbol = "<rsk_store::authenticated::counters::Counters<firmware::flash_storage::SharedFlash>>::resolve"
+surface = "storage v2 replicated counter authority agreement and recovery"
+
+[[caller]]
+symbol = "<rsk_store::authenticated::counters::Counters<firmware::flash_storage::SharedFlash>>::resolve::{closure#0}"
+surface = "storage v2 freshly observed counter-bank fingerprints before mounted-directory reuse"
+
+[[caller]]
+symbol = "<rsk_store::authenticated::counters::Counters<firmware::flash_storage::SharedFlash>>::resolve_uncached"
+surface = "storage v2 replicated counter authority agreement after complete replay"
+
+[[caller]]
+symbol = "<rsk_store::authenticated::counters::read::tags::ReadCache>::mount"
+surface = "counter authority context equality before returning a mounted proof"
+
+[[caller]]
+symbol = "<rsk_store::authenticated::counters::read::tags::ReadCache>::mount::{closure#0}"
+surface = "the cached counter authority context match during proof lookup"
+
+[[caller]]
+symbol = "<rsk_store::authenticated::counters::read::tags::ReadCache>::verify"
+surface = "fresh-root complete counter payload authentication before returning bytes"
+
+[[caller]]
+symbol = "<rsk_store::authenticated::counters::read::tags::ValueTag>::binds"
+surface = "counter payload tag equality with the current authority context"
+
+[[caller]]
+symbol = "<rsk_store::authenticated::counters::read::tags::ValueTag>::verify"
+surface = "counter payload MAC equality under its authenticated entry and authority"
+
+[[caller]]
+symbol = "<rsk_store::authenticated::import::Import<firmware::flash_storage::SharedFlash>>::load_manifest"
+surface = "attended storage v2 legacy-import manifest authentication"
+
+[[caller]]
+symbol = "<rsk_store::authenticated::import::Manifest>::verify"
+surface = "attended storage v2 legacy-import root, epoch and frozen-set validation"
+
+[[caller]]
+symbol = "<rsk_store::authenticated::journal::Journal<firmware::flash_storage::SharedFlash>>::write_snapshot::<1287>"
+surface = "storage v2 main authority checkpoint and complete-directory validation"
+
+[[caller]]
+symbol = "<rsk_store::authenticated::main::Main<firmware::flash_storage::SharedFlash, sequential_storage::cache::Cache<sequential_storage::cache::page_states::ArrayPageStates<352>, sequential_storage::cache::page_pointers::ArrayPagePointers<352>, sequential_storage::cache::key_pointers::ArrayKeyPointers<u16, 1287>, u16>>>::check_banks"
+surface = "storage v2 complete physical bank fingerprints before reusing mounted state for mutation"
+
+[[caller]]
+symbol = "<rsk_store::authenticated::main::Main<firmware::flash_storage::SharedFlash, sequential_storage::cache::Cache<sequential_storage::cache::page_states::ArrayPageStates<352>, sequential_storage::cache::page_pointers::ArrayPagePointers<352>, sequential_storage::cache::key_pointers::ArrayKeyPointers<u16, 1287>, u16>>>::read_proven"
+surface = "the fresh-root complete payload proof before returning backend bytes"
+
+[[caller]]
+symbol = "<rsk_store::authenticated::main::Main<firmware::flash_storage::SharedFlash, sequential_storage::cache::Cache<sequential_storage::cache::page_states::ArrayPageStates<352>, sequential_storage::cache::page_pointers::ArrayPagePointers<352>, sequential_storage::cache::key_pointers::ArrayKeyPointers<u16, 1287>, u16>>>::read_proven::{closure#1}"
+surface = "the optional cached complete-payload tag match on a backend read"
+
+[[caller]]
+symbol = "<rsk_store::authenticated::main::Main<firmware::flash_storage::SharedFlash, sequential_storage::cache::Cache<sequential_storage::cache::page_states::ArrayPageStates<352>, sequential_storage::cache::page_pointers::ArrayPagePointers<352>, sequential_storage::cache::key_pointers::ArrayKeyPointers<u16, 1287>, u16>>>::resolve"
+surface = "storage v2 main authority selection and repeated recovery"
+
+[[caller]]
+symbol = "<rsk_store::authenticated::main::Main<firmware::flash_storage::SharedFlash, sequential_storage::cache::Cache<sequential_storage::cache::page_states::ArrayPageStates<352>, sequential_storage::cache::page_pointers::ArrayPagePointers<352>, sequential_storage::cache::key_pointers::ArrayKeyPointers<u16, 1287>, u16>>>::resolve_inner"
+surface = "storage v2 main journal directory agreement during resolution and recovery"
+
+[[caller]]
+symbol = "<rsk_store::authenticated::read_proof::ReadProof>::verify_mount"
+surface = "the fresh-root mounted proof before absence or recovery"
+
+[[caller]]
+symbol = "<rsk_store::authenticated::read_tags::ReadTags>::bind"
+surface = "binding volatile read tags to the exact mounted authority"
+
+[[caller]]
+symbol = "<rsk_store::authenticated::read_tags::ReadTags>::bind::{closure#0}"
+surface = "mounted-context equality before retaining volatile read tags"
+
+[[caller]]
+symbol = "<rsk_store::authenticated::read_tags::ReadTags>::find"
+surface = "mounted-context equality before reusing a complete-payload tag"
+
+[[caller]]
+symbol = "<rsk_store::authenticated::read_tags::ReadTags>::find::{closure#0}"
+surface = "the cached context match for a complete-payload tag lookup"
+
+[[caller]]
+symbol = "<rsk_store::authenticated::read_tags::ReadTags>::insert"
+surface = "mounted-context equality before remembering a complete-payload tag"
+
+[[caller]]
+symbol = "<rsk_store::authenticated::read_tags::ReadTags>::insert::{closure#0}"
+surface = "the cached context match for complete-payload tag insertion"
+
+[[caller]]
+symbol = "<rsk_store::authenticated::read_tags::ReadTags>::mount_tag"
+surface = "mounted-context equality before reusing a mounted-authority tag"
+
+[[caller]]
+symbol = "<rsk_store::authenticated::read_tags::ReadTags>::mount_tag::{closure#0}"
+surface = "the cached context match for a mounted-authority tag lookup"
+
+[[caller]]
+symbol = "<rsk_store::authenticated::record::Entry>::verify"
+surface = "storage v2 full-value MAC before decoding stored security records"
+
+[[caller]]
+symbol = "<rsk_store::authenticated::record::Entry>::verify_with::<<rsk_store::authenticated::record::Entry>::verify::{closure#0}>"
+surface = "the complete stored payload and expected entry"
+
+[[caller]]
+symbol = "<rsk_store::authenticated::record::Entry>::verify_with::<<rsk_store::authenticated::record::Entry>::verify_with_mac::{closure#0}>"
+surface = "the complete stored payload and expected entry"
+
+[[caller]]
+symbol = "<rsk_store::authenticated::record::Entry>::verify_with_mac"
+surface = "the complete stored payload with a command-local HMAC context"
+
+[[caller]]
+symbol = "<rsk_store::authenticated::transaction::Delta>::verify"
+surface = "storage v2 authenticated main write/delete transaction decoding"
+
+[[caller]]
+symbol = "<rsk_store::authenticated::transaction::TransactionState>::apply"
+surface = "storage v2 main transaction chain and publication validation"
+
+[[caller]]
 symbol = "rsk_crypto::pinproto::verify"
 surface = "CTAP pinUvAuthProtocol MAC verify"
 
 [[caller]]
-symbol = "rsk_devconf::lock::lock_change"
+symbol = "rsk_devconf::lock::lock_change::<rsk_store::authenticated::managed::Managed<firmware::flash_storage::SharedFlash, sequential_storage::cache::Cache<sequential_storage::cache::page_states::ArrayPageStates<352>, sequential_storage::cache::page_pointers::ArrayPagePointers<352>, sequential_storage::cache::key_pointers::ArrayKeyPointers<u16, 1287>, u16>>>"
 surface = "management configuration lock code verify"
 
 [[caller]]
-symbol = "rsk_fido::clientpin::pin_verifier_matches"
+symbol = "rsk_fido::clientpin::pin_verifier_matches::<rsk_store::authenticated::managed::Managed<firmware::flash_storage::SharedFlash, sequential_storage::cache::Cache<sequential_storage::cache::page_states::ArrayPageStates<352>, sequential_storage::cache::page_pointers::ArrayPagePointers<352>, sequential_storage::cache::key_pointers::ArrayKeyPointers<u16, 1287>, u16>>, firmware::handler::FidoRng>"
 surface = "FIDO device-local PIN verify"
 
 [[caller]]
@@ -49,15 +309,15 @@ symbol = "rsk_fido::clientpin::pinproto_ct_eq"
 surface = "FIDO's forwarder onto the canonical comparator"
 
 [[caller]]
-symbol = "rsk_fido::clientpin::spend_and_verify_device_pin"
+symbol = "rsk_fido::clientpin::spend_and_verify_device_pin::<rsk_store::authenticated::managed::Managed<firmware::flash_storage::SharedFlash, sequential_storage::cache::Cache<sequential_storage::cache::page_states::ArrayPageStates<352>, sequential_storage::cache::page_pointers::ArrayPagePointers<352>, sequential_storage::cache::key_pointers::ArrayKeyPointers<u16, 1287>, u16>>>"
 surface = "FIDO device-PIN hash verify"
 
 [[caller]]
-symbol = "rsk_fido::clientpin::spend_and_verify_pin_at"
+symbol = "rsk_fido::clientpin::spend_and_verify_pin_at::<rsk_store::authenticated::managed::Managed<firmware::flash_storage::SharedFlash, sequential_storage::cache::Cache<sequential_storage::cache::page_states::ArrayPageStates<352>, sequential_storage::cache::page_pointers::ArrayPagePointers<352>, sequential_storage::cache::key_pointers::ArrayKeyPointers<u16, 1287>, u16>>>"
 surface = "FIDO clientPIN hash verify, panel path"
 
 [[caller]]
-symbol = "rsk_fido::clientpin::spend_and_verify_pin_hash"
+symbol = "rsk_fido::clientpin::spend_and_verify_pin_hash::<rsk_store::authenticated::managed::Managed<firmware::flash_storage::SharedFlash, sequential_storage::cache::Cache<sequential_storage::cache::page_states::ArrayPageStates<352>, sequential_storage::cache::page_pointers::ArrayPagePointers<352>, sequential_storage::cache::key_pointers::ArrayKeyPointers<u16, 1287>, u16>>, firmware::handler::FidoRng>"
 surface = "FIDO clientPIN hash verify"
 
 [[caller]]
@@ -65,39 +325,23 @@ symbol = "rsk_fido::keyderiv::verify_key"
 surface = "FIDO credential key-handle verify"
 
 [[caller]]
-symbol = "rsk_fido::vendor::device_pin_gate"
+symbol = "rsk_fido::vendor::device_pin_gate::<rsk_store::authenticated::managed::Managed<firmware::flash_storage::SharedFlash, sequential_storage::cache::Cache<sequential_storage::cache::page_states::ArrayPageStates<352>, sequential_storage::cache::page_pointers::ArrayPagePointers<352>, sequential_storage::cache::key_pointers::ArrayKeyPointers<u16, 1287>, u16>>, firmware::handler::FidoRng>"
 surface = "vendor device-PIN gate, pad path"
 
 [[caller]]
-symbol = "rsk_fido::vendor::pin_gate"
+symbol = "rsk_fido::vendor::pin_gate::<rsk_store::authenticated::managed::Managed<firmware::flash_storage::SharedFlash, sequential_storage::cache::Cache<sequential_storage::cache::page_states::ArrayPageStates<352>, sequential_storage::cache::page_pointers::ArrayPagePointers<352>, sequential_storage::cache::key_pointers::ArrayKeyPointers<u16, 1287>, u16>>, firmware::handler::FidoRng>"
 surface = "vendor device-PIN gate"
-
-[[caller]]
-symbol = "rsk_oath::OathApplet::cmd_set_code"
-surface = "OATH SET CODE"
-
-[[caller]]
-symbol = "rsk_oath::OathApplet::cmd_validate"
-surface = "OATH VALIDATE"
-
-[[caller]]
-symbol = "rsk_oath::OathApplet::otp_pin_matches"
-surface = "OATH PIN match helper"
-
-[[caller]]
-symbol = "rsk_oath::OathApplet::spend_and_match_otp_pin"
-surface = "OATH PIN-gated code match"
 
 [[caller]]
 symbol = "rsk_oath::ct_eq"
 surface = "OATH's forwarder onto the canonical comparator"
 
 [[caller]]
-symbol = "rsk_openpgp::init::neutralize_default_reset_code"
+symbol = "rsk_openpgp::init::neutralize_default_reset_code::<rsk_store::authenticated::managed::Managed<firmware::flash_storage::SharedFlash, sequential_storage::cache::Cache<sequential_storage::cache::page_states::ArrayPageStates<352>, sequential_storage::cache::page_pointers::ArrayPagePointers<352>, sequential_storage::cache::key_pointers::ArrayKeyPointers<u16, 1287>, u16>>>"
 surface = "OpenPGP default reset-code neutralisation"
 
 [[caller]]
-symbol = "rsk_openpgp::pin::check_pin"
+symbol = "rsk_openpgp::pin::check_pin::<rsk_store::authenticated::managed::Managed<firmware::flash_storage::SharedFlash, sequential_storage::cache::Cache<sequential_storage::cache::page_states::ArrayPageStates<352>, sequential_storage::cache::page_pointers::ArrayPagePointers<352>, sequential_storage::cache::key_pointers::ArrayKeyPointers<u16, 1287>, u16>>>"
 surface = "OpenPGP PW1/PW3/RC verify"
 
 [[caller]]
@@ -105,43 +349,7 @@ symbol = "rsk_openpgp::pin::ct_eq"
 surface = "OpenPGP's forwarder onto the canonical comparator"
 
 [[caller]]
-symbol = "rsk_otp::OtpApplet::cmd_configure"
-surface = "OTP slot configure access code"
-
-[[caller]]
-symbol = "rsk_otp::OtpApplet::cmd_otp"
-surface = "OTP command dispatch access code"
-
-[[caller]]
-symbol = "rsk_otp::OtpApplet::cmd_swap"
-surface = "OTP slot swap access code"
-
-[[caller]]
-symbol = "rsk_otp::OtpApplet::cmd_swap::_{{closure}}"
-surface = "OTP slot swap access code, inner"
-
-[[caller]]
-symbol = "rsk_otp::OtpApplet::cmd_update"
-surface = "OTP slot update access code"
-
-[[caller]]
-symbol = "rsk_otp::OtpApplet::code_clears_every_slot"
-surface = "OTP access-code sweep"
-
-[[caller]]
-symbol = "rsk_piv::PivApplet::get_metadata"
-surface = "PIV slot metadata default-value check"
-
-[[caller]]
-symbol = "rsk_piv::auth::GenAuth<S>::mutual_auth"
-surface = "PIV mutual authenticate"
-
-[[caller]]
-symbol = "rsk_piv::auth::GenAuth<S>::single_auth_verify"
-surface = "PIV single authenticate"
-
-[[caller]]
-symbol = "rsk_piv::check_ref"
+symbol = "rsk_piv::check_ref::<rsk_store::authenticated::managed::Managed<firmware::flash_storage::SharedFlash, sequential_storage::cache::Cache<sequential_storage::cache::page_states::ArrayPageStates<352>, sequential_storage::cache::page_pointers::ArrayPagePointers<352>, sequential_storage::cache::key_pointers::ArrayKeyPointers<u16, 1287>, u16>>>"
 surface = "PIV PIN/PUK reference verify"
 
 [[caller]]
@@ -149,189 +357,9 @@ symbol = "rsk_piv::ct_eq"
 surface = "PIV's forwarder onto the canonical comparator"
 
 [[caller]]
-symbol = "rsk_store::authenticated::checkpoint::Checkpoint::verify"
-surface = "storage v2 authority-header MAC at boot and before persistent operations"
-
-[[caller]]
-symbol = "rsk_store::authenticated::counter_bank::CounterBank<F>::scan"
-surface = "storage v2 complete counter-bank authentication before counter reads or updates"
-
-[[caller]]
-symbol = "rsk_store::authenticated::counter_bank::CounterBank<F>::write_snapshot"
-surface = "storage v2 counter checkpoint publication and full-set digest validation"
-
-[[caller]]
-symbol = "rsk_store::authenticated::counter_bank::scan::scan"
+symbol = "rsk_store::authenticated::counter_bank::scan::scan::<firmware::flash_storage::SharedFlash>"
 surface = "storage v2 counter scan engine complete-directory digest verification"
-
-[[caller]]
-symbol = "rsk_store::authenticated::counters::Counters<F>::resolve"
-surface = "storage v2 replicated counter authority agreement and recovery"
-
-[[caller]]
-symbol = "rsk_store::authenticated::counters::Counters<F>::resolve::_{{closure}}"
-surface = "storage v2 freshly observed counter-bank fingerprints before mounted-directory reuse"
-
-[[caller]]
-symbol = "rsk_store::authenticated::counters::Counters<F>::resolve_uncached"
-surface = "storage v2 replicated counter authority agreement after complete replay"
-
-[[caller]]
-symbol = "rsk_store::authenticated::import::Import<F>::load_manifest"
-surface = "attended storage v2 legacy-import manifest authentication"
-
-[[caller]]
-symbol = "rsk_store::authenticated::import::Manifest::verify"
-surface = "attended storage v2 legacy-import root, epoch and frozen-set validation"
 
 [[caller]]
 symbol = "rsk_store::authenticated::journal::checkpoint_digest_matches"
 surface = "storage v2 main journal replay and complete-directory validation"
-
-[[caller]]
-symbol = "rsk_store::authenticated::journal::Journal<F>::write_snapshot"
-surface = "storage v2 main authority checkpoint and complete-directory validation"
-
-[[caller]]
-symbol = "rsk_store::authenticated::main::Main<F,C>::resolve"
-surface = "storage v2 main authority selection and repeated recovery"
-
-[[caller]]
-symbol = "rsk_store::authenticated::record::Entry::verify"
-surface = "storage v2 full-value MAC before decoding stored security records"
-
-[[caller]]
-symbol = "rsk_store::authenticated::transaction::Delta::verify"
-surface = "storage v2 authenticated main write/delete transaction decoding"
-
-[[caller]]
-symbol = "rsk_store::authenticated::transaction::TransactionState::apply"
-surface = "storage v2 main transaction chain and publication validation"
-
-[[caller]]
-symbol = "rsk_store::authenticated::authority::Authority::stage_replace"
-surface = "mounted storage root equality before same-arm snapshot replacement"
-
-[[caller]]
-symbol = "rsk_store::authenticated::authority::Bound::verify"
-surface = "fresh root binding for storage v2 cached main authority reads"
-
-[[caller]]
-symbol = "rsk_store::authenticated::append_proof::AppendProof::extend"
-surface = "storage v2 root-bound SHA prefix before extending an authenticated append"
-
-[[caller]]
-symbol = "rsk_store::authenticated::bank::RawBank<F>::confirm_append"
-surface = "storage v2 freshly read complete journal against the exact expected append"
-
-[[caller]]
-symbol = "rsk_store::authenticated::main::Main<F,C>::check_banks"
-surface = "storage v2 complete physical bank fingerprints before reusing mounted state for mutation"
-
-[[caller]]
-symbol = "rsk_store::authenticated::main::Main<F,C>::resolve_inner"
-surface = "storage v2 main journal directory agreement during resolution and recovery"
-
-[[caller]]
-symbol = "rsk_store::authenticated::authority::Authority::verify_read_with_mac"
-surface = "the mounted directory binding on a warm backend read"
-
-[[caller]]
-symbol = "rsk_store::authenticated::authority::Bound::verify_with"
-surface = "the full mounted directory binding with a command-local HMAC context"
-
-[[caller]]
-symbol = "rsk_store::authenticated::authority::Bound::same_context"
-surface = "the exact mounted context for volatile read-tag hints"
-
-[[caller]]
-symbol = "rsk_store::authenticated::read_tags::ReadTags::bind"
-surface = "binding volatile read tags to the exact mounted authority"
-
-[[caller]]
-symbol = "rsk_store::authenticated::read_tags::ReadTags::bind::_{{closure}}"
-surface = "mounted-context equality before retaining volatile read tags"
-
-[[caller]]
-symbol = "rsk_store::authenticated::read_tags::ReadTags::find"
-surface = "mounted-context equality before reusing a complete-payload tag"
-
-[[caller]]
-symbol = "rsk_store::authenticated::read_tags::ReadTags::find::_{{closure}}"
-surface = "the cached context match for a complete-payload tag lookup"
-
-[[caller]]
-symbol = "rsk_store::authenticated::read_tags::ReadTags::insert"
-surface = "mounted-context equality before remembering a complete-payload tag"
-
-[[caller]]
-symbol = "rsk_store::authenticated::read_tags::ReadTags::insert::_{{closure}}"
-surface = "the cached context match for complete-payload tag insertion"
-
-[[caller]]
-symbol = "rsk_store::authenticated::read_tags::ReadTags::mount_tag"
-surface = "mounted-context equality before reusing a mounted-authority tag"
-
-[[caller]]
-symbol = "rsk_store::authenticated::read_tags::ReadTags::mount_tag::_{{closure}}"
-surface = "the cached context match for a mounted-authority tag lookup"
-
-[[caller]]
-symbol = "rsk_store::authenticated::main::read_proof::_<impl rsk_store::authenticated::main::Main<F,C>>::read_proven"
-surface = "the fresh-root complete payload proof before returning backend bytes"
-
-[[caller]]
-symbol = "rsk_store::authenticated::main::read_proof::_<impl rsk_store::authenticated::main::Main<F,C>>::read_proven::_{{closure}}"
-surface = "the optional cached complete-payload tag match on a backend read"
-
-[[caller]]
-symbol = "rsk_store::authenticated::read_proof::ReadProof::verify_mount"
-surface = "the fresh-root mounted proof before absence or recovery"
-
-[[caller]]
-symbol = "rsk_store::authenticated::record::Entry::verify_with"
-surface = "the complete stored payload and expected entry"
-
-[[caller]]
-symbol = "rsk_store::authenticated::record::Entry::verify_with_mac"
-surface = "the complete stored payload with a command-local HMAC context"
-
-[[caller]]
-symbol = "rsk_store::authenticated::counter_bank::CounterBank<F>::read_bound_frame"
-surface = "PIN/HOTP counter entry identity before copying its physical frame"
-
-[[caller]]
-symbol = "rsk_store::authenticated::counters::read::_<impl rsk_store::authenticated::counters::Counters<F>>::read_mirrored"
-surface = "PIN/HOTP entry, payload and padding equality across both physical replicas"
-
-[[caller]]
-symbol = "rsk_store::authenticated::counters::read::_<impl rsk_store::authenticated::counters::Counters<F>>::read_proven"
-surface = "fresh-root counter proof and complete-bank equality for public counter reads"
-
-[[caller]]
-symbol = "rsk_store::authenticated::counters::read::_<impl rsk_store::authenticated::counters::Counters<F>>::read_proven::_{{closure}}"
-surface = "the fresh complete counter-bank fingerprint match before mounted-directory reuse"
-
-[[caller]]
-symbol = "rsk_store::authenticated::counters::read::_<impl rsk_store::authenticated::counters::Counters<F>>::read_with_source"
-surface = "fresh-root authenticated counter reads and failure invalidation"
-
-[[caller]]
-symbol = "rsk_store::authenticated::counters::read::tags::ReadCache::mount"
-surface = "counter authority context equality before returning a mounted proof"
-
-[[caller]]
-symbol = "rsk_store::authenticated::counters::read::tags::ReadCache::mount::_{{closure}}"
-surface = "the cached counter authority context match during proof lookup"
-
-[[caller]]
-symbol = "rsk_store::authenticated::counters::read::tags::ReadCache::verify"
-surface = "fresh-root complete counter payload authentication before returning bytes"
-
-[[caller]]
-symbol = "rsk_store::authenticated::counters::read::tags::ValueTag::binds"
-surface = "counter payload tag equality with the current authority context"
-
-[[caller]]
-symbol = "rsk_store::authenticated::counters::read::tags::ValueTag::verify"
-surface = "counter payload MAC equality under its authenticated entry and authority"

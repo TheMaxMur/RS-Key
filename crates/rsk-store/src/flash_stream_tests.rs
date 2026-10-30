@@ -118,8 +118,13 @@ fn reads_words_in_order_drains_stale_fifo_and_preserves_output_guards() {
                 read(&mut stream, 1024, 256, &mut out[1..1 + length]),
                 Ok(())
             );
-            for (i, word) in out[1..1 + length].chunks_exact(WORD_BYTES).enumerate() {
-                assert_eq!(word, (256 + i as u32 * WORD_BYTES as u32).to_le_bytes());
+            for (i, word) in out[1..1 + length]
+                .as_chunks::<WORD_BYTES>()
+                .0
+                .iter()
+                .enumerate()
+            {
+                assert_eq!(*word, (256 + i as u32 * WORD_BYTES as u32).to_le_bytes());
             }
             assert_eq!(out[0], 0x5a);
             assert!(out[1 + length..].iter().all(|byte| *byte == 0x5a));

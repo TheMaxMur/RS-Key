@@ -276,14 +276,17 @@ full Kani/assurance result is claimed for this refactor.
 
 ## Emulator source and isolation checks
 
-The image backend uses `third_party/picoem`, imported from
+The image backend uses a pinned Git dependency on the external
+[picoem fork](https://github.com/TheMaxMur/picoem). Its isolation changes were
+originally developed against
 [TheMaxMur/picoem](https://github.com/TheMaxMur/picoem/tree/9513634a7ba2c8331f4f8b363196eb24bace96df)
 at `9513634a7ba2c8331f4f8b363196eb24bace96df`. Upstream library code keeps
 its MIT OR Apache-2.0 terms; local security changes are AGPL-3.0-only. The ROM
-is BSD-3-Clause, with its licence beside the fixture. Only
-`rp2350-emu` and `picoem-common` library sources and the pinned A4 ROM are
-imported; integration-test firmware fixtures and unrelated binaries are omitted. Local changes implement
-the isolation model needed to test this boundary. They add no firmware dependency.
+is BSD-3-Clause, with its licence beside the fixture. The external fork preserves
+the isolation model, the pinned A4 ROM and its integration-test fixtures. RS-Key
+links only `rp2350-emu` and `picoem-common` into the host emulator; neither is a
+firmware dependency. `tools/emu/Cargo.lock` pins the source revision, and the
+quality gate resolves that same checkout for model formatting, clippy and tests.
 
 The CPU model now checks SAU/IDAU attribution before every byte, halfword and
 word data access and every instruction dispatch, including decode-cache hits.
@@ -304,8 +307,11 @@ getInfo smoke: 32 keepalives, maximum image-time gap 187 ms. ACCESSCTRL, DMA,
 malicious image probes and independent Secure USB revocation are still pending.
 
 ```sh
-nix develop -c cargo test --locked --manifest-path third_party/picoem/Cargo.toml \
-  -p rp2350-emu --target aarch64-apple-darwin --lib
+# Inside nix develop, resolve the same model checkout as tools/emu:
+model=$(cargo metadata --locked --manifest-path tools/emu/Cargo.toml --format-version 1 |
+  python -c 'import json, sys; print(next(p["manifest_path"] for p in json.load(sys.stdin)["packages"] if p["name"] == "rp2350-emu"))')
+cargo test --locked --manifest-path "$model" -p rp2350-emu -p picoem-common \
+  --target "$(rustc -vV | sed -n 's/^host: //p')" --lib
 ```
 
 The full `scripts/check.sh` passed for the CPU-memory step. Controller, DMA
@@ -318,7 +324,7 @@ EXC_RETURN from thread mode cannot unstack a frame; NS returns with invalid ES
 or DCRS fields raise INVER. Returning to a protected S frame checks its integrity
 signature before restoring registers. Honest S-to-NS interrupt returns follow
 the default DCRS rules, including callee-register preservation. The existing
-quality gate now runs the vendored model's formatting, clippy and library tests,
+quality gate runs the pinned model's formatting, clippy and library tests,
 so these tests participate in CI rather than only in manual emulator checks.
 
 
@@ -1143,8 +1149,8 @@ to that same PIN query. Both runs reconfigure USB without a power cycle.
 
 ## Software recheck on 2026-10-16
 
-The recheck used branch revision `9b9ce0c4` and fresh partitioned combined
-images. PIV RESET `6581` investigation was excluded. No firmware behavior,
+The recheck used pre-extraction revision `9b9ce0c4` (now `90584dba`) and fresh
+partitioned combined images. PIV RESET `6581` investigation was excluded. No firmware behavior,
 build counter, dependency pin or hardware state was changed by this recheck.
 
 | Check | Observed result |

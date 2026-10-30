@@ -52,5 +52,3 @@ sram.bin*
 /site/
 /mermaid.min.js
 /mermaid-init.js
-
-/third_party/picoem/target/

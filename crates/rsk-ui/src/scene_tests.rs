@@ -1561,8 +1561,8 @@ fn static_and_dynamic_fill_colors_write_the_same_big_endian_pixel_pattern() {
         let mut out = [0x55; BAND_BYTES + 6];
         fill_color(&mut out, color);
         let expected = color.into_storage().to_be_bytes();
-        for bytes in out.chunks_exact(2) {
-            assert_eq!(bytes, expected);
+        for bytes in out.as_chunks::<2>().0.iter() {
+            assert_eq!(*bytes, expected);
         }
     }
 }

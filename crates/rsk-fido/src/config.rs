@@ -448,7 +448,7 @@ fn set_ea_rpids<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, rp_ids: &[&str]) -> Cta
         return Ok(0);
     }
     let mut data = [0u8; 32 * MAX_EA_RPIDS];
-    for (slot, id) in data.chunks_exact_mut(32).zip(rp_ids) {
+    for (slot, id) in data.as_chunks_mut::<32>().0.iter_mut().zip(rp_ids) {
         slot.copy_from_slice(&sha256(id.as_bytes()));
     }
     ctx.fs

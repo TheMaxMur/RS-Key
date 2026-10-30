@@ -831,6 +831,7 @@ pub fn backdate_local(ms: u32) {
 fn cloned_parked_cells_share_the_host_borrows_and_pin_state() {
     let env = Env::new();
     let original = env.cells();
+    #[expect(clippy::clone_on_copy, reason = "exercise the Clone implementation")]
     let cloned = Clone::clone(&original);
     assert!(core::ptr::eq(original.keys, cloned.keys));
     assert_eq!(cloned.fs.try_pin_set(), Some(false));

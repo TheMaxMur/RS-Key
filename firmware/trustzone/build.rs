@@ -69,24 +69,25 @@ pub fn configure(out: &Path, memory: &mut String, code_size: u32, flash_size: u3
         "ASSERT(LOADADDR(.data) + SIZEOF(.data) <= {nsc_start:#010x}, \"Secure image overlaps NSC\")\n",
     ));
     // Keep the Montgomery ladder and field arithmetic within one XIP cache way.
+    // Rust 1.99 folds APLUS2_OVER_FOUR into immediate multiplication by 121666;
+    // guard the reviewed ladder body instead of the eliminated 40-byte constant.
     memory.push_str(&format!(
         "SECTIONS {{ .rsk_curve25519 : ALIGN({XIP_WAY_BYTES}) {{\n\
          __rsk_curve25519_start = .;\n\
          KEEP(*(.text.*FieldElement2625*Mul* .text.*FieldElement2625*Sub* .text.*FieldElement262512square_inner*))\n\
-         __rsk_curve25519_barrier_start = .;\n\
-         KEEP(*(.text._ZN6subtle9black_box17h????????????????E))\n\
+         . = ALIGN(4); __rsk_curve25519_barrier_start = .;\n\
+         KEEP(*(.text._RINvCs*_6subtle9black_boxhE*))\n\
          __rsk_curve25519_barrier_end = .;\n\
          __rsk_curve25519_field_end = .;\n\
-         KEEP(*(.text._ZN12x25519_dalek6x255196x2551917h????????????????E))\n\
-         . = ALIGN(4); __rsk_curve25519_aplus_start = .;\n\
-         KEEP(*(.rodata..Lanon.85af889235b8362dd68e687840cca964.16))\n\
-         __rsk_curve25519_aplus_end = .;\n\
+         . = ALIGN(4); __rsk_x25519_start = .;\n\
+         KEEP(*(.text._RNvNtCs*_12x25519_dalek6x255196x25519*))\n\
+         __rsk_x25519_end = .;\n\
          __rsk_curve25519_end = .;\n\
          }} > FLASH }} INSERT BEFORE .rodata;\n\
          ASSERT(SIZEOF(.rsk_curve25519) > 0, \"Curve25519 code is missing\")\n\
          ASSERT(__rsk_curve25519_barrier_start > __rsk_curve25519_start, \"Curve25519 field code is missing\")\n\
          ASSERT(__rsk_curve25519_barrier_end - __rsk_curve25519_barrier_start == 18, \"Constant-time barrier changed; review grouping\")\n\
-         ASSERT(__rsk_curve25519_aplus_end - __rsk_curve25519_aplus_start == 40, \"X25519 ladder multiplier changed; review grouping\")\n\
+         ASSERT(__rsk_x25519_end - __rsk_x25519_start == 4900, \"X25519 ladder changed; review grouping\")\n\
          ASSERT(SIZEOF(.rsk_curve25519) <= {XIP_WAY_BYTES}, \"Curve25519 code exceeds one XIP cache way\")\n",
     ));
     // Keep the Edwards loop off the field core's cache indices, leaving a way
@@ -94,10 +95,10 @@ pub fn configure(out: &Path, memory: &mut String, code_size: u32, flash_size: u3
     memory.push_str(&format!(
         "__rsk_ed25519_offset = ALIGN(__rsk_curve25519_field_end - __rsk_curve25519_start, {XIP_LINE_BYTES});\n\
          SECTIONS {{ .rsk_ed25519 (ALIGN({XIP_WAY_BYTES}) + __rsk_ed25519_offset) : {{\n\
-         KEEP(*(.text._ZN16curve25519_dalek7backend6serial12curve_models172_$LT$impl$u20$core..ops..arith..Add$LT$$RF$curve25519_dalek..backend..serial..curve_models..AffineNielsPoint$GT$$u20$for$u20$$RF$curve25519_dalek..edwards..EdwardsPoint$GT$3add17h????????????????E))\n\
-         KEEP(*(.text._ZN16curve25519_dalek7edwards12EdwardsPoint8mul_base17h????????????????E))\n\
-         KEEP(*(.text._ZN16curve25519_dalek6window20LookupTable$LT$T$GT$6select17h????????????????E))\n\
-         KEEP(*(.text._ZN117_$LT$curve25519_dalek..backend..serial..curve_models..AffineNielsPoint$u20$as$u20$subtle..ConditionallySelectable$GT$18conditional_assign17h????????????????E))\n\
+         KEEP(*(.text._RNvX*16curve25519_dalek7backend6serial12curve_models*12EdwardsPoint*3Add*16AffineNielsPointE3add*))\n\
+         KEEP(*(.text._RNvM*16curve25519_dalek7edwards*12EdwardsPoint8mul_base*))\n\
+         KEEP(*(.text._RNvM*16curve25519_dalek6window*11LookupTable*16AffineNielsPointE6select*))\n\
+         KEEP(*(.text._RNvX*16curve25519_dalek7backend6serial12curve_models*16AffineNielsPoint*6subtle23ConditionallySelectable18conditional_assign*))\n\
          }} > FLASH }} INSERT BEFORE .rodata;\n\
          ASSERT(SIZEOF(.rsk_ed25519) > 0, \"Ed25519 code is missing\")\n\
          ASSERT(__rsk_ed25519_offset > 0 && ADDR(.rsk_ed25519) % {XIP_WAY_BYTES} == __rsk_ed25519_offset, \"Ed25519 cache offset differs from field span\")\n\
@@ -106,9 +107,9 @@ pub fn configure(out: &Path, memory: &mut String, code_size: u32, flash_size: u3
     // Group the hot callees so the comb loop cannot introduce a third cache tag.
     memory.push_str(&format!(
         "SECTIONS {{ .rsk_k256_field : ALIGN({XIP_WAY_BYTES}) {{\n\
-         KEEP(*(.text._ZN4k25610arithmetic5field*))\n\
-         KEEP(*(.text._ZN4k25610arithmetic10projective15ProjectivePoint10add_assign17h????????????????E))\n\
-         KEEP(*(.text.*k256..arithmetic..affine..AffinePoint*18conditional_select17h????????????????E))\n\
+         KEEP(*(.text._R*4k25610arithmetic5field*))\n\
+         KEEP(*(.text._RNvM*4k25610arithmetic10projective*15ProjectivePoint10add_assign*))\n\
+         KEEP(*(.text._RNvX*4k25610arithmetic6affine*11AffinePoint*6subtle23ConditionallySelectable18conditional_select*))\n\
          }} > FLASH }} INSERT BEFORE .rodata;\n\
          ASSERT(SIZEOF(.rsk_k256_field) > 0, \"secp256k1 field code is missing\")\n\
          ASSERT(SIZEOF(.rsk_k256_field) <= {XIP_WAY_BYTES}, \"secp256k1 field code exceeds one XIP cache way\")\n",
@@ -117,16 +118,16 @@ pub fn configure(out: &Path, memory: &mut String, code_size: u32, flash_size: u3
     // one cache way without competing with each other for cache indices.
     memory.push_str(&format!(
         "SECTIONS {{ .rsk_p384_comb : ALIGN({XIP_WAY_BYTES}) {{\n\
-         KEEP(*(.text._ZN4p38410arithmetic5field12FieldElement3add17h????????????????E))\n\
-         KEEP(*(.text._ZN4p38410arithmetic5field12FieldElement3sub17h????????????????E))\n\
-         KEEP(*(.text._ZN4p38410arithmetic5field12FieldElement6double17h????????????????E))\n\
-         KEEP(*(.text._ZN4p38410arithmetic5field12montgomery326square17h????????????????E))\n\
-         KEEP(*(.text._ZN6rsk_ec9comb_p38413comb_mul_p38417h????????????????E))\n\
+         KEEP(*(.text._RNvM*4p38410arithmetic5field*12FieldElement3add*))\n\
+         KEEP(*(.text._RNvM*4p38410arithmetic5field*12FieldElement3sub*))\n\
+         KEEP(*(.text._RNvM*4p38410arithmetic5field*12FieldElement6double*))\n\
+         KEEP(*(.text._RNvNtNtNtCs*_4p38410arithmetic5field12montgomery326square*))\n\
+         KEEP(*(.text._RNvNtCs*_6rsk_ec9comb_p38413comb_mul_p384*))\n\
          __rsk_p384_mixed_start = .;\n\
-         KEEP(*(.text._ZN134_$LT$primeorder..point_arithmetic..EquationAIsMinusThree$u20$as$u20$primeorder..point_arithmetic..sealed..PointArithmetic$LT$C$GT$$GT$16add_assign_mixed17h40a511cceca3a12cE))\n\
+         KEEP(*(.text._RNvX*10primeorder16point_arithmetic*21EquationAIsMinusThree*15PointArithmetic*4p3848NistP384E16add_assign_mixed*))\n\
          __rsk_p384_mixed_end = .;\n\
          }} > FLASH }} INSERT BEFORE .rodata;\n\
-         ASSERT(__rsk_p384_mixed_end - __rsk_p384_mixed_start == 712, \"P-384 mixed addition monomorph changed; review placement\")\n\
+         ASSERT(__rsk_p384_mixed_end - __rsk_p384_mixed_start == 634, \"P-384 mixed addition monomorph changed; review placement\")\n\
          ASSERT(SIZEOF(.rsk_p384_comb) <= {XIP_WAY_BYTES}, \"P-384 comb code exceeds one XIP cache way\")\n",
     ));
     // Keep the shared verifier and its memory helpers off the XIP path.
@@ -136,51 +137,51 @@ pub fn configure(out: &Path, memory: &mut String, code_size: u32, flash_size: u3
          .rsk_exec : ALIGN(32) {\n\
          __rsk_exec_start = .;\n\
          __rsk_sha256_initial_start = .;\n\
-         KEEP(*(.rodata._ZN10rsk_sha2567INITIAL17h????????????????E))\n\
+         KEEP(*(.rodata._RNvCs*_10rsk_sha2567INITIAL))\n\
          __rsk_sha256_initial_end = .;\n\
-         KEEP(*(.text.*rsk_sha256* .text._ZN10rsk_crypto3mac10HmacSha256* .text._ZN10rsk_crypto3mac11hkdf_sha256* .text._ZN10rsk_crypto4drbg8HmacDrbg*)) KEEP(*(.data.bignum_hl .data.bignum_asm .data.sieve_step .data.ram_func))\n\
-         KEEP(*(.text._ZN9rsk_store13authenticated6record5Entry15verify_with_mac17h????????????????E))\n\
-         KEEP(*(.text._ZN10rsk_crypto4hash6sha25617h????????????????E))\n\
+         KEEP(*(.text.*rsk_sha256* .text._RNvM*10rsk_crypto3mac*10HmacSha256* .text._RNvNtCs*_10rsk_crypto3mac11hkdf_sha256* .text._RNvM*10rsk_crypto4drbg*8HmacDrbg*)) KEEP(*(.data.bignum_hl .data.bignum_asm .data.sieve_step .data.ram_func))\n\
+         KEEP(*(.text._RNvM*9rsk_store13authenticated6record*5Entry15verify_with_mac*))\n\
+         KEEP(*(.text._RNvNtCs*_10rsk_crypto4hash6sha256*))\n\
          __rsk_memory_start = .;\n\
          KEEP(*(.text.__aeabi_mem* .text.memcpy .text.memmove .text.memset .text.*compiler_builtins3mem6memcpy .text.*compiler_builtins3mem7memmove))\n\
          __rsk_memory_end = .;\n\
-         KEEP(*(.text._ZN3aes4soft8fixslice14aes256_encrypt17h????????????????E))\n\
-         KEEP(*(.text._ZN3aes4soft8fixslice9sub_bytes17h????????????????E))\n\
-         KEEP(*(.text._ZN3aes4soft8fixslice13mix_columns_117h????????????????E))\n\
-         KEEP(*(.text._ZN3aes4soft8fixslice13mix_columns_317h????????????????E))\n\
-         KEEP(*(.text._ZN65_$LT$aes..soft..Aes256$u20$as$u20$cipher..block..BlockEncrypt$GT$20encrypt_with_backend17h????????????????E))\n\
-         KEEP(*(.text._ZN75_$LT$ghash..GHashBackend$LT$B$GT$$u20$as$u20$universal_hash..UhfBackend$GT$10proc_block17h????????????????E))\n\
-         KEEP(*(.text._ZN7aes_gcm39AesGcm$LT$Aes$C$NonceSize$C$TagSize$GT$11compute_tag17h????????????????E))\n\
-         KEEP(*(.text._ZN4p25610arithmetic5field10field_impl3add17h????????????????E))\n\
-         KEEP(*(.text._ZN4p25610arithmetic5field10field_impl17montgomery_reduce17h????????????????E))\n\
-         KEEP(*(.text._ZN4p25610arithmetic5field10field_impl3sub17h????????????????E))\n\
-         KEEP(*(.text._ZN13crypto_bigint4uint3mul9karatsuba18widening_mul_fixed17h????????????????E))\n\
-         KEEP(*(.text._ZN14num_bigint_dig10algorithms3mac4long17h????????????????E))\n\
-         KEEP(*(.text._ZN74_$LT$firmware..ZeroingHeap$u20$as$u20$core..alloc..global..GlobalAlloc$GT$7dealloc17h????????????????E))\n\
-         KEEP(*(.text._ZN13crypto_bigint4limb2ct97_$LT$impl$u20$ctutils..traits..ct_assign..CtAssignSlice$u20$for$u20$crypto_bigint..limb..Limb$GT$15ct_assign_slice17h????????????????E))\n\
-         KEEP(*(.text._ZN124_$LT$num_bigint_dig..biguint..BigUint$u20$as$u20$core..ops..arith..SubAssign$LT$$RF$num_bigint_dig..biguint..BigUint$GT$$GT$10sub_assign17h????????????????E))\n\
+         KEEP(*(.text._RNvNtNtCs*_3aes4soft8fixslice14aes256_encrypt*))\n\
+         KEEP(*(.text._RNvNtNtCs*_3aes4soft8fixslice9sub_bytes*))\n\
+         KEEP(*(.text._RNvNtNtCs*_3aes4soft8fixslice13mix_columns_1*))\n\
+         KEEP(*(.text._RNvNtNtCs*_3aes4soft8fixslice13mix_columns_3*))\n\
+         KEEP(*(.text._RINvX*3aes4soft*6Aes256*6cipher5block12BlockEncrypt20encrypt_with_backend*))\n\
+         KEEP(*(.text._RNvX*5ghash*12GHashBackend*14universal_hash10UhfBackend10proc_block*))\n\
+         KEEP(*(.text._RNvM*7aes_gcm*6AesGcm*11compute_tag*))\n\
+         KEEP(*(.text._RNvNtNtNtCs*_4p25610arithmetic5field10field_impl3add*))\n\
+         KEEP(*(.text._RNvNtNtNtCs*_4p25610arithmetic5field10field_impl17montgomery_reduce*))\n\
+         KEEP(*(.text._RNvNtNtNtCs*_4p25610arithmetic5field10field_impl3sub*))\n\
+         KEEP(*(.text._RINvNtNtNtCs*_13crypto_bigint4uint3mul9karatsuba18widening_mul_fixed*))\n\
+         KEEP(*(.text._RNvNtNtCs*_14num_bigint_dig10algorithms3mac4long*))\n\
+         KEEP(*(.text._RNvX*8firmware*11ZeroingHeap*4core5alloc6global11GlobalAlloc7dealloc*))\n\
+         KEEP(*(.text._RNvX*13crypto_bigint4limb2ct*4Limb*7ctutils6traits9ct_assign13CtAssignSlice15ct_assign_slice*))\n\
+         KEEP(*(.text._RNvX*14num_bigint_dig7biguint*7BigUint*4core3ops5arith9SubAssign*10sub_assign*))\n\
          __rsk_p256_add_start = .;\n\
-         KEEP(*(.text._ZN134_$LT$primeorder..point_arithmetic..EquationAIsMinusThree$u20$as$u20$primeorder..point_arithmetic..sealed..PointArithmetic$LT$C$GT$$GT$10add_assign17h54848a1e6960f4b6E))\n\
+         KEEP(*(.text._RNvX*10primeorder16point_arithmetic*21EquationAIsMinusThree*15PointArithmetic*4p2568NistP256E10add_assign*))\n\
          __rsk_p256_add_end = .;\n\
-         KEEP(*(.text._ZN67_$LT$p256..arithmetic..field..FieldElement$u20$as$u20$ff..Field$GT$6invert17h????????????????E))\n\
-         KEEP(*(.text._ZN6rsk_ec3key16ecdh_p256_shared17h????????????????E))\n\
-         KEEP(*(.text._ZN14elliptic_curve4ecdh14diffie_hellman17h????????????????E))\n\
-         KEEP(*(.text._ZN10primeorder6tables6lookup24LookupTable$LT$Point$GT$6select17h????????????????E))\n\
-         KEEP(*(.text._ZN67_$LT$p256..arithmetic..field..FieldElement$u20$as$u20$ff..Field$GT$6square17h????????????????E))\n\
-         KEEP(*(.text._ZN4p38410arithmetic5field12montgomery328multiply17h????????????????E))\n\
-         KEEP(*(.text._ZN14num_bigint_dig10algorithms3div7div_rem17h????????????????E))\n\
-         KEEP(*(.text._ZN14num_bigint_dig10algorithms3mul4mul317h????????????????E))\n\
-         KEEP(*(.text._ZN14num_bigint_dig10algorithms3mac9karatsuba17h????????????????E))\n\
-         KEEP(*(.text._ZN14num_bigint_dig10algorithms3sub8sub_sign17h????????????????E))\n\
+         KEEP(*(.text._RNvX*4p25610arithmetic5field*12FieldElement*2ff5Field6invert*))\n\
+         KEEP(*(.text._RNvNtCs*_6rsk_ec3key16ecdh_p256_shared*))\n\
+         KEEP(*(.text._RINvNtCs*_14elliptic_curve4ecdh14diffie_hellman*))\n\
+         KEEP(*(.text._RNvM*10primeorder6tables6lookup*11LookupTable*6select*))\n\
+         KEEP(*(.text._RNvX*4p25610arithmetic5field*12FieldElement*2ff5Field6square*))\n\
+         KEEP(*(.text._RNvNtNtNtCs*_4p38410arithmetic5field12montgomery328multiply*))\n\
+         KEEP(*(.text._RNvNtNtCs*_14num_bigint_dig10algorithms3div7div_rem*))\n\
+         KEEP(*(.text._RNvNtNtCs*_14num_bigint_dig10algorithms3mul4mul3*))\n\
+         KEEP(*(.text._RNvNtNtCs*_14num_bigint_dig10algorithms3mac9karatsuba*))\n\
+         KEEP(*(.text._RNvNtNtCs*_14num_bigint_dig10algorithms3sub8sub_sign*))\n\
          __rsk_flash_read_start = .;\n\
-         KEEP(*(.text._ZN104_$LT$firmware..flash_storage..SharedFlash$u20$as$u20$embedded_storage_async..nor_flash..ReadNorFlash$GT$4read28_$u7b$$u7b$closure$u7d$$u7d$17h????????????????E))\n\
+         KEEP(*(.text._RNCNvXs_NtCs*_8firmware13flash_storageNtB*_11SharedFlashNtNtCs*_22embedded_storage_async9nor_flash12ReadNorFlash4read0*))\n\
          __rsk_flash_read_end = .;\n\
          . = ALIGN(32); __rsk_exec_end = .;\n\
          } > RAM AT> FLASH\n\
          } INSERT BEFORE .data;\n\
          SECTIONS { .rsk_init_anchor (NOLOAD) : { __sdata = ADDR(.rsk_exec); __sidata = LOADADDR(.rsk_exec); } > RAM } INSERT AFTER .uninit;\n\
          ASSERT(__rsk_sha256_initial_end - __rsk_sha256_initial_start == 32, \"SHA-256 initial vector is not 32 bytes\")\n\
-         ASSERT(__rsk_p256_add_end - __rsk_p256_add_start == 1222, \"P-256 addition monomorph changed; review relocation\")\n\
+         ASSERT(__rsk_p256_add_end - __rsk_p256_add_start == 798, \"P-256 addition monomorph changed; review relocation\")\n\
          ASSERT(__rsk_memory_end > __rsk_memory_start, \"Memory helpers are missing from Secure SRAM\")\n\
          ASSERT(__rsk_flash_read_end > __rsk_flash_read_start, \"Shared flash reader is missing from Secure SRAM\")\n\
          ASSERT(LOADADDR(.data) - LOADADDR(.rsk_exec) == ADDR(.data) - ADDR(.rsk_exec), \"RAM initialization is not contiguous\")\n",
@@ -190,8 +191,8 @@ pub fn configure(out: &Path, memory: &mut String, code_size: u32, flash_size: u3
         "SECTIONS {\n\
          .rsk_scratch_exec : ALIGN(32) {\n\
          __rsk_scratch_exec_start = .;\n\
-         KEEP(*(.text._ZN4p52110arithmetic5field10field_impl19fiat_p521_carry_mul17h????????????????E*))\n\
-         KEEP(*(.text._ZN4p52110arithmetic5field10field_impl22fiat_p521_carry_square17h????????????????E*))\n\
+         KEEP(*(.text._RNvNtNtNtCs*_4p52110arithmetic5field10field_impl19fiat_p521_carry_mul*))\n\
+         KEEP(*(.text._RNvNtNtNtCs*_4p52110arithmetic5field10field_impl22fiat_p521_carry_square*))\n\
          __rsk_scratch_payload_end = .;\n\
          . = ORIGIN(SCRATCH) + LENGTH(SCRATCH);\n\
          __rsk_scratch_exec_end = .;\n\
