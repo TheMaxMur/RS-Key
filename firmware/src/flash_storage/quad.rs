@@ -57,10 +57,7 @@ impl Engine {
 
 #[inline(always)]
 fn halt() -> ! {
-    #[cfg(rsk_trustzone_prototype)]
     crate::trustzone::fault::fence();
-    #[cfg(not(rsk_trustzone_prototype))]
-    crate::usb_fence::disconnect_after_fault();
     loop {
         core::hint::spin_loop();
     }

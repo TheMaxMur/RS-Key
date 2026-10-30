@@ -222,7 +222,7 @@ CLAIMS = """
 [[claim]]
 subject = "owner->image"
 method = "BINARY-CHECKED"
-artifact = "target/thumbv8m.main-none-eabihf/release/firmware"
+artifact = "target/trustzone/combined.elf"
 build = "cargo build --release -p firmware"
 statement = "every registered owner is bound to this ELF"
 
@@ -339,7 +339,7 @@ def test_an_empty_artifact_is_not_an_answer():
     """`assurance/board/*.toml` ships `firmware_sha256 = ""` in eleven files, so
     a blank field is this tree's own spelling and a presence test walks past it."""
     findings, _ = run(CLAIMS.replace(
-        'artifact = "target/thumbv8m.main-none-eabihf/release/firmware"', 'artifact = ""'
+        'artifact = "target/trustzone/combined.elf"', 'artifact = ""'
     ) + ABSENT)
     assert any("claim 1: `artifact` is empty" in f for f in findings), findings
 
@@ -492,10 +492,10 @@ def test_the_artifact_is_held_against_the_other_registry_in_this_window():
     does not audit: `assurance/image.toml` names the same path, and the no-touch
     build overwrites it ~250 rows later."""
     findings, _ = run(CLAIMS.replace(
-        "target/thumbv8m.main-none-eabihf/release/firmware",
+        "target/trustzone/combined.elf",
         "target/thumbv8m.main-none-eabihf/release/rsk-wipe",
     ) + ABSENT)
-    assert any("names `target/thumbv8m.main-none-eabihf/release/firmware`" in f for f in findings), findings
+    assert any("names `target/trustzone/combined.elf`" in f for f in findings), findings
 
 
 def test_an_artifact_that_is_not_there_says_which_command_makes_it():
@@ -503,7 +503,7 @@ def test_an_artifact_that_is_not_there_says_which_command_makes_it():
     by injecting `raw`: no build, no image, and a row that must say so rather
     than resolve 44 owners `absent` against a file it never opened."""
     findings, _ = run(CLAIMS.replace(
-        "target/thumbv8m.main-none-eabihf/release/firmware", "target/nothing/here/firmware",
+        "target/trustzone/combined.elf", "target/nothing/here/firmware",
     ) + ABSENT, raw=None)
     assert any("build it first: cargo build --release -p firmware" in f for f in findings), findings
 

@@ -28,26 +28,24 @@ assurance/board/PLAT-TIMER-002.toml	crates/rsk-usb/src/ctaphid.rs	959-959	match 
 assurance/board/PLAT-TIMER-002.toml	firmware/src/led.rs	618-618	Timer::after_millis(5).await;	Timer::after_millis(5).await;
 assurance/board/PLAT-TIMER-002.toml	firmware/src/led.rs	692-692	const PERIOD_US: u64 = 2000;	const PERIOD_US: u64 = 2000;
 assurance/board/PLAT-TIMER-002.toml	firmware/src/led.rs	727-727	Timer::after_millis(5).await;	Timer::after_millis(5).await;
-assurance/board/PLAT-TIMER-002.toml	firmware/src/main.rs	663-663	let mut config = embassy_rp::config::Config::default();	let mut config = embassy_rp::config::Config::default();
-assurance/board/PLAT-TIMER-002.toml	firmware/src/main.rs	1222-1222	_ => gpio_pin!(p.PIN_29),	_ => gpio_pin!(p.PIN_29),
-assurance/board/PLAT-TIMER-002.toml	firmware/src/main.rs	1230-1230	let rg = Pwm::new_output_ab(p.PWM_SLICE1, p.PIN_18, p.PIN_19, led::pimoroni_cfg());	let rg = Pwm::new_output_ab(p.PWM_SLICE1, p.PIN_18, p.PIN_19, led::pimoroni_cfg());
-assurance/board/PLAT-TIMER-002.toml	firmware/src/main.rs	1284-1284	_ => ws2812_pin!(p.PIN_29),	_ => ws2812_pin!(p.PIN_29),
-assurance/board/PLAT-TIMER-002.toml	firmware/src/presence.rs	260-263	#[cfg(feature = "no-touch")]	}
+assurance/board/PLAT-TIMER-002.toml	firmware/src/main.rs	565-565	let mut config = embassy_rp::config::Config::default();	let mut config = embassy_rp::config::Config::default();
+assurance/board/PLAT-TIMER-002.toml	firmware/src/main.rs	988-988	_ => gpio_pin!(p.PIN_29),	_ => gpio_pin!(p.PIN_29),
+assurance/board/PLAT-TIMER-002.toml	firmware/src/main.rs	996-996	let rg = Pwm::new_output_ab(p.PWM_SLICE1, p.PIN_18, p.PIN_19, led::pimoroni_cfg());	let rg = Pwm::new_output_ab(p.PWM_SLICE1, p.PIN_18, p.PIN_19, led::pimoroni_cfg());
+assurance/board/PLAT-TIMER-002.toml	firmware/src/main.rs	1050-1050	_ => ws2812_pin!(p.PIN_29),	_ => ws2812_pin!(p.PIN_29),
+assurance/board/PLAT-TIMER-002.toml	firmware/src/presence.rs	243-246	#[cfg(feature = "no-touch")]	}
 assurance/board/PLAT-TIMER-002.toml	firmware/src/usb_attach.rs	34-36	/// Milliseconds since the attach — the clock the FIDO layer gets as `Ctx::now_ms`,	pub fn elapsed_ms() -> u64 {
-assurance/board/PLAT-TIMER-002.toml	firmware/src/worker.rs	319-319	const BTN_POLL_MS: u64 = 16;	const BTN_POLL_MS: u64 = 16;
-assurance/board/PLAT-TIMER-002.toml	firmware/src/worker.rs	728-728	crate::usb_attach::elapsed_ms(),	crate::usb_attach::elapsed_ms(),
+assurance/board/PLAT-TIMER-002.toml	firmware/src/worker.rs	181-181	const BTN_POLL_MS: u64 = 16;	const BTN_POLL_MS: u64 = 16;
+assurance/board/PLAT-TIMER-002.toml	firmware/src/worker.rs	571-571	crate::usb_attach::elapsed_ms(),	crate::usb_attach::elapsed_ms(),
 assurance/board/PLAT-TIMER-002.toml	scripts/platform_gate.py	1337-1337	OUTCOME_STATUS = {"pass": "discharged", "fail": "refuted"}	OUTCOME_STATUS = {"pass": "discharged", "fail": "refuted"}
 assurance/board/PLAT-TIMER-002.toml	tools/rsk/audit.py	170-170	print(f"{'seq':>6}  {'uptime':>10}  {'event':<18} aux  detail")	print(f"{'seq':>6}  {'uptime':>10}  {'event':<18} aux  detail")
 assurance/board/PLAT-TIMER-003.toml	crates/rsk-fido/src/journal.rs	215-217	if !ctx.state.audit_boot_logged {	let _ = raw_append(&ctx.dev, ctx.fs, ctx.now_ms, EV_BOOT, 0, &[]);
 assurance/board/PLAT-TIMER-003.toml	crates/rsk-fido/src/vendor.rs	493-493	journal::vendor_read(ctx, out)	journal::vendor_read(ctx, out)
-assurance/board/PLAT-TIMER-003.toml	firmware/src/main.rs	663-663	let mut config = embassy_rp::config::Config::default();	let mut config = embassy_rp::config::Config::default();
-assurance/board/PLAT-TIMER-003.toml	firmware/src/main.rs	1060-1060	usb_attach::mark();	usb_attach::mark();
-assurance/board/PLAT-TIMER-003.toml	firmware/src/pin_lock.rs	54-54	rp_pac::WATCHDOG.scratch2().write_value(encode(lock));	rp_pac::WATCHDOG.scratch2().write_value(encode(lock));
+assurance/board/PLAT-TIMER-003.toml	firmware/src/main.rs	565-565	let mut config = embassy_rp::config::Config::default();	let mut config = embassy_rp::config::Config::default();
 assurance/board/PLAT-TIMER-003.toml	firmware/src/usb_attach.rs	34-36	/// Milliseconds since the attach — the clock the FIDO layer gets as `Ctx::now_ms`,	pub fn elapsed_ms() -> u64 {
 assurance/board/PLAT-TIMER-003.toml	scripts/platform_gate.py	1337-1337	OUTCOME_STATUS = {"pass": "discharged", "fail": "refuted"}	OUTCOME_STATUS = {"pass": "discharged", "fail": "refuted"}
 assurance/board/PLAT-TIMER-003.toml	tools/rsk/audit.py	170-170	print(f"{'seq':>6}  {'uptime':>10}  {'event':<18} aux  detail")	print(f"{'seq':>6}  {'uptime':>10}  {'event':<18} aux  detail")
-assurance/board/PLAT-TRNG-002.toml	firmware/src/main.rs	714-714	trng_cfg.sample_count = 1000;	trng_cfg.sample_count = 1000;
-assurance/board/PLAT-TRNG-002.toml	firmware/src/main.rs	715-715	let trng = Trng::new(p.TRNG, Irqs, trng_cfg);	let trng = Trng::new(p.TRNG, Irqs, trng_cfg);
+assurance/board/PLAT-TRNG-002.toml	firmware/src/main.rs	616-616	trng_cfg.sample_count = 1000;	trng_cfg.sample_count = 1000;
+assurance/board/PLAT-TRNG-002.toml	firmware/src/main.rs	617-617	let trng = Trng::new(p.TRNG, Irqs, trng_cfg);	let trng = Trng::new(p.TRNG, Irqs, trng_cfg);
 assurance/board/PLAT-TRNG-002.toml	scripts/platform_gate.py	1337-1337	OUTCOME_STATUS = {"pass": "discharged", "fail": "refuted"}	OUTCOME_STATUS = {"pass": "discharged", "fail": "refuted"}
 assurance/bundle/SEC-FIDO-001.toml	crates/rsk-fido/src/clientpin.rs	795-795	/// Refines `RSKeySecurityState!NoAuthorizationBypass` — SEC-FIDO-001.	/// Refines `RSKeySecurityState!NoAuthorizationBypass` — SEC-FIDO-001.
 assurance/bundle/SEC-FIDO-001.toml	crates/rsk-fido/src/state.rs	181-181	/// Refines `RSKeySecurityState!NoAuthorizationBypass` — SEC-FIDO-001.	/// Refines `RSKeySecurityState!NoAuthorizationBypass` — SEC-FIDO-001.
@@ -75,10 +73,10 @@ assurance/bundle/SEC-FIDO-002.toml	crates/rsk-display/src/presence.rs	41-44	let 
 assurance/bundle/SEC-FIDO-002.toml	crates/rsk-usb/src/ctaphid.rs	100-104	pub fn is_cancel_frame(frame: &[u8; HID_RPT_SIZE], n: usize, cid: u32) -> bool {	}
 assurance/bundle/SEC-FIDO-002.toml	crates/rsk-usb/src/ctaphid.rs	956-958	&& epoch == H::session_epoch()	{
 assurance/bundle/SEC-FIDO-002.toml	firmware/src/presence.rs	19-19	//! Kani harnesses for `NoCrossTransportTouchConsumption`. What stays here is the	//! Kani harnesses for `NoCrossTransportTouchConsumption`. What stays here is the
-assurance/bundle/SEC-FIDO-002.toml	firmware/src/presence.rs	111-113	/// User presence via BOOTSEL (default) or a dedicated GPIO button.	pub struct ButtonPresence {
-assurance/bundle/SEC-FIDO-002.toml	firmware/src/presence.rs	225-281	pub fn poll_pressed(&mut self) -> bool {	}
-assurance/bundle/SEC-FIDO-002.toml	firmware/src/presence.rs	286-292	#[cfg(feature = "display")]	ARBITER.set_cancel_requested(requested);
-assurance/bundle/SEC-FIDO-002.toml	firmware/src/worker.rs	681-681	crate::presence::set_wait_scope(match ex.kind {	crate::presence::set_wait_scope(match ex.kind {
+assurance/bundle/SEC-FIDO-002.toml	firmware/src/presence.rs	103-105	/// User presence via BOOTSEL (default) or a dedicated GPIO button.	pub struct ButtonPresence {
+assurance/bundle/SEC-FIDO-002.toml	firmware/src/presence.rs	208-264	pub fn poll_pressed(&mut self) -> bool {	}
+assurance/bundle/SEC-FIDO-002.toml	firmware/src/presence.rs	269-275	#[cfg(feature = "display")]	ARBITER.set_cancel_requested(requested);
+assurance/bundle/SEC-FIDO-002.toml	firmware/src/worker.rs	527-527	crate::presence::set_wait_scope(match ex.kind {	crate::presence::set_wait_scope(match ex.kind {
 assurance/bundle/SEC-FIDO-002.toml	formal/gen-configs.sh	105-107	ALL_INV=(NoAuthorizationBypass NoCrossTransportTouchConsumption	NoUnmanageableCredential ResetNeverWeakensSurvivingState)
 assurance/bundle/SEC-FIDO-002.toml	formal/run-tlc.sh	16-16	# (sha256 936a2620...), so `floors.txt` still describes the TLC that measured it.	# (sha256 936a2620...), so `floors.txt` still describes the TLC that measured it.
 assurance/bundle/SEC-FIDO-002.toml	scripts/assurance_gate.py	103-103	TAG = re.compile(r"Refines\s+`([A-Za-z0-9]+)!([A-Za-z0-9]+)`\s+—\s+(SEC-[A-Z]+-[0-9A-Z]+)")	TAG = re.compile(r"Refines\s+`([A-Za-z0-9]+)!([A-Za-z0-9]+)`\s+—\s+(SEC-[A-Z]+-[0-9A-Z]+)")
@@ -127,8 +125,8 @@ assurance/bundle/SEC-FIDO-003.toml	scripts/citation_gate.py	618-621	return re.co
 assurance/bundle/SEC-FIDO-003.toml	scripts/evidence_gate.py	515-546	def freshness(root, commit, inputs):	return ("fresh" if not behind else "stale"), behind
 assurance/bundle/SEC-FIDO-003.toml	scripts/kani.sh	307-307	export RUSTFLAGS="${RUSTFLAGS:+$RUSTFLAGS }--cfg sha2_backend=\"soft\" --cfg poly1305_force_soft --cfg sha1_force_soft"	export RUSTFLAGS="${RUSTFLAGS:+$RUSTFLAGS }--cfg sha2_backend=\"soft\" --cfg poly1305_force_soft --cfg sha1_force_soft"
 assurance/bundle/SEC-FIDO-003.toml	scripts/platform_gate.py	1894-1922	def check_bundles(root, ids, findings):	)
-assurance/bundle/SEC-FIDO-004.toml	crates/rsk-device/src/ctap.rs	242-242	persistent_grant_record: fs.has_key(EF_PAUTHTOKEN),	persistent_grant_record: fs.has_key(EF_PAUTHTOKEN),
-assurance/bundle/SEC-FIDO-004.toml	crates/rsk-device/src/ctap.rs	277-277	persistent_grant: fs.has_key(EF_PAUTHTOKEN),	persistent_grant: fs.has_key(EF_PAUTHTOKEN),
+assurance/bundle/SEC-FIDO-004.toml	crates/rsk-device/src/ctap.rs	241-241	persistent_grant_record: fs.has_key(EF_PAUTHTOKEN),	persistent_grant_record: fs.has_key(EF_PAUTHTOKEN),
+assurance/bundle/SEC-FIDO-004.toml	crates/rsk-device/src/ctap.rs	276-276	persistent_grant: fs.has_key(EF_PAUTHTOKEN),	persistent_grant: fs.has_key(EF_PAUTHTOKEN),
 assurance/bundle/SEC-FIDO-004.toml	crates/rsk-fido/src/clientpin.rs	457-460	// §6.5.5.7.2 step 12 / .3 step 11: a `pcmr` request is answered with the	// minted at provisioning, and `ensure_ppuat` re-mints one a PIN change dropped.
 assurance/bundle/SEC-FIDO-004.toml	crates/rsk-fido/src/clientpin.rs	458-463	// persistent token and stops there — it neither mints nor begins using a	} else {
 assurance/bundle/SEC-FIDO-004.toml	crates/rsk-fido/src/clientpin.rs	462-462	ensure_ppuat(&ctx.dev, ctx.fs, ctx.rng).map_err(|_| CtapError::Other)?	ensure_ppuat(&ctx.dev, ctx.fs, ctx.rng).map_err(|_| CtapError::Other)?
@@ -246,7 +244,7 @@ assurance/bundle/SEC-FIDO-006.toml	formal/gen-configs.sh	171-176	if [ "$b" = "$o
 assurance/bundle/SEC-FIDO-006.toml	formal/run-tlc.sh	16-16	# (sha256 936a2620...), so `floors.txt` still describes the TLC that measured it.	# (sha256 936a2620...), so `floors.txt` still describes the TLC that measured it.
 assurance/bundle/SEC-FIDO-006.toml	fuzz/fuzz_targets/power_cut.rs	248-250	(!credential_usable || (fs.has_data(EF_PIN) && fs.has_data(EF_ALWAYS_UV)))	}
 assurance/bundle/SEC-FIDO-006.toml	scripts/assurance_gate.py	122-142	def cfg_checked(path: pathlib.Path) -> list[str]:	return out
-assurance/bundle/SEC-FIDO-006.toml	scripts/check.sh	587-587	run "assurance-trace image identity" assurance_trace_is_image_neutral	run "assurance-trace image identity" assurance_trace_is_image_neutral
+assurance/bundle/SEC-FIDO-006.toml	scripts/check.sh	573-573	run "assurance-trace image identity" assurance_trace_is_image_neutral	run "assurance-trace image identity" assurance_trace_is_image_neutral
 assurance/bundle/SEC-FIDO-006A.toml	crates/rsk-fido/src/consts.rs	361-361	pub const EF_PIN: u16 = rsk_fs::counter::FIDO_PIN; // PIN: [retries, len, format, verifier(32)]	pub const EF_PIN: u16 = rsk_fs::counter::FIDO_PIN; // PIN: [retries, len, format, verifier(32)]
 assurance/bundle/SEC-FIDO-006A.toml	crates/rsk-fido/src/reset.rs	6-6	//! physical touch gates the wipe, inside the CTAP 2.1 §6.6 power-up window	//! physical touch gates the wipe, inside the CTAP 2.1 §6.6 power-up window
 assurance/bundle/SEC-FIDO-006A.toml	crates/rsk-fido/src/reset.rs	37-51	if !ctx.presence.shows_confirm() && !in_reset_window(ctx) {	}
@@ -358,7 +356,7 @@ assurance/bundle/SEC-FIDO-006C.toml	fuzz/fuzz_targets/power_cut.rs	291-293	let m
 assurance/bundle/SEC-FIDO-006C.toml	scripts/comutate.py	311-335	def armed_subject(config, companion: dict[str, str]) -> str | None:	return None
 assurance/bundle/SEC-FIDO-006C.toml	tests/29_reset_power_cut.py	526-527	assertion_status = old_credential_without_gates(dev, cid, credential_id)	assert assertion_status != 0, (
 assurance/bundle/SEC-FIDO-006C.toml	tests/29_reset_power_cut.py	537-537	assert current != owner_seed, "owner seed survived after its backup seal disappeared"	assert current != owner_seed, "owner seed survived after its backup seal disappeared"
-assurance/bundle/SEC-FIDO-007.toml	crates/rsk-device/src/ctap.rs	262-262	keydev_ram_raw: st.keydev_dec.is_some(),	keydev_ram_raw: st.keydev_dec.is_some(),
+assurance/bundle/SEC-FIDO-007.toml	crates/rsk-device/src/ctap.rs	261-261	keydev_ram_raw: st.keydev_dec.is_some(),	keydev_ram_raw: st.keydev_dec.is_some(),
 assurance/bundle/SEC-FIDO-007.toml	crates/rsk-fido/src/config.rs	411-415	/// the seed-backup [`MseChannel`], `keydev_dec` carries no channel,	/// itself. What the finding does close is the consent: the prompt named "Unlock",
 assurance/bundle/SEC-FIDO-007.toml	crates/rsk-fido/src/config.rs	421-421	if ctx.state.keydev_dec.is_none() {	if ctx.state.keydev_dec.is_none() {
 assurance/bundle/SEC-FIDO-007.toml	crates/rsk-fido/src/config.rs	427-427	let r = match ctx.state.keydev_dec.as_ref() {	let r = match ctx.state.keydev_dec.as_ref() {
@@ -392,8 +390,8 @@ assurance/bundle/SEC-FIDO-007.toml	crates/rsk-fido/src/vendor.rs	608-608	ctx.sta
 assurance/bundle/SEC-FIDO-007.toml	crates/rsk-fido/src/vendor.rs	1005-1005	let unlocked = ctx.state.keydev_dec.is_some();	let unlocked = ctx.state.keydev_dec.is_some();
 assurance/bundle/SEC-FIDO-007.toml	formal/gen-configs.sh	109-114	# Structural facts the model's own arguments rest on, asserted on the baseline	EXTRA_INV=(RamNeverOutlivesFlashSeed NoLiveTokenWithoutPinRecord)
 assurance/bundle/SEC-FIDO-007.toml	scripts/comutate.py	338-366	def solo_index(root: pathlib.Path) -> dict[str, list[str]]:	return out
-assurance/bundle/SEC-FIDO-008.toml	crates/rsk-device/src/ctap.rs	248-248	token_in_use_raw: st.paut.in_use,	token_in_use_raw: st.paut.in_use,
-assurance/bundle/SEC-FIDO-008.toml	crates/rsk-device/src/ctap.rs	276-276	pin_set: fs.exists(EF_PIN),	pin_set: fs.exists(EF_PIN),
+assurance/bundle/SEC-FIDO-008.toml	crates/rsk-device/src/ctap.rs	247-247	token_in_use_raw: st.paut.in_use,	token_in_use_raw: st.paut.in_use,
+assurance/bundle/SEC-FIDO-008.toml	crates/rsk-device/src/ctap.rs	275-275	pin_set: fs.exists(EF_PIN),	pin_set: fs.exists(EF_PIN),
 assurance/bundle/SEC-FIDO-008.toml	crates/rsk-display/src/gates.rs	11-11	/// shared; the backing record (`EF_DEVICE_PIN` vs `EF_PIN`) and the floor differ, and so	/// shared; the backing record (`EF_DEVICE_PIN` vs `EF_PIN`) and the floor differ, and so
 assurance/bundle/SEC-FIDO-008.toml	crates/rsk-display/src/pin.rs	775-775	.factory_wipe(	.factory_wipe(
 assurance/bundle/SEC-FIDO-008.toml	crates/rsk-display/src/pin.rs	810-810	/// floor); the **FIDO** PIN goes to `EF_PIN` as the same verifier the host	/// floor); the **FIDO** PIN goes to `EF_PIN` as the same verifier the host
@@ -458,8 +456,8 @@ assurance/bundle/SEC-STORE-006.toml	crates/rsk-fs/src/store_assurance.rs	224-228
 assurance/crates.toml	crates/rsk-device/src/ctap.rs	82-93	fido_state: &'a RefCell<rsk_fido::FidoState>,	}
 assurance/deleters.toml	crates/rsk-fido/src/vendor.rs	439-439	// so U2F REGISTER answered 6F00 on every later call — the same key-without-chain	// so U2F REGISTER answered 6F00 on every later call — the same key-without-chain
 assurance/deleters.toml	crates/rsk-openpgp/src/putdata.rs	176-176	Ok(true) if fs.force_delete(slot.get()).is_err() => return Sw::MEMORY_FAILURE,	Ok(true) if fs.force_delete(slot.get()).is_err() => return Sw::MEMORY_FAILURE,
-assurance/platform.toml	crates/rsk-device/src/ctap.rs	248-248	token_in_use_raw: st.paut.in_use,	token_in_use_raw: st.paut.in_use,
-assurance/platform.toml	crates/rsk-device/src/ctap.rs	276-276	pin_set: fs.exists(EF_PIN),	pin_set: fs.exists(EF_PIN),
+assurance/platform.toml	crates/rsk-device/src/ctap.rs	247-247	token_in_use_raw: st.paut.in_use,	token_in_use_raw: st.paut.in_use,
+assurance/platform.toml	crates/rsk-device/src/ctap.rs	275-275	pin_set: fs.exists(EF_PIN),	pin_set: fs.exists(EF_PIN),
 assurance/platform.toml	crates/rsk-device/src/presence.rs	26-32	pub const SCOPE_NONE: u8 = 0;	pub const SCOPE_OTP: u8 = 3;
 assurance/platform.toml	crates/rsk-device/src/presence.rs	72-77	/// The three cross-executor presence flags plus the runtime touch-wait timeout.	pub struct Arbiter {
 assurance/platform.toml	crates/rsk-device/src/presence.rs	120-120	self.cancel_requested.store(true, Ordering::Release);	self.cancel_requested.store(true, Ordering::Release);
@@ -554,29 +552,28 @@ assurance/platform.toml	firmware/src/led.rs	692-692	const PERIOD_US: u64 = 2000;
 assurance/platform.toml	firmware/src/led.rs	695-695	let c = blinker.tick();	let c = blinker.tick();
 assurance/platform.toml	firmware/src/led.rs	719-719	let c = blinker.tick();	let c = blinker.tick();
 assurance/platform.toml	firmware/src/led.rs	727-727	Timer::after_millis(5).await;	Timer::after_millis(5).await;
-assurance/platform.toml	firmware/src/main.rs	663-663	let mut config = embassy_rp::config::Config::default();	let mut config = embassy_rp::config::Config::default();
-assurance/platform.toml	firmware/src/main.rs	706-706	let mut trng_cfg = TrngConfig::default();	let mut trng_cfg = TrngConfig::default();
-assurance/platform.toml	firmware/src/main.rs	707-713	// The default sample_count (25) is too low for some RP2350 ROSC units: the	// unchanged — the NIST health checks stay enabled, the source is unchanged.
-assurance/platform.toml	firmware/src/main.rs	714-714	trng_cfg.sample_count = 1000;	trng_cfg.sample_count = 1000;
-assurance/platform.toml	firmware/src/main.rs	715-715	let trng = Trng::new(p.TRNG, Irqs, trng_cfg);	let trng = Trng::new(p.TRNG, Irqs, trng_cfg);
-assurance/platform.toml	firmware/src/main.rs	732-732	fs.scan(); // recover dynamic files (counter, resident creds) from flash	fs.scan(); // recover dynamic files (counter, resident creds) from flash
-assurance/platform.toml	firmware/src/main.rs	1222-1222	_ => gpio_pin!(p.PIN_29),	_ => gpio_pin!(p.PIN_29),
-assurance/platform.toml	firmware/src/main.rs	1230-1230	let rg = Pwm::new_output_ab(p.PWM_SLICE1, p.PIN_18, p.PIN_19, led::pimoroni_cfg());	let rg = Pwm::new_output_ab(p.PWM_SLICE1, p.PIN_18, p.PIN_19, led::pimoroni_cfg());
-assurance/platform.toml	firmware/src/main.rs	1284-1284	_ => ws2812_pin!(p.PIN_29),	_ => ws2812_pin!(p.PIN_29),
-assurance/platform.toml	firmware/src/presence.rs	111-113	/// User presence via BOOTSEL (default) or a dedicated GPIO button.	pub struct ButtonPresence {
-assurance/platform.toml	firmware/src/presence.rs	160-160	const _: () = assert!(embassy_time::TICK_HZ == 1_000_000);	const _: () = assert!(embassy_time::TICK_HZ == 1_000_000);
-assurance/platform.toml	firmware/src/presence.rs	186-189	#[cfg(not(feature = "display"))]	pub type Presence = crate::display::TouchPresence;
-assurance/platform.toml	firmware/src/presence.rs	225-281	pub fn poll_pressed(&mut self) -> bool {	}
-assurance/platform.toml	firmware/src/presence.rs	292-292	ARBITER.set_cancel_requested(requested);	ARBITER.set_cancel_requested(requested);
+assurance/platform.toml	firmware/src/main.rs	565-565	let mut config = embassy_rp::config::Config::default();	let mut config = embassy_rp::config::Config::default();
+assurance/platform.toml	firmware/src/main.rs	608-608	let mut trng_cfg = TrngConfig::default();	let mut trng_cfg = TrngConfig::default();
+assurance/platform.toml	firmware/src/main.rs	609-615	// The default sample_count (25) is too low for some RP2350 ROSC units: the	// unchanged — the NIST health checks stay enabled, the source is unchanged.
+assurance/platform.toml	firmware/src/main.rs	616-616	trng_cfg.sample_count = 1000;	trng_cfg.sample_count = 1000;
+assurance/platform.toml	firmware/src/main.rs	617-617	let trng = Trng::new(p.TRNG, Irqs, trng_cfg);	let trng = Trng::new(p.TRNG, Irqs, trng_cfg);
+assurance/platform.toml	firmware/src/main.rs	634-634	fs.scan(); // recover dynamic files (counter, resident creds) from flash	fs.scan(); // recover dynamic files (counter, resident creds) from flash
+assurance/platform.toml	firmware/src/main.rs	988-988	_ => gpio_pin!(p.PIN_29),	_ => gpio_pin!(p.PIN_29),
+assurance/platform.toml	firmware/src/main.rs	996-996	let rg = Pwm::new_output_ab(p.PWM_SLICE1, p.PIN_18, p.PIN_19, led::pimoroni_cfg());	let rg = Pwm::new_output_ab(p.PWM_SLICE1, p.PIN_18, p.PIN_19, led::pimoroni_cfg());
+assurance/platform.toml	firmware/src/main.rs	1050-1050	_ => ws2812_pin!(p.PIN_29),	_ => ws2812_pin!(p.PIN_29),
+assurance/platform.toml	firmware/src/presence.rs	103-105	/// User presence via BOOTSEL (default) or a dedicated GPIO button.	pub struct ButtonPresence {
+assurance/platform.toml	firmware/src/presence.rs	143-143	const _: () = assert!(embassy_time::TICK_HZ == 1_000_000);	const _: () = assert!(embassy_time::TICK_HZ == 1_000_000);
+assurance/platform.toml	firmware/src/presence.rs	169-172	#[cfg(not(feature = "display"))]	pub type Presence = crate::display::TouchPresence;
+assurance/platform.toml	firmware/src/presence.rs	208-264	pub fn poll_pressed(&mut self) -> bool {	}
+assurance/platform.toml	firmware/src/presence.rs	275-275	ARBITER.set_cancel_requested(requested);	ARBITER.set_cancel_requested(requested);
 assurance/platform.toml	firmware/src/usb_attach.rs	8-8	//! before the bus pull-up goes up: the TRNG seed (~1.5 s), the seal migrations, the	//! before the bus pull-up goes up: the TRNG seed (~1.5 s), the seal migrations, the
-assurance/platform.toml	firmware/src/worker.rs	319-319	const BTN_POLL_MS: u64 = 16;	const BTN_POLL_MS: u64 = 16;
-assurance/platform.toml	firmware/src/worker.rs	681-681	crate::presence::set_wait_scope(match ex.kind {	crate::presence::set_wait_scope(match ex.kind {
+assurance/platform.toml	firmware/src/worker.rs	181-181	const BTN_POLL_MS: u64 = 16;	const BTN_POLL_MS: u64 = 16;
+assurance/platform.toml	firmware/src/worker.rs	527-527	crate::presence::set_wait_scope(match ex.kind {	crate::presence::set_wait_scope(match ex.kind {
 assurance/platform.toml	formal/gen-configs.sh	211-225	# `clauses=1` HERE and on no other baseline, and the choice is a measurement.	# SeedReachable restatement).
 assurance/platform.toml	formal/gen-configs.sh	322-322	emit Historical_E76.cfg BugSeedDoesNotLead TRUE TRUE	emit Historical_E76.cfg BugSeedDoesNotLead TRUE TRUE
 assurance/platform.toml	fuzz/fuzz_targets/fido_session.rs	1440-1440	"NoTokenAfterInvalidation: getPinToken re-issued the standing token"	"NoTokenAfterInvalidation: getPinToken re-issued the standing token"
 assurance/platform.toml	fuzz/fuzz_targets/power_cut.rs	248-248	(!credential_usable || (fs.has_data(EF_PIN) && fs.has_data(EF_ALWAYS_UV)))	(!credential_usable || (fs.has_data(EF_PIN) && fs.has_data(EF_ALWAYS_UV)))
-assurance/platform.toml	scripts/check.sh	176-225	assurance_trace_is_image_neutral() {	}
-assurance/platform.toml	scripts/check.sh	511-511	run_tests "test (host)"              cargo test --workspace --exclude firmware --exclude firmware-ns --exclude rsk-wipe --target "$HOST"	run_tests "test (host)"              cargo test --workspace --exclude firmware --exclude firmware-ns --exclude rsk-wipe --target "$HOST"
+assurance/platform.toml	scripts/check.sh	498-498	run_tests "test (host)"              cargo test --workspace --exclude firmware --exclude firmware-ns --exclude rsk-wipe --target "$HOST"	run_tests "test (host)"              cargo test --workspace --exclude firmware --exclude firmware-ns --exclude rsk-wipe --target "$HOST"
 assurance/platform.toml	scripts/citation_gate.py	556-556	EXTS = "rs|sh|txt|py"	EXTS = "rs|sh|txt|py"
 assurance/platform.toml	scripts/fuzz-all.sh	55-55	mapfile -t targets < <(cargo fuzz list)	mapfile -t targets < <(cargo fuzz list)
 assurance/platform.toml	scripts/kani_gate.py	389-409	def workflow_pins(root):	}
@@ -585,7 +582,7 @@ assurance/platform.toml	tests/29_reset_power_cut.py	527-530	assert assertion_sta
 assurance/platform.toml	tests/54_sram_residue.py	48-48	Run on 2026-08-05, Waveshare RP2350 Zero (silicon A4, secure boot off, picotool	Run on 2026-08-05, Waveshare RP2350 Zero (silicon A4, secure boot off, picotool
 assurance/token_refinement.toml	crates/rsk-device/src/ctap.rs	122-122	*st = rsk_fido::FidoState::new();	*st = rsk_fido::FidoState::new();
 assurance/toolchain.toml	crates/rsk-rsa/src/lib.rs	326-338	fn rsa_private_exp_crt(	);
-assurance/toolchain.toml	scripts/check.sh	279-279	want="$(arm-none-eabi-nm "$elf" | awk '$3 == "__kvmain_start" { print $1 }')"	want="$(arm-none-eabi-nm "$elf" | awk '$3 == "__kvmain_start" { print $1 }')"
+assurance/toolchain.toml	scripts/check.sh	265-265	want="$(arm-none-eabi-nm "$elf" | awk '$3 == "__kvmain_start" { print $1 }')"	want="$(arm-none-eabi-nm "$elf" | awk '$3 == "__kvmain_start" { print $1 }')"
 assurance/toolchain.toml	scripts/pt.sh	27-31	nm_bin=	[ -n "$nm_bin" ] || { echo "pt.sh: no nm on PATH (need arm-none-eabi-nm, llvm-nm or nm)" >&2; exit 1; }
 assurance/toolchain.toml	scripts/pt.sh	43-43	start=$(sym __kvmain_start)	start=$(sym __kvmain_start)
 assurance/toolchain.toml	scripts/pt.sh	107-107	if ! log=$(picotool partition create "$tmp/pt.json" "$out" "$in" -t elf 2>&1); then	if ! log=$(picotool partition create "$tmp/pt.json" "$out" "$in" -t elf 2>&1); then
@@ -669,8 +666,8 @@ formal/README.md	crates/rsk-device/src/ccid.rs	389-389	self.disp.current() == So
 formal/README.md	crates/rsk-device/src/ccid.rs	403-418	/// Drop the selected applet's security status on an ICC power transition, so a	self.disp.reset_card(&mut applets, &mut *fsb);
 formal/README.md	crates/rsk-device/src/ctap.rs	82-93	fido_state: &'a RefCell<rsk_fido::FidoState>,	}
 formal/README.md	crates/rsk-device/src/ctap.rs	128-128	st.restore_pin_lock(boot.lock);	st.restore_pin_lock(boot.lock);
-formal/README.md	crates/rsk-device/src/ctap.rs	218-222	EF_PIN, EF_RP, MAX_RESIDENT_CREDENTIALS,	let pin_size = fs.size(EF_PIN);
-formal/README.md	crates/rsk-device/src/ctap.rs	275-282	.abstract_token(rsk_fido::TokenPersistentView {	/// the first conjunct of `crates/rsk-fido/src/clientpin.rs:677`. An INPUT to
+formal/README.md	crates/rsk-device/src/ctap.rs	217-221	EF_PIN, EF_RP, MAX_RESIDENT_CREDENTIALS,	let pin_size = fs.size(EF_PIN);
+formal/README.md	crates/rsk-device/src/ctap.rs	274-281	.abstract_token(rsk_fido::TokenPersistentView {	/// the first conjunct of `crates/rsk-fido/src/clientpin.rs:677`. An INPUT to
 formal/README.md	crates/rsk-device/src/ctap_tests.rs	126-148	#[test]	}
 formal/README.md	crates/rsk-device/src/presence.rs	25-26	/// No host request in flight: an on-panel (local) flow owns the button.	pub const SCOPE_NONE: u8 = 0;
 formal/README.md	crates/rsk-device/src/presence.rs	118-122	pub fn request_cancel(&self) {	}
@@ -839,16 +836,16 @@ formal/README.md	crates/rsk-usb/src/ctaphid.rs	657-657	pub async fn run(&mut sel
 formal/README.md	crates/rsk-usb/src/ctaphid.rs	1087-1099	async fn write_frames<S, T, F>(sink: &mut S, cid: u32, cmd: u8, data: &[u8], mut timeout: F)	}
 formal/README.md	crates/rsk-usb/src/ctaphid_tests.rs	479-479	fn write_frames_abandons_when_host_stalls() {	fn write_frames_abandons_when_host_stalls() {
 formal/README.md	crates/rsk-usb/src/ctaphid_tests.rs	501-501	fn write_frames_writes_every_frame_when_host_drains() {	fn write_frames_writes_every_frame_when_host_drains() {
-formal/README.md	firmware/src/main.rs	749-786	let usb_itf = if storage_ready {	// and everything past it carries only `mkek_source`.
-formal/README.md	firmware/src/main.rs	785-785	// to read it, and this block is that place: the read dies at its closing brace,	// to read it, and this block is that place: the read dies at its closing brace,
-formal/README.md	firmware/src/main.rs	790-806	PRE_OTP_OTP, PRE_OTP_PIV, PRE_OTP_STORAGE,	// A fused key the boot cannot read is no blank page: each step in the else
+formal/README.md	firmware/src/main.rs	651-688	let usb_itf = if storage_ready {	// and everything past it carries only `mkek_source`.
+formal/README.md	firmware/src/main.rs	687-687	// to read it, and this block is that place: the read dies at its closing brace,	// to read it, and this block is that place: the read dies at its closing brace,
+formal/README.md	firmware/src/main.rs	692-708	PRE_OTP_OTP, PRE_OTP_PIV, PRE_OTP_STORAGE,	// A fused key the boot cannot read is no blank page: each step in the else
 formal/README.md	firmware/src/pin_lock.rs	18-21	//! a real power cycle clears it. The *whole* lock moves: carrying the engaged flag	//!
-formal/README.md	firmware/src/presence.rs	111-118	/// User presence via BOOTSEL (default) or a dedicated GPIO button.	}
-formal/README.md	firmware/src/worker.rs	651-677	/// One transport (CTAPHID/CCID) request: run the synchronous dispatch and	let mut ex = EXCHANGE.lock().await;
-formal/README.md	firmware/src/worker.rs	681-681	crate::presence::set_wait_scope(match ex.kind {	crate::presence::set_wait_scope(match ex.kind {
-formal/README.md	firmware/src/worker.rs	798-800	// Nothing is in flight again: a wait started from here on is an on-panel	crate::presence::set_wait_scope(crate::presence::SCOPE_NONE);
-formal/README.md	firmware/src/worker.rs	800-800	crate::presence::set_wait_scope(crate::presence::SCOPE_NONE);	crate::presence::set_wait_scope(crate::presence::SCOPE_NONE);
-formal/README.md	firmware/src/worker.rs	937-939	// Scope any touch wait this command starts to the OTP transport, so a host	crate::presence::set_wait_scope(crate::presence::SCOPE_OTP);
+formal/README.md	firmware/src/presence.rs	103-110	/// User presence via BOOTSEL (default) or a dedicated GPIO button.	}
+formal/README.md	firmware/src/worker.rs	497-523	/// One transport (CTAPHID/CCID) request: run the synchronous dispatch and	let mut ex = EXCHANGE.lock().await;
+formal/README.md	firmware/src/worker.rs	527-527	crate::presence::set_wait_scope(match ex.kind {	crate::presence::set_wait_scope(match ex.kind {
+formal/README.md	firmware/src/worker.rs	641-643	// Nothing is in flight again: a wait started from here on is an on-panel	crate::presence::set_wait_scope(crate::presence::SCOPE_NONE);
+formal/README.md	firmware/src/worker.rs	643-643	crate::presence::set_wait_scope(crate::presence::SCOPE_NONE);	crate::presence::set_wait_scope(crate::presence::SCOPE_NONE);
+formal/README.md	firmware/src/worker.rs	778-780	// Scope any touch wait this command starts to the OTP transport, so a host	crate::presence::set_wait_scope(crate::presence::SCOPE_OTP);
 formal/README.md	tools/emu/src/device.rs	513-513	let seeded = rsk_fido::seed::ensure_seed(&dev(), &mut fsb, &mut *rngb);	let seeded = rsk_fido::seed::ensure_seed(&dev(), &mut fsb, &mut *rngb);
 formal/RSKeyAdminSurface.tla	crates/rsk-devconf/src/lib.rs	280-280	/// the enabled-applications TLV *without* any transport length prefix; the caller	/// the enabled-applications TLV *without* any transport length prefix; the caller
 formal/RSKeyAdminSurface.tla	crates/rsk-devconf/src/lib.rs	302-316	// verifier, and READ CONFIG echoes this blob to any unauthenticated host (audit	let mut merged = [0u8; DEV_CONF_MERGE_MAX];
@@ -875,7 +872,7 @@ formal/RSKeyAppletPolicies.tla	crates/rsk-piv/src/auth.rs	58-66	fn pin_satisfied
 formal/RSKeyAppletPolicies.tla	crates/rsk-piv/src/auth.rs	114-118	/// Refines `RSKeyAppletPolicies!PivAlwaysSpendsFreshness` — SEC-POL-002.	}
 formal/RSKeyAppletSeams.tla	crates/rsk-device/src/ccid.rs	104-122	pub struct CcidApplets<'a, S: Storage, R: rsk_sdk::Rng + 'static, VP: rsk_vendor::Platform> {	enabled_caps: u16,
 formal/RSKeyAppletSeams.tla	crates/rsk-device/src/ccid.rs	403-418	/// Drop the selected applet's security status on an ICC power transition, so a	self.disp.reset_card(&mut applets, &mut *fsb);
-formal/RSKeyAppletSeams.tla	crates/rsk-device/src/ctap.rs	218-222	EF_PIN, EF_RP, MAX_RESIDENT_CREDENTIALS,	let pin_size = fs.size(EF_PIN);
+formal/RSKeyAppletSeams.tla	crates/rsk-device/src/ctap.rs	217-221	EF_PIN, EF_RP, MAX_RESIDENT_CREDENTIALS,	let pin_size = fs.size(EF_PIN);
 formal/RSKeyAppletSeams.tla	crates/rsk-display/src/pin.rs	770-779	let _ = rsk_ui::render_erasing(&mut self.frame());	)
 formal/RSKeyAppletSeams.tla	crates/rsk-fido/src/reset.rs	270-313	/// Whether `fid` is cleared by `authenticatorReset` — every FIDO-owned flash file plus	}
 formal/RSKeyAppletSeams.tla	crates/rsk-fs/src/fs.rs	528-579	/// that is still live and, for PIV, not PIN-bound at rest — or, for OATH, leaves	return Err(Error::MemoryFatal);
@@ -951,7 +948,7 @@ formal/RSKeyRetryLattice.tla	crates/rsk-piv/src/lib.rs	1350-1417	/// Refines `RS
 formal/RSKeyRetryLattice.tla	crates/rsk-piv/src/lib.rs	1355-1357	Err(sw) => return sw,	if left == 0 {
 formal/RSKeyRetryLattice.tla	crates/rsk-piv/src/lib.rs	1375-1375	if set_retries_left(fs, retry, left - 1).is_err() {	if set_retries_left(fs, retry, left - 1).is_err() {
 formal/RSKeyRetryLattice.tla	crates/rsk-piv/src/lib.rs	1512-1512	puk: &[u8],	puk: &[u8],
-formal/RSKeySecurityState.tla	crates/rsk-device/src/ctap.rs	373-373	crate::reset_token_on_local_pin_change(self.hooks, self.fido_state, self.rng);	crate::reset_token_on_local_pin_change(self.hooks, self.fido_state, self.rng);
+formal/RSKeySecurityState.tla	crates/rsk-device/src/ctap.rs	372-372	crate::reset_token_on_local_pin_change(self.hooks, self.fido_state, self.rng);	crate::reset_token_on_local_pin_change(self.hooks, self.fido_state, self.rng);
 formal/RSKeySecurityState.tla	crates/rsk-device/src/lib.rs	123-125	if hooks.borrow_mut().local_pin_changed() {	fido_state.borrow_mut().reset_pin_uv_auth_token(&mut *rngb);
 formal/RSKeySecurityState.tla	crates/rsk-device/src/lib.rs	132-141	/// Hand the clientPIN soft lock to the board after a dispatch on either transport. It is	.store_pin_lock(fido_state.borrow().pin_lock());
 formal/RSKeySecurityState.tla	crates/rsk-device/src/presence.rs	25-26	/// No host request in flight: an on-panel (local) flow owns the button.	pub const SCOPE_NONE: u8 = 0;
@@ -1088,13 +1085,13 @@ formal/RSKeySecurityState.tla	crates/rsk-fido/src/vendor.rs	980-987	// no MSE ha
 formal/RSKeySecurityState.tla	crates/rsk-fido/src/vendor.rs	1056-1062	/// `EF_BACKUP_SEALED` marker so the seed can no longer be exported **or** shown as	fs.put(EF_BACKUP_SEALED, &[1]).is_ok()
 formal/RSKeySecurityState.tla	crates/rsk-fs/src/fs.rs	447-450	/// A FID can be yielded MORE THAN ONCE — the log-structured backend walks	/// below does).
 formal/RSKeySecurityState.tla	crates/rsk-usb/src/ctaphid.rs	984-986	if matches!(read, Ok(k) if is_cancel_frame(watch.expose(), k, cid)) {	cancelled |= monitor;
-formal/RSKeySecurityState.tla	firmware/src/main.rs	839-839	let _ = rsk_fido::seed::ensure_seed(&dev, &mut fs, &mut rng);	let _ = rsk_fido::seed::ensure_seed(&dev, &mut fs, &mut rng);
-formal/RSKeySecurityState.tla	firmware/src/presence.rs	111-118	/// User presence via BOOTSEL (default) or a dedicated GPIO button.	}
-formal/RSKeySecurityState.tla	firmware/src/worker.rs	681-686	crate::presence::set_wait_scope(match ex.kind {	});
-formal/RSKeySecurityState.tla	firmware/src/worker.rs	798-800	// Nothing is in flight again: a wait started from here on is an on-panel	crate::presence::set_wait_scope(crate::presence::SCOPE_NONE);
-formal/RSKeySecurityState.tla	firmware/src/worker.rs	800-800	crate::presence::set_wait_scope(crate::presence::SCOPE_NONE);	crate::presence::set_wait_scope(crate::presence::SCOPE_NONE);
-formal/RSKeySecurityState.tla	firmware/src/worker.rs	922-947	/// dirty latch, so the CCID / FIDO2 / U2F / OTP gates all act on the new set	// confirms on an already-held button — so without this the release edge of
-formal/RSKeySecurityState.tla	firmware/src/worker.rs	937-939	// Scope any touch wait this command starts to the OTP transport, so a host	crate::presence::set_wait_scope(crate::presence::SCOPE_OTP);
+formal/RSKeySecurityState.tla	firmware/src/main.rs	741-741	let _ = rsk_fido::seed::ensure_seed(&dev, &mut fs, &mut rng);	let _ = rsk_fido::seed::ensure_seed(&dev, &mut fs, &mut rng);
+formal/RSKeySecurityState.tla	firmware/src/presence.rs	103-110	/// User presence via BOOTSEL (default) or a dedicated GPIO button.	}
+formal/RSKeySecurityState.tla	firmware/src/worker.rs	527-532	crate::presence::set_wait_scope(match ex.kind {	});
+formal/RSKeySecurityState.tla	firmware/src/worker.rs	641-643	// Nothing is in flight again: a wait started from here on is an on-panel	crate::presence::set_wait_scope(crate::presence::SCOPE_NONE);
+formal/RSKeySecurityState.tla	firmware/src/worker.rs	643-643	crate::presence::set_wait_scope(crate::presence::SCOPE_NONE);	crate::presence::set_wait_scope(crate::presence::SCOPE_NONE);
+formal/RSKeySecurityState.tla	firmware/src/worker.rs	763-788	/// dirty latch, so the CCID / FIDO2 / U2F / OTP gates all act on the new set	// confirms on an already-held button — so without this the release edge of
+formal/RSKeySecurityState.tla	firmware/src/worker.rs	778-780	// Scope any touch wait this command starts to the OTP transport, so a host	crate::presence::set_wait_scope(crate::presence::SCOPE_OTP);
 formal/RSKeySecurityState.tla	tools/emu/src/device.rs	513-513	let seeded = rsk_fido::seed::ensure_seed(&dev(), &mut fsb, &mut *rngb);	let seeded = rsk_fido::seed::ensure_seed(&dev(), &mut fsb, &mut *rngb);
 formal/RSKeyStore.tla	crates/rsk-fs/src/fs.rs	106-106	present: [u8; FID_PRESENT_BYTES],	present: [u8; FID_PRESENT_BYTES],
 formal/RSKeyStore.tla	crates/rsk-fs/src/fs.rs	115-115	decided: [u8; FID_PRESENT_BYTES],	decided: [u8; FID_PRESENT_BYTES],
@@ -1226,8 +1223,8 @@ scripts/test_run_tlc.py	scripts/verdict_gate.py	619-634	if row["invariant"] is n
 scripts/test_security_trace.py	tools/emu/src/device.rs	813-814	crate::security_trace::POWER_CYCLE,	0,
 scripts/test_token_refinement_gate.py	crates/rsk-device/src/ctap.rs	122-122	*st = rsk_fido::FidoState::new();	*st = rsk_fido::FidoState::new();
 scripts/test_token_refinement_gate.py	crates/rsk-fido/src/credential.rs	978-978	let fid = EF_RP + i;	let fid = EF_RP + i;
-scripts/test_token_refinement_gate.py	firmware/src/main.rs	1438-1438	let fido_state_ref = FIDO_STATE.init(RefCell::new(rsk_fido::FidoState::new()));	let fido_state_ref = FIDO_STATE.init(RefCell::new(rsk_fido::FidoState::new()));
+scripts/test_token_refinement_gate.py	firmware/src/main.rs	1204-1204	let fido_state_ref = FIDO_STATE.init(RefCell::new(rsk_fido::FidoState::new()));	let fido_state_ref = FIDO_STATE.init(RefCell::new(rsk_fido::FidoState::new()));
 scripts/token_refinement_gate.py	crates/rsk-device/src/ctap.rs	122-122	*st = rsk_fido::FidoState::new();	*st = rsk_fido::FidoState::new();
-scripts/token_refinement_gate.py	firmware/src/main.rs	1438-1438	let fido_state_ref = FIDO_STATE.init(RefCell::new(rsk_fido::FidoState::new()));	let fido_state_ref = FIDO_STATE.init(RefCell::new(rsk_fido::FidoState::new()));
+scripts/token_refinement_gate.py	firmware/src/main.rs	1204-1204	let fido_state_ref = FIDO_STATE.init(RefCell::new(rsk_fido::FidoState::new()));	let fido_state_ref = FIDO_STATE.init(RefCell::new(rsk_fido::FidoState::new()));
 scripts/trace_map.py	crates/rsk-sdk/src/applet.rs	449-449	let reselect = self.current == Some(i);	let reselect = self.current == Some(i);
 tools/emu/src/hid.rs	crates/rsk-usb/src/ctaphid.rs	728-756	async fn on_frame(&mut self, f: &[u8; HID_RPT_SIZE]) {	}

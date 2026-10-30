@@ -67,10 +67,10 @@ development happens; on Linux run `HOST_TARGET=x86_64-unknown-linux-gnu
 
 The standard firmware build is `bash firmware/trustzone/build.sh` inside the
 dev shell, or `nix build .#firmware`. Both produce a combined Secure/Non-secure
-image with the partition table. `check.sh` also builds legacy diagnostic
-variants and leaves a no-touch legacy ELF at `target/.../release/firmware`.
-Do not flash that path as the default image. Rebuild with the TrustZone builder
-and no test features before flashing; its outputs are
+image with the partition table. TrustZone is mandatory: bare Cargo refuses to
+build the authenticator outside the S/NS link stages. `check.sh` leaves a
+combined no-touch test image. Rebuild with no test features before flashing;
+the builder outputs are
 `target/trustzone/combined.elf` and `combined.uf2`.
 
 The TUI has a separate shell: `nix develop .#tui`. The full gate enters it for

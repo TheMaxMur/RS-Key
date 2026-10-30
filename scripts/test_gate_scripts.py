@@ -324,10 +324,8 @@ def test_every_gate_reports_a_summary_when_it_is_happy():
 #: reason of all — "a `run` row with no mutation table" — and are on [`NAMED`]
 #: now. What is left is the two shapes a table here is not the answer to: a
 #: script that is not a guard, and a guard whose table is INSIDE it, driven by
-#: the row itself. `pt.sh` and `gate-lib.sh` are the two that are not guards.
+#: the row itself. `gate-lib.sh` is shared runner plumbing rather than a guard.
 UNROSTERED = {
-    "pt.sh": "not a guard and not a `run` row: the elf and store rows invoke it"
-             " to apply a partition table, and it asserts nothing",
     "gate-lib.sh": "not a guard and not a row: both runners source it for `run`,"
                    " the signal traps and the pytest base, which the per-checkout"
                    " base cases below evaluate",
@@ -461,6 +459,8 @@ def test_a_finding_reaches_the_row_as_a_non_zero_exit(name, monkeypatch, capsys)
     arity = audit_arity(name)
     finding = f"SYNTHETIC-EXIT-PROBE for {name}"
     answer = ([finding], *FILLER[1:arity]) if arity > 1 else [finding]
+    if name == "elf_gate.py":
+        answer = ([finding], "synthetic image summary")
     monkeypatch.setattr(module, "audit", lambda *a, **k: answer)
     assert exit_code(name, module) != 0, f"{name} prints a finding and exits 0"
     printed = capsys.readouterr()

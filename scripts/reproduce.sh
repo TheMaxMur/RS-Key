@@ -185,7 +185,9 @@ CLAIM_JOBS=(
 #: `Unmatched (`, on stderr, while the row it was meant to claim reads as
 #: unrecognised. Measured on the first run of this table.
 CLAIM_ROWS=(
-  "^bash firmware/trustzone/build\\.sh$|gate|builds the combined S/NS image from pinned local sources without a board or signing key"
+  "^bash firmware/trustzone/build\\.sh( --features [a-z0-9,-]+)?$|gate|builds the combined S/NS image from pinned local sources without a board or signing key"
+  "^env FLASH_SIZE=16M bash firmware/trustzone/build\\.sh$|gate|builds the 16 MB combined image locally"
+  "^env LED_KIND=none FLASH_SIZE=16M bash firmware/trustzone/build\\.sh --features display$|gate|builds the combined display image locally"
   "^cargo |gate|"
   "^env .*cargo |gate|"
   "^nix develop \\.#tui -c cargo fmt --manifest-path tools/tui/|gate|the separate TUI shell provides host dependencies, with no board or secrets"

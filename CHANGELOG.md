@@ -38,6 +38,11 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ## [Unreleased]
 
+- Make TrustZone mandatory for every authenticator build (bcdDevice 0x0BDA):
+  remove the monolithic firmware and legacy Nix package, refuse bare Cargo
+  builds, and halt the import-library ELF before initialization without NS.
+  Build and image checks now consume the combined image and independent NS ELF.
+
 ### bcdDevice → 0x0BD9: refreshed build environment
 
 - Refresh the Nix inputs and use Rust 1.99.1, with matching LLVM tools for the

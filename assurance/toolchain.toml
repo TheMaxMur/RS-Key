@@ -234,7 +234,7 @@ statement = "firmware/memory.x:32. The counter partition's flash offset, fenced 
 [[boundary]]
 id = "import:firmware/src/main.rs:__kvcnt_end"
 provider = "rust-lld"
-statement = "firmware/memory.x:33. The end of the counter partition; scripts/check.sh:279 holds the partition table against __kvmain_start..__kvcnt_end."
+statement = "firmware/memory.x:33. The end of the counter partition; scripts/check.sh:265 holds the partition table against __kvmain_start..__kvcnt_end."
 
 [[boundary]]
 id = "unit:crates/rsk-rsa/csrc/bignum_high_level.c"
@@ -320,6 +320,11 @@ statement = "The TrustZone linker section defines the aligned immutable RAM-code
 id = "import:firmware/src/trustzone/mpu.rs:__rsk_exec_end"
 provider = "rust-lld"
 statement = "The TrustZone linker section defines the aligned immutable RAM-code bounds used by Secure MPU on both cores."
+
+[[boundary]]
+id = "import:firmware/src/trustzone/mod.rs:__rsk_ns_image_len"
+provider = "rust-lld"
+statement = "SIZEOF(.nonsecure) from the generated linker script is an absolute symbol; startup reads its address without dereferencing it and halts an incomplete import-library image before initialization."
 
 [[boundary]]
 id = "import:firmware/src/trustzone/mod.rs:__rsk_scratch_exec_start"

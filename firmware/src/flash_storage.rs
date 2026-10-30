@@ -130,24 +130,18 @@ impl NorFlash for SharedFlash {
     const WRITE_SIZE: usize = <AsyncFlash as NorFlash>::WRITE_SIZE;
     const ERASE_SIZE: usize = <AsyncFlash as NorFlash>::ERASE_SIZE;
     async fn erase(&mut self, from: u32, to: u32) -> core::result::Result<(), Self::Error> {
-        #[cfg(rsk_trustzone_prototype)]
         {
             crate::trustzone::mpu::with_flash_code(|| {
                 block_on(self.inner.borrow_mut().erase(from, to))
             })
         }
-        #[cfg(not(rsk_trustzone_prototype))]
-        block_on(self.inner.borrow_mut().erase(from, to))
     }
     async fn write(&mut self, offset: u32, bytes: &[u8]) -> core::result::Result<(), Self::Error> {
-        #[cfg(rsk_trustzone_prototype)]
         {
             crate::trustzone::mpu::with_flash_code(|| {
                 block_on(self.inner.borrow_mut().write(offset, bytes))
             })
         }
-        #[cfg(not(rsk_trustzone_prototype))]
-        block_on(self.inner.borrow_mut().write(offset, bytes))
     }
 }
 impl MultiwriteNorFlash for SharedFlash {}

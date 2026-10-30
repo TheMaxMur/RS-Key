@@ -28,7 +28,9 @@ import json, os, pathlib, sys
 args = sys.argv[1:]
 with open(os.environ["BUILD_LOG"], "a") as log:
     log.write(json.dumps({"args": args, "product": os.environ.get("USB_PRODUCT"),
-                         "target": os.environ.get("CARGO_TARGET_DIR")}) + "\\n")
+                         "target": os.environ.get("CARGO_TARGET_DIR"),
+                         "stage": os.environ.get("RSK_TZ_STAGE"),
+                         "ns_image": os.environ.get("RSK_TZ_NS_IMAGE")}) + "\\n")
 out = pathlib.Path(os.environ["CARGO_TARGET_DIR"])
 package = args[args.index("-p") + 1]
 binary = out / "thumbv8m.main-none-eabihf/release" / package
@@ -77,7 +79,7 @@ def test_features_and_env_reach_both_secure_links(build):
                           FEATURES="no-touch", USB_PRODUCT=product)
     assert result.returncode == 0, result.stderr
     assert len(calls) == 3
-    expected = {"rsk-device/trustzone", "strict-config", "advertise-pqc", "fips-profile", "no-touch"}
+    expected = {"strict-config", "advertise-pqc", "fips-profile", "no-touch"}
     assert features(calls[0]) == features(calls[2]) == expected
     assert all(call["product"] == product for call in calls)
     assert "strict-config" in features(calls[1])
@@ -86,7 +88,7 @@ def test_features_and_env_reach_both_secure_links(build):
 def test_default_is_touch_enabled_with_no_test_probes(build):
     result, calls = build()
     assert result.returncode == 0, result.stderr
-    assert features(calls[0]) == features(calls[2]) == {"rsk-device/trustzone"}
+    assert features(calls[0]) == features(calls[2]) == set()
     assert "--features" not in calls[1]["args"]
 
 
@@ -101,7 +103,7 @@ def test_existing_test_env_is_supported_and_probes_compose(build):
     result, calls = build(RSK_TZ_NO_TOUCH="1", RSK_TZ_DISPLAY="1",
                           RSK_TZ_GATEWAY_PROBES="1", RSK_TZ_PROBE_ADDRESS="0x50110000")
     assert result.returncode == 0, result.stderr
-    assert features(calls[0]) == features(calls[2]) == {"rsk-device/trustzone", "no-touch", "display"}
+    assert features(calls[0]) == features(calls[2]) == {"no-touch", "display"}
     assert features(calls[1]) == {"test-gateway-probes", "test-hostile-access"}
 
 
@@ -110,3 +112,57 @@ def test_invalid_arguments_fail_before_compilation(build, args):
     result, calls = build(*args)
     assert result.returncode != 0
     assert calls == []
+
+
+@pytest.mark.parametrize("args,knobs", [
+    ((), {}),
+    (("--no-default-features",), {"RSK_TRUSTZONE_PROTOTYPE": "0"}),
+    (("--features=",), {}),
+])
+def test_no_feature_or_old_env_can_select_a_monolithic_build(build, args, knobs):
+    result, calls = build(*args, **knobs)
+    if "--features=" in args:
+        assert result.returncode != 0 and not calls
+        return
+    assert result.returncode == 0, result.stderr
+    assert [call["args"][call["args"].index("-p") + 1] for call in calls] == [
+        "firmware", "firmware-ns", "firmware",
+    ]
+    assert calls[0]["stage"] == "import" and calls[0]["ns_image"] is None
+    assert calls[2]["stage"] == "final" and calls[2]["ns_image"].endswith("nonsecure.bin")
+
+
+@pytest.fixture(scope="module")
+def firmware_build_script(tmp_path_factory):
+    out = tmp_path_factory.mktemp("firmware-build-script") / "build"
+    subprocess.run(["rustc", "--edition=2024", str(ROOT / "firmware/build.rs"), "-o", str(out)],
+                   check=True, capture_output=True, text=True)
+    return out
+
+
+@pytest.mark.parametrize("knobs,expected", [
+    ({}, "RS-Key requires Secure + Non-secure firmware"),
+    ({"RSK_TRUSTZONE_PROTOTYPE": "0"}, "RS-Key requires Secure + Non-secure firmware"),
+    ({"RSK_TRUSTZONE_PROTOTYPE": "1"}, "RS-Key requires Secure + Non-secure firmware"),
+    ({"RSK_TZ_STAGE": "legacy"}, "RS-Key requires Secure + Non-secure firmware"),
+    ({"RSK_TZ_STAGE": "final"}, "final TrustZone stage requires RSK_TZ_NS_IMAGE"),
+    ({"RSK_TZ_STAGE": "import", "RSK_TZ_NS_IMAGE": "stale.bin"},
+     "import-library stage must not embed a Non-secure image"),
+])
+def test_firmware_build_entry_refuses_missing_or_invalid_composition(firmware_build_script, knobs, expected):
+    env = {k: v for k, v in os.environ.items() if not k.startswith("RSK_TZ_")}
+    env.update(knobs)
+    result = subprocess.run([str(firmware_build_script)], env=env, cwd=ROOT / "firmware",
+                            capture_output=True, text=True, check=False)
+    assert result.returncode != 0
+    assert expected in result.stderr
+
+
+@pytest.mark.parametrize("size", [0, 7, 65537])
+def test_final_build_rejects_incomplete_or_oversized_ns(firmware_build_script, tmp_path, size):
+    image = tmp_path / "ns.bin"
+    image.write_bytes(bytes(size))
+    env = dict(os.environ, RSK_TZ_STAGE="final", RSK_TZ_NS_IMAGE=str(image))
+    result = subprocess.run([str(firmware_build_script)], env=env, cwd=ROOT / "firmware",
+                            capture_output=True, text=True, check=False)
+    assert result.returncode != 0 and "invalid Non-secure image size" in result.stderr

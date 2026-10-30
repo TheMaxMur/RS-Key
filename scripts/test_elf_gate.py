@@ -38,6 +38,7 @@ DWARF parser does not read elided; the arms no case can drive are recorded in
 from __future__ import annotations
 
 import pathlib
+import json
 import re
 import subprocess
 import sys
@@ -49,6 +50,42 @@ import elf_gate  # noqa: E402
 import gate_lines  # noqa: E402
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
+
+
+@pytest.mark.parametrize("missing", [False, True])
+def test_ed25519_cache_offset_keeps_a_signable_section(tmp_path, missing):
+    source = (ROOT / "firmware/trustzone/build.rs").read_text()
+    begin = source.index('"__rsk_ed25519_offset =')
+    end = source.index('\n    ));', begin)
+    literal = re.sub(r'\\\n\s*', '', source[begin:end].strip().removesuffix(','))
+    fragment = json.loads(literal).format(XIP_WAY_BYTES=8192, XIP_LINE_BYTES=8)
+    linker = tmp_path / "layout.x"
+    linker.write_text(
+        'MEMORY { FLASH : ORIGIN = 0x10000000, LENGTH = 64K }\n'
+        '__rsk_curve25519_start = 0x10000000;\n'
+        '__rsk_curve25519_field_end = 0x10000ae8;\n'
+        'SECTIONS { .curve : { *(.curve) } > FLASH\n'
+        ' .rodata : { *(.rodata) } > FLASH }\n' + fragment
+    )
+    assembly = tmp_path / "layout.s"
+    section = '.unrelated' if missing else '.text._RNvMtest16curve25519_dalek7edwards12EdwardsPoint8mul_base'
+    assembly.write_text('.section .curve,"ax"\n.space 0x1e0c\n'
+                        f'.section {section},"ax"\n.balign 4\n.thumb\nnop\n')
+    obj, elf = tmp_path / "layout.o", tmp_path / "layout.elf"
+    subprocess.run(['arm-none-eabi-as', '-mcpu=cortex-m33', '-mthumb', '-o', str(obj), str(assembly)],
+                   check=True, capture_output=True)
+    linked = subprocess.run(['rust-lld', '-flavor', 'gnu', '-T', str(linker), '-o', str(elf), str(obj)],
+                            capture_output=True, text=True)
+    if missing:
+        assert linked.returncode != 0 and 'Ed25519 code is missing' in linked.stderr
+        return
+    assert linked.returncode == 0, linked.stderr
+    sections = subprocess.check_output(['arm-none-eabi-readelf', '-SW', str(elf)], text=True)
+    line = next(line for line in sections.splitlines() if ' .rsk_ed25519 ' in line)
+    assert int(line.split()[-1]) == 8192, line
+    assert '10002000' in line, line
+    symbols = subprocess.check_output(['arm-none-eabi-nm', str(elf)], text=True)
+    assert re.search(r'^10002ae8 . __rsk_ed25519_code_start$', symbols, re.M), symbols
 
 
 @pytest.mark.parametrize("script", ["firmware/memory.x", "rsk-wipe/memory.x"])
@@ -196,7 +233,13 @@ def recorded_image():
     """Keep the recorded DWARF tied to its original compiler set."""
     image = shipped()
     image["producers"] = [PINNED, BLOB]
+    image["writable_executable"] = [".data"]
     return image
+
+
+def recorded_audit(root, **kwargs):
+    kwargs.setdefault("linker", (ROOT / "firmware/memory.x").read_text())
+    return elf_gate.audit(root, **kwargs)
 
 
 def registry_text() -> str:
@@ -218,7 +261,7 @@ def row(needle: str) -> int:
 def test_the_registry_is_the_shape_the_gate_reads():
     image = shipped()
     assert image["profile"] == "default"
-    assert image["writable_executable"] == [".data"]
+    assert image["writable_executable"] == [".rsk_exec"]
     assert set(image["allocator"]) == {
         "__rust_alloc",
         "__rust_realloc",
@@ -251,7 +294,7 @@ def test_a_field_the_registry_lost_is_a_finding():
 
 
 def test_the_linker_regions_parse():
-    where = elf_gate.regions(ROOT)
+    where = elf_gate.regions(ROOT, (ROOT / "firmware/memory.x").read_text())
     assert set(where) == {"FLASH", "KVMAIN", "KVCNT", "RAM"}
     assert where["FLASH"][0] == 0x10000000
     assert where["RAM"][0] == 0x20000000
@@ -259,7 +302,7 @@ def test_the_linker_regions_parse():
 
 def test_the_recorded_image_is_clean():
     """The control. Without it every case below could pass over a dead parser."""
-    findings, summary = elf_gate.audit(ROOT, image=recorded_image(), raw=RECORDED)
+    findings, summary = recorded_audit(ROOT, image=recorded_image(), raw=RECORDED)
     assert not findings, findings
     assert "5 LOAD segment(s) inside 4" in summary
     assert "1 writable-executable as registered" in summary
@@ -270,21 +313,21 @@ def test_the_recorded_image_is_clean():
 def test_a_second_writable_executable_segment_is_a_finding():
     image = recorded_image()
     image["writable_executable"] = []
-    findings, _ = elf_gate.audit(ROOT, image=image, raw=RECORDED)
+    findings, _ = recorded_audit(ROOT, image=image, raw=RECORDED)
     assert any("writable AND executable" in f for f in findings), findings
 
 
 def test_an_allocator_symbol_that_is_not_registered_is_a_finding():
     image = recorded_image()
     image["allocator"] = ["__rust_alloc"]
-    findings, _ = elf_gate.audit(ROOT, image=image, raw=RECORDED)
+    findings, _ = recorded_audit(ROOT, image=image, raw=RECORDED)
     assert any("allocator surface" in f for f in findings), findings
 
 
 def test_a_vector_table_away_from_the_flash_origin_is_a_finding():
     image = recorded_image()
     image["vector_section"] = ".text"
-    findings, _ = elf_gate.audit(ROOT, image=image, raw=RECORDED)
+    findings, _ = recorded_audit(ROOT, image=image, raw=RECORDED)
     assert any("not at" in f and "FLASH origin" in f for f in findings), findings
 
 
@@ -292,11 +335,11 @@ def test_a_segment_outside_every_region_is_a_finding():
     # FLASH shrunk to one page: `.text` no longer fits any region, and neither
     # does the vector table's own segment.
     linker = edited(
-        (ROOT / elf_gate.LINKER).read_text(encoding="utf-8"),
+        (ROOT / "firmware/memory.x").read_text(encoding="utf-8"),
         "FLASH  : ORIGIN = 0x10000000, LENGTH = 2560K",
         "FLASH  : ORIGIN = 0x10000000, LENGTH = 4K",
     )
-    findings, _ = elf_gate.audit(ROOT, image=recorded_image(), linker=linker, raw=RECORDED)
+    findings, _ = recorded_audit(ROOT, image=recorded_image(), linker=linker, raw=RECORDED)
     assert any("outside every" in f for f in findings), findings
 
 
@@ -305,11 +348,11 @@ def test_code_landing_in_the_kv_store_is_a_finding():
     # the linker already placed. The table fences the store from BOOTSEL; this
     # fences it from the linker.
     linker = edited(
-        (ROOT / elf_gate.LINKER).read_text(encoding="utf-8"),
+        (ROOT / "firmware/memory.x").read_text(encoding="utf-8"),
         "KVMAIN : ORIGIN = 0x10280000, LENGTH = 1408K",
         "KVMAIN : ORIGIN = 0x10001000, LENGTH = 1408K",
     )
-    findings, _ = elf_gate.audit(ROOT, image=recorded_image(), linker=linker, raw=RECORDED)
+    findings, _ = recorded_audit(ROOT, image=recorded_image(), linker=linker, raw=RECORDED)
     assert any("erased by its own store" in f for f in findings), findings
 
 
@@ -317,7 +360,7 @@ def test_an_entry_point_outside_flash_is_a_finding():
     """A linked image whose entry is in RAM does not boot at all, and the rule
     that says so had no case: it was asserted directly on the real ELF, which is
     the assertion that vanished when the image was missing."""
-    findings, _ = elf_gate.audit(
+    findings, _ = recorded_audit(
         ROOT, image=recorded_image(), raw=raw(phdr=edited(PHDR, "Entry point 0x1000013d", "Entry point 0x2000013d"))
     )
     assert any("entry point" in f and "outside FLASH" in f for f in findings), findings
@@ -329,14 +372,14 @@ def test_a_vector_section_no_segment_carries_is_a_finding():
     would otherwise leave `table` empty and every address rule silent."""
     image = recorded_image()
     image["vector_section"] = ".no_such_section"
-    findings, _ = elf_gate.audit(ROOT, image=image, raw=RECORDED)
+    findings, _ = recorded_audit(ROOT, image=image, raw=RECORDED)
     assert any("no LOAD segment carries" in f for f in findings), findings
 
 
 def test_a_linker_script_with_no_regions_is_a_finding():
     """Vacuity, one layer down: with no region parsed, "inside a region" and
     "not inside the KV store" are both true of everything."""
-    findings, _ = elf_gate.audit(ROOT, image=recorded_image(), linker="", raw=RECORDED)
+    findings, _ = recorded_audit(ROOT, image=recorded_image(), linker="", raw=RECORDED)
     assert any("no MEMORY region parsed" in f for f in findings), findings
 
 
@@ -344,14 +387,14 @@ def test_a_program_header_table_the_parser_cannot_read_is_a_finding():
     """And one layer down again: `readelf`'s row format moving is the way this
     whole file goes quiet, so "fewer than two LOAD segments" is its own finding
     rather than a silent pass over an empty list."""
-    findings, _ = elf_gate.audit(ROOT, image=recorded_image(), raw=raw(phdr=""))
+    findings, _ = recorded_audit(ROOT, image=recorded_image(), raw=raw(phdr=""))
     assert any("the parser found nothing" in f for f in findings), findings
 
 
 def test_an_undefined_symbol_is_a_finding():
     """`nm -u` empty is a measurement, not a certainty: a `#[no_mangle]` C symbol
     nothing provides links here and traps at the call."""
-    findings, _ = elf_gate.audit(ROOT, image=recorded_image(), raw=raw(undefined="         U __aeabi_memcpy\n"))
+    findings, _ = recorded_audit(ROOT, image=recorded_image(), raw=raw(undefined="         U __aeabi_memcpy\n"))
     assert any("undefined symbol(s)" in f for f in findings), findings
 
 
@@ -359,7 +402,7 @@ def test_a_third_compiler_is_a_finding():
     """The producer rule's point: the image's trusted computing base is the set
     of compilers that wrote it, and one arriving through a dependency changed
     nothing else this file reads."""
-    findings, _ = elf_gate.audit(
+    findings, _ = recorded_audit(
         ROOT,
         image=recorded_image(),
         raw=raw(
@@ -372,14 +415,14 @@ def test_a_third_compiler_is_a_finding():
 def test_a_producer_the_registry_holds_and_the_image_lost_is_a_finding():
     """Held BOTH ways. The blob leaving is not a defect, but it is a change to
     what built the image, and a set that only grows is a set nobody re-reads."""
-    findings, _ = elf_gate.audit(ROOT, image=recorded_image(), raw=raw(dwarf=edited(DWARF, BLOB, PINNED)))
+    findings, _ = recorded_audit(ROOT, image=recorded_image(), raw=raw(dwarf=edited(DWARF, BLOB, PINNED)))
     assert any("DWARF producers are" in f for f in findings), findings
 
 
 def test_an_image_with_no_producer_at_all_is_a_finding():
     """The vacuity control: a stripped image answers every rule above with
     nothing, and an empty set would otherwise match an emptied registry."""
-    findings, _ = elf_gate.audit(ROOT, image=recorded_image(), raw=raw(dwarf=""))
+    findings, _ = recorded_audit(ROOT, image=recorded_image(), raw=raw(dwarf=""))
     assert any("no DW_AT_producer" in f for f in findings), findings
 
 
@@ -497,3 +540,67 @@ def test_the_image_arms_were_driven_by_hand():
     fixtures above are dated for.
     """
     assert elf_gate.UNITS == {"": 1, "K": 1024, "M": 1024 * 1024}
+
+
+def composition_case():
+    secure = {"FLASH": (0x10000000, 0x10270000), "RAM": (0x20000000, 0x20070000),
+              "NSFLASH": (0x10270000, 0x10280000)}
+    ns = {"FLASH": secure["NSFLASH"], "RAM": (0x20070000, 0x20080000)}
+    payload = bytes(0xa5f4)
+    # Verbatim LOAD rows from the combined ELF: exercise flag normalization.
+    headers = elf_gate.segments("""
+  LOAD           0x0e39e0 0x10270000 0x10270000 0x0a5f4 0x0a5f4 R   0x1
+  LOAD           0x0e39c0 0x1026f000 0x1026f000 0x00020 0x00020 R E 0x20
+""")[0]
+    return secure, ns, headers, {0: ".nonsecure", 1: ".gnu.sgstubs"}, payload, payload
+
+
+def test_composed_image_control():
+    assert elf_gate.composition_findings(*composition_case()) == []
+
+
+@pytest.mark.parametrize("change,expected", [
+    ("payload", "does not embed"),
+    ("missing", "does not embed"),
+    ("vma", "LOAD address"),
+    ("lma", "LOAD address"),
+    ("extent", "LOAD address"),
+    ("overlap", "overlaps"),
+    ("map", "disagree"),
+    ("gateway", "veneers"),
+    ("writable", "veneers"),
+    ("noexec", "veneers"),
+])
+def test_composition_rejects_broken_boundary(change, expected):
+    secure, ns, headers, names, payload, embedded = composition_case()
+    if change == "payload": embedded = b"other NS payload"
+    elif change == "missing": embedded = b""
+    elif change == "vma": headers[0] = ("LOAD", 0x10010000, *headers[0][2:])
+    elif change == "lma": headers[0] = (*headers[0][:2], 0x10010000, *headers[0][3:])
+    elif change == "extent": headers[0] = (*headers[0][:3], 4, 4, "R  ")
+    elif change == "overlap": ns["RAM"] = secure["RAM"]
+    elif change == "map": ns["FLASH"] = (0x10260000, 0x10270000)
+    elif change == "gateway": names[1] = ".unrelated"
+    elif change == "writable": headers[1] = (*headers[1][:-1], "RWE")
+    elif change == "noexec": headers[1] = (*headers[1][:-1], "RW ")
+    findings = elf_gate.composition_findings(secure, ns, headers, names, payload, embedded)
+    assert any(expected in finding for finding in findings), findings
+
+
+@pytest.mark.parametrize("broken", [None, "nonsecure", "composition"])
+def test_image_gate_entry_propagates_both_worlds_and_composition(monkeypatch, broken):
+    visited = []
+    def audit(root, image=None, **kwargs):
+        visited.append(image["profile"])
+        return (["bad NS"] if broken == image["profile"] else []), "checked"
+    def composition(*args):
+        visited.append("composition")
+        return ["bad boundary"] if broken == "composition" else []
+    monkeypatch.setattr(elf_gate, "audit", audit)
+    monkeypatch.setattr(elf_gate, "composition", composition)
+    original = pathlib.Path.read_text
+    monkeypatch.setattr(pathlib.Path, "read_text", lambda path, *a, **kw:
+                        "MEMORY" if path == ROOT / elf_gate.NS_LINKER else original(path, *a, **kw))
+    assert elf_gate.main([]) == (1 if broken else 0)
+    assert visited == ["default", "nonsecure", "composition"]
+    assert row('python scripts/elf_gate.py') > row('"build firmware (release)"')

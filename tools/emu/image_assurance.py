@@ -440,10 +440,56 @@ def cuts(args, work, report):
     report["replacement_programmed_bytes"] = total
 
 
+def import_stage_halts(args, work, report):
+    """The import ELF must not start the valid NS left by the combined image.
+    Control through the basic CLI: bypassing the length branch fails with
+    "import image started the stale NS transport"; the intact branch passes."""
+    store = work / "import-stage.flash"
+    shutil.copyfile(work / "basic.flash", store)
+    inspector = port()
+    with (work / "import-stage.log").open("w") as log:
+        process = subprocess.Popen([
+            str(args.emulator), "--image", str(args.import_image), "--store", str(store),
+            "--seed", SEED, "--fido-port", str(port()), "--ccid-port", str(port()),
+            "--inspect-port", str(inspector),
+        ], stdout=log, stderr=log)
+        try:
+            def inspect(command):
+                with socket.create_connection(("127.0.0.1", inspector), timeout=10) as sock:
+                    sock.sendall(command.encode() + b"\n")
+                    reply = sock.makefile("r").readline().strip()
+                assert reply.startswith("ok "), reply
+                return reply[3:]
+
+            deadline = time.monotonic() + 60
+            while True:
+                assert process.poll() is None, "import image emulator exited"
+                assert time.monotonic() < deadline, "import image never reached its explicit halt"
+                try:
+                    where = inspect("where")
+                    state = fields(inspect("status"))
+                    assert state["ready"] == "false", "import image started the stale NS transport"
+                    assert state["dead"] == "false", "import image faulted instead of halting"
+                except OSError:
+                    time.sleep(0.02)
+                    continue
+                if "halt_incomplete_image" in where:
+                    break
+                time.sleep(0.02)
+            state = fields(inspect("status"))
+            assert state["ready"] == state["dead"] == state["bootloader"] == "false", state
+            assert int(state["programmed_bytes"]) == 0, "import link touched persistent state"
+            report["import_stage"] = {"where": where, "status": state}
+        finally:
+            process.kill()
+            process.wait()
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--emulator", type=Path, required=True)
     parser.add_argument("--image", type=Path, required=True, help="partitioned current no-touch ELF")
+    parser.add_argument("--import-image", type=Path, help="Secure import-library ELF without NS")
     parser.add_argument("--release-image", type=Path, help="partitioned v0.4.11 no-touch ELF")
     parser.add_argument("--incompatible-image", type=Path, help="scratch ELF with OATH FID base changed")
     parser.add_argument("--stack-regression", type=Path, help="scratch ELF with increased ML-DSA stack use")
@@ -451,13 +497,13 @@ def main():
     parser.add_argument("--only", choices=["basic", "stack", "operations", "upgrade", "cuts", "all"], default="all")
     args = parser.parse_args()
     args.work.mkdir(parents=True, exist_ok=False)
-    for name in ("emulator", "image", "release_image", "incompatible_image", "stack_regression"):
+    for name in ("emulator", "image", "import_image", "release_image", "incompatible_image", "stack_regression"):
         value = getattr(args, name)
         if value:
             setattr(args, name, value.resolve(strict=True))
     report = {"emulator": hashlib.sha256(args.emulator.read_bytes()).hexdigest(),
               "images": {name: hashlib.sha256(getattr(args, name).read_bytes()).hexdigest()
-                         for name in ("image", "release_image", "incompatible_image", "stack_regression")
+                         for name in ("image", "import_image", "release_image", "incompatible_image", "stack_regression")
                          if getattr(args, name)}}
     if args.stack_regression:
         assert report["images"]["image"] != report["images"]["stack_regression"], "stack mutant ELF is identical to baseline"
@@ -477,6 +523,8 @@ def main():
                 image.measured("oath_calculate", lambda: calculate(image), report)
                 residue(image)
                 report["residue"] = "known OATH key and HMAC pads absent; SRAM planted leak found and cleared"
+            if args.import_image:
+                import_stage_halts(args, args.work, report)
         if args.only in ("all", "stack"):
             for label, elf in (("stack", args.image), ("stack_regression", args.stack_regression)):
                 if not elf:

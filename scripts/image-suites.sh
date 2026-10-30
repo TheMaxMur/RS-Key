@@ -15,13 +15,14 @@ WORK="$(cd "$WORK" && pwd)"
 echo "image suites: logs and reports in $WORK"
 
 bash firmware/trustzone/build.sh --features no-touch
-cp target/trustzone/combined.elf "$WORK/firmware-pt.elf"
+cp "${RSK_TZ_OUT:-target/trustzone}/combined.elf" "$WORK/firmware-pt.elf"
+cp "${RSK_TZ_OUT:-target/trustzone}/import.elf" "$WORK/import.elf"
 CARGO_PROFILE_RELEASE_DEBUG_ASSERTIONS=true CARGO_PROFILE_RELEASE_OVERFLOW_CHECKS=true \
   cargo build --locked --release --manifest-path tools/emu/Cargo.toml --target "$HOST_TARGET"
 
 for scenario in basic stack operations cuts; do
   python tools/emu/image_assurance.py --emulator "$EMU" --image "$WORK/firmware-pt.elf" \
-    --only "$scenario" --work "$WORK/$scenario" 2>&1 | tee "$WORK/$scenario.log"
+    --import-image "$WORK/import.elf" --only "$scenario" --work "$WORK/$scenario" 2>&1 | tee "$WORK/$scenario.log"
 done
 python tools/emu/image_otp_seal.py --binary "$EMU" --image "$WORK/firmware-pt.elf" \
   --out "$WORK/otp-seal"

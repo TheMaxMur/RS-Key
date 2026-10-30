@@ -189,9 +189,9 @@ socket's reports and CCID messages over its endpoints, so `tests/emu.py` and the
 suites run unchanged.
 
 ```bash
-nix develop -c cargo build --release -p firmware --features no-touch
+nix develop -c bash firmware/trustzone/build.sh --features no-touch
 nix develop -c cargo run --release --manifest-path tools/emu/Cargo.toml --target "$HOST" -- \
-  --image target/thumbv8m.main-none-eabihf/release/firmware --store ./image.store
+  --image target/trustzone/combined.elf --store ./image.store
 # First approve `rsk storage initialize` through the owned CCID socket.
 python tests/emu.py tests/10_fido_getinfo.py
 ```

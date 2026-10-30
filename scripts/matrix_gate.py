@@ -181,7 +181,7 @@ ROW_TRANCHES = ("p0-launch", "p0b")
 #: catches only the collapse, never the slide, and losing four boards one at a
 #: time is how an axis quietly stops being an axis. Shrinking one for real is
 #: then a deliberate edit here, in the same diff as the shrink.
-FLOOR_PACKAGES = 21
+FLOOR_PACKAGES = 20
 FLOOR_BOARDS = 6
 FLOOR_ROWS = 41
 #: A `why` or a settling question shorter than this is a placeholder rather than
@@ -428,6 +428,8 @@ def packages(root):
         }
         if residual:
             knobs["cargoFlags"] = residual
+        if "trustzone" in knobs and not re.search(r"\btrustzone\s*\?", code):
+            raise ValueError(f"{FLAKE}: `{name}` overrides mandatory TrustZone")
         mode = knobs.get("trustzone", "true" if default_mode else "false")
         if mode not in ("true", "false"):
             raise ValueError(f"{FLAKE}: `{name}` has a non-literal trustzone mode: {mode}")
@@ -457,7 +459,11 @@ def trustzone_default(root):
         for _indent, body in gate_lines.logical_lines((root / FLAKE).read_text())
     )
     found = re.search(r"\btrustzone\s*\?\s*([^,}\n]+)", code)
-    if found is None or found.group(1).strip() not in ("true", "false"):
+    if found is None:
+        if "bash firmware/trustzone/build.sh" not in code:
+            raise ValueError(f"{FLAKE}: mandatory TrustZone builder is missing")
+        return True
+    if found.group(1).strip() not in ("true", "false"):
         raise ValueError(f"{FLAKE}: mkFirmware's trustzone default is not a literal boolean")
     return found.group(1).strip() == "true"
 
@@ -527,7 +533,7 @@ def check_sh_rows(root):
         label, command = found.groups()
         features = frozenset(
             feature
-            for group in FEATURE_FLAG.findall(cargo_part(command))
+            for group in FEATURE_FLAG.findall(command if "bash firmware/trustzone/build.sh" in command else cargo_part(command))
             for feature in group.split(",")
         )
         # The knobs sit in the `env …` prefix, ahead of the cargo they wrap.
@@ -553,7 +559,8 @@ def check_sh_firmware_features(root):
     return {
         feature
         for features, _env, command in check_sh_rows(root).values()
-        if "cargo " in command and "firmware" in gate_lines.packages(command)
+        if ("cargo " in command and "firmware" in gate_lines.packages(command))
+        or "bash firmware/trustzone/build.sh" in command
         for feature in features
     }
 
@@ -678,7 +685,10 @@ class Column:
                 raise ValueError(
                     "TrustZone columns require rsk-device and firmware-ns workspace members"
                 )
-            secure.append("rsk-device/trustzone")
+            # Historical fixtures retain the former optional seam; current
+            # rsk-device exposes transport reset unconditionally.
+            if "trustzone" in manifests["rsk-device"].get("features", {}):
+                secure.append("rsk-device/trustzone")
             ns = ["strict-config"] if self.features & {
                 "strict-config", "firmware/strict-config"
             } else []
@@ -710,14 +720,8 @@ def columns(root, manifests):
 
 
 def reference_column(cols):
-    """The legacy evidence baseline, independent of the shipping default.
-
-    Derived (legacy mode, no cargo feature or build knob) rather than named, so a renamed
-    `firmware` cannot leave the page silently measuring against nothing. Picking
-    the first of several is not a choice: two columns with no feature and no knob
-    resolve the same workspace, so they are one image under two names.
-    """
-    return next((column for column in cols if column.default), None)
+    """Featureless comparison closure; this does not grant legacy evidence."""
+    return next((column for column in cols if not column.features and not column.knobs), None)
 
 
 @functools.cache
@@ -1969,9 +1973,8 @@ def render(root):
         "| `gap` | `gap` | nobody has decided yet; the column's settling question is below |",
         "",
         "The retained `default-build` basis refers to the featureless **legacy evidence",
-        "baseline**, now named `firmware-legacy`; it does not mean the shipping default.",
-        "TrustZone is the shipping default. Its Secure closure includes",
-        "`rsk-device/trustzone`, and its independently built Non-secure closure is",
+        "baseline**. It has no current buildable column; dated bundles retain its scope.",
+        "TrustZone is mandatory. Its independently built Non-secure closure is",
         "compared separately (`NS:` below), including the OTP `strict-config` policy.",
         "Changing the default does not promote earlier legacy evidence to TrustZone.",
         "The direct-Cargo evidence reader cannot establish a composed TrustZone run.",
@@ -1992,14 +1995,14 @@ def render(root):
         "## Columns",
         "",
         "The last cell is DERIVED, not declared: the per-crate cargo-feature"
-        " closure this column resolves to, against the legacy evidence baseline's. It is the"
+        " closure this column resolves to, against the featureless TrustZone comparison baseline's. It is the"
         " same derivation the `equivalent` rule refuses a cell on, so a column"
-        " reading `—` there compiles the workspace exactly as the legacy baseline"
+        " reading `—` there compiles the workspace exactly as that comparison baseline"
         " does and its whole delta is knobs — and a column that names a crate has"
         " that crate's code moving under every row of its column, which is the"
         " fact a `gap` there is about.",
         "",
-        "| # | Configuration | Kind | Published | Cargo features | Build mode / knobs | Compiles unlike the legacy evidence baseline |",
+        "| # | Configuration | Kind | Published | Cargo features | Build mode / knobs | Compiles unlike the comparison baseline |",
         "|---|---|---|---|---|---|---|",
     ]
     index = {column.name: f"{n:02d}" for n, column in enumerate(cols, 1)}
@@ -2088,7 +2091,7 @@ def render(root):
         "The middle column is derived, and it is what a `gap` here costs: the open"
         " rows whose OWNING crates — the ones whose production Rust carries the"
         " property's tag — are among the crates the column compiles unlike the"
-        " legacy evidence baseline, above. Outside it, the code the statement is about did not"
+        " comparison baseline, above. Outside it, the code the statement is about did not"
         " move and the question is whether the rest of the image reaches it; inside"
         " it, the statement is about a different compilation. " + blind,
         "",

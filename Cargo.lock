@@ -1067,7 +1067,6 @@ dependencies = [
  "embedded-graphics",
  "embedded-storage-async",
  "mipidsi",
- "panic-halt",
  "rp-pac",
  "rsk-bench",
  "rsk-bip39",

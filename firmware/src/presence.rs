@@ -40,16 +40,8 @@ use rsk_device::presence::{Board, Outcome};
 use rsk_device::presence::Arbiter;
 
 #[cfg_attr(
-    all(
-        rsk_trustzone_prototype,
-        feature = "no-touch",
-        led_kind = "none",
-        not(feature = "display")
-    ),
-    expect(
-        unused_imports,
-        reason = "the prototype USB handler lives in Non-secure"
-    )
+    all(feature = "no-touch", led_kind = "none", not(feature = "display")),
+    expect(unused_imports, reason = "the USB handler lives in Non-secure")
 )]
 pub(crate) use rsk_device::presence::MIN_TIMEOUT_SECS;
 pub use rsk_device::presence::{SCOPE_CCID, SCOPE_FIDO, SCOPE_NONE, SCOPE_OTP};
@@ -131,16 +123,7 @@ impl Button {
     fn sample(&mut self) -> bool {
         match self {
             Button::Bootsel(bootsel) => {
-                #[cfg(rsk_trustzone_prototype)]
-                {
-                    crate::trustzone::mpu::with_flash_code(|| {
-                        is_bootsel_pressed(bootsel.reborrow())
-                    })
-                }
-                #[cfg(not(rsk_trustzone_prototype))]
-                {
-                    is_bootsel_pressed(bootsel.reborrow())
-                }
+                crate::trustzone::mpu::with_flash_code(|| is_bootsel_pressed(bootsel.reborrow()))
             }
             Button::Gpio(button, active_high) => {
                 if *active_high {

@@ -102,7 +102,22 @@ fn initialize_scratch_code() {
     cortex_m::asm::isb();
 }
 
+#[inline(never)]
+fn halt_incomplete_image() -> ! {
+    loop {
+        core::hint::spin_loop();
+    }
+}
+
 pub fn start() {
+    unsafe extern "C" {
+        static __rsk_ns_image_len: u8;
+    }
+    // The import-library link must halt even over a previous valid NS image.
+    // The linker symbol keeps the same Secure code in both link stages.
+    if (core::ptr::addr_of!(__rsk_ns_image_len) as usize) < 8 {
+        halt_incomplete_image();
+    }
     initialize_scratch_code();
     interrupt::SWI_IRQ_4.disable();
     interrupt::SWI_IRQ_4.unpend();

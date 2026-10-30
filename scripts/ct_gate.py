@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: AGPL-3.0-only
 # Copyright (C) 2026 RS-Key contributors
-"""Constant-time sites, read out of the legacy diagnostic ELF.
+"""Constant-time sites in the Secure half of the combined TrustZone ELF.
 
-This Cargo-default path does not audit the shipping combined TrustZone image.
+All executable sections are read, including relocated SRAM and scratch code.
+The embedded NS payload has separate image hygiene checks in elf_gate.py.
 
 `docs/ct-audit.md` says the canonical comparator's inlined copies "lower to a
 loop whose only branch is governed by the *public* length counter", and that
@@ -17,7 +18,7 @@ This gate makes the two sentences machine-checked against the ELF `check.sh`
 just built:
 
 * **No branch anywhere depends on a byte a registered site loaded.** For every
-  conditional branch in `.text`, the flag-setting instruction it reads is found,
+  conditional branch in executable sections, its flag-setting instruction is found,
   and each register that instruction reads is traced back to its last
   definition. A definition that is a LOAD FROM A BUFFER whose own inline chain
   names a registered site makes the branch secret-dependent, and one such branch
@@ -87,23 +88,22 @@ spills described below, not a channel. Spelled with the same taint walk it would
 be sound and EMPTY: inside the registered site every register-indexed load is
 indexed by the public length counter, and the one load-shaped residual
 `docs/ct-audit.md` names — the `rsk-rsa` modexp secret-indexed window lookup —
-is out of reach three ways, whichever surface drives it. The arm that ships folds
+is out of reach two ways, whichever surface drives it. The arm that ships folds
 the secret nibble into the BASE pointer rather than an index
 (`crates/rsk-rsa/csrc/bignum_high_level.c`'s
 `table_entry = (void *)temp + four_bits * modulus_length_bytes`, the `#else` arm
 that `CONSTANT_MEMORY_ACCESS_PATTERN 0` in `crates/rsk-rsa/csrc/bignum_config.h`
 selects); the load itself happens inside `bignum_mulacc`, so the taint would have
-to cross a `bl` and the ABI into hand-written asm; and neither end is in `.text`
-— the C carries `BIGNUM_RAMFUNC`, which is `section(".data.bignum_hl")`, the
-asm's whole translation unit is `.section .data.bignum_asm`, and the disassembly
-below is `--section=.text`. A rule whose extension is empty over everything the
+to cross a `bl` and the ABI into hand-written asm. Both ends now reside in
+executable SRAM sections read by this gate; including those sections does not
+extend the taint walk across calls. A rule whose extension is empty over everything the
 audit page names is a green cell with nothing in it, which is the shape this file
 exists to refuse.
 
 The word `keygen` stood in that descriptor until the page it quotes refuted the
 scope: the same `bignum_modexp_private_exponent_internal` runs on `dP`/`dQ` for
 PIV GENERAL AUTHENTICATE and for OpenPGP PSO:CDS / INTERNAL AUTHENTICATE /
-DECIPHER, all reachable over USB against a long-lived key. None of the three
+DECIPHER, all reachable over USB against a long-lived key. Neither of the two
 reasons above depended on which surface drives the modexp, which is why the
 descriptor could rot without the reasoning going wrong — and why a copy of
 another page's finding is worth this paragraph rather than a shorter sentence.
@@ -205,7 +205,7 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 
 REGISTRY = pathlib.Path("assurance/ct_sites.toml")
 PAGE = pathlib.Path("docs/ct-audit.md")
-ELF = pathlib.Path("target/thumbv8m.main-none-eabihf/release/firmware")
+ELF = pathlib.Path("target/trustzone/combined.elf")
 OBJDUMP = "arm-none-eabi-objdump"
 CXXFILT = "arm-none-eabi-c++filt"
 
@@ -515,10 +515,10 @@ def disassembly(root: pathlib.Path) -> list[str]:
     elf = root / ELF
     if not elf.is_file():
         raise FileNotFoundError(
-            f"{ELF} — build it first: cargo build --release -p firmware"
+            f"{ELF} — build it first: bash firmware/trustzone/build.sh"
         )
     out = subprocess.run(
-        [OBJDUMP, "-d", "-l", "--inlines", "--section=.text", str(elf)],
+        [OBJDUMP, "-d", "-l", "--inlines", str(elf)],
         capture_output=True,
         text=True,
         check=True,

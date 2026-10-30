@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # Copyright (C) 2026 RS-Key contributors
 #
-# What links a REGISTERED SOURCE OWNER to the legacy diagnostic binary, for
+# What links a REGISTERED SOURCE OWNER to the combined TrustZone binary, for
 # scripts/owner_binding_gate.py. Stage 11A work 4: a δC/Step owner named in
 # assurance/token_refinement.toml is a claim about a function; until something
 # reads the image, nothing says that function is in the firmware that ships.
@@ -71,8 +71,8 @@
 [[claim]]
 subject = "owner->image"
 method = "BINARY-CHECKED"
-artifact = "target/thumbv8m.main-none-eabihf/release/firmware"
-build = "cargo build --release -p firmware"
+artifact = "target/trustzone/combined.elf"
+build = "bash firmware/trustzone/build.sh"
 statement = "Every (file, function) assurance/token_refinement.toml owns is bound to this ELF: it defines a symbol for it, or the image's DWARF carries it as an abstract instance with at least one inlined call site, or it is registered absent below with a basis this gate re-derives. The artifact is held against assurance/image.toml's `elf` so the two registries cannot name different binaries."
 
 [[claim]]
@@ -144,10 +144,3 @@ file = "firmware/src/pin_lock.rs"
 function = "round_trips"
 basis = "const-evaluated"
 why = "a `const fn` reached only by `const _: () = assert!(round_trips(..))` items in its own file; the compiler answers it and emits no code"
-
-
-[[absent]]
-file = "crates/rsk-device/src/ctap.rs"
-function = "reset_transport_session"
-basis = "cfg-gated"
-why = "the explicit firmware-legacy diagnostic uses Cargo default features, which exclude trustzone. This absence is for that legacy ELF, not the shipping combined TrustZone image"

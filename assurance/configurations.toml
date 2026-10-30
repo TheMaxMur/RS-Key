@@ -181,31 +181,9 @@ out-of-queue = [
 # and that is the point — it puts the new rows beside the `why` that refuses the
 # rest, where a reader sees both halves of the judgement at once.
 
-[[cell]]
-# Historical legacy evidence context, separate from the shipping default.
-properties = [
-  "SEC-FIDO-001", "SEC-FIDO-002", "SEC-FIDO-003", "SEC-FIDO-004",
-  "SEC-FIDO-005", "SEC-FIDO-006", "SEC-FIDO-006A", "SEC-FIDO-006B",
-  "SEC-FIDO-006C", "SEC-FIDO-007", "SEC-FIDO-008", "SEC-STORE-001",
-  "SEC-STORE-002", "SEC-STORE-003", "SEC-STORE-004", "SEC-STORE-005",
-  "SEC-STORE-006", "SEC-LAT-001", "SEC-LAT-002", "SEC-LAT-003", "SEC-LAT-004",
-  "SEC-POL-001", "SEC-POL-002", "SEC-POL-003", "SEC-POL-004", "SEC-POL-005",
-  "SEC-POL-006", "SEC-SEAM-001", "SEC-SEAM-002", "SEC-SEAM-003",
-  "SEC-SEAM-006", "SEC-ADM-002", "SEC-ADM-004", "SEC-BOOT-001",
-  "SEC-BOOT-002", "SEC-TRANS-001", "SEC-TRANS-002", "SEC-TRANS-003",
-]
-columns = ["firmware-legacy"]
-disposition = "covered"
-basis = "default-build"
-why = """
-The recorded evidence used the featureless legacy firmware context, now \
-explicitly named `firmware-legacy`. Its historical name was `firmware`; \
-`assurance/bundle/SEC-FIDO-001.toml` preserves that dated build record. This \
-cell does not claim that the same evidence was produced under Secure/Non-secure \
-composition. The shipping default is now TrustZone, whose scheduling, gateways \
-and independent Non-secure binary remain separate obligations. The existing \
-models, host tests and Kani evidence retain their original bounds and context; \
-renaming their legacy image neither reruns them nor promotes their scope."""
+# Historical featureless-monolith evidence remains in assurance/bundle/*.toml.
+# No current configuration is a monolithic firmware build, so it grants no live
+# default-build coverage. Secure/Non-secure composition retains its own gaps.
 
 [[cell]]
 # The trusted-display flow is `dep:`-gated; a key without a screen compiles none
@@ -215,7 +193,7 @@ properties = [
   "SEC-DISP-001", "SEC-DISP-002", "SEC-DISP-003",
 ]
 columns = [
-  "firmware", "firmware-legacy", "firmware-trustzone", "firmware-no-touch", "firmware-fips", "firmware-pqc",
+  "firmware", "firmware-trustzone", "firmware-no-touch", "firmware-fips", "firmware-pqc",
   "firmware-fips-pqc", "firmware-no-touch-pqc", "firmware-no-touch-fips",
   "firmware-no-touch-fips-pqc", "firmware-strong-pin",
   "firmware-strong-pin-pqc", "firmware-always-uv", "firmware-always-uv-pqc",
@@ -331,7 +309,7 @@ build", and `release-build.yml` refuses to create a release carrying one. \
 column = "firmware"
 owner = "contributor"
 settled_by = "evidence"
-text = "Which existing properties retain scoped evidence in the default combined TrustZone image? Earlier featureless legacy evidence stays on firmware-legacy; independent Non-secure code, gateways, IRQ scheduling and cleanup need evidence on this execution context."
+text = "Which existing properties retain scoped evidence in the default combined TrustZone image? Earlier featureless legacy evidence stays in dated bundles; independent Non-secure code, gateways, IRQ scheduling and cleanup need evidence on this execution context."
 
 [[question]]
 column = "firmware-pico"

@@ -69,9 +69,9 @@ Root inputs of `flake.lock` deliberately outside this TCB:
 | `rsk_tz_readable_impl` | export | `firmware/src/trustzone/mod.rs, #[unsafe(no_mangle symbol, unconditional` | `arm-none-eabi-gcc` |
 | `rsk_tz_writable_impl` | export | `firmware/src/trustzone/mod.rs, #[unsafe(no_mangle symbol, unconditional` | `arm-none-eabi-gcc` |
 | `rsk_tz_usb_impl` | export | `firmware/src/trustzone/usb.rs, #[unsafe(no_mangle symbol, unconditional` | `arm-none-eabi-gcc` |
-| `rsk_tz_control_impl` | export | `firmware/src/worker.rs, #[unsafe(no_mangle symbol, #[cfg(rsk_trustzone_prototype)]` | `arm-none-eabi-gcc` |
-| `rsk_tz_poll_impl` | export | `firmware/src/worker.rs, #[unsafe(no_mangle symbol, #[cfg(rsk_trustzone_prototype)]` | `arm-none-eabi-gcc` |
-| `rsk_tz_submit_impl` | export | `firmware/src/worker.rs, #[unsafe(no_mangle symbol, #[cfg(rsk_trustzone_prototype)]` | `arm-none-eabi-gcc` |
+| `rsk_tz_control_impl` | export | `firmware/src/worker.rs, #[unsafe(no_mangle symbol, unconditional` | `arm-none-eabi-gcc` |
+| `rsk_tz_poll_impl` | export | `firmware/src/worker.rs, #[unsafe(no_mangle symbol, unconditional` | `arm-none-eabi-gcc` |
+| `rsk_tz_submit_impl` | export | `firmware/src/worker.rs, #[unsafe(no_mangle symbol, unconditional` | `arm-none-eabi-gcc` |
 | `SWI_IRQ_1` | export | `firmware/trustzone/nonsecure/src/main.rs, #[unsafe(no_mangle symbol, unconditional` | `rustc` |
 | `SWI_IRQ_4` | export | `firmware/trustzone/nonsecure/src/notify.rs, #[unsafe(no_mangle symbol, unconditional` | `rustc` |
 | `RSK_NS_PROBE_PROGRESS` | export | `firmware/trustzone/nonsecure/src/probe.rs, #[unsafe(no_mangle symbol, unconditional` | `rustc` |
@@ -84,6 +84,7 @@ Root inputs of `flake.lock` deliberately outside this TCB:
 | `__kvmain_end` | import | `firmware/src/main.rs, extern "C", unconditional` | `rust-lld` |
 | `__kvmain_start` | import | `firmware/src/main.rs, extern "C", unconditional` | `rust-lld` |
 | `_stack_end` | import | `firmware/src/main.rs, extern "C", unconditional` | `flip-link` |
+| `__rsk_ns_image_len` | import | `firmware/src/trustzone/mod.rs, extern "C", unconditional` | `rust-lld` |
 | `__rsk_scratch_exec_end` | import | `firmware/src/trustzone/mod.rs, extern "C", unconditional` | `rust-lld` |
 | `__rsk_scratch_exec_load` | import | `firmware/src/trustzone/mod.rs, extern "C", unconditional` | `rust-lld` |
 | `__rsk_scratch_exec_start` | import | `firmware/src/trustzone/mod.rs, extern "C", unconditional` | `rust-lld` |
@@ -102,7 +103,7 @@ Root inputs of `flake.lock` deliberately outside this TCB:
 
 - **assembler** — `arm-none-eabi-as`, `cortex-m`
 - **compiler** — `arm-none-eabi-gcc`, `rustc`
-- **ffi** — the 32 boundary(s) in the table above, each joined to the pinned tool that produces its foreign half
+- **ffi** — the 33 boundary(s) in the table above, each joined to the pinned tool that produces its foreign half
 - **linker** — `flip-link`, `rust-lld`
 
 Not enumerated by this generator at all, and not by any other:
@@ -342,26 +343,12 @@ What `nix build .#<flavor>` runs, out of `nix/firmware.nix`:
 ```sh
 # buildPhase
 export PATH="${toolchain}/lib/rustlib/$(rustc -vV | sed -n 's/^host: //p')/bin:$PATH"
-${
-if trustzone then
-''
 export CARGO_NET_OFFLINE=true
 export RSK_TZ_CARGO_CONFIG="target.${target}.rustflags=[\"--remap-path-prefix=$NIX_BUILD_TOP=/build\",\"--remap-path-prefix=${toolchain}=/toolchain\"]"
 bash firmware/trustzone/build.sh ${lib.escapeShellArgs buildFlags}
-''
-else
-''
-cargo build --release --offline --frozen -p firmware --target ${target} --config "target.${target}.rustflags=[\"--remap-path-prefix=$NIX_BUILD_TOP=/build\",\"--remap-path-prefix=${toolchain}=/toolchain\"]" ${lib.escapeShellArgs buildFlags}
-''
-}
 # installPhase
 mkdir -p "$out"
-${
-if trustzone then
-''cp "target/trustzone/combined.elf" "$out/${name}.elf"''
-else
-''bash scripts/pt.sh "target/${target}/release/firmware" "$out/${name}.elf"''
-}
+cp "target/trustzone/combined.elf" "$out/${name}.elf"
 picotool uf2 convert "$out/${name}.elf" -t elf "$out/${name}.uf2"
 ```
 
@@ -373,7 +360,7 @@ The files that decide what a release is. A digest here covers the parts the tabl
 |---|---|
 | `.github/workflows/release.yml` | `9f4218cfb9869bc458be8076f2185af6bdb734598db9b49167557dca30324a05` |
 | `.github/workflows/release-build.yml` | `f4b514f89c593def72b9800914d54295f3a29d51ec45bde50fe06ef29c80fb27` |
-| `nix/firmware.nix` | `ba3d68d5bb884402a57b986156e4f229681813836c7406523403840eb664b1e5` |
+| `nix/firmware.nix` | `79041337af6c02ed2c2559090df6b234da4e364e1283dfb8df87c7575b8a6b32` |
 | `scripts/pt.sh` | `c55ba6255421a664c13ba8b1e3b05b01af842d3ba8e95cd986a7a46005c877ed` |
 
 The CI code that runs them, pinned by commit:

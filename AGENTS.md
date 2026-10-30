@@ -204,9 +204,10 @@ CONTRIBUTING.md → "Code".
 - **Use the combined TrustZone image.** `nix build .#firmware` and
   `nix develop -c bash firmware/trustzone/build.sh` build S and NS together,
   including the partition table. Rebuild without `no-touch` or diagnostic
-  features before flashing; sign the combined ELF. `check.sh` also leaves a
-  **legacy no-touch** ELF at `target/.../release/firmware`; that path is not the
-  standard deployable image. TUI development uses `nix develop .#tui`; the full
+  features before flashing; sign the combined ELF. `check.sh` leaves a combined
+  **no-touch** image at `target/trustzone/combined.elf`. TrustZone is mandatory;
+  bare Cargo refuses to build outside the S/NS link stages. TUI development
+  uses `nix develop .#tui`; the full
   gate invokes that environment for its TUI rows.
 
 ## Layout

@@ -8,6 +8,9 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 HOST="${HOST_TARGET:-aarch64-apple-darwin}"
+# Every binary reader below names this output; do not audit a stale default path.
+export RSK_TZ_OUT="$PWD/target/trustzone"
+unset FEATURES RSK_TZ_NO_TOUCH RSK_TZ_DISPLAY RSK_TZ_GATEWAY_PROBES RSK_TZ_PROBE_ADDRESS RSK_TZ_TEST_DELAY RSK_TZ_NS_IMAGE
 
 # Five rows below allocate a temp, and this was the one script in scripts/ with
 # no cleanup: ~10 GB of build trees per run, until a full volume took the machine
@@ -102,16 +105,16 @@ embassy_revs_match() {
 
 # The shipping image must fit the 2560K code region (firmware/memory.x); this
 # ceiling is a *ratchet* well under that hard limit. It hugs the current image
-# (924 KiB) plus a small margin, so a runaway — an accidental fat dependency
+# (949 KiB) plus a small margin, so a runaway — an accidental fat dependency
 # (one extra EC curve is ~150 KiB) — or any surprise growth trips it, while
 # ordinary build noise does not. Ratchet discipline: when the image shrinks,
 # lower this to lock the win in; when a real feature grows it, raise this in the
 # same commit. Measured on the default (shipping) build before the display/
 # no-touch rebuilds overwrite the ELF; arm-none-eabi-size ships in the dev shell.
-# Ed25519 tables and authenticated PIN/HOTP journals: measured default image 924 KiB.
-FIRMWARE_FLASH_BUDGET_KIB=928
+# Combined S/NS image, including aligned Ed25519 padding: measured 949 KiB.
+FIRMWARE_FLASH_BUDGET_KIB=952
 firmware_size_budget() {
-  local elf="target/thumbv8m.main-none-eabihf/release/firmware"
+  local elf="target/trustzone/combined.elf"
   local bytes kib
   bytes=$(arm-none-eabi-size "$elf" | awk 'NR==2 { print $1 + $2 }')
   kib=$(( (bytes + 1023) / 1024 ))
@@ -129,44 +132,31 @@ firmware_size_budget() {
 # and wedged the key. Same ratchet discipline as the flash budget, floor instead
 # of ceiling. The two symbols swap ends under flip-link, so subtract, don't
 # assume which is on top.
-FIRMWARE_STACK_FLOOR_KIB=168
-firmware_stack_floor() {
-  local elf="target/thumbv8m.main-none-eabihf/release/firmware"
-  local top bot kib
+FIRMWARE_STACK_FLOOR_KIB=120
+DISPLAY_STACK_FLOOR_KIB=116
+NONSECURE_STACK_FLOOR_KIB=20
+stack_floor() {
+  local elf=$1 floor=$2 label=$3 top bot kib
   top=$(arm-none-eabi-nm "$elf" | awk '$3 == "_stack_start" { print $1 }')
   bot=$(arm-none-eabi-nm "$elf" | awk '$3 == "_stack_end" { print $1 }')
   kib=$(( (0x$top - 0x$bot) / 1024 ))
-  echo "stack ${kib} KiB / ${FIRMWARE_STACK_FLOOR_KIB} KiB floor; ML-DSA-65 makeCredential peaks near 114 KiB"
-  if [ "$kib" -lt "$FIRMWARE_STACK_FLOOR_KIB" ]; then
-    echo "FAIL: only ${kib} KiB of stack left, under the ${FIRMWARE_STACK_FLOOR_KIB} KiB floor." >&2
-    echo "      Static RAM grew into the stack. Shrink it, or lower the floor deliberately." >&2
+  echo "$label stack ${kib} KiB / ${floor} KiB floor"
+  if [ "$kib" -lt "$floor" ]; then
+    echo "FAIL: $label stack ${kib} KiB is under the ${floor} KiB floor." >&2
     exit 1
   fi
 }
 
-# The display flavor's floor. Two things share that stack and the linker can see
-# neither: the same ML-DSA-65 keygen peak as above, and one retained display frame
-# — `rsk_ui::scene::RETAINED_FRAME_STACK_BYTES`, 32 KiB, held there by a const
-# assert over `size_of::<Scene>()` plus the DMA bands. 114 + 32 = 146 KiB if they
-# ever nest, against the 202 KiB this build has.
-#
-# It needs its own row because the plain floor above CANNOT see the regression that
-# matters here: the retained compositor deleted a 4 KiB static pixel buffer and put
-# ~26 KiB on the stack instead, which moves `_stack_start - _stack_end` the RIGHT
-# way while the peak grows. A shared row would have reported an improvement.
-DISPLAY_STACK_FLOOR_KIB=168
+firmware_stack_floor() {
+  stack_floor target/trustzone/combined.elf "$FIRMWARE_STACK_FLOOR_KIB" Secure
+  stack_floor target/trustzone/nonsecure/thumbv8m.main-none-eabihf/release/firmware-ns "$NONSECURE_STACK_FLOOR_KIB" Non-secure
+}
+
+# Display tasks and crypto share the cooperative S executor. Retain a separate
+# floor: static display state reduces S stack even when NS stays unchanged.
 display_stack_floor() {
-  local elf="target/thumbv8m.main-none-eabihf/release/firmware"
-  local top bot kib
-  top=$(arm-none-eabi-nm "$elf" | awk '$3 == "_stack_start" { print $1 }')
-  bot=$(arm-none-eabi-nm "$elf" | awk '$3 == "_stack_end" { print $1 }')
-  kib=$(( (0x$top - 0x$bot) / 1024 ))
-  echo "display stack ${kib} KiB / ${DISPLAY_STACK_FLOOR_KIB} KiB floor; ML-DSA-65 makeCredential near 114 KiB + a retained frame under 32 KiB"
-  if [ "$kib" -lt "$DISPLAY_STACK_FLOOR_KIB" ]; then
-    echo "FAIL: the display build has only ${kib} KiB of stack, under the ${DISPLAY_STACK_FLOOR_KIB} KiB floor." >&2
-    echo "      It carries a retained frame on top of the crypto peak the default build has." >&2
-    exit 1
-  fi
+  stack_floor target/trustzone/combined.elf "$DISPLAY_STACK_FLOOR_KIB" 'Secure display'
+  stack_floor target/trustzone/nonsecure/thumbv8m.main-none-eabihf/release/firmware-ns "$NONSECURE_STACK_FLOOR_KIB" Non-secure
 }
 
 # `assurance-trace` exposes α and generated proof domains to host tooling only.
@@ -190,8 +180,8 @@ assurance_trace_is_image_neutral() {
     exit 1
   fi
 
-  CARGO_TARGET_DIR="$dir/target-before" cargo build --manifest-path "$src/Cargo.toml" --release -p firmware
-  elf_before="$dir/target-before/thumbv8m.main-none-eabihf/release/firmware"
+  RSK_TZ_OUT="$dir/target-before" bash "$src/firmware/trustzone/build.sh"
+  elf_before="$dir/target-before/combined.elf"
   arm-none-eabi-objcopy -O binary "$elf_before" "$dir/before.bin"
 
   for f in generated_token_edges.rs state_assurance.rs state_refinement_kani.rs \
@@ -199,8 +189,8 @@ assurance_trace_is_image_neutral() {
     printf '\ncompile_error!("assurance source reached production");\n' \
       >> "$src/crates/rsk-fido/src/$f"
   done
-  CARGO_TARGET_DIR="$dir/target-poison" cargo build --manifest-path "$src/Cargo.toml" --release -p firmware
-  elf_poison="$dir/target-poison/thumbv8m.main-none-eabihf/release/firmware"
+  RSK_TZ_OUT="$dir/target-poison" bash "$src/firmware/trustzone/build.sh"
+  elf_poison="$dir/target-poison/combined.elf"
   arm-none-eabi-objcopy -O binary "$elf_poison" "$dir/poison.bin"
 
   control="$dir/feature-control.log"
@@ -237,7 +227,7 @@ assurance_trace_is_image_neutral() {
 # → all four names present, row red; `strip --strip-debug` → the control fires.
 DEBUG_VENDOR_METHODS=(core1_stats keygen_bench latency_bench stack_residue)
 debug_vendor_commands_absent() {
-  local elf="target/thumbv8m.main-none-eabihf/release/firmware" m
+  local elf="target/trustzone/combined.elf" m
   if [ ! -f "$elf" ]; then
     echo "FAIL: $elf was not built, so there is nothing to check." >&2
     exit 1
@@ -270,23 +260,19 @@ debug_vendor_commands_absent() {
 # writes to its own flash. So assert the emitted table against the ELF's own
 # symbols — not against pt.sh's arithmetic, which is the thing under test.
 partition_table_fences_the_store() {
-  local elf="target/thumbv8m.main-none-eabihf/release/firmware"
-  local dir out line want got
-  dir=$(mktemp -d)
-  GATE_TMP+=("$dir")
-  out="$dir/pt.elf"
-  scripts/pt.sh "$elf" "$out"
+  local elf="target/trustzone/combined.elf"
+  local line want got
   want="$(arm-none-eabi-nm "$elf" | awk '$3 == "__kvmain_start" { print $1 }')"
   want="$want->$(arm-none-eabi-nm "$elf" | awk '$3 == "__kvcnt_end" { print $1 }')"
   for p in "0:NSBOOT(rw)" "1:NSBOOT(-)"; do
-    line=$(picotool info -a "$out" | grep -E "^ +partition ${p%%:*} ") || {
+    line=$(picotool info -a "$elf" | grep -E "^ +partition ${p%%:*} ") || {
       echo "FAIL: no partition ${p%%:*} in the emitted table" >&2; exit 1
     }
     grep -q -- "${p#*:}" <<<"$line" || {
       echo "FAIL: partition ${p%%:*} is not ${p#*:}: $line" >&2; exit 1
     }
   done
-  got=$(picotool info -a "$out" | grep -E '^ +partition 1 ' | grep -oE '[0-9a-f]{8}->[0-9a-f]{8}')
+  got=$(picotool info -a "$elf" | grep -E '^ +partition 1 ' | grep -oE '[0-9a-f]{8}->[0-9a-f]{8}')
   if [ "$got" != "$want" ]; then
     echo "FAIL: the store partition is $got but __kvmain_start..__kvcnt_end is $want." >&2
     echo "      A table that misses the store locks the firmware out of its own data." >&2
@@ -308,13 +294,12 @@ partition_table_fences_the_store() {
 # real one never enters the gate.
 release_image_retires_its_unsigned_image_def() {
   local elf dir key first
-  elf="target/thumbv8m.main-none-eabihf/release/firmware"
+  elf="target/trustzone/combined.elf"
   dir=$(mktemp -d)
   GATE_TMP+=("$dir")
   key="$dir/throwaway.pem"
   openssl ecparam -genkey -name secp256k1 -noout -out "$key" 2>/dev/null
-  scripts/pt.sh "$elf" "$dir/pt.elf" 2>/dev/null
-  picotool seal --sign --hash "$dir/pt.elf" -t elf "$dir/signed.elf" -t elf \
+  picotool seal --sign --hash "$elf" -t elf "$dir/signed.elf" -t elf \
     "$key" "$dir/otp.json" --major 1 --minor 0 --rollback 1 >/dev/null
   first=$(picotool info -a "$dir/signed.elf" |
     awk '/Metadata Block 1/ { f = 1 } f && /block type:/ { print $3; exit }')
@@ -405,6 +390,8 @@ run "fmt"                      cargo fmt --all --check
 run "TrustZone image" bash firmware/trustzone/build.sh
 export RSK_TZ_IMPLIB="$PWD/target/trustzone/ns-import.a"
 export RSK_TZ_NS_MEMORY="$PWD/target/trustzone/nonsecure-memory.x"
+export RSK_TZ_SECURE_MEMORY="$PWD/target/trustzone/secure-memory.x"
+export RSK_TZ_STAGE=import
 
 run "clippy (embedded)"        cargo clippy --workspace --exclude firmware --exclude firmware-ns --exclude rsk-wipe -- -D warnings
 run "clippy (S/wipe)"          env BOARD=waveshare-one cargo clippy -p firmware -p rsk-wipe -- -D warnings # roster: scoped
@@ -581,9 +568,8 @@ run "clippy (display strong-pin)" env LED_KIND=none cargo clippy -p firmware --f
 # no gate at all until audit run-36, so it does not go back to having no test.
 run_tests "test (display wiring)"    cargo test -p rsk-device --features display --target "$HOST"
 run "clippy (display wiring)"  cargo clippy -p rsk-device --features display --target "$HOST" --all-targets -- -D warnings
-# These direct-Cargo image checks retain the explicit legacy baseline.
-# The shipping combined TrustZone ELF is built above and run by image-suites.sh.
-run "build firmware (release)" cargo build --release -p firmware
+# Read the shipping combined TrustZone ELF; NS has its own ELF/DWARF audit.
+run "build firmware (release)" bash firmware/trustzone/build.sh
 run "assurance-trace image identity" assurance_trace_is_image_neutral
 run "firmware size budget"     firmware_size_budget
 run "firmware stack floor"     firmware_stack_floor
@@ -616,7 +602,7 @@ run "registered owners in the shipped image" python scripts/owner_binding_gate.p
 # the XIP window, where the bootrom's RP2350-E10 absolute block lives, and
 # `picotool partition create` refuses a table claiming it — a build the release
 # makes (display, 16mb) and the 4 MB gate above never exercised.
-run "build firmware (16M)"     env FLASH_SIZE=16M cargo build --release -p firmware
+run "build firmware (16M)"     env FLASH_SIZE=16M bash firmware/trustzone/build.sh
 run "partition table fences the store (16M)" partition_table_fences_the_store
 # The trusted-display flavor must keep building from the same tree. Built
 # `LED_KIND=none` (the panel replaces the addressable LED and its backlight uses
@@ -631,7 +617,7 @@ run "partition table fences the store (16M)" partition_table_fences_the_store
 # column says so in as many words. It does not make the `SEC-DISP-*` rows
 # `covered`: this compiles the shipped image, and their EVIDENCE is still
 # produced at 4 MB.
-run "build firmware (display)" env LED_KIND=none FLASH_SIZE=16M cargo build --release -p firmware --features display
+run "build firmware (display)" env LED_KIND=none FLASH_SIZE=16M bash firmware/trustzone/build.sh --features display
 run "firmware stack floor (display)" display_stack_floor
 # Machine-checked "no size cost for keys without a screen": the display UI crate
 # and its driver stack must be absent from the DEFAULT firmware dependency tree, so
@@ -642,7 +628,7 @@ run "display code absent from default image" sh -c '
     echo "FAIL: display code (rsk-ui/rsk-bip39/rsk-slip39/mipidsi) leaked into the default (no-display) firmware image"; exit 1
   fi'
 # The test build: no BOOTSEL presence, so the automated suites don't hang on a touch.
-run "build firmware (test, --features no-touch)" cargo build --release -p firmware --features no-touch
+run "build firmware (test, --features no-touch)" bash firmware/trustzone/build.sh --features no-touch
 # rsk-wipe bakes its erase length AND its LED wiring in at build time, and it is
 # the signed recovery hatch: build it for every board, so a change that stops
 # `BOARD` reaching it (which once left a 16 MB board's whole KV store intact behind

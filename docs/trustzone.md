@@ -3,7 +3,7 @@
 
 # TrustZone boundary and resource ownership
 
-TrustZone is the default build from bcdDevice 0x0BD8. USB classes and
+TrustZone is mandatory from bcdDevice 0x0BDA. USB classes and
 transports run Non-secure (NS); the controller, lifecycle observer, worker,
 applets, cryptography, storage, OTP and trusted board input/output stay Secure
 (S). The firmware is delivered as one combined ELF/UF2, including the storage
@@ -38,8 +38,14 @@ for pure Nix configuration, ENV overrides and test-only features.
 Sign the combined ELF after the partition table has been added. Flash only
 the resulting combined image. Building or signing either half separately is
 not an update procedure. Keep the same flash geometry and KV layout when
-upgrading a provisioned device. `firmware-legacy` is an explicit diagnostic
-package without TrustZone and is not included in release assets.
+upgrading a provisioned device. There is no non-TrustZone authenticator build,
+feature switch or legacy Nix package. `--no-default-features` cannot remove the
+boundary. Bare Cargo refuses to build outside the S/NS link stages.
+
+The first Secure link exists only to export the import library. It halts before
+initialization if it has no embedded NS payload, even over old NS flash contents.
+The final link requires the payload. `rsk-wipe` remains a separate Secure SRAM
+recovery utility; it has no authenticator applets or Non-secure transport.
 
 After OTP keys are provisioned, S validates the key rows, migrates records and
 scrubs old copies before automatically closing page 58. If a PIN-bound record
@@ -51,9 +57,10 @@ causes a scrubbed reboot before NS starts. `rsk otp status` reports the outcome.
 The ordinary gate builds the combined image. The image suite runs the actual
 TrustZone ELF through RP2350 ROM, exercises command stacks and interrupted
 writes, and checks automatic OTP sealing. CI runs these on `develop`, `main`
-and pull requests. Legacy image/constant-time/owner-binding checks remain
-separately scoped diagnostics; old formal evidence does not automatically
-become evidence for the changed Secure/NS execution boundary.
+and pull requests. ELF, constant-time and owner-binding readers inspect the
+combined Secure image; the NS ELF is audited separately and compared with its
+embedded payload. Old formal evidence does not automatically become evidence
+for the changed Secure/NS execution boundary.
 
 Before a hardware release, verify debug denial after cold power-up, signed
 combined-image update/rejection, page-58 read denial and the remaining physical

@@ -3,6 +3,32 @@
 
 use std::{env, path::Path, process::Command};
 
+pub fn validate_stage() {
+    println!("cargo:rerun-if-env-changed=RSK_TZ_STAGE");
+    println!("cargo:rerun-if-env-changed=RSK_TZ_NS_IMAGE");
+    match env::var("RSK_TZ_STAGE").as_deref() {
+        Ok("import") => assert!(
+            env::var_os("RSK_TZ_NS_IMAGE").is_none(),
+            "the import-library stage must not embed a Non-secure image"
+        ),
+        Ok("final") => {
+            let image = env::var("RSK_TZ_NS_IMAGE")
+                .expect("the final TrustZone stage requires RSK_TZ_NS_IMAGE");
+            let length = std::fs::metadata(image)
+                .expect("read the Non-secure image")
+                .len();
+            assert!(
+                (8..=64 * 1024).contains(&length),
+                "invalid Non-secure image size"
+            );
+        }
+        _ => panic!(
+            "RS-Key requires Secure + Non-secure firmware; build with \
+             `bash firmware/trustzone/build.sh` or `nix build .#firmware`"
+        ),
+    }
+}
+
 fn run(command: &mut Command) {
     assert!(
         command
@@ -46,7 +72,7 @@ pub fn configure(out: &Path, memory: &mut String, code_size: u32, flash_size: u3
         );
     memory.replace_range(begin..=end, &block);
     memory.push_str(&format!(
-        "\nMEMORY {{ SCRATCH : ORIGIN = {SCRATCH_START:#010x}, LENGTH = {} }}\n",
+        "\nMEMORY {{\n SCRATCH : ORIGIN = {SCRATCH_START:#010x}, LENGTH = {}\n}}\n",
         SCRATCH_END - SCRATCH_START
     ));
     let ns_memory = env::var("RSK_TZ_NS_MEMORY").expect("RSK_TZ_NS_MEMORY");
@@ -63,8 +89,12 @@ pub fn configure(out: &Path, memory: &mut String, code_size: u32, flash_size: u3
     }
     println!("cargo:rerun-if-env-changed=RSK_TZ_NS_MEMORY");
     memory.push_str(
-        "\nSECTIONS { .nonsecure : { KEEP(*(.nonsecure)) } > NSFLASH } INSERT AFTER .end_block;\n",
+        "\nSECTIONS { .nonsecure : { KEEP(*(.nonsecure)) } > NSFLASH } INSERT AFTER .end_block;\n\
+         __rsk_ns_image_len = SIZEOF(.nonsecure);\n",
     );
+    if env::var("RSK_TZ_STAGE").as_deref() == Ok("final") {
+        memory.push_str("ASSERT(SIZEOF(.nonsecure) >= 8, \"Non-secure image is missing\")\n");
+    }
     memory.push_str(&format!(
         "ASSERT(LOADADDR(.data) + SIZEOF(.data) <= {nsc_start:#010x}, \"Secure image overlaps NSC\")\n",
     ));
@@ -94,15 +124,17 @@ pub fn configure(out: &Path, memory: &mut String, code_size: u32, flash_size: u3
     // for its public basepoint table (RP2350 datasheet section 4.4.1).
     memory.push_str(&format!(
         "__rsk_ed25519_offset = ALIGN(__rsk_curve25519_field_end - __rsk_curve25519_start, {XIP_LINE_BYTES});\n\
-         SECTIONS {{ .rsk_ed25519 (ALIGN({XIP_WAY_BYTES}) + __rsk_ed25519_offset) : {{\n\
+         SECTIONS {{ .rsk_ed25519 : ALIGN({XIP_WAY_BYTES}) {{\n\
+         . += __rsk_ed25519_offset;\n\
+         __rsk_ed25519_code_start = .;\n\
          KEEP(*(.text._RNvX*16curve25519_dalek7backend6serial12curve_models*12EdwardsPoint*3Add*16AffineNielsPointE3add*))\n\
          KEEP(*(.text._RNvM*16curve25519_dalek7edwards*12EdwardsPoint8mul_base*))\n\
          KEEP(*(.text._RNvM*16curve25519_dalek6window*11LookupTable*16AffineNielsPointE6select*))\n\
          KEEP(*(.text._RNvX*16curve25519_dalek7backend6serial12curve_models*16AffineNielsPoint*6subtle23ConditionallySelectable18conditional_assign*))\n\
          }} > FLASH }} INSERT BEFORE .rodata;\n\
-         ASSERT(SIZEOF(.rsk_ed25519) > 0, \"Ed25519 code is missing\")\n\
-         ASSERT(__rsk_ed25519_offset > 0 && ADDR(.rsk_ed25519) % {XIP_WAY_BYTES} == __rsk_ed25519_offset, \"Ed25519 cache offset differs from field span\")\n\
-         ASSERT(__rsk_ed25519_offset + SIZEOF(.rsk_ed25519) <= {XIP_WAY_BYTES}, \"Ed25519 code overlaps field cache indices\")\n",
+         ASSERT(SIZEOF(.rsk_ed25519) > __rsk_ed25519_offset, \"Ed25519 code is missing\")\n\
+         ASSERT(__rsk_ed25519_offset > 0 && __rsk_ed25519_code_start % {XIP_WAY_BYTES} == __rsk_ed25519_offset, \"Ed25519 cache offset differs from field span\")\n\
+         ASSERT(SIZEOF(.rsk_ed25519) <= {XIP_WAY_BYTES}, \"Ed25519 code overlaps field cache indices\")\n",
     ));
     // Group the hot callees so the comb loop cannot introduce a third cache tag.
     memory.push_str(&format!(
@@ -255,4 +287,7 @@ pub fn configure(out: &Path, memory: &mut String, code_size: u32, flash_size: u3
     println!("cargo:rerun-if-changed=src/trustzone/gateway.c");
     println!("cargo:rerun-if-env-changed=RSK_TZ_IMPLIB");
     println!("cargo:rerun-if-env-changed=RSK_TZ_NS_IMAGE");
+    let secure_memory = env::var("RSK_TZ_SECURE_MEMORY").expect("RSK_TZ_SECURE_MEMORY");
+    std::fs::write(secure_memory, memory).expect("write the Secure memory map");
+    println!("cargo:rerun-if-env-changed=RSK_TZ_SECURE_MEMORY");
 }

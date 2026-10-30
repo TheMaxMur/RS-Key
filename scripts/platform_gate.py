@@ -2608,9 +2608,9 @@ def render(root, registered=None, dated=None):
         " it costs instead is this page — a row going stale is a diff.",
         "",
         "That price is worth stating for the `unsafe` rows, because the input is a"
-        " whole FILE and the claim is two lines of it. `PLAT-UNSAFE-001` is"
-        " anchored on `firmware/src/main.rs`, so ANY commit touching that file"
-        " flips it stale and owes this page a regeneration — including the many"
+        " whole FILE and the claim is two lines of it. If `PLAT-UNSAFE-003` is"
+        " discharged against `firmware/src/main.rs`, ANY later commit to that file"
+        " will make its evidence stale and require regeneration — including changes"
         " that cannot touch what the row is about. The site-level axis such a row"
         " wants is already elsewhere: its `covers` keys are the sites' own code,"
         " so a site that is rewritten reddens the row outright rather than dating"

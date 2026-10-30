@@ -1414,7 +1414,7 @@ def test_trustzone_inherits_the_literal_builder_default_with_explicit_legacy_ove
     assert cols["firmware"].trustzone and not cols["firmware"].default
     assert cols["firmware-legacy"].default and not cols["firmware-legacy"].trustzone
     assert cols["loud"].trustzone and cols["board-a"].trustzone
-    assert matrix_gate.reference_column(list(cols.values())).name == "firmware-legacy"
+    assert matrix_gate.reference_column(list(cols.values())).name == "firmware"
     assert cols["firmware"].closure["rsk-device"] == frozenset({"trustzone"})
     assert "firmware-ns" in cols["firmware"].ns_present
     assert "firmware-ns" not in cols["firmware-legacy"].present
@@ -1496,9 +1496,10 @@ def test_current_shipping_trustzone_columns_do_not_claim_historical_coverage():
     doc = matrix_gate.ledger(ROOT)
     placed = dict(matrix_gate.expand(doc, []))
     covered = {name for (_pid, name), cell in placed.items() if cell["disposition"] == "covered"}
-    assert covered == {"firmware-legacy"}
-    assert cols["firmware-legacy"].default
-    assert all(cols[name].trustzone for name in cols if name != "firmware-legacy")
+    assert not covered
+    assert "firmware-legacy" not in cols
+    assert all(col.trustzone for col in cols.values())
+    assert matrix_gate.reference_column(list(cols.values())).name == "firmware"
 
 
 def test_a_hand_edited_matrix_is_rejected(tree, capsys):
@@ -1953,3 +1954,19 @@ def test_a_rerun_declared_for_a_knob_nothing_reads_is_refused(tree, capsys):
         '    println!("cargo:rerun-if-env-changed=KVMAIN");',
     )
     assert "declares `cargo:rerun-if-env-changed=KVMAIN`" in red(tree, capsys)
+
+
+def test_mandatory_builder_refuses_an_explicit_legacy_override(tree):
+    source = (ROOT / 'nix/firmware.nix').read_text()
+    source = source.replace('default = mkFirmware { name = "firmware"; };',
+                            'default = mkFirmware { name = "firmware"; trustzone = false; };')
+    tree.write('nix/firmware.nix', source)
+    with pytest.raises(ValueError, match='overrides mandatory TrustZone'):
+        matrix_gate.packages(tree.root)
+
+
+def test_trustzone_wrapper_features_are_checked_by_the_matrix_row(tree, capsys):
+    path = tree.root / "scripts/check.sh"
+    path.write_text(path.read_text() + '\nrun "TrustZone" bash firmware/trustzone/build.sh --features stale-tz-feature\n')
+    assert 'stale-tz-feature' in matrix_gate.check_sh_firmware_features(tree.root)
+    assert 'a stale row' in red(tree, capsys)

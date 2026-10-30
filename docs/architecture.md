@@ -45,7 +45,7 @@ run their own executor and use bounded CMSE gateways. Secure owns the low-level
 USB driver and observes lifecycle events independently. Requests and replies
 are copied across the boundary; Rust references and secret-bearing state are
 not shared. The interrupt priorities preserve keepalives during Secure crypto.
-The legacy diagnostic build retains the former thread-worker/USB-IRQ arrangement.
+All authenticator builds use this split; there is no monolithic build mode.
 
 **Why (mostly) one core.** The async executor provides the *concurrency* that
 the upstream design used a second core and hand-rolled queues for. Core 1 is

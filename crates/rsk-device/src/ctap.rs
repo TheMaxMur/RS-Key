@@ -197,7 +197,6 @@ impl<'a, S: Storage, R: rsk_sdk::Rng + 'static, VP: rsk_vendor::Platform>
     }
 
     /// A transport reset drops authorization without granting a new per-boot PIN budget.
-    #[cfg(any(feature = "trustzone", test))]
     pub fn reset_transport_session(&mut self) {
         let lock = self.fido_state.borrow().pin_lock();
         self.scrub_secrets();

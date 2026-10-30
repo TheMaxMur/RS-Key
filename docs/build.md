@@ -1,6 +1,6 @@
 # Build options
 
-TrustZone is the default for local builds, Nix packages and release images.
+TrustZone is mandatory for local builds, Nix packages and release images.
 The builder links Secure, links Non-secure against its gateways, then embeds
 Non-secure in the final Secure image. It adds the storage partition fence and
 produces one flashable ELF/UF2 pair. Always sign the combined ELF.
@@ -15,8 +15,9 @@ nix develop -c env KNOB=value bash firmware/trustzone/build.sh [--features ...]
 ```
 
 Both this command and `nix build .#firmware` include the
-[partition table](#the-partition-table). A bare Cargo invocation is a component
-or legacy diagnostic build, not the supported way to produce a deployable image.
+[partition table](#the-partition-table). Bare Cargo refuses to build the
+authenticator outside the S/NS link stages. Neither `--no-default-features` nor
+environment overrides can select a monolithic image.
 `--features a,b` and `FEATURES=a,b` compose; unsupported builder arguments fail
 before compilation. Features are identical across both Secure links. The NS
 image receives its transport policy (`strict-config`), while applet policy
@@ -123,15 +124,12 @@ provisioned key needs only a few hundred KB, so 896K is ample.
 
 ![4 MB vs 16 MB flash layout: the KV store is identical on both; only the code region and the KV origin move with FLASH_SIZE](images/flash-map-sizes.svg)
 
-At the `4M` default the code region is `2560K`. `check.sh` retains the size and
-stack ratchets for the explicit legacy diagnostic image. The combined TrustZone
-image has separate S/NS reservations; its linker bounds and image-suite stack
-checks apply to that layout. Legacy thresholds are not TrustZone measurements.
-The legacy size ratchet is a ceiling that
-hugs the current image, so a runaway dependency (a whole extra EC curve is
-~150 KiB) or any surprise growth trips it long before the linker's hard limit.
-Lower `FIRMWARE_FLASH_BUDGET_KIB` when the image shrinks; raise it in the same
-commit when a real feature legitimately grows it.
+At the `4M` default the code region is `2560K`. The gate reads the combined
+image for flash size and the Secure ELF's stack symbols. It separately audits
+the NS ELF and its generated memory map and checks that its payload is exactly
+what the combined ELF embeds. The size budget counts the NS payload once.
+The combined-image budget is 952 KiB. Secure stack floors are 120 KiB for the
+ordinary image and 116 KiB with a display; both also require 20 KiB of NS stack.
 
 RAM has the mirror-image ratchet, `FIRMWARE_STACK_FLOOR_KIB`. Whatever `.data`
 and `.bss` do not take is stack, so a new static costs stack depth — and the
@@ -161,10 +159,8 @@ because a table that misses the store still links, still boots, and then loses t
 firmware's writes at runtime.
 
 The standard TrustZone builder and all Nix firmware packages already include
-this table. `cargo build --release -p firmware` alone is retained only for
-legacy diagnostic checks; it has neither the combined S/NS build nor the
-post-link table. The explicit `firmware-legacy` Nix package includes the table
-but has no TrustZone isolation and is not published as a release asset.
+this table. Direct Cargo links are intermediate components, never standalone
+updates; the public builder requires and embeds both worlds.
 
 ## Examples
 
@@ -341,9 +337,8 @@ flowchart TD
 
 ## TrustZone boundary
 
-The [TrustZone page](trustzone.md#build-and-update) describes the default
-combined-image build, resource ownership and verification scope. Direct Cargo
-builds remain legacy diagnostics.
+The [TrustZone page](trustzone.md#build-and-update) describes the mandatory
+combined-image build, resource ownership and verification scope.
 
 ### Reproducible configuration and environment overrides
 

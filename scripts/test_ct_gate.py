@@ -19,7 +19,7 @@ re-ran them. These do, every session. Neither half touches the working tree.
 
 Which image the second half reads is whichever `target/` holds — after
 `check.sh`'s later rows that is the no-touch build, and after
-`cargo build --release -p firmware` it is the default one. No case here reads a
+`bash firmware/trustzone/build.sh` it is the default one. No case here reads a
 count off it, so both drive these arms; pinning the default image is the row's
 job, not this file's.
 
@@ -1132,12 +1132,12 @@ def whole_image():
     """
     elf = ROOT / ct_gate.ELF
     assert elf.is_file(), (
-        f"{ct_gate.ELF} is not there — `cargo build --release -p firmware`"
+        f"{ct_gate.ELF} is not there — `bash firmware/trustzone/build.sh`"
         " first. The arms below prove a machine-code defect reddens the row, and"
         " they have no image to put a defect into."
     )
     done = subprocess.run(
-        [ct_gate.OBJDUMP, "-d", "-l", "--inlines", "--section=.text", str(elf)],
+        [ct_gate.OBJDUMP, "-d", "-l", "--inlines", str(elf)],
         capture_output=True,
         text=True,
         check=True,
@@ -1224,7 +1224,7 @@ def row(work, dump, script=None):
     # than as a green row over a stream nothing produced.
     spelled = argv.read_text(encoding="utf-8")
     assert str(script.parents[1] / ct_gate.ELF) in spelled, spelled
-    assert "--inlines" in spelled and "--section=.text" in spelled, spelled
+    assert "--inlines" in spelled and "--section=" not in spelled, spelled
     return done
 
 

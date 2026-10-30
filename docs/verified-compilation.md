@@ -37,7 +37,7 @@ subset, one is already C, and three are not code a C compiler could accept.
 | zeroization routines | 16 `scrub` / `wipe_*` sites across `crates/` and `firmware/`, and `rsk_secret`'s drops | 16 sites, 49 files using `zeroize` | **No.** Each is a method on a Rust type, and the drop glue that makes it sound is the compiler's |
 | the RSA C/asm wrapper and fault check | `crates/rsk-rsa/src/lib.rs` over `crates/rsk-rsa/csrc/` | 807 Rust, 397 C, 1082 asm | **Already C — and that is the finding.** The assembly is 73% of the foreign half by line and no verified compiler compiles assembly |
 | ML-DSA reductions | `crates/rsk-mldsa/src/reduce.rs`, `ntt.rs`, `round.rs` | 256 lines | **Yes, in principle.** Branch-free integer arithmetic, no generic function in any of the three |
-| linker-generated boundaries | 11 of the 32 `[[boundary]]` rows in `assurance/toolchain.toml` | 11 symbol imports | **Not code.** The datum is a symbol's address; a compiler has nothing to say about it |
+| linker-generated boundaries | 12 of the 33 `[[boundary]]` rows in `assurance/toolchain.toml` | 12 symbol imports | **Not code.** The datum is a symbol's address; a compiler has nothing to say about it |
 
 The genericity is the load-bearing number. Across the production modules of
 `crates/rsk-fido/src/`, 243 of 470 functions are generic and 177 of those carry
@@ -155,7 +155,7 @@ checksums, provenance, signing, notes, publication — are language-agnostic.
 
 ## What it costs the gate
 
-`scripts/check.sh` runs 104 rows: 65 invoke `cargo`, 18 are Python, 21 are
+`scripts/check.sh` runs 104 rows: 61 invoke `cargo`, 18 are Python, 25 are
 neither. A kernel outside Rust is invisible to a measured nine of them, and
 would need a twin for many more.
 
