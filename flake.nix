@@ -36,7 +36,12 @@
     flake-utils.lib.eachDefaultSystem (
       system:
       let
-        pkgs = import nixpkgs { inherit system; };
+        pkgs = import nixpkgs {
+          inherit system;
+          overlays = [
+            (_final: prev: { picotool = import ./nix/picotool.nix { pkgs = prev; }; })
+          ];
+        };
         sdl2 = (import nixpkgs-sdl2 { inherit system; }).SDL2;
         fx = fenix.packages.${system};
 

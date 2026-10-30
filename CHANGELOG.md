@@ -38,6 +38,10 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ## [Unreleased]
 
+- Fix picotool's ECDSA DER/RAW conversion for leading-zero scalars in the pinned
+  Nix tool. Signing now verifies the bytes written to the image; the gate also
+  reopens the sealed ELF and requires a verified hash and signature.
+
 - Make TrustZone mandatory for every authenticator build (bcdDevice 0x0BDA):
   remove the monolithic firmware and legacy Nix package, refuse bare Cargo
   builds, and halt the import-library ELF before initialization without NS.

@@ -58,6 +58,43 @@ import gate_lines
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 HERE = pathlib.Path(__file__).resolve().parent
 
+
+@pytest.mark.parametrize("block,digest,signature,earlier,error", [
+    ("ignored", "verified", "verified", "", None),
+    ("image", "verified", "verified", "", "first metadata block"),
+    ("ignored", "incorrect", "verified", "", "hash or signature did not verify"),
+    ("ignored", "verified", "incorrect", "", "hash or signature did not verify"),
+    ("ignored", "verified", "absent", "", "hash or signature did not verify"),
+    ("ignored", "incorrect", "verified", "hash", "hash or signature did not verify"),
+    ("ignored", "verified", "incorrect", "signature", "hash or signature did not verify"),
+])
+def test_seal_row_checks_the_reopened_image(tmp_path, block, digest, signature, earlier, error):
+    text = (HERE / "check.sh").read_text()
+    name = "release_image_retires_its_unsigned_image_def"
+    function = re.search(rf"^{name}\(\) \{{\n.*?^\}}", text, re.M | re.S)
+    row = re.search(rf'^run "[^"]+" {name}$', text, re.M)
+    assert function and row
+    info = f"Metadata Block 1\n  block type: {block}\n"
+    if earlier:
+        info += f"  {earlier}: verified\n"
+    info += f"Metadata Block 2\n  hash: {digest}\n  signature: {signature}\n"
+    script = '\n'.join([
+        "set -euo pipefail",
+        f'source "{HERE / "gate-lib.sh"}"',
+        "GATE_TMP=()",
+        'trap \'rm -rf -- "${GATE_TMP[@]}"\' EXIT',
+        "openssl() { :; }",
+        'picotool() { if [ "$1" = info ]; then printf "%s" "$SEALED_INFO"; fi; }',
+        function[0], row[0],
+    ])
+    done = subprocess.run(["bash", "-c", script], cwd=ROOT, capture_output=True, text=True,
+                          env={**os.environ, "SEALED_INFO": info, "XDG_CACHE_HOME": str(tmp_path)})
+    if error is None:
+        assert done.returncode == 0, done.stderr
+    else:
+        assert done.returncode != 0 and error in done.stderr, done.stdout + done.stderr
+
+
 #: A gate script: run by `check.sh`, owed a mutation table. `gate_lines.py` is a
 #: shared helper with no rule of its own, and the two `gate_*.py` spellings that
 #: predate the convention are named here rather than pattern-matched, so the

@@ -293,7 +293,7 @@ partition_table_fences_the_store() {
 # it was reflashed — measured on one. A throwaway key keeps this offline; the
 # real one never enters the gate.
 release_image_retires_its_unsigned_image_def() {
-  local elf dir key first
+  local elf dir key first info
   elf="target/trustzone/combined.elf"
   dir=$(mktemp -d)
   GATE_TMP+=("$dir")
@@ -301,12 +301,20 @@ release_image_retires_its_unsigned_image_def() {
   openssl ecparam -genkey -name secp256k1 -noout -out "$key" 2>/dev/null
   picotool seal --sign --hash "$elf" -t elf "$dir/signed.elf" -t elf \
     "$key" "$dir/otp.json" --major 1 --minor 0 --rollback 1 >/dev/null
-  first=$(picotool info -a "$dir/signed.elf" |
+  info=$(picotool info -a "$dir/signed.elf")
+  first=$(printf '%s\n' "$info" |
     awk '/Metadata Block 1/ { f = 1 } f && /block type:/ { print $3; exit }')
   if [ "$first" != "ignored" ]; then
     echo "FAIL: the sealed image's first metadata block is '$first', want 'ignored'." >&2
     echo "      A live unsigned IMAGE_DEF ahead of the signed one does not boot on a" >&2
     echo "      secure-boot device. Seal the ELF, then convert to UF2 — not the reverse." >&2
+    exit 1
+  fi
+  if printf '%s\n' "$info" | grep -qE '(hash|signature):[[:space:]]+incorrect' ||
+     ! printf '%s\n' "$info" | grep -qE 'hash:[[:space:]]+verified' ||
+     ! printf '%s\n' "$info" | grep -qE 'signature:[[:space:]]+verified'; then
+    echo "FAIL: the sealed image's hash or signature did not verify." >&2
+    printf '%s\n' "$info" >&2
     exit 1
   fi
   echo "sealed image retires its unsigned IMAGE_DEF (block 1 = ignored)"
