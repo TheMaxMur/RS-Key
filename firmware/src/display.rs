@@ -129,10 +129,11 @@ impl Touch {
     #[cfg(display_tp = "cst3530")]
     fn read_report(&mut self) -> Option<rsk_ui::Point> {
         let mut buf = [0u8; 9];
-        let pt = match self
-            .i2c
-            .blocking_write_read(CST3530_ADDR, &CST3530_DATA_REG.to_be_bytes(), &mut buf)
-        {
+        let pt = match self.i2c.blocking_write_read(
+            CST3530_ADDR,
+            &CST3530_DATA_REG.to_be_bytes(),
+            &mut buf,
+        ) {
             Ok(()) => rsk_ui::touch::parse_cst3530(&buf),
             Err(_) => None,
         };
