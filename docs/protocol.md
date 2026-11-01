@@ -333,10 +333,12 @@ string). ⚠️ so a phy-repointed default key can present a full Yubico identit
 runtime; the USB/smartcard identity is cosmetic and host-configurable, never a
 security or anti-counterfeiting control (see docs/threat-model.md).
 
-**Recognizing an RS-Key by PC/SC reader name:** the reader name contains `RS-Key`
-(default build) or `RSK` (Yubico-interop build). Neither appears in a genuine
-YubiKey's reader name. Reference: `RSK_READER_TOKENS` in
-`tools/rsk/ccid.py`.
+**Recognizing an RS-Key by PC/SC reader name:** match `RS-Key`, `RSK`, or the
+appended `(rs-key-0001)` USB serial. Linux pcscd uses the driver's friendly
+name rather than the USB product string, so the serial may be the only marker
+in the interop build's reader name. These markers support discovery, not
+authentication; ordinary third-party readers do not carry them. Reference:
+`RSK_READER_TOKENS` in `tools/rsk/ccid.py`.
 
 ### 3.2 Firmware version & `bcdDevice`
 
