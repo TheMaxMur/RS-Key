@@ -21,9 +21,8 @@ let
   vendorId = "0x1209";
   productId = "0x0001";
 
-  # pcsc-lite names a reader from the USB product string, falling back to the
-  # driver's friendly name; both spellings have to keep matching the host tools'
-  # reader test (`RSK_READER_TOKENS` in tools/rsk/ccid.py).
+  # Linux pcsc-lite uses the driver's friendly name, so it must match the host
+  # tools' reader test (`RSK_READER_TOKENS` in tools/rsk/ccid.py).
   friendlyName = "RS-Key";
 
   # Anchor on pid.codes 0x1209's other tenant so the entry lands with the ids it

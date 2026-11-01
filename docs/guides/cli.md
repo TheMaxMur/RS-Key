@@ -65,6 +65,12 @@ and [Linux host setup](../linux.md).
 The Nix shell stays the primary, reproducible path (it also carries `picotool`,
 `ykman`, `gpg`, and the test suites). The uv/pip path is for hosts without Nix.
 
+CCID reader selection recognizes `RS-Key`, `RSK`, or the firmware's appended
+`(rs-key-0001)` USB serial in the PC/SC reader name. Linux pcscd uses the
+driver's friendly name rather than the USB product string, so renaming the
+product does not fix reader selection on older CLI versions. Run the current
+source with `nix develop -c rsk status` to use the updated selection.
+
 ## Command groups
 
 | Group | What it does | Guide |

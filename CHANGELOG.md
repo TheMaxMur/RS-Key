@@ -40,6 +40,10 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- `rsk` recognizes PC/SC readers carrying the firmware's `(rs-key-0001)` USB
+  serial when Linux's driver-supplied name omits `RS-Key` / `RSK`. Status and
+  OTP commands no longer reject those readers; irreversible commands still
+  refuse to select among multiple matching devices.
 - **PIV serves a Card Capability Container** (`5FC107`) where it previously
   answered `6A82` on a card whose host had never written one. It is a mandatory
   PIV object (SP 800-73-4 pt1 §3.1.1), and the Windows inbox PIV minidriver
