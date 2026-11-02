@@ -24,7 +24,7 @@ dynamic = ["version"]
 dependencies = [
   "hidapi>=0.14",         # CTAPHID transport (`import hid`)
   "cryptography>=50.0.2",     # P-256 ECDH/AES/HMAC (clientPIN + MSE); >=46 adds hybrid ML-KEM-768
-  "pyscard>=2.0",         # PC/SC for the CCID applets (PIV / OATH / rescue)
+  "pyscard>=2.3.2",         # PC/SC for the CCID applets (PIV / OATH / rescue)
   "fido2>=1.1",           # `rsk fido` set-pin / list-passkeys
   "mnemonic>=0.21",       # BIP-39 seed rendering
   "shamir-mnemonic>=0.3", # SLIP-39 Shamir shares
