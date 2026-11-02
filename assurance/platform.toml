@@ -1644,9 +1644,17 @@ covers = ["unsafe:firmware/src/trustzone/mpu.rs#extern:static-__rsk_exec_start-u
 id = "PLAT-TZ-007"
 class = "toolchain"
 statement = "The disposable hostile NS image may disable its own MPU and intentionally read or write a denied address; its NS-only progress marker distinguishes the denied access from an unrelated startup fault."
-discharge = "Review firmware/trustzone/nonsecure/src/probe.rs, ensure the feature is off in normal builds, and assert the selected LDR/STR instruction, pre-access marker, exact fault cause/address and absence of the post-access marker after the completion barrier. Relax the resource grant in throwaway images and require the tests to fail because the read or write succeeds; confirm the allowed USBCTRL write changes the controller, relaxing the DMA grant lets the DMA register write through, and a load substituted for the store is refused."
+discharge = "READ on 2026-11-03. firmware/trustzone/nonsecure/src/probe.rs disables the NS MPU, writes the pre-access marker, performs the selected LDR/STR behind a completion barrier, and writes the post-access marker only on success; scripts/test_trustzone_build.py holds the feature out of the default image. tests/97_trustzone_isolation.py asserts the selected instruction, the marker sequence, the exact BFAR/CFSR and the terminal USB/DPRAM fence. Disposable controls observed: an allowed USBCTRL read and write reach the post marker; the traced allowed write logs `ADDR_ENDP <- address 127`; a load substituted for the store is refused with `hostile write probe is not STR`; relaxing only the DMA grant lets the DMA register write reach the post marker."
 discharge_owner = "contributor"
-status = "pending"
+status = "discharged"
+evidence = [
+  "firmware/trustzone/nonsecure/src/probe.rs",
+  "scripts/image-suites.sh",
+  "scripts/test_image_assurance.py",
+  "tests/97_trustzone_isolation.py",
+]
+revalidated_by = "A change to firmware/trustzone/nonsecure/src/probe.rs, scripts/image-suites.sh, tests/97_trustzone_isolation.py or scripts/test_image_assurance.py; a changed fault cause/address, marker sequence or fence assertion; or a new disposable control. This row covers the probe mechanism only; each protected resource remains PLAT-TZ-001's."
+evidence_commit = "3feeddb427384bdfa580b0ff0cf504123c9ef385"
 failure_direction = "memory-safety and isolation: an incorrect register range, retained executable stack window or ineffective denial test can hide access to protected state"
 covers = ["unsafe:firmware/trustzone/nonsecure/src/probe.rs#attr:no_mangle-static-rsk_ns_probe_progress-atomicu32", "unsafe:firmware/trustzone/nonsecure/src/probe.rs#block:xe000_ed94-as-mut-u32-write_volatile-cortex_m"]
 
