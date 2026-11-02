@@ -3,9 +3,16 @@
 
 pub(crate) const COMMAND: u8 = 0x7e;
 const LEGACY_RESET_SESSION: u32 = 7;
+static GATEWAYS_CHECKED: core::sync::atomic::AtomicBool =
+    core::sync::atomic::AtomicBool::new(false);
+
+pub(crate) fn gateways_checked() {
+    GATEWAYS_CHECKED.store(true, core::sync::atomic::Ordering::Release);
+}
 
 pub(crate) fn reply(data: &[u8], out: &mut [u8]) -> Option<usize> {
     let value = match data {
+        b"gateways" => u32::from(GATEWAYS_CHECKED.load(core::sync::atomic::Ordering::Acquire)),
         b"epoch" => super::usb::epoch(),
         b"reset" => {
             super::session::late_reset_callback();

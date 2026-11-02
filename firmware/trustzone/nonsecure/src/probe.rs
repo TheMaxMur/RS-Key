@@ -5,6 +5,9 @@ use core::sync::atomic::{AtomicU32, Ordering};
 
 include!(concat!(env!("OUT_DIR"), "/probe_address.rs"));
 
+// An allowed USBCTRL write leaves a distinct device address in the emulator log.
+const PROBE_WRITE_VALUE: u32 = 0x7f;
+
 #[unsafe(no_mangle)]
 static RSK_NS_PROBE_PROGRESS: AtomicU32 = AtomicU32::new(0);
 
@@ -23,6 +26,7 @@ pub async fn after_usb() {
     run();
 }
 
+#[inline(never)]
 pub fn run() -> ! {
     RSK_NS_PROBE_PROGRESS.store(1, Ordering::Release);
     // SAFETY: this disposable hostile image disables its own MPU and deliberately probes denied MMIO/RAM.
@@ -30,7 +34,26 @@ pub fn run() -> ! {
         (0xe000_ed94 as *mut u32).write_volatile(0);
         cortex_m::asm::dsb();
         cortex_m::asm::isb();
-        let _ = (PROBE_ADDRESS as *const u32).read_volatile();
+        if PROBE_WRITE {
+            core::arch::asm!(
+                ".global RSK_NS_PROBE_ACCESS",
+                ".set RSK_NS_PROBE_ACCESS, .",
+                "str {value}, [{address}]",
+                address = in(reg) PROBE_ADDRESS,
+                value = inout(reg) PROBE_WRITE_VALUE => _,
+                options(nostack, preserves_flags),
+            );
+        } else {
+            core::arch::asm!(
+                ".global RSK_NS_PROBE_ACCESS",
+                ".set RSK_NS_PROBE_ACCESS, .",
+                "ldr {value}, [{address}]",
+                address = in(reg) PROBE_ADDRESS,
+                value = out(reg) _,
+                options(nostack, preserves_flags),
+            );
+        }
+        cortex_m::asm::dsb();
     }
     RSK_NS_PROBE_PROGRESS.store(2, Ordering::Release);
     loop {

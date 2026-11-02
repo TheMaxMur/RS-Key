@@ -15,7 +15,14 @@ fn main() {
     if std::env::var_os("CARGO_FEATURE_TEST_HOSTILE_ACCESS").is_some() {
         let address = std::env::var("RSK_TZ_PROBE_ADDRESS").expect("probe address");
         let address = u32::from_str_radix(address.trim_start_matches("0x"), 16).unwrap();
-        std::fs::write(out.join("probe_address.rs"), format!("// SPDX-License-Identifier: AGPL-3.0-only\n// Copyright (C) 2026 RS-Key contributors\npub const PROBE_ADDRESS: u32 = {address};\n")).unwrap();
+        let access = std::env::var_os("RSK_TZ_PROBE_ACCESS").unwrap_or_else(|| "read".into());
+        let write = match access.to_str() {
+            Some("read") => false,
+            Some("write") => true,
+            _ => panic!("RSK_TZ_PROBE_ACCESS must be read or write"),
+        };
+        std::fs::write(out.join("probe_address.rs"), format!("// SPDX-License-Identifier: AGPL-3.0-only\n// Copyright (C) 2026 RS-Key contributors\npub const PROBE_ADDRESS: u32 = {address};\npub const PROBE_WRITE: bool = {write};\n")).unwrap();
     }
     println!("cargo:rerun-if-env-changed=RSK_TZ_PROBE_ADDRESS");
+    println!("cargo:rerun-if-env-changed=RSK_TZ_PROBE_ACCESS");
 }

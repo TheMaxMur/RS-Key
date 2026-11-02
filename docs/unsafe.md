@@ -396,11 +396,12 @@ recovery and hardware timing still require their own validation.
 ### 61. Hostile NS image probe — `PLAT-TZ-007`
 
 `firmware/trustzone/nonsecure/src/probe.rs` is feature-gated test code that
-disables its own NS MPU, then deliberately reads protected memory or MMIO.
+disables its own NS MPU, then deliberately reads or writes protected memory/MMIO.
 The Secure policy remains intact. Its marker contains no secret and is in NS RAM.
-*Safe alternative:* a deliberate denied MMIO access necessarily uses raw memory.
-*Containment:* disposable emulator-only image; marker and exact fault assertions,
-plus a relaxed-grant falsifier; excluded from normal builds.
+*Safe alternative:* a deliberate denied access needs raw memory; a named assembly
+instruction lets the runner distinguish a real word load from a word store.
+*Containment:* disposable emulator-only image; exact instruction, marker and fault
+assertions, a completion barrier and relaxed-grant falsifiers; excluded from normal builds.
 
 
 ### 62. Fatal Secure exception — `PLAT-TZ-008`

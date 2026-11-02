@@ -4,7 +4,11 @@
 """Refused image commands cannot leak an accumulated response body."""
 
 import importlib.util
+import os
 from pathlib import Path
+import shutil
+import subprocess
+import sys
 
 import pytest
 
@@ -23,6 +27,14 @@ def laboratory(monkeypatch):
     device.cid = bytes(4)
     device.image = None
     return module, device
+
+
+@pytest.fixture
+def hostile():
+    spec = importlib.util.spec_from_file_location("hostile", ROOT / "tests/97_trustzone_isolation.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 @pytest.mark.parametrize("chained", [False, True])
@@ -60,6 +72,144 @@ def test_empty_refusals_and_successful_payloads_still_pass(laboratory, monkeypat
     assert device.ctap(2, expected=0x33) is None
     monkeypatch.setattr(module, "send_cbor", lambda *args: b"\x00\xa0")
     assert device.ctap(2) == {}
+
+
+@pytest.mark.parametrize("response,error", [
+    (b"\x00\x00\x00\x00\xbf\x00\x01\x01", "diagnostic missing"),
+    (b"\x00\x00\x00\x00\xfe\x00\x04\x00\x00\x00\x00", "did not complete"),
+    (b"\x00\x00\x00\x00\xfe\x00\x04\x01\x00\x00\x00", None),
+])
+def test_gateway_image_requires_completed_probes_and_a_live_worker(laboratory, monkeypatch, response, error):
+    module, device = laboratory
+    writes, commands = [], []
+    monkeypatch.setattr(module, "write", lambda hid, payload: writes.append(payload))
+    monkeypatch.setattr(module, "read", lambda hid: response)
+    monkeypatch.setattr(device, "ctap", lambda command: commands.append(command) or {})
+    if error:
+        with pytest.raises(AssertionError, match=error):
+            module.gateway_probes(device)
+        assert commands == []
+    else:
+        module.gateway_probes(device)
+        assert commands == [4]
+    assert writes == [device.cid + b"\xfe\x00\x08gateways"]
+
+
+@pytest.mark.parametrize("failure", ["gateways", "usbctrl-read", "usbctrl-write", "dma-write", None])
+def test_image_suite_requires_its_separate_probe_images(tmp_path, failure):
+    script = tmp_path / "scripts/image-suites.sh"
+    script.parent.mkdir()
+    shutil.copyfile(ROOT / "scripts/image-suites.sh", script)
+    binary = tmp_path / "tools/emu/target/test-host/release/rsk-emu"
+    binary.parent.mkdir(parents=True)
+    binary.write_bytes(b"emulator")
+    commands = tmp_path / "bin"
+    commands.mkdir()
+    build = commands / "bash"
+    build.write_text(f"#!{sys.executable}\n" + '''
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 RS-Key contributors
+import os
+from pathlib import Path
+out = Path("target/trustzone")
+out.mkdir(parents=True, exist_ok=True)
+name = os.environ.get("RSK_TZ_PROBE_NAME")
+image = b"hostile-" + name.encode() if name else b"probes" if os.environ.get("RSK_TZ_GATEWAY_PROBES") == "1" else b"ordinary"
+out.joinpath("combined.elf").write_bytes(image)
+out.joinpath("import.elf").write_bytes(b"import")
+ns = out / "nonsecure/thumbv8m.main-none-eabihf/release/firmware-ns"
+ns.parent.mkdir(parents=True, exist_ok=True)
+ns.write_bytes(image)
+''')
+    build.chmod(0o755)
+    cargo = commands / "cargo"
+    cargo.write_text("#!/bin/sh\n# SPDX-License-Identifier: AGPL-3.0-only\n"
+                     "# Copyright (C) 2026 RS-Key contributors\nexit 0\n")
+    cargo.chmod(0o755)
+    runner = commands / "python"
+    runner.write_text(f"#!{sys.executable}\n" + '''
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 RS-Key contributors
+import os, sys
+from pathlib import Path
+args = sys.argv[1:]
+PROBES = {
+    "usbctrl-read": ("read", 19359, "0x50110000"),
+    "usbctrl-write": ("write", 19362, "0x50110000"),
+    "dma-write": ("write", 19365, "0x50000400"),
+}
+if args[0] == "tests/97_trustzone_isolation.py":
+    image = Path(args[args.index("--image") + 1])
+    name = image.name.removeprefix("hostile-").removesuffix(".elf")
+    access, port, address = PROBES[name]
+    assert image.read_bytes() == b"hostile-" + name.encode(), "missing hostile build"
+    assert Path(args[args.index("--ns-image") + 1]).read_bytes() == b"hostile-" + name.encode(), "wrong NS symbols"
+    assert args[args.index("--address") + 1] == address
+    assert args[args.index("--access") + 1] == access
+    assert args[args.index("--cfsr") + 1] == "0x8200"
+    assert int(args[args.index("--base-port") + 1]) == port
+    assert "--require-fenced" in args
+    with open(os.environ["HOSTILE_RAN"], "a") as log:
+        log.write(name + "\\n")
+    if os.environ["PROBE_FAILURE"] == name:
+        sys.exit(f"protected {access} succeeded: post-probe marker reached")
+    sys.exit(0)
+if args[0] != "tools/emu/image_assurance.py" or args[args.index("--only") + 1] != "basic":
+    sys.exit(0)
+if "--gateway-image" in args:
+    assert Path(args[args.index("--gateway-image") + 1]).read_bytes() == b"probes", "missing probe build"
+    if os.environ["PROBE_FAILURE"] == "gateways":
+        sys.exit("gateway startup probes did not complete")
+''')
+    runner.chmod(0o755)
+    env = {key: value for key, value in os.environ.items()
+           if not key.startswith("RSK_TZ_") and key != "CARGO_TARGET_DIR"}
+    env.update(PATH=f"{commands}:{env['PATH']}", HOST_TARGET="test-host",
+               RSK_TZ_GATEWAY_PROBES="1", RSK_TZ_PROBE_ADDRESS="0xdeadbeef",
+               RSK_TZ_PROBE_ACCESS="invalid",
+               PROBE_FAILURE=failure or "", HOSTILE_RAN=str(tmp_path / "hostile-ran"))
+    work = tmp_path / "report"
+    result = subprocess.run(["/bin/bash", str(script), str(work)], cwd=tmp_path,
+                            env=env, text=True, capture_output=True, check=False)
+    assert (result.returncode == 0) == (failure is None), result.stdout + result.stderr
+    assert (work / "firmware-pt.elf").read_bytes() == b"ordinary"
+    order = ["usbctrl-read", "usbctrl-write", "dma-write"]
+    expected = order if failure in (None, "gateways") else order[:order.index(failure) + 1]
+    assert (tmp_path / "hostile-ran").read_text().splitlines() == expected
+    if failure == "gateways":
+        assert "gateway startup probes did not complete" in result.stdout
+    elif failure is not None:
+        access = "read" if failure == "usbctrl-read" else "write"
+        assert f"protected {access} succeeded: post-probe marker reached" in result.stdout
+
+
+@pytest.mark.parametrize("access,encoding,operation,accepted", [
+    ("read", "6801", "ldr", True),
+    ("write", "6001", "str", True),
+    ("read", "f8d0 1000", "ldr.w", True),
+    ("write", "f8c0 1000", "str.w", True),
+    ("write", "6801", "ldr", False),
+    ("read", "6001", "str", False),
+])
+def test_hostile_mode_requires_the_actual_load_or_store(hostile, tmp_path, monkeypatch, access, encoding, operation, accepted):
+    outputs = iter(["20070000 B RSK_NS_PROBE_PROGRESS\n10084000 T RSK_NS_PROBE_ACCESS\n",
+                    f"10084000:\t{encoding}\t{operation}\tr1, [r0]\n"])
+    monkeypatch.setattr(hostile.subprocess, "check_output", lambda *args, **kwargs: next(outputs))
+    if accepted:
+        assert hostile.load_probe(tmp_path / "ns.elf", access) == 0x20070000
+    else:
+        with pytest.raises(AssertionError, match=f"hostile {access} probe is not"):
+            hostile.load_probe(tmp_path / "ns.elf", access)
+
+
+def test_hostile_entrypoint_rejects_a_read_labeled_as_write_before_opening_ports(hostile, tmp_path, monkeypatch):
+    args = hostile.argparse.Namespace(ns_image=tmp_path / "ns.elf", access="write")
+    monkeypatch.setattr(hostile, "arguments", lambda: args)
+    outputs = iter(["20070000 B RSK_NS_PROBE_PROGRESS\n10084000 T RSK_NS_PROBE_ACCESS\n",
+                    "10084000:\t6801\tldr\tr1, [r0]\n"])
+    monkeypatch.setattr(hostile.subprocess, "check_output", lambda *args, **kwargs: next(outputs))
+    with pytest.raises(AssertionError, match="hostile write probe is not STR"):
+        hostile.main()
 
 
 @pytest.mark.parametrize("state", [b"\x02\x00", b"\x02\x01"])

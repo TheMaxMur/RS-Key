@@ -62,6 +62,32 @@ combined Secure image; the NS ELF is audited separately and compared with its
 embedded payload. Old formal evidence does not automatically become evidence
 for the changed Secure/NS execution boundary.
 
+The image suite also builds a separate `test-gateway-probes` image. Startup
+checks reject Secure RAM, NS code/MMIO, crossing and wrapping worker buffers,
+zero-capacity replies and malformed request tags. Valid NS RAM and empty-input
+controls must reach the worker; abandoned replies must preserve their buffer.
+The runner requires the completion diagnostic and a subsequent getInfo. The
+ordinary image is rebuilt with probes disabled. These checks exercise the
+worker gateways in the emulator; physical isolation remains a board obligation.
+
+The suite separately builds hostile NS images that disable their MPU and read
+or write USBCTRL at `0x50110000`, or write DMA's interrupt register at
+`0x50000400`, after arming a nonzero IN packet. The runner requires the selected
+LDR/STR instruction in the matching NS ELF, the pre-access marker, no post-access
+marker, that exact BFAR and CFSR `0x8200`, and the terminal USB/DPRAM fence. A
+completion barrier precedes the post-access marker.
+`RSK_TZ_PROBE_ACCESS=read|write` selects the test access; reading remains the default.
+Inherited probe settings cannot enable a test feature in the ordinary image.
+
+| Negative control | Observed failure |
+|---|---|
+| Omit the NS startup probe call | `scripts/image-suites.sh` refuses the incomplete completion diagnostic |
+| Remove `--gateway-image` from the image-suite command | The row regression detects that incomplete probes were accepted |
+| Grant NS access to USBCTRL in disposable images | `scripts/image-suites.sh` fails because the protected read or write succeeds; the store changes the logged USB address to 127 |
+| Grant NS access to DMA in disposable images | `scripts/image-suites.sh` fails because the protected DMA write succeeds; the post-probe marker is reached |
+| Substitute LDR for the hostile store | The ELF instruction check refuses the mislabeled write probe |
+| Omit the hostile write case | The row regression detects that the write image was never checked |
+
 Before a hardware release, verify debug denial after cold power-up, signed
 combined-image update/rejection, page-58 read denial and the remaining physical
 isolation cases. Neither emulation nor a successful build substitutes for those

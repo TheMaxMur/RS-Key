@@ -10,7 +10,7 @@ cd "$(dirname "$0")/.."
 HOST="${HOST_TARGET:-aarch64-apple-darwin}"
 # Every binary reader below names this output; do not audit a stale default path.
 export RSK_TZ_OUT="$PWD/target/trustzone"
-unset FEATURES RSK_TZ_NO_TOUCH RSK_TZ_DISPLAY RSK_TZ_GATEWAY_PROBES RSK_TZ_PROBE_ADDRESS RSK_TZ_TEST_DELAY RSK_TZ_NS_IMAGE
+unset FEATURES RSK_TZ_NO_TOUCH RSK_TZ_DISPLAY RSK_TZ_GATEWAY_PROBES RSK_TZ_PROBE_ADDRESS RSK_TZ_PROBE_ACCESS RSK_TZ_TEST_DELAY RSK_TZ_NS_IMAGE
 
 # Five rows below allocate a temp, and this was the one script in scripts/ with
 # no cleanup: ~10 GB of build trees per run, until a full volume took the machine

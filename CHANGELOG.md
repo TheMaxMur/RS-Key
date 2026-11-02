@@ -38,6 +38,20 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ## [Unreleased]
 
+- Add hostile NS USBCTRL write and DMA register probes alongside the read probe
+  (bcdDevice 0x0BDD; test coverage, no applet behavior change). Check the
+  actual LDR/STR instruction in the NS ELF, the access fault and terminal
+  USB/DPRAM cleanup.
+
+- Run the hostile Non-secure USBCTRL read and fatal USB/DPRAM fence check in
+  the image suite. Keep hostile, gateway-probe and ordinary build settings
+  separate even when probe variables are inherited from the shell.
+
+- Exercise TrustZone worker gateway range and selector probes in the image
+  suite (bcdDevice 0x0BDC; test coverage, no applet behavior change), with
+  valid-buffer controls and an explicit completion diagnostic. Test probes
+  remain absent from ordinary firmware.
+
 - Move the firmware entry point to `scripts/build.sh` (bcdDevice 0x0BDB;
   build refactor, no applet behavior change). It inherits exported
   environment variables, combines `FEATURES` with Cargo feature arguments,

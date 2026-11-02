@@ -13,6 +13,29 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 
 
+@pytest.mark.parametrize("access,write", [(None, False), ("read", False), ("write", True), ("invalid", None)])
+def test_hostile_probe_build_selects_read_or_write(tmp_path, access, write):
+    binary = tmp_path / "build"
+    subprocess.run(["rustc", "--edition=2024", str(ROOT / "firmware/trustzone/nonsecure/build.rs"),
+                    "-o", str(binary)], check=True)
+    memory = tmp_path / "ns-memory.x"
+    memory.write_text("MEMORY")
+    out = tmp_path / "out"
+    out.mkdir()
+    env = {key: value for key, value in os.environ.items() if not key.startswith("RSK_TZ_")}
+    env.update(OUT_DIR=str(out), RSK_TZ_NS_MEMORY=str(memory), RSK_TZ_IMPLIB="unused.a",
+               CARGO_FEATURE_TEST_HOSTILE_ACCESS="1", RSK_TZ_PROBE_ADDRESS="0x50110000")
+    if access is not None:
+        env["RSK_TZ_PROBE_ACCESS"] = access
+    result = subprocess.run([str(binary)], env=env, text=True, capture_output=True, check=False)
+    if write is None:
+        assert result.returncode != 0
+        assert "RSK_TZ_PROBE_ACCESS must be read or write" in result.stderr
+    else:
+        assert result.returncode == 0, result.stderr
+        assert f"pub const PROBE_WRITE: bool = {str(write).lower()};" in (out / "probe_address.rs").read_text()
+
+
 @pytest.fixture
 def build(tmp_path):
     script = tmp_path / "scripts/build.sh"

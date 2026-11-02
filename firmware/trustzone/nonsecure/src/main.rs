@@ -391,7 +391,7 @@ fn init() {
 
 #[cfg(feature = "test-gateway-probes")]
 fn gateway_probes() {
-    let probe = [0u8; 32];
+    let mut probe = [0xa5u8; 32];
     // SAFETY: invalid pointers are intentional probes of the hardware-checked SG entries.
     unsafe {
         assert_eq!(
@@ -404,5 +404,51 @@ fn gateway_probes() {
             abi::INVALID
         );
         assert_eq!(rsk_tz_submit(0xff, 0, probe.as_ptr(), 32), abi::INVALID);
+        for (address, length) in [
+            (gateway_probes as *const () as usize, 4),
+            (rp_pac::TIMER1.as_ptr() as usize, 4),
+            (0, 1),
+            (0x2006_ffff, 2),
+            (0x2007_fff0, 32),
+            (0x2008_0000, 1),
+            (0xffff_fff0, 32),
+            (0x2007_0000, u32::MAX),
+        ] {
+            assert_eq!(
+                rsk_tz_submit(abi::CBOR, 0, address as *const u8, length),
+                abi::INVALID
+            );
+            assert_eq!(rsk_tz_poll(0, address as *mut u8, length), abi::INVALID);
+        }
+        for tag in [
+            0xff,
+            abi::CBOR | 0x100,
+            abi::APDU | 0x100,
+            abi::VENDOR | 0x1_0000,
+        ] {
+            assert_eq!(rsk_tz_submit(tag, 0, probe.as_ptr(), 32), abi::INVALID);
+        }
+        // Admission is closed before USB starts; valid inputs must reach that fence.
+        assert_eq!(
+            rsk_tz_submit(abi::CBOR, 0, probe.as_ptr(), 32),
+            abi::PENDING
+        );
+        assert_eq!(
+            rsk_tz_submit(abi::CBOR, 0, core::ptr::null(), 0),
+            abi::PENDING
+        );
+        assert_eq!(
+            rsk_tz_submit(abi::VENDOR | 0xff00, 0, probe.as_ptr(), 32),
+            abi::PENDING
+        );
+        assert_eq!(rsk_tz_poll(0, probe.as_mut_ptr(), 32), abi::ABANDONED);
+        assert_eq!(rsk_tz_poll(0, probe.as_mut_ptr(), 0), abi::INVALID);
+        assert_eq!(
+            rsk_tz_submit(abi::CBOR, 0, 0x2007_ffff as *const u8, 1),
+            abi::PENDING
+        );
+        assert_eq!(rsk_tz_poll(0, 0x2007_ffff as *mut u8, 1), abi::ABANDONED);
     }
+    assert_eq!(probe, [0xa5; 32]);
+    diagnostics::gateways_checked();
 }

@@ -26,7 +26,7 @@ sys.path.insert(0, str(ROOT / "tests"))
 import emu  # noqa: E402
 
 emu.install()
-from ctaphid import ctaphid_init, decode, enc, send_cbor  # noqa: E402
+from ctaphid import ctaphid_init, decode, enc, read, send_cbor, write  # noqa: E402
 import image_operations  # noqa: E402
 
 OATH = bytes.fromhex("a0000005272101")
@@ -485,11 +485,21 @@ def import_stage_halts(args, work, report):
             process.wait()
 
 
+def gateway_probes(dev):
+    command, payload = 0xFE, b"gateways"
+    write(dev.hid, dev.cid + bytes([command, 0, len(payload)]) + payload)
+    response = read(dev.hid)
+    assert response[:7] == dev.cid + bytes([command, 0, 4]), "gateway probe diagnostic missing"
+    assert response[7:11] == b"\x01\x00\x00\x00", "gateway startup probes did not complete"
+    assert isinstance(dev.ctap(4), dict), "getInfo failed after gateway probes"
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--emulator", type=Path, required=True)
     parser.add_argument("--image", type=Path, required=True, help="partitioned current no-touch ELF")
     parser.add_argument("--import-image", type=Path, help="Secure import-library ELF without NS")
+    parser.add_argument("--gateway-image", type=Path, help="combined no-touch ELF with test-gateway-probes")
     parser.add_argument("--release-image", type=Path, help="partitioned v0.4.11 no-touch ELF")
     parser.add_argument("--incompatible-image", type=Path, help="scratch ELF with OATH FID base changed")
     parser.add_argument("--stack-regression", type=Path, help="scratch ELF with increased ML-DSA stack use")
@@ -497,13 +507,13 @@ def main():
     parser.add_argument("--only", choices=["basic", "stack", "operations", "upgrade", "cuts", "all"], default="all")
     args = parser.parse_args()
     args.work.mkdir(parents=True, exist_ok=False)
-    for name in ("emulator", "image", "import_image", "release_image", "incompatible_image", "stack_regression"):
+    for name in ("emulator", "image", "import_image", "gateway_image", "release_image", "incompatible_image", "stack_regression"):
         value = getattr(args, name)
         if value:
             setattr(args, name, value.resolve(strict=True))
     report = {"emulator": hashlib.sha256(args.emulator.read_bytes()).hexdigest(),
               "images": {name: hashlib.sha256(getattr(args, name).read_bytes()).hexdigest()
-                         for name in ("image", "import_image", "release_image", "incompatible_image", "stack_regression")
+                         for name in ("image", "import_image", "gateway_image", "release_image", "incompatible_image", "stack_regression")
                          if getattr(args, name)}}
     if args.stack_regression:
         assert report["images"]["image"] != report["images"]["stack_regression"], "stack mutant ELF is identical to baseline"
@@ -514,6 +524,10 @@ def main():
                 with device(args.emulator, elf, args.work / f"{label}.store", args.work, label) as dev:
                     image_operations.run(dev, report[label])
         if args.only in ("all", "basic"):
+            if args.gateway_image:
+                with device(args.emulator, args.gateway_image, args.work / "gateway.flash", args.work, "gateway") as image:
+                    gateway_probes(image)
+                    report["gateway_probes"] = "startup refusals and valid NS RAM controls completed; getInfo passed"
             with device(args.emulator, None, args.work / "native.store", args.work, "native") as native:
                 expected = transcript(native)
             with device(args.emulator, args.image, args.work / "basic.flash", args.work, "basic") as image:
