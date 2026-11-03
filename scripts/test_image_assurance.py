@@ -3,9 +3,11 @@
 
 """Refused image commands cannot leak an accumulated response body."""
 
+import argparse
 import importlib.util
 import os
 from pathlib import Path
+from queue import SimpleQueue
 import shutil
 import subprocess
 import sys
@@ -95,7 +97,7 @@ def test_gateway_image_requires_completed_probes_and_a_live_worker(laboratory, m
     assert writes == [device.cid + b"\xfe\x00\x08gateways"]
 
 
-@pytest.mark.parametrize("failure", ["gateways", "usbctrl-read", "usbctrl-write", "dma-write", None])
+@pytest.mark.parametrize("failure", ["gateways", "usbctrl-read", "usbctrl-write", "dma-write", "matrix-read", "matrix-write", "rsa-events", "fault-recovery", None])
 def test_image_suite_requires_its_separate_probe_images(tmp_path, failure):
     script = tmp_path / "scripts/image-suites.sh"
     script.parent.mkdir()
@@ -137,7 +139,14 @@ PROBES = {
     "usbctrl-read": ("read", 19359, "0x50110000"),
     "usbctrl-write": ("write", 19362, "0x50110000"),
     "dma-write": ("write", 19365, "0x50000400"),
+    "matrix-read": ("read", 19368, "0"),
+    "matrix-write": ("write", 20392, "0"),
 }
+if args[0] in ("tests/106_trustzone_rsa_events.py", "tests/107_trustzone_fault_recovery.py"):
+    name = "rsa-events" if args[0].startswith("tests/106_") else "fault-recovery"
+    if os.environ["PROBE_FAILURE"] == name:
+        sys.exit(name + " regression failed")
+    sys.exit(0)
 if args[0] == "tests/97_trustzone_isolation.py":
     image = Path(args[args.index("--image") + 1])
     name = image.name.removeprefix("hostile-").removesuffix(".elf")
@@ -149,6 +158,7 @@ if args[0] == "tests/97_trustzone_isolation.py":
     assert args[args.index("--cfsr") + 1] == "0x8200"
     assert int(args[args.index("--base-port") + 1]) == port
     assert "--require-fenced" in args
+    assert ("--matrix" in args) == name.startswith("matrix-")
     with open(os.environ["HOSTILE_RAN"], "a") as log:
         log.write(name + "\\n")
     if os.environ["PROBE_FAILURE"] == name:
@@ -173,13 +183,15 @@ if "--gateway-image" in args:
                             env=env, text=True, capture_output=True, check=False)
     assert (result.returncode == 0) == (failure is None), result.stdout + result.stderr
     assert (work / "firmware-pt.elf").read_bytes() == b"ordinary"
-    order = ["usbctrl-read", "usbctrl-write", "dma-write"]
-    expected = order if failure in (None, "gateways") else order[:order.index(failure) + 1]
+    order = ["usbctrl-read", "usbctrl-write", "dma-write", "matrix-read", "matrix-write"]
+    expected = order if failure in (None, "gateways", "rsa-events", "fault-recovery") else order[:order.index(failure) + 1]
     assert (tmp_path / "hostile-ran").read_text().splitlines() == expected
     if failure == "gateways":
         assert "gateway startup probes did not complete" in result.stdout
+    elif failure in ("rsa-events", "fault-recovery"):
+        assert failure + " regression failed" in result.stdout
     elif failure is not None:
-        access = "read" if failure == "usbctrl-read" else "write"
+        access = "read" if failure.endswith("read") else "write"
         assert f"protected {access} succeeded: post-probe marker reached" in result.stdout
 
 
@@ -210,6 +222,88 @@ def test_hostile_entrypoint_rejects_a_read_labeled_as_write_before_opening_ports
     monkeypatch.setattr(hostile.subprocess, "check_output", lambda *args, **kwargs: next(outputs))
     with pytest.raises(AssertionError, match="hostile write probe is not STR"):
         hostile.main()
+
+
+@pytest.mark.parametrize("actual", [b"\x12\x34\0\0", b"\x12\x34\0\xff"])
+def test_scratch_check_includes_padding_bytes(laboratory, actual):
+    _, device = laboratory
+    device.image = Path("combined.elf")
+    device.scratch = (0x20080100, b"\x12\x34\0\0")
+    commands = []
+
+    def inspect(command):
+        commands.append(command)
+        return actual.hex()
+
+    device.inspect = inspect
+    if actual[-1]:
+        with pytest.raises(AssertionError, match="scratch code/padding differs"):
+            device.check_scratch_code()
+    else:
+        device.check_scratch_code()
+    assert commands == ["read 20080100 4"]
+
+
+@pytest.mark.parametrize("failure", [False, True])
+def test_hostile_matrix_joins_every_isolated_case_and_propagates_failure(hostile, monkeypatch, failure):
+    args = argparse.Namespace(ns_image=Path("ns.elf"), matrix=True, access="write",
+                              address=0, base_port=20000)
+    marker, target = 0x20070000, 0x20070004
+    calls = SimpleQueue()
+    monkeypatch.setattr(hostile, "arguments", lambda: args)
+    monkeypatch.setattr(hostile, "load_probe", lambda *args: marker)
+    monkeypatch.setattr(hostile, "load_target", lambda *args: target)
+    monkeypatch.setattr(hostile, "RESOURCES", [("usbctrl", 0x50110000)])
+    monkeypatch.setattr(hostile, "MEMORY_RESOURCES", [("scratch", 0x20080100)])
+
+    def probe(args, marker, address, port, **kwargs):
+        calls.put((address, port, kwargs.get("allowed", False), kwargs.get("secure_fault", False)))
+        assert kwargs["target"] == target
+        if failure and address == 0x50110000:
+            raise AssertionError("protected write succeeded")
+
+    monkeypatch.setattr(hostile, "run_probe", probe)
+    if failure:
+        with pytest.raises(AssertionError, match="protected write succeeded"):
+            hostile.main()
+    else:
+        hostile.main()
+        assert sorted(calls.get_nowait() for _ in range(3)) == sorted([
+            (target, 20000, True, False), (0x50110000, 20003, False, False),
+            (0x20080100, 20006, False, True),
+        ])
+        assert calls.empty()
+
+
+def test_device_context_rejects_padding_changed_during_work(laboratory, monkeypatch):
+    module, device = laboratory
+    actual = bytearray(b"\x12\x34\0\0")
+    device.image = Path("combined.elf")
+    device.scratch = (0x20080100, bytes(actual))
+    device.inspect = lambda command: actual.hex()
+    closed = []
+    device.close = lambda: closed.append(True)
+    monkeypatch.setattr(module, "Device", lambda: device)
+    with pytest.raises(AssertionError, match="scratch code/padding differs"):
+        with module.device():
+            actual[-1] = 0xff
+    assert closed == [True]
+
+
+@pytest.mark.parametrize("secure,body,error", [
+    (False, "CFSR 0x00008200, BFAR 0x50110000", None),
+    (False, "CFSR 0x00008200, BFAR 0x50110004", "address differs"),
+    (True, "SFSR 0x00000048, SFAR 0x20080100", None),
+    (True, "SFSR 0x00000000, SFAR 0x20080100", "status differs"),
+    (True, "CFSR 0x00008200, BFAR 0x20080100", "address differs"),
+])
+def test_hostile_fault_identifies_bus_and_sau_denial(hostile, secure, body, error):
+    address = 0x20080100 if secure else 0x50110000
+    if error:
+        with pytest.raises(AssertionError, match=error):
+            hostile.check_fault(body, address, "write", 0x8200, secure)
+    else:
+        hostile.check_fault(body, address, "write", 0x8200, secure)
 
 
 @pytest.mark.parametrize("state", [b"\x02\x00", b"\x02\x01"])

@@ -19,6 +19,7 @@ import shutil
 import socket
 import subprocess
 import sys
+import tempfile
 import time
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -53,6 +54,24 @@ def port():
 
 def fields(reply):
     return dict(item.split("=", 1) for item in reply.split() if "=" in item)
+
+
+def scratch_code(image):
+    listing = subprocess.check_output(["arm-none-eabi-nm", "-n", str(image)], text=True)
+    names = ("__rsk_scratch_exec_start", "__rsk_scratch_exec_end")
+    symbols = {line.split()[-1]: int(line.split()[0], 16) for line in listing.splitlines()
+               if line.endswith(names)}
+    if not symbols:
+        return None  # Historical images predate the scratch code island.
+    start, end = (symbols[name] for name in names)
+    assert 0x20080100 <= start < end <= 0x20082000, "scratch code leaves SRAM8/9"
+    with tempfile.TemporaryDirectory(prefix="rskey-scratch-load-") as folder:
+        output = Path(folder) / "scratch.bin"
+        subprocess.run(["arm-none-eabi-objcopy", "-O", "binary",
+            "--only-section=.rsk_scratch_exec", str(image), str(output)], check=True)
+        expected = output.read_bytes()
+    assert len(expected) == end - start, "scratch load bytes do not cover the complete destination"
+    return start, expected
 
 
 class ImageDeadline:
@@ -90,10 +109,13 @@ class Device:
             args += ["--usbip", f"127.0.0.1:{usbip}"]
         self.process = subprocess.Popen(args, stdout=self.log, stderr=self.log)
         self.image = image
+        self.scratch = None
         self.card = None
         self.hid = None
         try:
+            self.scratch = scratch_code(image) if image else None
             self.wait_ready()
+            self.check_scratch_code()
             os.environ[emu.ENV_ADDR] = f"127.0.0.1:{self.fido_port}"
             os.environ[emu.ENV_CCID_ADDR] = f"127.0.0.1:{self.ccid_port}"
             self.card = emu.EmuCard()
@@ -112,6 +134,12 @@ class Device:
         if (hi, lo) == (0x6A, 0x86):
             return  # Historical release images predate storage v2.
         assert (hi, lo) == (0x90, 0) and bytes(body) == b"\x02\x01", "automatic storage boot failed"
+
+    def check_scratch_code(self):
+        if self.image and self.scratch:
+            start, expected = self.scratch
+            actual = bytes.fromhex(self.inspect(f"read {start:x} {len(expected)}"))
+            assert actual == expected, "scratch code/padding differs from the exact ELF load bytes"
 
     def inspect(self, command):
         with socket.create_connection(("127.0.0.1", self.inspect_port), timeout=30) as sock:
@@ -229,6 +257,7 @@ def device(*args, **kwargs):
     item = Device(*args, **kwargs)
     try:
         yield item
+        item.check_scratch_code()
     finally:
         item.close()
 

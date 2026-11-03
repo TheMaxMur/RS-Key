@@ -271,12 +271,6 @@ Three spellings of "not current", which used to sit on two different pages and i
 | platform | `PLAT-STORE-003` | GIVEN a medium that tears the way PLAT-FLASH-001 asserts, a reboot rec |
 | platform | `PLAT-STORE-004` | `is_counter_fid` is a correct routing table over every FID the firmwar |
 | platform | `PLAT-TZ-001` | Secure startup is the sole writer of SAU, ITNS, AIRCR, VTOR_NS and the |
-| platform | `PLAT-TZ-002` | firmware/src/usb_fence.rs shares the same controller detach and DPRAM  |
-| platform | `PLAT-TZ-003` | The GCC CMSE veneers validate complete bounded NS RAM spans before the |
-| platform | `PLAT-TZ-004` | The NS critical section runs only on core0 and restores its own saved  |
-| platform | `PLAT-TZ-005` | NS gateway calls pass numeric selectors, tickets and bounded buffers;  |
-| platform | `PLAT-TZ-006` | Secure startup configures each core MPU with validated non-overlapping |
-| platform | `PLAT-TZ-007` | The disposable hostile NS image may disable its own MPU and intentiona |
 | platform | `PLAT-TZ-008` | A fatal Secure exception/panic latches all gateways closed before touc |
 | platform | `PLAT-TZ-009` | firmware/src/trustzone/mod.rs initializes the disjoint SRAM8/9 code de |
 | platform | `PLAT-UNSAFE-015` | The RP2350 translated uncached XIP window at 0x14000000 supplies initi |

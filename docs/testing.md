@@ -1469,6 +1469,13 @@ describe the commands and limits, including why stack paint alone lies when
 the firmware sweeps its dead stack. `scripts/image-suites.sh` builds a partitioned
 no-touch image and runs the basic, stack, operations and power-cut scenarios;
 the emulator workflow's `image` job runs it on pull requests and nightly.
+It also runs the hostile NS resource matrix, RSA session barriers and authorized
+fatal-fault recovery. `tests/106_trustzone_rsa_events.py` builds its disposable
+source copy outside the checkout, so Cargo does not merge two `.cargo/config.toml`
+files. `tests/107_trustzone_fault_recovery.py` reopens the same emulated store
+without sending ICC power-on before its first authorization check. The image
+runner compares the full SRAM8/9 code and padding with the ELF before and after
+each scenario; this checks the copy and retained bytes, not silicon permissions.
 Release upgrades still need an explicit old-image fixture. These checks are
 evidence about the emulator's fault model, not analog flash cells.
 

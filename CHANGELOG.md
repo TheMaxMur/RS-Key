@@ -38,6 +38,12 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ## [Unreleased]
 
+- Expand hostile Non-secure image checks to peripheral grants, DMA channels and
+  atomic register aliases, with live NS RAM controls (bcdDevice 0x0BDE).
+  Identify SecureFault addresses separately from bus faults, compare complete
+  SRAM8/9 code/padding with the ELF, and exercise RSA session events and
+  authorized fatal-fault recovery with disposable images.
+
 - Add hostile NS USBCTRL write and DMA register probes alongside the read probe
   (bcdDevice 0x0BDD; test coverage, no applet behavior change). Check the
   actual LDR/STR instruction in the NS ELF, the access fault and terminal

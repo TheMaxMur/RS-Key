@@ -397,7 +397,8 @@ recovery and hardware timing still require their own validation.
 
 `firmware/trustzone/nonsecure/src/probe.rs` is feature-gated test code that
 disables its own NS MPU, then deliberately reads or writes protected memory/MMIO.
-The Secure policy remains intact. Its marker contains no secret and is in NS RAM.
+The Secure policy remains intact. Its exported marker and target contain no
+secret and live in NS RAM; a zero target waits for the emulator's resource selection.
 *Safe alternative:* a deliberate denied access needs raw memory; a named assembly
 instruction lets the runner distinguish a real word load from a word store.
 *Containment:* disposable emulator-only image; exact instruction, marker and fault

@@ -30,6 +30,8 @@ build_hostile() {
 build_hostile usbctrl-read "$HOSTILE_USBCTRL" read
 build_hostile usbctrl-write "$HOSTILE_USBCTRL" write
 build_hostile dma-write "$HOSTILE_DMA" write
+build_hostile matrix-read 0 read
+build_hostile matrix-write 0 write
 RSK_TZ_PROBE_NAME= RSK_TZ_PROBE_ADDRESS= RSK_TZ_GATEWAY_PROBES=0 bash scripts/build.sh --features no-touch
 cp "$TZ_OUT/combined.elf" "$WORK/firmware-pt.elf"
 cp "$TZ_OUT/import.elf" "$WORK/import.elf"
@@ -47,6 +49,18 @@ check_hostile() {
 check_hostile usbctrl-read "$HOSTILE_USBCTRL" read
 check_hostile usbctrl-write "$HOSTILE_USBCTRL" write
 check_hostile dma-write "$HOSTILE_DMA" write
+for access in read write; do
+  python tests/97_trustzone_isolation.py --emulator "$EMU" --image "$WORK/hostile-matrix-$access.elf" \
+    --ns-image "$WORK/hostile-matrix-$access-ns.elf" --address 0 --access "$access" \
+    --matrix --cfsr 0x8200 --require-fenced --base-port "$HOSTILE_PORT" \
+    2>&1 | tee "$WORK/hostile-matrix-$access.log"
+  HOSTILE_PORT=$((HOSTILE_PORT + 1024))
+done
+python tests/106_trustzone_rsa_events.py --emulator "$EMU" --work "$WORK/rsa-events" \
+  2>&1 | tee "$WORK/rsa-events.log"
+python tests/107_trustzone_fault_recovery.py --emulator "$EMU" --image "$WORK/firmware-pt.elf" \
+  --hostile-image "$WORK/hostile-matrix-write.elf" --ns-image "$WORK/hostile-matrix-write-ns.elf" \
+  --work "$WORK/fault-recovery" 2>&1 | tee "$WORK/fault-recovery.log"
 
 for scenario in basic stack operations cuts; do
   python tools/emu/image_assurance.py --emulator "$EMU" --image "$WORK/firmware-pt.elf" \

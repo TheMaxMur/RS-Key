@@ -79,6 +79,24 @@ completion barrier precedes the post-access marker.
 `RSK_TZ_PROBE_ACCESS=read|write` selects the test access; reading remains the default.
 Inherited probe settings cannot enable a test feature in the ordinary image.
 
+The resource matrix reuses zero-address read/write images. After arming its IN
+packet, NS yields until the laboratory selects the target in NS RAM. Each case
+boots a fresh emulator, checks the instruction and pre-access marker, and compares
+the fault address and status before checking the USB/DPRAM fence. NS RAM controls
+must complete first. At most two denied cases run together, with separate ports
+and logs. Peripheral denials use BFAR/CFSR; SAU memory denials use
+SFAR/SFSR (`AUVIOL | SFARVALID`). The matrix includes peripheral grants, all DMA
+channel address/count/control and security registers, critical atomic aliases,
+Secure flash/RAM and scratch code. These are model checks, not silicon measurements.
+
+The suite also synchronizes RSA ABORT/reset/disconnect at a private-operation
+barrier in a disposable source copy, avoiding a race against the first WTX.
+A separate authorized-fault image checks terminal USB fencing and refusal of
+further CCID traffic. It cold boots the same store without ICC power-on, checks
+PIN refusal before PIV SELECT, then PIN and management refusal after SELECT.
+New authorization must succeed. The normal image runner compares the complete
+scratch code and padding with the exact ELF on entry and exit from each scenario.
+
 | Negative control | Observed failure |
 |---|---|
 | Omit the NS startup probe call | `scripts/image-suites.sh` refuses the incomplete completion diagnostic |
@@ -87,12 +105,20 @@ Inherited probe settings cannot enable a test feature in the ordinary image.
 | Grant NS access to DMA in disposable images | `scripts/image-suites.sh` fails because the protected DMA write succeeds; the post-probe marker is reached |
 | Substitute LDR for the hostile store | The ELF instruction check refuses the mislabeled write probe |
 | Omit the hostile write case | The row regression detects that the write image was never checked |
+| Corrupt one SRAM8/9 padding byte | The real basic row refuses scratch bytes that differ from the ELF |
+| Jump to terminal stop without fatal cleanup | The authorized-fault row fails with `authorized fault left USB/DPRAM live` |
 
 Before a hardware release, verify debug denial after cold power-up, signed
 combined-image update/rejection, page-58 read denial and the remaining physical
 isolation cases. Neither emulation nor a successful build substitutes for those
 board measurements. Both `DEBUG_DISABLE` and `SECURE_DEBUG_DISABLE` are required
 by the production provisioning policy.
+
+The retained PIV RESET `6581` remains unresolved. The 2026-11-03 board run
+reproduced it after the upgrade; a subsequent run passed without RSA. Neither
+result identifies the storage failure or establishes a migration defect. Preserve
+the first failure with `tests/102_piv_factory_reset.py`; another successful run
+does not discharge it.
 
 ## Attacker and trusted code
 

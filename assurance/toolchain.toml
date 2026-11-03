@@ -349,7 +349,12 @@ statement = "The generated linker symbol identifies the immutable scratch-SRAM c
 [[boundary]]
 id = "export:firmware/trustzone/nonsecure/src/probe.rs:RSK_NS_PROBE_PROGRESS"
 provider = "rustc"
-statement = "The disposable hostile NS image exposes only its own progress marker, so a denied access can be distinguished from an unrelated startup fault."
+statement = "The disposable hostile NS image exposes its own progress marker, so a denied access can be distinguished from an unrelated startup fault."
+
+[[boundary]]
+id = "export:firmware/trustzone/nonsecure/src/probe.rs:RSK_NS_PROBE_TARGET"
+provider = "rustc"
+statement = "The disposable hostile NS image exposes its non-secret NS RAM target so the image runner can select each protected address after USB startup."
 
 
 [[boundary]]

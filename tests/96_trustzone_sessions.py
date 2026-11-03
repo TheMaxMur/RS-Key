@@ -120,12 +120,23 @@ def rsa_event(args, event, operation="generate"):
         else:
             apdu = bytes([0, 0x47, 0, 0x9C, len(generation)]) + generation
         before = crypto.inspect(args.inspect_port, "status")
+        barrier = getattr(args, "rsa_barrier", None)
+        if barrier is not None:
+            rsa_pause(args, 1)
         piv.begin(0x6F, apdu)
-        piv.processing()
+        if barrier is None:
+            piv.processing()
+        else:
+            deadline = time.monotonic() + RECOVERY_TIMEOUT_S
+            while rsa_pause(args) != "ok 02000000":
+                assert time.monotonic() < deadline, "RSA did not reach the private-operation barrier"
+                time.sleep(0.005)
         if event == "abort":
             abort_sequence = 0xA6
             setup = bytes([0x21, 1, 0, abort_sequence, 2, 0, 0, 0])
             crypto.inspect(args.inspect_port, "usb-control " + setup.hex())
+            if barrier is not None:
+                rsa_pause(args, 0)
             response = piv.response()
             assert response[7:10] == bytes([0x40, CMD_ABORTED, 0]) and len(response) == 10, "RSA ABORT published an old result"
             piv.begin(CCID_ABORT, b"", sequence=abort_sequence)
@@ -135,6 +146,8 @@ def rsa_event(args, event, operation="generate"):
         else:
             injected = crypto.inspect(args.inspect_port, event)
             assert injected["in_flight"] == "true", "USB event missed RSA"
+            if barrier is not None:
+                rsa_pause(args, 0)
             if event == "usb-disconnect": crypto.inspect(args.inspect_port, "usb-connect")
             after = wait_ready(args)
             assert after["power_ups"] == before["power_ups"], "RSA bus reset rebooted the MCU"
@@ -153,6 +166,16 @@ def rsa_event(args, event, operation="generate"):
     finally:
         piv.sock.close()
         if fresh: fresh.sock.close()
+
+
+def rsa_pause(args, value=None):
+    command = (f"read {args.rsa_barrier:x} 4" if value is None else
+               f"plant {args.rsa_barrier:x} {value.to_bytes(4, 'little').hex()}")
+    with socket.create_connection(("127.0.0.1", args.inspect_port), timeout=20) as link:
+        link.sendall(command.encode() + b"\n")
+        reply = link.makefile("rb").readline(4096).decode().strip()
+    assert reply.startswith("ok "), reply
+    return reply
 
 
 class Hid(crypto.Hid):
@@ -444,6 +467,7 @@ if __name__ == "__main__":
     parser.add_argument("--inspect-port", type=int, required=True)
     parser.add_argument("--case", choices=["all", *CASES, "reset_window"], default="all")
     parser.add_argument("--mldsa-set", type=int, choices=SETS, default=87)
+    parser.add_argument("--rsa-barrier", type=lambda value: int(value, 16), help="private-operation marker in a disposable image")
     args = parser.parse_args()
     wait_ready(args)
     available = {**CASES, "reset_window": reset_window}

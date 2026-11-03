@@ -291,9 +291,11 @@ impl Chip {
             {
                 let lr = core.regs.lr();
                 let why = format!(
-                    "core {c} took a HardFault (CFSR {:#010x}, BFAR {:#010x}), pc {}, lr {}, MSP_S {:#010x}, MSP_NS {:#010x}",
+                    "core {c} took a HardFault (CFSR {:#010x}, BFAR {:#010x}, SFSR {:#010x}, SFAR {:#010x}), pc {}, lr {}, MSP_S {:#010x}, MSP_NS {:#010x}",
                     self.emu.core(c).ppb.cfsr,
                     self.emu.core(c).ppb.bfar,
+                    self.emu.core(c).ppb.sfsr,
+                    self.emu.core(c).ppb.sfar,
                     self.where_is(pc),
                     self.where_is(lr),
                     core.regs.msp,

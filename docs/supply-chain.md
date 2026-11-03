@@ -75,6 +75,7 @@ Root inputs of `flake.lock` deliberately outside this TCB:
 | `SWI_IRQ_1` | export | `firmware/trustzone/nonsecure/src/main.rs, #[unsafe(no_mangle symbol, unconditional` | `rustc` |
 | `SWI_IRQ_4` | export | `firmware/trustzone/nonsecure/src/notify.rs, #[unsafe(no_mangle symbol, unconditional` | `rustc` |
 | `RSK_NS_PROBE_PROGRESS` | export | `firmware/trustzone/nonsecure/src/probe.rs, #[unsafe(no_mangle symbol, unconditional` | `rustc` |
+| `RSK_NS_PROBE_TARGET` | export | `firmware/trustzone/nonsecure/src/probe.rs, #[unsafe(no_mangle symbol, unconditional` | `rustc` |
 | `TIMER1_IRQ_0` | export | `firmware/trustzone/nonsecure/src/time.rs, #[unsafe(no_mangle symbol, unconditional` | `rustc` |
 | `bignum_modexp_private_exponent` | import | `crates/rsk-rsa/src/lib.rs, extern "C", #[cfg(target_os = "none")]` | `arm-none-eabi-gcc` |
 | `bignum_modexp_public_exponent` | import | `crates/rsk-rsa/src/lib.rs, extern "C", #[cfg(target_os = "none")]` | `arm-none-eabi-gcc` |
@@ -103,7 +104,7 @@ Root inputs of `flake.lock` deliberately outside this TCB:
 
 - **assembler** — `arm-none-eabi-as`, `cortex-m`
 - **compiler** — `arm-none-eabi-gcc`, `rustc`
-- **ffi** — the 33 boundary(s) in the table above, each joined to the pinned tool that produces its foreign half
+- **ffi** — the 34 boundary(s) in the table above, each joined to the pinned tool that produces its foreign half
 - **linker** — `flip-link`, `rust-lld`
 
 Not enumerated by this generator at all, and not by any other:
