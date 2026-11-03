@@ -340,11 +340,11 @@ warnings` plus the fuzz targets ([testing.md](testing.md)) keep it that way.
 
 ## TrustZone transport build
 
-These sites implement the mandatory Secure and Non-secure split. They are included in the runtime count above; their pending platform obligations are explicit. See [the TrustZone chapter](trustzone.md).
+These sites implement the mandatory Secure and Non-secure split. They are included in the runtime count above; their platform obligations and measured scope are explicit. See [the TrustZone chapter](trustzone.md).
 
 ### 27–41. Secure startup and worker ownership — `PLAT-TZ-001`
 
-`firmware/src/trustzone/mod.rs`. Startup owns the core registers until the validated NS reset vector is entered. Secure boot, worker and display share one cooperative IRQ executor; LED and EP0 callbacks have separate owners. The launch sets banked masks and FP policy, then a C entry clears every shared GPR/FP register. The linker-size symbol is read by address only: an empty NS image halts before initialization, so the import-library ELF cannot launch stale NS flash. Dynamic S/NS/NSC bounds come from one build layout; hardware and full banked-FP model fidelity still need validation.
+`firmware/src/trustzone/mod.rs`. Startup owns the core registers until the validated NS reset vector is entered. Secure boot, worker and display share one cooperative IRQ executor; LED and EP0 callbacks have separate owners. The launch sets banked masks and FP policy, then a C entry clears every shared GPR/FP register. The linker-size symbol is read by address only: an empty NS image halts before initialization, so the import-library ELF cannot launch stale NS flash. Dynamic S/NS/NSC bounds come from one build layout. The RP2350 A2 record covers launch and resource isolation; full FPU model fidelity remains separate.
 
 `tests/tz_hardware/nonsecure.rs` adds four diagnostic sites: banked entry reads, its own MPU disable, and the selected LDR/STR. `tests/tz_hardware/secure.rs` adds the banked launch read and two SAU selector writes, restoring the selector afterwards. These templates compile only in a separate test checkout. Architectural snapshots and deliberately denied accesses need assembly or volatile pointers; NS reads outside the public data control are discarded, and the runner excludes OTP stores.
 

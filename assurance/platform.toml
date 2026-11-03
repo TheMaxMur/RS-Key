@@ -1584,9 +1584,24 @@ supports = ["SEC-STORE-002"]
 id = "PLAT-TZ-001"
 class = "toolchain"
 statement = "Secure startup is the sole writer of SAU, ITNS, AIRCR, VTOR_NS and the NS stack registers, and starts cooperative Secure boot, worker and display tasks on one Secure IRQ executor. Separate Secure LED/EP0 executors do not borrow applet state. The entry validates NS vectors, initializes banked masks, locks FP policy and clears shared registers before BXNS."
-discharge = "Source contracts: firmware/src/trustzone/mod.rs and firmware/src/trustzone/security_policy.rs. Review startup ordering, both executor call sites and the exact SAU and interrupt map. tests/97_trustzone_isolation.py's image matrix checks peripheral grants, all DMA channel address/count/control and security registers, critical atomic aliases, Secure flash/RAM and scratch code with the NS MPU off; NS RAM read/write controls must complete. These cases exercise the emulator's attribution model. Production closure still needs the exact silicon grant/alias map, DMA descriptor and lock behavior, interrupt routing and banked launch state checked against hostile NS on hardware. Hardware procedure: tests/108_trustzone_hardware.py; assurance/board/PLAT-TZ-001.toml records the still-planned physical run. tests/tz_hardware/secure.rs and tests/tz_hardware/nonsecure.rs provide the disposable launch and hostile-access observations."
+discharge = "Measured on 2026-11-03. The complete 184-case read and 179-case write matrices passed on the same exact combined ELF, each including nine allowed controls. Every protected access produced its selected fault cause and address with the NS MPU disabled. All sixteen DMA channel S/P/LOCK settings and the ACCESSCTRL locks resisted attempted relaxation. Secure launch readback was 0x7ff; NS CONTROL/PRIMASK/BASEPRI/FAULTMASK were [4,0,0,0], with valid MSP/MSPLIM. CONTROL.FPCA is shared and is set by the pre-BXNS FPU clearing, unlike the pinned model. No OTP stores were submitted. The capture retains the earlier apparatus-only incomplete runs separately from these passing matrices. Raw observations: assurance/board/PLAT-TZ-2026-11-03-capture.json"
 discharge_owner = "maintainer"
-status = "pending"
+status = "discharged"
+board_revision = "RP2350 A2"
+evidence_commit = "9d78a48488d0edc64e3d811644474fdcde59704f"
+revalidated_by = "Re-run on a change to launch ordering, SAU/ITNS/FP policy, ACCESSCTRL/DMA grants or locks, the resource/alias matrix, the diagnostic observations, or the silicon/ROM/boot configuration."
+evidence = [
+  "firmware/src/trustzone/mod.rs",
+  "firmware/src/trustzone/security_policy.rs",
+  "firmware/src/trustzone/gateway.c",
+  "tests/97_trustzone_isolation.py",
+  "tests/108_trustzone_hardware.py",
+  "tests/tz_hardware.py",
+  "tests/tz_hardware_run.py",
+  "tests/tz_hardware/secure.rs",
+  "tests/tz_hardware/nonsecure.rs",
+  "assurance/board/PLAT-TZ-2026-11-03-capture.json",
+]
 failure_direction = "memory-safety and isolation: concurrent worker ownership or an incorrect launch attribution exposes Secure state or routes a privileged interrupt into NS"
 covers = [
   "board-only:108_trustzone_hardware",
@@ -1735,9 +1750,26 @@ covers = ["unsafe:firmware/trustzone/nonsecure/src/probe.rs#attr:no_mangle-stati
 id = "PLAT-TZ-008"
 class = "toolchain"
 statement = "A fatal Secure exception/panic latches all gateways closed before touching raw USB registers, detaches USB and wipes DPRAM without borrowing interrupted owner state. Only a fresh boot reopens admission; this is not a recoverable command reset or a promise of fault-time SRAM scrubbing."
-discharge = "Source contracts: firmware/src/trustzone/fault.rs, firmware/src/trustzone/usb.rs and firmware/src/worker.rs. tests/107_trustzone_fault_recovery.py authorizes PIV before a denied NS write, requires terminal USB/DPRAM cleanup and CCID refusal, then cold boots the same store without ICC power-on: PIN is refused before SELECT, PIN and management authority are refused after SELECT, and new authorization succeeds. A disposable ELF that branches directly to the terminal stop without cleanup fails with `authorized fault left USB/DPRAM live`. These observations cover the image model; verify detach, pending packets and cold-boot authorization on hardware before discharge. Hardware procedure: tests/108_trustzone_hardware.py; assurance/board/PLAT-TZ-008.toml records the still-planned physical run. tests/tz_hardware/secure.rs reads public core/USB registers for its fatal witness."
+discharge = "Measured on 2026-11-03. PIN and management authorization were observed before the forbidden NS USBCTRL store, after queuing a nonzero CCID packet. The real fatal fence produced the expected BusFault, closed gateway admission, disabled USB interrupts and pull-up, and cleared every endpoint buffer control and payload byte. USB removal preceded the four-second watchdog timeout. The recovered boot had no PIV authority before ICC power-on; PIN and management operations were refused, and fresh authorization succeeded. The paired no-fence ELF failed the same physical runner for missing cleanup: FENCED with flags 193 instead of 223, the correct 0x8200 cause, target 0x50110000 and watchdog reason 1. Thus the negative result followed the actual forbidden store, not a missing packet or an unexecuted probe. Raw observations: assurance/board/PLAT-TZ-2026-11-03-capture.json"
 discharge_owner = "maintainer"
-status = "pending"
+status = "discharged"
+board_revision = "RP2350 A2"
+evidence_commit = "9d78a48488d0edc64e3d811644474fdcde59704f"
+revalidated_by = "Re-run on a change to fatal fencing, gateway admission, USB/DPRAM revocation, PIV session initialization, the pending-packet/recovery oracle, or the silicon/ROM/boot configuration."
+evidence = [
+  "firmware/src/trustzone/fault.rs",
+  "firmware/src/trustzone/usb.rs",
+  "firmware/src/usb_fence.rs",
+  "firmware/src/worker.rs",
+  "crates/rsk-piv/src/lib.rs",
+  "tests/107_trustzone_fault_recovery.py",
+  "tests/108_trustzone_hardware.py",
+  "tests/tz_hardware.py",
+  "tests/tz_hardware_run.py",
+  "tests/tz_hardware/secure.rs",
+  "tests/tz_hardware/nonsecure.rs",
+  "assurance/board/PLAT-TZ-2026-11-03-capture.json",
+]
 failure_direction = "confidentiality and isolation: an interrupted lock can deadlock cleanup, or an open gateway/pending endpoint can export pre-fault authorization or reply bytes"
 covers = [
   "unsafe:firmware/src/trustzone/fault.rs#attr:no_mangle-pub-extern-fn-rsk_tz_fault_stop",
@@ -1749,9 +1781,25 @@ covers = [
 id = "PLAT-TZ-009"
 class = "toolchain"
 statement = "firmware/src/trustzone/mod.rs initializes the disjoint SRAM8/9 code destination once from its linker-bounded flash image, including zero padding, before tasks, core1 or Non-secure entry. DSB/ISB precede use; both cores retain the complete interval read-only executable during normal execution and temporary flash-stack windows, without a writable execution alias. BOOTSEL ownership of its overlapping erase bitmap is terminal for the old firmware; firmware startup reloads the complete code image before it can execute again."
-discharge = "Review firmware/src/trustzone/mod.rs with firmware/trustzone/build.rs, firmware/src/trustzone/mpu.rs and firmware/src/core1.rs: disjoint load/destination ranges, full 7936-byte copy at 0x20080100, first 256 scratch bytes left data/XN, both-core startup ordering, SAU/ACCESSCTRL/alias permissions and six/eight MPU-region plans. tools/emu/image_assurance.py compares the complete scratch code and padding with the exact ELF before and after each successful scenario; changing one padding byte makes the real basic row fail. tests/107_trustzone_fault_recovery.py checks the same bytes after cold boot. These checks observe copy and retention in the image model. Still check the RP2350 SRAM execution map, both-core RX permissions through flash windows, writable aliases and BootROM usb_virtual_disk.c erase bitmap at 0x20081c00..0x20082000 across reset and BOOTSEL handover. Host planner tests and symbolic proofs cover their models only; they do not discharge silicon, BootROM ownership or compiler behavior. Hardware procedure: tests/108_trustzone_hardware.py; assurance/board/PLAT-TZ-009.toml records the still-planned physical run. tests/tz_hardware/secure.rs implements bounded code slices, controlled Secure probes and restored MPU selectors solely in the diagnostic image."
+discharge = "Measured on 2026-11-03. All 7936 scratch code/padding bytes matched the exact ELF through the host CRC and the diagnostic bytewise load-image comparison. Both cores executed the scratch control and wrote allowed data; first/last code-word stores faulted with CFSR 0x82 on each core, both normally and while core0 held the observed production flash MPU window. The code remained intact. BOOTSEL reached the selected ROM serial, served a 256-byte SRAM write/read control exactly, and retained the old application absent after one original UF2 block. Its overlapping erase bitmap was exactly 01 followed by 1023 zero bytes at 0x20081c00. A complete image reload then passed all twenty startup/protection scenarios again. The ordinary touch-enabled image was restored and checked. The primary RP2350 SRAM map removes the RP2040 non-striped execution mirror; the record note retains those references. Raw observations: assurance/board/PLAT-TZ-2026-11-03-capture.json"
 discharge_owner = "maintainer"
-status = "pending"
+status = "discharged"
+board_revision = "RP2350 A2"
+evidence_commit = "9d78a48488d0edc64e3d811644474fdcde59704f"
+revalidated_by = "Re-run on a change to scratch layout/initialization, either core MPU plan, flash window, execution/address map, BOOTSEL handover/ROM bitmap, the copy/probe oracle, or the silicon/ROM/boot configuration."
+evidence = [
+  "firmware/src/trustzone/mod.rs",
+  "firmware/src/trustzone/mpu.rs",
+  "firmware/src/core1.rs",
+  "firmware/trustzone/build.rs",
+  "crates/rsk-device/src/mpu_layout.rs",
+  "tests/108_trustzone_hardware.py",
+  "tests/tz_hardware.py",
+  "tests/tz_hardware_run.py",
+  "tests/tz_hardware/secure.rs",
+  "tests/tz_hardware/nonsecure.rs",
+  "assurance/board/PLAT-TZ-2026-11-03-capture.json",
+]
 failure_direction = "memory-safety and isolation: an incomplete or overlapping initialization, stale BootROM bytes, concurrent scratch writer or writable alias can corrupt executable code; missing RX retention during a flash window can fault execution or expose unintended permissions"
 covers = [
   "unsafe:firmware/src/trustzone/mod.rs#block:core-ptr-copy_nonoverlapping-core-ptr-addr_of",

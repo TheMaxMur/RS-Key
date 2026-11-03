@@ -68,7 +68,7 @@ zero-capacity replies and malformed request tags. Valid NS RAM and empty-input
 controls must reach the worker; abandoned replies must preserve their buffer.
 The runner requires the completion diagnostic and a subsequent getInfo. The
 ordinary image is rebuilt with probes disabled. These checks exercise the
-worker gateways in the emulator; physical isolation remains a board obligation.
+worker gateways in the emulator. Physical RP2350 A2 measurements are recorded below.
 
 The suite separately builds hostile NS images that disable their MPU and read
 or write USBCTRL at `0x50110000`, or write DMA's interrupt register at
@@ -107,6 +107,23 @@ scratch code and padding with the exact ELF on entry and exit from each scenario
 | Omit the hostile write case | The row regression detects that the write image was never checked |
 | Corrupt one SRAM8/9 padding byte | The real basic row refuses scratch bytes that differ from the ELF |
 | Jump to terminal stop without fatal cleanup | The authorized-fault row fails with `authorized fault left USB/DPRAM live` |
+| Omit the fatal fence in the physical diagnostic | The actual USBCTRL store faults, but retained flags 193 instead of 223 expose missing cleanup |
+
+On 2026-11-03, suite `108_trustzone_hardware.py` passed 184 read and 179 write
+cases on `rs-key-0001`, RP2350 A2, ROM `312e22fa`, secure boot disabled. Both
+matrices included nine allowed controls. They checked the launch registers,
+all sixteen DMA channel locks, protected peripheral/memory accesses, fatal USB
+cleanup and fresh PIV authorization. Both cores retained scratch RX permissions
+during normal execution and the observed flash MPU window. The complete
+7936-byte code/padding image matched its ELF through every reset.
+
+The BOOTSEL arm verified actual SRAM write/read service, submitted one original
+UF2 block and observed the overlapping ROM erase bitmap while the old application
+remained absent. A complete reload passed all twenty baseline cases again.
+The ordinary touch-enabled image was restored; getInfo passed, the private
+diagnostic command was refused, and PIV authority was absent. The precommitted
+criteria and raw captures are linked from
+[`PLAT-TZ-001`, `PLAT-TZ-008` and `PLAT-TZ-009`](platform-assumptions.md).
 
 Before a hardware release, verify debug denial after cold power-up, signed
 combined-image update/rejection, page-58 read denial and the remaining physical
@@ -319,8 +336,9 @@ which software cases have passed and which still require hardware.
 
 The image backend exercises scheduling, tickets and both normal and omitted NS
 reset callbacks. The vendored core now enforces the tested SAU/MPU, ACCESSCTRL,
-SIO and serial DMA paths described below. Further hostile NS images, remaining
-instruction/FPU fidelity and hardware confirmation are still required. Direct
-ELF boot does not prove bootrom signature verification. No hardware-isolation
-property is closed here. XIP-cache latency requires physical timing; neither
+SIO and serial DMA paths described above. Remaining instruction/FPU model
+fidelity and physical properties outside the recorded RP2350 A2 cases require
+their own validation. Direct ELF boot does not prove bootrom signature
+verification. The three hardware records discharge their measured conditions for
+the recorded silicon, ROM and boot configuration. XIP-cache latency requires physical timing; neither
 backend models cache misses. See [testing](testing.md) for the emulator paths.

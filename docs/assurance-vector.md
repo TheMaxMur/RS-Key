@@ -270,9 +270,6 @@ Three spellings of "not current", which used to sit on two different pages and i
 | platform | `PLAT-STORE-002` | The backend's enumeration-completeness flag is honest: `for_each_key`  |
 | platform | `PLAT-STORE-003` | GIVEN a medium that tears the way PLAT-FLASH-001 asserts, a reboot rec |
 | platform | `PLAT-STORE-004` | `is_counter_fid` is a correct routing table over every FID the firmwar |
-| platform | `PLAT-TZ-001` | Secure startup is the sole writer of SAU, ITNS, AIRCR, VTOR_NS and the |
-| platform | `PLAT-TZ-008` | A fatal Secure exception/panic latches all gateways closed before touc |
-| platform | `PLAT-TZ-009` | firmware/src/trustzone/mod.rs initializes the disjoint SRAM8/9 code de |
 | platform | `PLAT-UNSAFE-015` | The RP2350 translated uncached XIP window at 0x14000000 supplies initi |
 
 ## Review packet
