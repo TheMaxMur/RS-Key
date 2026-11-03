@@ -1,0 +1,8 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 RS-Key contributors
+
+assumption = "PLAT-TZ-001"
+outcome = "planned"
+method = "Build tests/108_trustzone_hardware.py diagnostics, retain their exact ELF/UF2 hashes and patch, and run physical read/write resource matrices with the NS MPU disabled. Observe SAU, ITNS, banked launch controls and FP/AIRCR policy before NS entry, then test all DMA channel locks and ACCESSCTRL locks. Exercise allowed NS RAM read/write controls and retain every watchdog witness. The OTP controller and its data/atomic aliases are read only."
+boot_config = "Disposable combined TrustZone no-touch image with test-hostile-access and test-gateway-probes. Instrumentation adds public observations, a queued CCID marker and a reset timer; normal production security initialization remains in place. Restore the ordinary touch-enabled image after the run."
+expected = "PASS = both physical resource matrices refuse each protected access with the selected fault cause/address, all allowed controls complete, all launch observations match, and DMA/ACCESSCTRL lock writes leave the locked values unchanged. FAIL = a protected access completes, a locked value changes, or a launch observation disagrees. INCONCLUSIVE = the exact image, pending packet, watchdog reset, enumeration or retained witness cannot be established."

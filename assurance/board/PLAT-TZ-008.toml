@@ -1,0 +1,8 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 RS-Key contributors
+
+assumption = "PLAT-TZ-008"
+outcome = "planned"
+method = "Authorize PIV PIN and management access, confirm their live state, queue a nonzero CCID IN packet, then submit a forbidden NS USBCTRL store. Keep the PC/SC session open until USB removal. The production fatal fence runs before the diagnostic witness reads gateway admission, USB IRQ/pull-up, all endpoint controls and payload bytes. Recover the record after watchdog reset, inspect initial PIV authority before ICC power-on, then check refusal and fresh authorization over CCID. A disposable no-fence image must fail the same runner."
+boot_config = "Disposable combined no-touch S/NS diagnostic image; production fatal cleanup is unchanged, with a witness after cleanup and a watchdog in place of the final endless halt. Reset is a test mechanism and is not added to the production fatal path."
+expected = "PASS = USB detaches before watchdog expiry after an observed pending packet; the retained fault record shows closed admission, disabled USB interrupts/pull-up, empty endpoint controls and zero payload, and PIV authority is absent at boot while fresh authorization succeeds; omitting the fence fails these checks. FAIL = admission or USB data remains live, authority survives reset, or the no-fence control passes. INCONCLUSIVE = pending data, exact image, reset or fault witness cannot be established."
