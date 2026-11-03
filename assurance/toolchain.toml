@@ -366,3 +366,18 @@ statement = "firmware/src/trustzone/gateway.c. Startup-only BXNS entry, after va
 id = "export:firmware/src/trustzone/fault.rs:rsk_tz_fault_stop"
 provider = "rustc"
 statement = "Terminal Secure fault range, entered after the fatal latch and raw USB cleanup. Image instrumentation waits for it rather than stopping before HardFault/panic cleanup."
+
+[[boundary]]
+id = "import:tests/tz_hardware/secure.rs:__rsk_scratch_exec_start"
+provider = "rust-lld"
+statement = "The disposable hardware fixture reads the production linker-bounded scratch destination; tests/tz_hardware.py copies this template into the Secure image before the combined build."
+
+[[boundary]]
+id = "import:tests/tz_hardware/secure.rs:__rsk_scratch_exec_end"
+provider = "rust-lld"
+statement = "The generated TrustZone linker section bounds the diagnostic's complete code/padding comparison, including its retained scratch execution control."
+
+[[boundary]]
+id = "import:tests/tz_hardware/secure.rs:__rsk_scratch_exec_load"
+provider = "rust-lld"
+statement = "The diagnostic compares the scratch destination with the same LOADADDR flash source the production initializer copies, then binds its CRC to the exact host ELF."

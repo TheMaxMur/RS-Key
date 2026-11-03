@@ -1180,6 +1180,31 @@ nix develop -c python tests/75_seed_backup.py --pin <your PIN>
 
 - Most need the **no-touch build** (`--features no-touch`): they cannot
   press the button. If the board runs secure boot, sign the test build too.
+- `108_trustzone_hardware.py` builds disposable S/NS diagnostics in a separate
+  checkout. It keeps the production fault fence and uses a four-second watchdog
+  to retain public fault observations across a reset. Build with
+  `python tests/108_trustzone_hardware.py build --work target/tz-hw-image` inside
+  `nix develop`; the maintainer loads that directory's combined image. Run
+  `physical --image-dir target/tz-hw-image --serial rs-key-0001 --work target/tz-hw-run`
+  through the same script, or use its `model` subcommand with `--emulator`.
+  `--matrix read` and `--matrix write` add the resource list from suite 97;
+  the write matrix excludes the OTP controller and its data/atomic aliases.
+  The runner checks the exact image, launch registers, both-core scratch RX
+  permissions, a queued CCID packet, fault cleanup and PIV recovery. It requires
+  the default PIV PIN and management key. It lets PC/SC finish reader setup
+  before queuing the marker. The raw NS entry registers are retained: clearing
+  FPU registers before BXNS sets the shared CONTROL.FPCA bit on silicon; the
+  pinned model does not implement that update. Privilege, stack selection and
+  interrupt masks must still match. JSON reports retain failures as well
+  as passes. An unavailable packet before the probe is recorded as inconclusive
+  and gets at most three attempts; access and cleanup failures are never retried.
+  Its `bootsel` subcommand takes `--volume /Volumes/RP2350` and
+  `--bootrom-serial` from the selected board's picotool identity, checks
+  ROM SRAM reads, and submits one block of the exact UF2 to observe the erase
+  bitmap. **That subcommand leaves an incomplete firmware transfer:** load the
+  complete image immediately afterwards, rerun `physical` to check startup
+  restoration, then restore the ordinary touch-enabled image. Negative-control
+  images are selected by `build --control`; none belongs on a key in normal use.
 - **One key attached, or name the one you mean.** A board built `VIDPID=Yubikey5`
   answers on the same `1050:0407` as a real YubiKey, so a first match over the HID
   enumeration can run the suite against the wrong device and report its answers as

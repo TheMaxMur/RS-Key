@@ -97,6 +97,9 @@ Root inputs of `flake.lock` deliberately outside this TCB:
 | `rsk_tz_poll` | import | `firmware/trustzone/nonsecure/src/main.rs, extern "C", unconditional` | `arm-none-eabi-gcc` |
 | `rsk_tz_submit` | import | `firmware/trustzone/nonsecure/src/main.rs, extern "C", unconditional` | `arm-none-eabi-gcc` |
 | `rsk_tz_usb` | import | `firmware/trustzone/nonsecure/src/usb.rs, extern "C", unconditional` | `arm-none-eabi-gcc` |
+| `__rsk_scratch_exec_end` | import | `tests/tz_hardware/secure.rs, extern "C", unconditional` | `rust-lld` |
+| `__rsk_scratch_exec_load` | import | `tests/tz_hardware/secure.rs, extern "C", unconditional` | `rust-lld` |
+| `__rsk_scratch_exec_start` | import | `tests/tz_hardware/secure.rs, extern "C", unconditional` | `rust-lld` |
 | `crates/rsk-rsa/csrc/bignum_asm.S` | unit | `crates/rsk-rsa/build.rs, cc::Build` | `arm-none-eabi-as` |
 | `crates/rsk-rsa/csrc/bignum_high_level.c` | unit | `crates/rsk-rsa/build.rs, cc::Build` | `arm-none-eabi-gcc` |
 
@@ -104,7 +107,7 @@ Root inputs of `flake.lock` deliberately outside this TCB:
 
 - **assembler** — `arm-none-eabi-as`, `cortex-m`
 - **compiler** — `arm-none-eabi-gcc`, `rustc`
-- **ffi** — the 34 boundary(s) in the table above, each joined to the pinned tool that produces its foreign half
+- **ffi** — the 37 boundary(s) in the table above, each joined to the pinned tool that produces its foreign half
 - **linker** — `flip-link`, `rust-lld`
 
 Not enumerated by this generator at all, and not by any other:

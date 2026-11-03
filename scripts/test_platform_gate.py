@@ -665,6 +665,7 @@ def test_the_checkout_derives_what_it_is_measured_at():
         "board-only:100_trustzone_usb_regressions",
         "board-only:101_trustzone_otp_status",
         "board-only:105_fido_getinfo_latency",
+        "board-only:108_trustzone_hardware",
     }, kinds["board-only"]
     assert set(kinds["model"]) == {
         "model:PowerOnClearsScratch2",
@@ -2077,7 +2078,7 @@ def test_the_record_vocabulary_is_ratcheted():
     assert platform_gate.BOARD_RESULT_FIELDS == RESULT_FIELDS
     assert platform_gate.BOARD_SHA.pattern == r"[0-9a-f]{64}"
     assert set(platform_gate.OUTCOME_STATUS) == {"pass", "fail"}
-    assert platform_gate.BOARD_ROW_FLOOR >= 13, platform_gate.BOARD_ROW_FLOOR
+    assert platform_gate.BOARD_ROW_FLOOR >= 17, platform_gate.BOARD_ROW_FLOOR
     # The arm vocabulary is BOARD_OUTCOMES', less the one state that has no arm.
     # ARM_REQUIRED is load-bearing twice: it is the list of arms a record owes,
     # and it is what holds `pass` and `fail` out of `check_board_records`'

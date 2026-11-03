@@ -7,7 +7,7 @@ contained. Adding a new `unsafe` requires updating this page. (Safe Rust rules
 out memory-corruption bugs in this code. It is not a security audit; see the
 [threat model](threat-model.md).)
 
-**Runtime sites: 67.** Thirty in the applet firmware and tools, plus thirty-seven in Secure startup and Non-secure transport. Fourteen are in `main.rs` and `presence.rs`:
+**Runtime sites: 79.** Thirty in the applet firmware and tools, thirty-seven in Secure startup and Non-secure transport, and twelve in disposable hardware diagnostics. Fourteen are in `main.rs` and `presence.rs`:
 the heap init and its zeroing
 allocator (5), and the eight GPIO-pin `steal`s (the presence button, the LED power-enable rail, the nuisance
 USR LED, the display build's wake button, and — display builds only — the panel's
@@ -342,35 +342,37 @@ warnings` plus the fuzz targets ([testing.md](testing.md)) keep it that way.
 
 These sites implement the mandatory Secure and Non-secure split. They are included in the runtime count above; their pending platform obligations are explicit. See [the TrustZone chapter](trustzone.md).
 
-### 27–34. Secure startup and worker ownership — `PLAT-TZ-001`
+### 27–41. Secure startup and worker ownership — `PLAT-TZ-001`
 
 `firmware/src/trustzone/mod.rs`. Startup owns the core registers until the validated NS reset vector is entered. Secure boot, worker and display share one cooperative IRQ executor; LED and EP0 callbacks have separate owners. The launch sets banked masks and FP policy, then a C entry clears every shared GPR/FP register. The linker-size symbol is read by address only: an empty NS image halts before initialization, so the import-library ELF cannot launch stale NS flash. Dynamic S/NS/NSC bounds come from one build layout; hardware and full banked-FP model fidelity still need validation.
+
+`tests/tz_hardware/nonsecure.rs` adds four diagnostic sites: banked entry reads, its own MPU disable, and the selected LDR/STR. `tests/tz_hardware/secure.rs` adds the banked launch read and two SAU selector writes, restoring the selector afterwards. These templates compile only in a separate test checkout. Architectural snapshots and deliberately denied accesses need assembly or volatile pointers; NS reads outside the public data control are discarded, and the runner excludes OTP stores.
 
 *Safe alternative:* the architecture exposes these launch registers and Embassy requires the interrupt callback; the wrapper supplies the one-owner transfer.
 *Containment:* startup-only writes, a Secure vector and stack, and an owned worker on one Secure executor.
 
-### 35–40. Secure USB controller ownership and packet spans — `PLAT-TZ-002`
+### 42–47. Secure USB controller ownership and packet spans — `PLAT-TZ-002`
 
 `firmware/src/trustzone/usb.rs`, `firmware/src/trustzone/usb/control.rs` and `firmware/src/usb_fence.rs`. The controller mutex owns endpoints and DPRAM; packet copies are at most 64 bytes and the complete NS RAM span passes TT before it becomes a slice. Clearing endpoint availability precedes the volatile DPRAM wipe. The EP0 pipe moves once to SWI_IRQ_2; only its bound handler services that executor. Epoch checks fence input and output at bus lifecycle changes.
 
 *Safe alternative:* DPRAM wiping and CMSE pointer conversion require raw memory access; Embassy requires an IRQ callback and a Send wrapper for the single task transfer.
 *Containment:* Secure-only USB access, bounded packet copies, serialized checks and copies, and one owner for the control pipe.
 
-### 41–42. Worker gateway spans — `PLAT-TZ-003`
+### 48–49. Worker gateway spans — `PLAT-TZ-003`
 
 `firmware/src/worker.rs`. The C veneer validates each complete span through the Secure TT helpers before calling the exported implementation. The worker copies input into its own exchange, bounds reply length, and wipes its Secure exchange at completion or abandonment. Output export is serialized with lifecycle observation; revocation wipes the temporary NS output before return.
 
 *Safe alternative:* the CMSE C boundary carries raw pointers and integer lengths; Rust slices are created only after that boundary validates them.
 *Containment:* bounded copies, Secure-owned exchange state, generation tickets and USB epoch checks.
 
-### 43–50. Non-secure local interrupts and USB task ownership — `PLAT-TZ-004`
+### 50–57. Non-secure local interrupts and USB task ownership — `PLAT-TZ-004`
 
 `firmware/trustzone/nonsecure/src/main.rs`, `firmware/trustzone/nonsecure/src/time.rs` and `firmware/trustzone/nonsecure/src/notify.rs`. NS masks and restores only its core0 interrupt state. Its critical-section implementation does not acquire a Secure spinlock. SendUsb moves once to the NS interrupt task; handlers store state in NS-local synchronization. TIMER1 and SWI_IRQ_4 have their installed NS handlers before interrupt enable. SWI_IRQ_4 changes only an NS-local generation and waiter list; Secure pends it after publication and cleanup, without sharing a controller reference.
 
 *Safe alternative:* the critical-section backend, interrupt enable and Embassy task transfer require these unsafe contracts.
 *Containment:* one core, one task owner, NS-local locks, and matching interrupt starters and handlers.
 
-### 51–59. Non-secure calls to bounded Secure gateways — `PLAT-TZ-005`
+### 58–66. Non-secure calls to bounded Secure gateways — `PLAT-TZ-005`
 
 `firmware/trustzone/nonsecure/src/main.rs`, `firmware/trustzone/nonsecure/src/usb.rs`, `firmware/trustzone/nonsecure/src/session.rs` and `firmware/trustzone/nonsecure/src/keyboard.rs`. Calls use the Cargo-shared numeric ABI. Secure checks selectors, complete NS RAM spans, lengths and epochs, copies packets and retains no NS pointer. Ticket abandonment fences dropped futures. Keyboard calls consume only output already authorized by Secure; a revoked session blocks export. Deliberately invalid startup pointers must be rejected by the gateway without a memory access.
 
@@ -380,7 +382,7 @@ These sites implement the mandatory Secure and Non-secure split. They are includ
 The CMSE export attributes and FFI declarations are counted separately from runtime sites. `firmware/src/trustzone/gateway.c` supplies GCC-generated SG veneers and BXNS returns. These software checks do not establish complete silicon isolation or physical disconnect detection.
 
 
-### 60. Secure MPU registers — `PLAT-TZ-006`
+### 67. Secure MPU registers — `PLAT-TZ-006`
 
 `firmware/src/trustzone/mpu.rs` writes only the current core's architectural MPU
 registers during Secure startup or a serialized Secure flash call. The checked
@@ -393,7 +395,7 @@ has no typed bank API covering this setup.
 an RAII restore on every normal return, including flash errors. Panic/fault
 recovery and hardware timing still require their own validation.
 
-### 61. Hostile NS image probe — `PLAT-TZ-007`
+### 68. Hostile NS image probe — `PLAT-TZ-007`
 
 `firmware/trustzone/nonsecure/src/probe.rs` is feature-gated test code that
 disables its own NS MPU, then deliberately reads or writes protected memory/MMIO.
@@ -405,18 +407,20 @@ instruction lets the runner distinguish a real word load from a word store.
 assertions, a completion barrier and relaxed-grant falsifiers; excluded from normal builds.
 
 
-### 62. Fatal Secure exception — `PLAT-TZ-008`
+### 69–70. Fatal Secure exception — `PLAT-TZ-008`
 
 `firmware/src/trustzone/fault.rs` never resumes an interrupted worker or borrows
 its state. The fatal latch rejects all gateways; direct S-owned MMIO detaches
 USB and clears pending DPRAM before the terminal loop. The exported stop symbol
 lets the image backend execute that cleanup before declaring the image dead.
+`tests/tz_hardware/secure.rs::read` uses volatile reads of public core/MMIO registers and the bounded USB payload to record the fatal fence. It never exports key memory or borrows interrupted owners. The disposable diagnostic adds a watchdog after the production fence; retained public words use scratch 0, 1 and 3, preserving the PIN-lock and ROM-owned slots. The ordinary fatal path remains terminal.
+
 *Safe alternative:* the exception ABI requires an unsafe handler; normal
 `Worker::reboot` cannot safely borrow an arbitrarily interrupted worker.
 *Containment:* no reboot, flash/OTP write or unsafe RAM alias; terminal admission
 until cold boot. This path fences authorization but does not claim SRAM wiping.
 
-### 63. Uncached page-state byte reads — `PLAT-UNSAFE-015`
+### 71. Uncached page-state byte reads — `PLAT-UNSAFE-015`
 
 `firmware/src/flash_storage/stream.rs::read_uncached` reads one byte through the
 RP2350 translated uncached alias at `0x14000000`, as defined by the
@@ -432,7 +436,7 @@ no MMIO stores, no new grants, and unchanged authority, root and payload checks.
 The byte load has no software deadline and a bus fault is not a flash error.
 A fatal Secure exception uses the USB fence before stopping.
 
-### 64–66. Full response-buffer wiping — `PLAT-UNSAFE-016`
+### 72–74. Full response-buffer wiping — `PLAT-UNSAFE-016`
 
 *Safe alternative:* byte-wise `Zeroize` clears the same arrays but repeats a
 volatile store and loop step for every byte. Word stores require validated
@@ -463,13 +467,15 @@ The same borrowed guard clears the complete 64-byte packets in Non-secure
 Drop. Their initialized buffers and guard lifetimes, including the existing
 control abandonment and epoch checks, are unchanged.
 
-### 67. Scratch SRAM code initialization — `PLAT-TZ-009`
+### 75–79. Scratch SRAM code initialization — `PLAT-TZ-009`
 
 `firmware/src/trustzone/mod.rs::initialize_scratch_code` copies one linker-bounded
 flash section into disjoint SRAM8/9 before the executor, core1 or Non-secure code
 starts. The section includes zero padding through the end of SRAM; no old RAM
 bytes become executable. DSB/ISB precede execution. Both cores subsequently map
 the complete section read-only executable, including during flash operations.
+`tests/tz_hardware/secure.rs` adds four runtime sites: linker-bounded immutable code/load slices, separate controlled Secure LDR/STR operations and an MPU selector helper which restores the selector. Its linker imports and scratch execution placement also require explicit unsafe contracts. Secure probes select only three public scratch addresses. The diagnostic verifies the full copy, actual processor and flash MPU window; it is compiled only in the separate checkout. Assembly and raw linker/register addresses are needed to test these hardware permissions.
+
 *Safe alternative:* the discontiguous linker destination is not owned by a Rust
 value or covered by the ordinary runtime data-copy range.
 *Containment:* one startup call, linker size and overlap assertions, no mutable

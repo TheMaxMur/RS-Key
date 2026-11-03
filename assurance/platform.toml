@@ -1584,11 +1584,32 @@ supports = ["SEC-STORE-002"]
 id = "PLAT-TZ-001"
 class = "toolchain"
 statement = "Secure startup is the sole writer of SAU, ITNS, AIRCR, VTOR_NS and the NS stack registers, and starts cooperative Secure boot, worker and display tasks on one Secure IRQ executor. Separate Secure LED/EP0 executors do not borrow applet state. The entry validates NS vectors, initializes banked masks, locks FP policy and clears shared registers before BXNS."
-discharge = "Source contracts: firmware/src/trustzone/mod.rs and firmware/src/trustzone/security_policy.rs. Review startup ordering, both executor call sites and the exact SAU and interrupt map. tests/97_trustzone_isolation.py's image matrix checks peripheral grants, all DMA channel address/count/control and security registers, critical atomic aliases, Secure flash/RAM and scratch code with the NS MPU off; NS RAM read/write controls must complete. These cases exercise the emulator's attribution model. Production closure still needs the exact silicon grant/alias map, DMA descriptor and lock behavior, interrupt routing and banked launch state checked against hostile NS on hardware."
-discharge_owner = "contributor"
+discharge = "Source contracts: firmware/src/trustzone/mod.rs and firmware/src/trustzone/security_policy.rs. Review startup ordering, both executor call sites and the exact SAU and interrupt map. tests/97_trustzone_isolation.py's image matrix checks peripheral grants, all DMA channel address/count/control and security registers, critical atomic aliases, Secure flash/RAM and scratch code with the NS MPU off; NS RAM read/write controls must complete. These cases exercise the emulator's attribution model. Production closure still needs the exact silicon grant/alias map, DMA descriptor and lock behavior, interrupt routing and banked launch state checked against hostile NS on hardware. Hardware procedure: tests/108_trustzone_hardware.py; assurance/board/PLAT-TZ-001.toml records the still-planned physical run. tests/tz_hardware/secure.rs and tests/tz_hardware/nonsecure.rs provide the disposable launch and hostile-access observations."
+discharge_owner = "maintainer"
 status = "pending"
 failure_direction = "memory-safety and isolation: concurrent worker ownership or an incorrect launch attribution exposes Secure state or routes a privileged interrupt into NS"
-covers = ["unsafe:firmware/src/trustzone/mod.rs#extern:static-__rsk_ns_image_len-u8", "unsafe:firmware/src/trustzone/mod.rs#attr:no_mangle-pub-extern-fn-rsk_tz_readable_impl-ptr", "unsafe:firmware/src/trustzone/mod.rs#attr:no_mangle-pub-extern-fn-rsk_tz_writable_impl-ptr", "unsafe:firmware/src/trustzone/mod.rs#block:cortex_m-peripherals-steal", "unsafe:firmware/src/trustzone/mod.rs#block:embassy_executor-spawner-for_current_executor-await", "unsafe:firmware/src/trustzone/mod.rs#block:executor-on_interrupt", "unsafe:firmware/src/trustzone/mod.rs#block:launch_nonsecure", "unsafe:firmware/src/trustzone/mod.rs#block:led_executor-on_interrupt", "unsafe:firmware/src/trustzone/mod.rs#block:let-nsacr-xe000_ed8c-as-mut-u32", "unsafe:firmware/src/trustzone/mod.rs#block:xe000_edd0-as-mut-u32-write_volatile-for", "unsafe:firmware/src/trustzone/mod.rs#extern:fn-rsk_tz_enter_ns-entry-u32", "unsafe:firmware/src/trustzone/mod.rs#fn:launch_nonsecure-let-mut-core-cortex_m-peripherals"]
+covers = [
+  "board-only:108_trustzone_hardware",
+  "unsafe:firmware/src/trustzone/mod.rs#extern:static-__rsk_ns_image_len-u8",
+  "unsafe:firmware/src/trustzone/mod.rs#attr:no_mangle-pub-extern-fn-rsk_tz_readable_impl-ptr",
+  "unsafe:firmware/src/trustzone/mod.rs#attr:no_mangle-pub-extern-fn-rsk_tz_writable_impl-ptr",
+  "unsafe:firmware/src/trustzone/mod.rs#block:cortex_m-peripherals-steal",
+  "unsafe:firmware/src/trustzone/mod.rs#block:embassy_executor-spawner-for_current_executor-await",
+  "unsafe:firmware/src/trustzone/mod.rs#block:executor-on_interrupt",
+  "unsafe:firmware/src/trustzone/mod.rs#block:launch_nonsecure",
+  "unsafe:firmware/src/trustzone/mod.rs#block:led_executor-on_interrupt",
+  "unsafe:firmware/src/trustzone/mod.rs#block:let-nsacr-xe000_ed8c-as-mut-u32",
+  "unsafe:firmware/src/trustzone/mod.rs#block:xe000_edd0-as-mut-u32-write_volatile-for",
+  "unsafe:firmware/src/trustzone/mod.rs#extern:fn-rsk_tz_enter_ns-entry-u32",
+  "unsafe:firmware/src/trustzone/mod.rs#fn:launch_nonsecure-let-mut-core-cortex_m-peripherals",
+  "unsafe:tests/tz_hardware/nonsecure.rs#block:core-arch-asm-a-out-reg",
+  "unsafe:tests/tz_hardware/nonsecure.rs#block:core-arch-asm-value-in-reg",
+  "unsafe:tests/tz_hardware/nonsecure.rs#block:core-arch-asm-value-out-reg",
+  "unsafe:tests/tz_hardware/nonsecure.rs#block:xe000_ed94-as-mut-u32-write_volatile",
+  "unsafe:tests/tz_hardware/secure.rs#block:core-arch-asm-a-out-reg",
+  "unsafe:tests/tz_hardware/secure.rs#block:xe000_edd8-as-mut-u32-write_volatile-index",
+  "unsafe:tests/tz_hardware/secure.rs#block:xe000_edd8-as-mut-u32-write_volatile-selected",
+]
 
 [[assumption]]
 id = "PLAT-TZ-002"
@@ -1714,23 +1735,33 @@ covers = ["unsafe:firmware/trustzone/nonsecure/src/probe.rs#attr:no_mangle-stati
 id = "PLAT-TZ-008"
 class = "toolchain"
 statement = "A fatal Secure exception/panic latches all gateways closed before touching raw USB registers, detaches USB and wipes DPRAM without borrowing interrupted owner state. Only a fresh boot reopens admission; this is not a recoverable command reset or a promise of fault-time SRAM scrubbing."
-discharge = "Source contracts: firmware/src/trustzone/fault.rs, firmware/src/trustzone/usb.rs and firmware/src/worker.rs. tests/107_trustzone_fault_recovery.py authorizes PIV before a denied NS write, requires terminal USB/DPRAM cleanup and CCID refusal, then cold boots the same store without ICC power-on: PIN is refused before SELECT, PIN and management authority are refused after SELECT, and new authorization succeeds. A disposable ELF that branches directly to the terminal stop without cleanup fails with `authorized fault left USB/DPRAM live`. These observations cover the image model; verify detach, pending packets and cold-boot authorization on hardware before discharge."
-discharge_owner = "contributor"
+discharge = "Source contracts: firmware/src/trustzone/fault.rs, firmware/src/trustzone/usb.rs and firmware/src/worker.rs. tests/107_trustzone_fault_recovery.py authorizes PIV before a denied NS write, requires terminal USB/DPRAM cleanup and CCID refusal, then cold boots the same store without ICC power-on: PIN is refused before SELECT, PIN and management authority are refused after SELECT, and new authorization succeeds. A disposable ELF that branches directly to the terminal stop without cleanup fails with `authorized fault left USB/DPRAM live`. These observations cover the image model; verify detach, pending packets and cold-boot authorization on hardware before discharge. Hardware procedure: tests/108_trustzone_hardware.py; assurance/board/PLAT-TZ-008.toml records the still-planned physical run. tests/tz_hardware/secure.rs reads public core/USB registers for its fatal witness."
+discharge_owner = "maintainer"
 status = "pending"
 failure_direction = "confidentiality and isolation: an interrupted lock can deadlock cleanup, or an open gateway/pending endpoint can export pre-fault authorization or reply bytes"
-covers = ["unsafe:firmware/src/trustzone/fault.rs#attr:no_mangle-pub-extern-fn-rsk_tz_fault_stop", "unsafe:firmware/src/trustzone/fault.rs#fn:hardfault-_frame-cortex_m_rt-exceptionframe-halt"]
+covers = [
+  "unsafe:firmware/src/trustzone/fault.rs#attr:no_mangle-pub-extern-fn-rsk_tz_fault_stop",
+  "unsafe:firmware/src/trustzone/fault.rs#fn:hardfault-_frame-cortex_m_rt-exceptionframe-halt",
+  "unsafe:tests/tz_hardware/secure.rs#block:address-as-const-u32-read_volatile",
+]
 
 [[assumption]]
 id = "PLAT-TZ-009"
 class = "toolchain"
 statement = "firmware/src/trustzone/mod.rs initializes the disjoint SRAM8/9 code destination once from its linker-bounded flash image, including zero padding, before tasks, core1 or Non-secure entry. DSB/ISB precede use; both cores retain the complete interval read-only executable during normal execution and temporary flash-stack windows, without a writable execution alias. BOOTSEL ownership of its overlapping erase bitmap is terminal for the old firmware; firmware startup reloads the complete code image before it can execute again."
-discharge = "Review firmware/src/trustzone/mod.rs with firmware/trustzone/build.rs, firmware/src/trustzone/mpu.rs and firmware/src/core1.rs: disjoint load/destination ranges, full 7936-byte copy at 0x20080100, first 256 scratch bytes left data/XN, both-core startup ordering, SAU/ACCESSCTRL/alias permissions and six/eight MPU-region plans. tools/emu/image_assurance.py compares the complete scratch code and padding with the exact ELF before and after each successful scenario; changing one padding byte makes the real basic row fail. tests/107_trustzone_fault_recovery.py checks the same bytes after cold boot. These checks observe copy and retention in the image model. Still check the RP2350 SRAM execution map, both-core RX permissions through flash windows, writable aliases and BootROM usb_virtual_disk.c erase bitmap at 0x20081c00..0x20082000 across reset and BOOTSEL handover. Host planner tests and symbolic proofs cover their models only; they do not discharge silicon, BootROM ownership or compiler behavior."
-discharge_owner = "contributor"
+discharge = "Review firmware/src/trustzone/mod.rs with firmware/trustzone/build.rs, firmware/src/trustzone/mpu.rs and firmware/src/core1.rs: disjoint load/destination ranges, full 7936-byte copy at 0x20080100, first 256 scratch bytes left data/XN, both-core startup ordering, SAU/ACCESSCTRL/alias permissions and six/eight MPU-region plans. tools/emu/image_assurance.py compares the complete scratch code and padding with the exact ELF before and after each successful scenario; changing one padding byte makes the real basic row fail. tests/107_trustzone_fault_recovery.py checks the same bytes after cold boot. These checks observe copy and retention in the image model. Still check the RP2350 SRAM execution map, both-core RX permissions through flash windows, writable aliases and BootROM usb_virtual_disk.c erase bitmap at 0x20081c00..0x20082000 across reset and BOOTSEL handover. Host planner tests and symbolic proofs cover their models only; they do not discharge silicon, BootROM ownership or compiler behavior. Hardware procedure: tests/108_trustzone_hardware.py; assurance/board/PLAT-TZ-009.toml records the still-planned physical run. tests/tz_hardware/secure.rs implements bounded code slices, controlled Secure probes and restored MPU selectors solely in the diagnostic image."
+discharge_owner = "maintainer"
 status = "pending"
 failure_direction = "memory-safety and isolation: an incomplete or overlapping initialization, stale BootROM bytes, concurrent scratch writer or writable alias can corrupt executable code; missing RX retention during a flash window can fault execution or expose unintended permissions"
 covers = [
   "unsafe:firmware/src/trustzone/mod.rs#block:core-ptr-copy_nonoverlapping-core-ptr-addr_of",
   "unsafe:firmware/src/trustzone/mod.rs#extern:static-__rsk_scratch_exec_start-u8-static-__rsk_scratch_exec_end-u8",
+  "unsafe:tests/tz_hardware/secure.rs#attr:link_section-rsk_hw_scratch-fn-execute_scratch-u32",
+  "unsafe:tests/tz_hardware/secure.rs#block:core-arch-asm-value-in-reg",
+  "unsafe:tests/tz_hardware/secure.rs#block:core-arch-asm-value-out-reg",
+  "unsafe:tests/tz_hardware/secure.rs#block:core-slice-from_raw_parts-start-length-core",
+  "unsafe:tests/tz_hardware/secure.rs#block:xe000_ed98-as-mut-u32-write_volatile-region",
+  "unsafe:tests/tz_hardware/secure.rs#extern:static-__rsk_scratch_exec_start-u8-static-__rsk_scratch_exec_end-u8",
 ]
 depends_on = ["PLAT-TZ-001", "PLAT-TZ-006"]
 

@@ -1455,7 +1455,7 @@ ARM_REQUIRED = ("pass", "fail")
 #: RATCHETED 13 -> 14 on 2026-09-27 for `PLAT-UNSAFE-014`, the dead-stack sweep's
 #: board run. That row covers two sites, so its deletion is red without the floor;
 #: the step is the equality rule above, not an anchor this row needs.
-BOARD_ROW_FLOOR = 14
+BOARD_ROW_FLOOR = 17  # Includes the three independently owned TrustZone hardware routes.
 
 
 def board_rows(ids):
