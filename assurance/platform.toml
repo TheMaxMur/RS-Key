@@ -1607,7 +1607,7 @@ evidence = [
   "tests/106_trustzone_rsa_events.py",
 ]
 revalidated_by = "A change to firmware/src/trustzone/usb.rs, firmware/src/trustzone/usb/control.rs, firmware/src/usb_fence.rs, tests/96_trustzone_sessions.py, tests/104_trustzone_late_reset.py or tests/106_trustzone_rsa_events.py; a changed reset/fence ordering or response-epoch release."
-    evidence_commit = "af1f0cda99531aa08bc199714ed9526054b6867a"
+evidence_commit = "a11a376d6d92daf64c9859f1f0f4167c9c948152"
 failure_direction = "memory-safety and confidentiality: an aliased controller, unchecked span or output copied after revocation can corrupt memory or release an old-session packet"
 covers = ["unsafe:firmware/src/trustzone/usb/control.rs#block:executor-on_interrupt", "unsafe:firmware/src/trustzone/usb/control.rs#impl:send-for-sendpipe", "unsafe:firmware/src/trustzone/usb.rs#fn:on_interrupt-observe-super-notify_nonsecure", "unsafe:firmware/src/usb_fence.rs#block:let-data-rp_pac-usb_dpram-as_ptr-as", "unsafe:firmware/src/trustzone/usb.rs#attr:no_mangle-pub-extern-fn-rsk_tz_usb_impl-operation", "unsafe:firmware/src/trustzone/usb.rs#extern:fn-rsk_tz_usb_impl-operation-u32-argument-u32", "unsafe:firmware/src/trustzone/usb.rs#block:core-slice-from_raw_parts-buffer-cast_const-length", "unsafe:firmware/src/trustzone/usb.rs#block:core-slice-from_raw_parts_mut-buffer-count"]
 
@@ -1626,7 +1626,7 @@ evidence = [
   "scripts/test_image_assurance.py",
 ]
 revalidated_by = "A change to firmware/src/trustzone/gateway.c, firmware/src/trustzone/mod.rs or firmware/src/worker.rs; a new gateway selector, a changed span check or a changed reply-header bound."
-    evidence_commit = "af1f0cda99531aa08bc199714ed9526054b6867a"
+evidence_commit = "a11a376d6d92daf64c9859f1f0f4167c9c948152"
 failure_direction = "memory-safety and confidentiality: a span bypass or stale reply ticket admits Secure memory or exports a revoked response"
 covers = ["unsafe:firmware/src/worker.rs#attr:no_mangle-pub-extern-fn-rsk_tz_submit_impl-tag", "unsafe:firmware/src/worker.rs#extern:fn-rsk_tz_submit_impl-tag-u32-cid-u32", "unsafe:firmware/src/worker.rs#block:core-slice-from_raw_parts-request-length", "unsafe:firmware/src/worker.rs#attr:no_mangle-pub-extern-fn-rsk_tz_poll_impl-ticket", "unsafe:firmware/src/worker.rs#extern:fn-rsk_tz_poll_impl-ticket-u32-response-mut", "unsafe:firmware/src/worker.rs#block:core-slice-from_raw_parts_mut-response-capacity", "unsafe:firmware/src/worker.rs#attr:no_mangle-pub-extern-fn-rsk_tz_control_impl-action"]
 
@@ -1646,7 +1646,7 @@ evidence = [
   "tests/104_trustzone_late_reset.py",
 ]
 revalidated_by = "A change to firmware/trustzone/nonsecure/src/main.rs, firmware/trustzone/nonsecure/src/time.rs, firmware/trustzone/nonsecure/src/notify.rs or the ITNS list in firmware/src/trustzone/mod.rs; a changed fallback, executor interrupt or NS task owner."
-    evidence_commit = "af1f0cda99531aa08bc199714ed9526054b6867a"
+evidence_commit = "a11a376d6d92daf64c9859f1f0f4167c9c948152"
 failure_direction = "memory-safety and availability: an incorrect PRIMASK restore, mismatched executor interrupt or second USB task owner races NS state or wedges the transport"
 covers = ["unsafe:firmware/trustzone/nonsecure/src/main.rs#impl:critical_section-impl-for-localcriticalsection-fn-acquire", "unsafe:firmware/trustzone/nonsecure/src/main.rs#fn:acquire-bool-let-enabled-cortex_m-register", "unsafe:firmware/trustzone/nonsecure/src/main.rs#fn:release-enabled-bool-if-enabled-cortex_m", "unsafe:firmware/trustzone/nonsecure/src/main.rs#block:cortex_m-interrupt-enable", "unsafe:firmware/trustzone/nonsecure/src/main.rs#attr:no_mangle-extern-fn-swi_irq_1", "unsafe:firmware/trustzone/nonsecure/src/main.rs#block:executor-on_interrupt", "unsafe:firmware/trustzone/nonsecure/src/main.rs#impl:send-for-sendusb", "unsafe:firmware/trustzone/nonsecure/src/time.rs#attr:no_mangle-extern-fn-timer1_irq_0", "unsafe:firmware/trustzone/nonsecure/src/time.rs#block:embassy_rp-interrupt-timer1_irq_0-enable", "unsafe:firmware/trustzone/nonsecure/src/notify.rs#block:interrupt-swi_irq_4-enable", "unsafe:firmware/trustzone/nonsecure/src/notify.rs#attr:no_mangle-extern-fn-swi_irq_4"]
 
@@ -1667,7 +1667,7 @@ evidence = [
   "tools/emu/image_assurance.py",
 ]
 revalidated_by = "A change to the NS gateway call sites or the Secure selector/span/ticket/epoch checks in firmware/src/worker.rs and firmware/src/trustzone/usb.rs; a new selector or a changed keyboard authorization gate."
-    evidence_commit = "af1f0cda99531aa08bc199714ed9526054b6867a"
+evidence_commit = "a11a376d6d92daf64c9859f1f0f4167c9c948152"
 failure_direction = "memory-safety and confidentiality: a gateway contract mismatch or missing Secure validation leaks key-grade state or emits stale authorized output"
 covers = ["unsafe:firmware/trustzone/nonsecure/src/keyboard.rs#block:rsk_tz_control-abi-cancel_otp", "unsafe:firmware/trustzone/nonsecure/src/keyboard.rs#block:rsk_tz_control-abi-otp_pending", "unsafe:firmware/trustzone/nonsecure/src/keyboard.rs#block:rsk_tz_control-abi-keyboard_char", "unsafe:firmware/trustzone/nonsecure/src/main.rs#extern:fn-rsk_tz_submit-kind-u32-cid-u32", "unsafe:firmware/trustzone/nonsecure/src/main.rs#block:rsk_tz_submit-kind-cid-data-as_ptr-length", "unsafe:firmware/trustzone/nonsecure/src/main.rs#block:rsk_tz_poll-ticket-reply-as_mut_ptr-u32-try_from", "unsafe:firmware/trustzone/nonsecure/src/main.rs#block:assert_eq-rsk_tz_submit-abi-cbor-x2000_0000-as", "unsafe:firmware/trustzone/nonsecure/src/session.rs#block:super-rsk_tz_control-action-ticket", "unsafe:firmware/trustzone/nonsecure/src/usb.rs#extern:fn-rsk_tz_usb-operation-u32-epoch_or_ticket-u32", "unsafe:firmware/trustzone/nonsecure/src/usb.rs#block:rsk_tz_usb-operation-argument-core-ptr-null_mut", "unsafe:firmware/trustzone/nonsecure/src/usb.rs#block:rsk_tz_usb-operation-argument-buffer-as_mut_ptr-length"]
 
@@ -1705,7 +1705,7 @@ evidence = [
   "tests/97_trustzone_isolation.py",
 ]
 revalidated_by = "A change to firmware/trustzone/nonsecure/src/probe.rs, scripts/image-suites.sh, tests/97_trustzone_isolation.py or scripts/test_image_assurance.py; a changed fault cause/address, marker sequence or fence assertion; or a new disposable control. This row covers the probe mechanism only; each protected resource remains PLAT-TZ-001's."
-evidence_commit = "3feeddb427384bdfa580b0ff0cf504123c9ef385"
+evidence_commit = "a11a376d6d92daf64c9859f1f0f4167c9c948152"
 failure_direction = "memory-safety and isolation: an incorrect register range, retained executable stack window or ineffective denial test can hide access to protected state"
 covers = ["unsafe:firmware/trustzone/nonsecure/src/probe.rs#attr:no_mangle-static-rsk_ns_probe_progress-atomicu32", "unsafe:firmware/trustzone/nonsecure/src/probe.rs#attr:no_mangle-static-rsk_ns_probe_target-atomicu32", "unsafe:firmware/trustzone/nonsecure/src/probe.rs#block:xe000_ed94-as-mut-u32-write_volatile-cortex_m"]
 
