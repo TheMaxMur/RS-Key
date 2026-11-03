@@ -1594,9 +1594,19 @@ covers = ["unsafe:firmware/src/trustzone/mod.rs#extern:static-__rsk_ns_image_len
 id = "PLAT-TZ-002"
 class = "toolchain"
 statement = "firmware/src/usb_fence.rs shares the same controller detach and DPRAM cleanup with terminal QMI failure in the Secure firmware. Only Secure code owns the USB controller, DPRAM and IRQ; packet spans are bounded, checked as NS RAM and copied while Secure serialization prevents attribution or session changes. The EP0 pipe moves once to its own Secure executor."
-discharge = "Source contracts: firmware/src/trustzone/usb.rs, firmware/src/trustzone/usb/control.rs. Review all controller and DPRAM borrowers, the TT checks and copy bounds, and both control executor call sites. Run the callback-omission image regression so bus reset revokes authorization and old response epochs before a new session can use them."
+discharge = "READ on 2026-11-03. `firmware/src/trustzone/usb.rs`'s `revoke` aborts every endpoint, clears USB DPRAM through `firmware/src/usb_fence.rs`, drops the configuration, resets the control session and calls `worker::revoke_transport`; `observe_locked` checks `SIE_STATUS.BUS_RESET`, the setup packet and the HAL events before every admission, and `admitted` re-observes before accepting an epoch. `firmware/src/usb_fence.rs::disconnect_after_fault` disables USB IRQs, drops the pull-up and wipes DPRAM; `firmware/src/flash_storage/quad.rs`'s fatal QMI path and the panic/HardFault handlers reach it through `trustzone::fault::fence`. `rsk_tz_usb_impl` validates every input/output span, copies into a `Secret` packet under the controller serialization and exports only after the epoch and ticket checks. `control::start` takes the driver once and runs the EP0 pipe on SWI_IRQ_2; `control::reset` scrubs the command. Tests observed: `tests/104_trustzone_late_reset.py` revoked the epoch and PIN authority and its missing-fallback control preserved the old authority; `tests/96_trustzone_sessions.py` passed `fido_token_reset`, `card_reset`, `reset_window` and `interleaved_reads`; `mldsa_reset` and `rsa_generate_usb-reset` passed. The RSA-sign reset arm is too short to hit on this host (`RSA completed before the event barrier`)."
 discharge_owner = "contributor"
-status = "pending"
+status = "discharged"
+evidence = [
+  "firmware/src/trustzone/usb.rs",
+  "firmware/src/trustzone/usb/control.rs",
+  "firmware/src/usb_fence.rs",
+  "firmware/src/flash_storage/quad.rs",
+  "tests/96_trustzone_sessions.py",
+  "tests/104_trustzone_late_reset.py",
+]
+revalidated_by = "A change to firmware/src/trustzone/usb.rs, firmware/src/trustzone/usb/control.rs, firmware/src/usb_fence.rs, tests/96_trustzone_sessions.py or tests/104_trustzone_late_reset.py; a changed reset/fence ordering or response-epoch release."
+    evidence_commit = "af1f0cda99531aa08bc199714ed9526054b6867a"
 failure_direction = "memory-safety and confidentiality: an aliased controller, unchecked span or output copied after revocation can corrupt memory or release an old-session packet"
 covers = ["unsafe:firmware/src/trustzone/usb/control.rs#block:executor-on_interrupt", "unsafe:firmware/src/trustzone/usb/control.rs#impl:send-for-sendpipe", "unsafe:firmware/src/trustzone/usb.rs#fn:on_interrupt-observe-super-notify_nonsecure", "unsafe:firmware/src/usb_fence.rs#block:let-data-rp_pac-usb_dpram-as_ptr-as", "unsafe:firmware/src/trustzone/usb.rs#attr:no_mangle-pub-extern-fn-rsk_tz_usb_impl-operation", "unsafe:firmware/src/trustzone/usb.rs#extern:fn-rsk_tz_usb_impl-operation-u32-argument-u32", "unsafe:firmware/src/trustzone/usb.rs#block:core-slice-from_raw_parts-buffer-cast_const-length", "unsafe:firmware/src/trustzone/usb.rs#block:core-slice-from_raw_parts_mut-buffer-count"]
 
@@ -1604,9 +1614,18 @@ covers = ["unsafe:firmware/src/trustzone/usb/control.rs#block:executor-on_interr
 id = "PLAT-TZ-003"
 class = "toolchain"
 statement = "The GCC CMSE veneers validate complete bounded NS RAM spans before the Rust worker implementation converts them to slices. No NS pointer is retained, and ticket and epoch checks precede output release."
-discharge = "Source contracts: firmware/src/worker.rs. Review gateway.c with the three Rust exports, including zero-length cases, reply header bounds and serialization. Re-run rejected Secure, wrapping and cross-boundary pointer probes and lifecycle tests on the combined image."
+discharge = "READ on 2026-11-03. `firmware/src/trustzone/gateway.c`'s CMSE entries call `rsk_tz_readable_impl`/`rsk_tz_writable_impl` before the Rust body; `firmware/src/trustzone/mod.rs::data_span` requires the complete span in NS RAM, non-zero and without a wrapping add, and `TestTarget::check_range` confirms NS read or read/write. `firmware/src/worker.rs` copies an accepted request into Secure storage before returning and retains no pointer; `rsk_tz_poll_impl` checks header plus length against capacity, releases the ticket before returning and wipes the response when release reports a revoked ticket. The combined gateway-probe image completed: Secure RAM, NS code/MMIO, crossing/wrapping spans, zero capacity and malformed tags were refused, valid NS RAM and empty-input controls reached the worker, and getInfo followed. `tools/emu/image_assurance.py` basic passed on 2026-11-03."
 discharge_owner = "contributor"
-status = "pending"
+status = "discharged"
+evidence = [
+  "firmware/src/trustzone/gateway.c",
+  "firmware/src/trustzone/mod.rs",
+  "firmware/src/worker.rs",
+  "tools/emu/image_assurance.py",
+  "scripts/test_image_assurance.py",
+]
+revalidated_by = "A change to firmware/src/trustzone/gateway.c, firmware/src/trustzone/mod.rs or firmware/src/worker.rs; a new gateway selector, a changed span check or a changed reply-header bound."
+    evidence_commit = "af1f0cda99531aa08bc199714ed9526054b6867a"
 failure_direction = "memory-safety and confidentiality: a span bypass or stale reply ticket admits Secure memory or exports a revoked response"
 covers = ["unsafe:firmware/src/worker.rs#attr:no_mangle-pub-extern-fn-rsk_tz_submit_impl-tag", "unsafe:firmware/src/worker.rs#extern:fn-rsk_tz_submit_impl-tag-u32-cid-u32", "unsafe:firmware/src/worker.rs#block:core-slice-from_raw_parts-request-length", "unsafe:firmware/src/worker.rs#attr:no_mangle-pub-extern-fn-rsk_tz_poll_impl-ticket", "unsafe:firmware/src/worker.rs#extern:fn-rsk_tz_poll_impl-ticket-u32-response-mut", "unsafe:firmware/src/worker.rs#block:core-slice-from_raw_parts_mut-response-capacity", "unsafe:firmware/src/worker.rs#attr:no_mangle-pub-extern-fn-rsk_tz_control_impl-action"]
 
@@ -1614,9 +1633,19 @@ covers = ["unsafe:firmware/src/worker.rs#attr:no_mangle-pub-extern-fn-rsk_tz_sub
 id = "PLAT-TZ-004"
 class = "toolchain"
 statement = "The NS critical section runs only on core0 and restores its own saved PRIMASK; NS USB task ownership moves once to SWI_IRQ_1 and TIMER1 and SWI_IRQ_4 are enabled only after their NS handlers exist. SWI_IRQ_4 wakes only NS-local waiters for public progress. It shares no Secure lock implementation or mutable controller reference."
-discharge = "Source contracts: firmware/trustzone/nonsecure/src/main.rs, firmware/trustzone/nonsecure/src/time.rs, firmware/trustzone/nonsecure/src/notify.rs. Review the acquire/release pair and all NS task and interrupt starters; confirm the Secure startup routes only SWI_IRQ_1, SWI_IRQ_4 and TIMER1_IRQ_0 to NS. Confirm registration rechecks generation, a one-millisecond fallback remains, and worker publication follows the Secure stack sweep. Exercise reset and keepalive while Secure crypto owns its separate executor."
+discharge = "READ on 2026-11-03. `LocalCriticalSection` in `firmware/trustzone/nonsecure/src/main.rs` saves PRIMASK, disables NS interrupts and restores only that saved state; no NS source names core1. SWI_IRQ_1 is installed before `EXECUTOR.start` and owns the single USB task; `time.rs` enables TIMER1_IRQ_0 only after its handler is defined; `notify.rs` enables SWI_IRQ_4 only after its handler, and `wait` rechecks the generation with a 16 ms Timer fallback. `launch_nonsecure` writes ITNS for exactly SWI_IRQ_1, SWI_IRQ_4 and TIMER1_IRQ_0. The NS side shares no Secure lock or controller reference. Tests observed: `tests/96_trustzone_sessions.py` passed `fido_token_reset`, `card_reset`, `reset_window` and `interleaved_reads`; `mldsa_reset` and `rsa_generate_abort` passed; `tests/104_trustzone_late_reset.py` passed both arms. The RSA-sign abort/reset runs could not hit the window on this host (`RSA completed before the event barrier`), so that timing arm is left to the board/CI job; the fallback is 16 ms, correcting the old route text's 1 ms."
 discharge_owner = "contributor"
-status = "pending"
+status = "discharged"
+evidence = [
+  "firmware/trustzone/nonsecure/src/main.rs",
+  "firmware/trustzone/nonsecure/src/time.rs",
+  "firmware/trustzone/nonsecure/src/notify.rs",
+  "firmware/src/trustzone/mod.rs",
+  "tests/96_trustzone_sessions.py",
+  "tests/104_trustzone_late_reset.py",
+]
+revalidated_by = "A change to firmware/trustzone/nonsecure/src/main.rs, firmware/trustzone/nonsecure/src/time.rs, firmware/trustzone/nonsecure/src/notify.rs or the ITNS list in firmware/src/trustzone/mod.rs; a changed fallback, executor interrupt or NS task owner."
+    evidence_commit = "af1f0cda99531aa08bc199714ed9526054b6867a"
 failure_direction = "memory-safety and availability: an incorrect PRIMASK restore, mismatched executor interrupt or second USB task owner races NS state or wedges the transport"
 covers = ["unsafe:firmware/trustzone/nonsecure/src/main.rs#impl:critical_section-impl-for-localcriticalsection-fn-acquire", "unsafe:firmware/trustzone/nonsecure/src/main.rs#fn:acquire-bool-let-enabled-cortex_m-register", "unsafe:firmware/trustzone/nonsecure/src/main.rs#fn:release-enabled-bool-if-enabled-cortex_m", "unsafe:firmware/trustzone/nonsecure/src/main.rs#block:cortex_m-interrupt-enable", "unsafe:firmware/trustzone/nonsecure/src/main.rs#attr:no_mangle-extern-fn-swi_irq_1", "unsafe:firmware/trustzone/nonsecure/src/main.rs#block:executor-on_interrupt", "unsafe:firmware/trustzone/nonsecure/src/main.rs#impl:send-for-sendusb", "unsafe:firmware/trustzone/nonsecure/src/time.rs#attr:no_mangle-extern-fn-timer1_irq_0", "unsafe:firmware/trustzone/nonsecure/src/time.rs#block:embassy_rp-interrupt-timer1_irq_0-enable", "unsafe:firmware/trustzone/nonsecure/src/notify.rs#block:interrupt-swi_irq_4-enable", "unsafe:firmware/trustzone/nonsecure/src/notify.rs#attr:no_mangle-extern-fn-swi_irq_4"]
 
@@ -1624,9 +1653,20 @@ covers = ["unsafe:firmware/trustzone/nonsecure/src/main.rs#impl:critical_section
 id = "PLAT-TZ-005"
 class = "toolchain"
 statement = "NS gateway calls pass numeric selectors, tickets and bounded buffers; Secure validates every selector and span and retains no NS reference. Startup invalid-pointer probes are deliberate negative tests, not dereferences by NS."
-discharge = "Source contracts: firmware/trustzone/nonsecure/src/keyboard.rs, firmware/trustzone/nonsecure/src/main.rs, firmware/trustzone/nonsecure/src/session.rs, firmware/trustzone/nonsecure/src/usb.rs. Review each NS call against worker_abi and usb_abi and its Secure implementation. Exercise invalid span probes, callback omission, cancellation, reset and response-epoch rejection on the combined image; keep keyboard output gated by Secure authorization cleanup."
+discharge = "READ on 2026-11-03. The NS call sites in `firmware/trustzone/nonsecure/src/{main,session,usb,keyboard}.rs` pass numeric selectors, tickets and bounded buffers; `session::Pending` drops through ABANDON and the CCID handler accepts only slot 0 with an empty body. The Secure side rechecks every selector and span: `worker.rs` validates kind/tag/cid, copies the request, checks capacity against header plus length and rejects a revoked ticket; `usb.rs` checks the epoch before every operation and validates the output span. The startup invalid-pointer probes are the `test-gateway-probes` image, not dereferences by NS. The combined gateway-probe basic run refused Secure RAM, NS code/MMIO, crossing/wrapping and zero-capacity inputs, accepted valid NS RAM/empty controls, and `tests/96_trustzone_sessions.py` passed `fido_token_reset`, `card_reset`, `reset_window` and `interleaved_reads`; `tests/104_trustzone_late_reset.py` passed. Keyboard output is gated by `rsk_tz_control_impl`'s `is_revoked` check."
 discharge_owner = "contributor"
-status = "pending"
+status = "discharged"
+evidence = [
+  "firmware/trustzone/nonsecure/src/keyboard.rs",
+  "firmware/trustzone/nonsecure/src/main.rs",
+  "firmware/trustzone/nonsecure/src/session.rs",
+  "firmware/trustzone/nonsecure/src/usb.rs",
+  "firmware/src/worker.rs",
+  "firmware/src/trustzone/usb.rs",
+  "tools/emu/image_assurance.py",
+]
+revalidated_by = "A change to the NS gateway call sites or the Secure selector/span/ticket/epoch checks in firmware/src/worker.rs and firmware/src/trustzone/usb.rs; a new selector or a changed keyboard authorization gate."
+    evidence_commit = "af1f0cda99531aa08bc199714ed9526054b6867a"
 failure_direction = "memory-safety and confidentiality: a gateway contract mismatch or missing Secure validation leaks key-grade state or emits stale authorized output"
 covers = ["unsafe:firmware/trustzone/nonsecure/src/keyboard.rs#block:rsk_tz_control-abi-cancel_otp", "unsafe:firmware/trustzone/nonsecure/src/keyboard.rs#block:rsk_tz_control-abi-otp_pending", "unsafe:firmware/trustzone/nonsecure/src/keyboard.rs#block:rsk_tz_control-abi-keyboard_char", "unsafe:firmware/trustzone/nonsecure/src/main.rs#extern:fn-rsk_tz_submit-kind-u32-cid-u32", "unsafe:firmware/trustzone/nonsecure/src/main.rs#block:rsk_tz_submit-kind-cid-data-as_ptr-length", "unsafe:firmware/trustzone/nonsecure/src/main.rs#block:rsk_tz_poll-ticket-reply-as_mut_ptr-u32-try_from", "unsafe:firmware/trustzone/nonsecure/src/main.rs#block:assert_eq-rsk_tz_submit-abi-cbor-x2000_0000-as", "unsafe:firmware/trustzone/nonsecure/src/session.rs#block:super-rsk_tz_control-action-ticket", "unsafe:firmware/trustzone/nonsecure/src/usb.rs#extern:fn-rsk_tz_usb-operation-u32-epoch_or_ticket-u32", "unsafe:firmware/trustzone/nonsecure/src/usb.rs#block:rsk_tz_usb-operation-argument-core-ptr-null_mut", "unsafe:firmware/trustzone/nonsecure/src/usb.rs#block:rsk_tz_usb-operation-argument-buffer-as_mut_ptr-length"]
 
@@ -1634,9 +1674,19 @@ covers = ["unsafe:firmware/trustzone/nonsecure/src/keyboard.rs#block:rsk_tz_cont
 id = "PLAT-TZ-006"
 class = "toolchain"
 statement = "Secure startup configures each core MPU with validated non-overlapping ranges. Flash operations on core0 temporarily permit only the bounded Secure stack window needed by the pinned HAL boot2 path, mask NS interrupts and restore data-only permissions before unmasking."
-discharge = "Review the volatile-register offsets and both-core startup calls in firmware/src/trustzone/mpu.rs with firmware/src/core1.rs and firmware/src/trustzone/mod.rs. Run the host region tests and symbolic partition proof, then the real image flash/crypto matrix and hostile NS tests. Hardware cache and flash timing remain separate board obligations."
+discharge = "READ on 2026-11-03. `firmware/src/trustzone/mpu.rs` builds both cores' regions through `rsk_device::mpu_layout`: `RamCode::regions` partitions SRAM into data, RX code, data and the scratch RX range; `flash_stack_regions` splits around the 4 KiB boot2 stack window at 32-byte alignment. `with_flash_code` runs under `interrupt::free`, installs eight regions with the flash window RX only, and restores `secure()` from a `Drop` guard before the mask is lifted; `firmware/src/core1.rs` calls `secure()` before its work. Host tests: `cargo test --target aarch64-apple-darwin -p rsk-device mpu_layout` = 6 passed. Kani: `flash_permissions_partition_ram_without_overlapping_immutable_code` = 1 verified, 2 covers satisfied. Image: basic, stack, the hostile USBCTRL/DMA rows and the full operations crypto/flash matrix passed on 2026-11-03. Hardware cache and flash timing remain separate board obligations."
 discharge_owner = "contributor"
-status = "pending"
+status = "discharged"
+evidence = [
+  "firmware/src/trustzone/mpu.rs",
+  "firmware/src/trustzone/mod.rs",
+  "firmware/src/core1.rs",
+  "crates/rsk-device/src/mpu_layout.rs",
+  "crates/rsk-device/src/mpu_layout_kani.rs",
+  "crates/rsk-device/src/mpu_layout_tests.rs",
+]
+revalidated_by = "A change to firmware/src/trustzone/mpu.rs, firmware/src/trustzone/mod.rs, firmware/src/core1.rs or crates/rsk-device/src/mpu_layout.rs; a changed RAM partition, flash-stack window or boot2 region plan."
+evidence_commit = "af1f0cda99531aa08bc199714ed9526054b6867a"
 failure_direction = "memory-safety and isolation: an incorrect register range, retained executable stack window or ineffective denial test can hide access to protected state"
 covers = ["unsafe:firmware/src/trustzone/mpu.rs#extern:static-__rsk_exec_start-u8-static-__rsk_exec_end-u8", "unsafe:firmware/src/trustzone/mpu.rs#block:let-register-base-as-mut-u32"]
 
