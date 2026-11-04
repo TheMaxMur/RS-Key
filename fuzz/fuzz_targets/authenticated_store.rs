@@ -15,6 +15,9 @@ use rsk_store::authenticated::{Authenticated, KeySource, RootArm, RootRead};
 use sequential_storage::cache::{Cache, Uncached};
 use sequential_storage::mock_flash::{MockFlashBase, MockFlashError, Operation, WriteCountCheck};
 
+#[path = "authenticated_store_v2.rs"]
+mod v2;
+
 const MAIN: core::ops::Range<u32> = 0..8 * 4096;
 const COUNTER: core::ops::Range<u32> = MAIN.end..40 * 4096;
 const OWNER: u16 = 0xB000;
@@ -161,6 +164,10 @@ fn bound_cuts(medium: &Medium, mut store: Store, data: &[u8]) {
 }
 
 pub fn run(data: &[u8]) {
+    if data.starts_with(v2::MAGIC) {
+        v2::run(data);
+        return;
+    }
     // MultiwriteNorFlash permits repeated programs that only clear bits. v2's
     // recovery rewrites a torn item header a third time; `Twice` refused it and
     // turned a recoverable second cut into a permanent MemoryFatal.

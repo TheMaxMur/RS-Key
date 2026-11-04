@@ -49,6 +49,32 @@ def assertion_sequences():
         yield "fido_session", f"rs-key-assertion-capacity-{capacity}", data
 
 
+def fido_token_sequences():
+    """The `TOK1` spend/revocation route in `fido_session_token.rs`.
+
+    Byte 0 is the variant, byte 1 the PIN protocol (0 = 2, 1 = 1), byte 2 extra
+    permissions and byte 3 the rpId binding. The target performs a real
+    clientPIN handshake and checks the spend, expiry, RP and revocation
+    transitions against its own model; no status word is taken as proof.
+    """
+    seeds = (
+        ("spend-mc", b"\x00\x00\x00\x00"),
+        ("spend-mc-proto1-bound", b"\x00\x01\x00\x01"),
+        ("residual-lbw", b"\x01\x00\x00\x01"),
+        ("rp-refusal", b"\x02\x00\x00\x01"),
+        ("inactivity-expiry", b"\x03\x00\x00\x00"),
+        ("inactivity-mutated-rp", b"\x03\xff\x02\x01"),
+        ("absolute-expiry", b"\x04\x00\x00\x00"),
+        ("reset-revocation", b"\x05\x01\x00\x00"),
+        ("wrong-pin-revocation", b"\x06\x00\x00\x00"),
+        ("reissue-proto1", b"\x07\x01\x00\x00"),
+        ("reissue-proto2", b"\x07\x00\x00\x00"),
+        ("spend-extra-perms", b"\x00\x00\x24\x00"),
+    )
+    for label, body in seeds:
+        yield "fido_session", f"rs-key-fido-token-{label}", b"TOK1" + body
+
+
 def backup_sequences():
     ordinary = (0, 64, 256, 700, 65535)
     erase = (0, 116, 256, 2047, 4211, 4212, 4716, 65535)
@@ -92,8 +118,9 @@ def oath_mark_sequences():
 
 # `cross_applet`'s opcode table (fuzz/fuzz_targets/cross_applet.rs): applet
 # indices 0-7 in registration order, then F0 management, F1 reset-card, F2
-# reset-chaining, F3 refresh-caps, F4 factory-wipe, F5 OTP-HID and F6 SET_CAPS
-# hi lo. The capability-gated applets and their bits are `rsk_devconf`'s.
+# reset-chaining, F3 refresh-caps, F4 factory-wipe, F5 OTP-HID, F6 SET_CAPS
+# hi lo and F7 the scripted OATH code route. The capability-gated applets and
+# their bits are `rsk_devconf`'s.
 CROSS_APPLET_GATED = (
     (1, "openpgp", 0x0008),  # CAP_OPENPGP
     (3, "oath", 0x0020),     # CAP_OATH
@@ -277,6 +304,31 @@ def authenticated_store_sequences():
     for label, flags, op, rec, fill, warm in seeds:
         yield ("authenticated_store", f"rs-key-authenticated-store-{label}",
                _le16(op) + _le16(rec) + bytes([flags, fill, warm]))
+    # The stateful v2 histories in `authenticated_store_v2.rs`; the magic routes
+    # them away from the original write/remove contract above.
+    histories = (
+        ("legacy-boot", b"\x00"),
+        ("legacy-administer", b"\x01"),
+        ("rescue-import", b"\x02"),
+        ("rescue-initv2", b"\x03"),
+        ("manifest-cut-recover", b"\x04"),
+        ("manifest-corrupt", b"\x05"),
+        ("activation-witness", b"\x06"),
+        ("root-rekey", b"\x07"),
+        ("rekey-two-faults", b"\x08\x00\x00"),
+        ("rekey-two-faults-long", b"\x08\x00\xff"),
+        ("compaction-cold", b"\x09"),
+        ("capacity", b"\x0a"),
+        ("silent-write-readback", b"\x0b"),
+        ("torn-write", b"\x0c"),
+        ("read-write-erase", b"\x0d"),
+        ("command-recovery-cut", b"\x0e"),
+        ("corrupt-during-rekey", b"\x0f\x00"),
+        ("corrupt-during-compaction", b"\x0f\x01"),
+    )
+    for label, history in histories:
+        yield ("authenticated_store", f"rs-key-authenticated-store-v2-{label}",
+               b"V2H1" + history)
 
 
 def cross_applet_privileged_sequences():
@@ -308,6 +360,39 @@ def cross_applet_privileged_sequences():
     yield ("cross_applet", "rs-key-cross-applet-oath-put-calculate-delete",
            bytes([3]) + b"".join(frame(command)
                                  for command in (put, calculate, delete, calculate)))
+
+
+def cross_applet_oath_code_sequences():
+    """The OATH access-code challenge-response, scripted by the 0xF7 route.
+
+    `0xF7 alg secret_len fill challenge[8] variants` makes the target build real
+    SET CODE / VALIDATE APDUs, read the applet's challenge from SELECT and
+    compute the HMACs at run time; no proof is precomputed here. One seed per
+    transition keeps the variant bits independent.
+    """
+    def script(alg, secret_len, fill, challenge, variants):
+        return bytes([0xF7, alg, secret_len, fill]) + challenge + bytes([variants])
+
+    yield ("cross_applet", "rs-key-cross-applet-oath-code-sha1",
+           script(1, 14, 0xA5, bytes(range(1, 9)), 0x01))
+    yield ("cross_applet", "rs-key-cross-applet-oath-code-sha256",
+           script(2, 32, 0x5A, bytes(range(9, 1, -1)), 0x01))
+    yield ("cross_applet", "rs-key-cross-applet-oath-code-sha512",
+           script(3, 64, 0x3C, bytes([0x11]) * 8, 0x01))
+    yield ("cross_applet", "rs-key-cross-applet-oath-code-wrong-set",
+           script(1, 14, 0xA5, bytes([0x22]) * 8, 0x02))
+    yield ("cross_applet", "rs-key-cross-applet-oath-code-wrong-validate",
+           script(3, 20, 0x77, bytes([0x33]) * 8, 0x04))
+    yield ("cross_applet", "rs-key-cross-applet-oath-code-stale",
+           script(1, 16, 0x44, bytes([0x44]) * 8, 0x08))
+    yield ("cross_applet", "rs-key-cross-applet-oath-code-malformed",
+           script(2, 14, 0x99, bytes([0x55]) * 8, 0x10))
+    yield ("cross_applet", "rs-key-cross-applet-oath-code-replace",
+           script(1, 14, 0xA5, bytes([0x66]) * 8, 0x20))
+    yield ("cross_applet", "rs-key-cross-applet-oath-code-remove",
+           script(1, 14, 0xA5, bytes([0x77]) * 8, 0x40))
+    yield ("cross_applet", "rs-key-cross-applet-oath-code-reset",
+           script(2, 32, 0x5A, bytes([0x88]) * 8, 0x80))
 
 
 def records():
@@ -352,12 +437,14 @@ def records():
             elif group in APPLETS and 0 < len(data) < 255:
                 yield APPLETS[group], label, bytes([len(data)]) + data
     yield from assertion_sequences()
+    yield from fido_token_sequences()
     yield from backup_sequences()
     yield from journal_sequences()
     yield from openpgp_cut_sequences()
     yield from oath_mark_sequences()
     yield from cross_applet_sequences()
     yield from cross_applet_privileged_sequences()
+    yield from cross_applet_oath_code_sequences()
     yield from fs_ops_sequences()
     yield from credential_cut_sequences()
     yield from config_cut_sequences()

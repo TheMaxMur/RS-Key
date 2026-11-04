@@ -526,13 +526,24 @@ multi-step):
   OATH / OTP / PIV set over a single shared `Fs`: SELECT switches, command
   chaining and the file system persist across APDUs. State leaking between
   applets, a SELECT mid-chain, FID collisions. (GENERATE is skipped, as on
-  device the RSA prime search is fast-pathed off the dispatcher.)
+  device the RSA prime search is fast-pathed off the dispatcher.) Its `0xF7`
+  route installs and validates a real OATH access code, computes the HMACs
+  independently and checks every protected reply against the host model.
 - `fido_session` replays a CTAPHID_CBOR message sequence against one
   `FidoState` + `Fs` with an all-permissions token armed and a resident
   credential provisioned. PIN/token state, the credential store, large blobs
-  and the journal persist across commands. `now_ms` advances over the
-  token-timeout edges. A mid-sequence reset wipes the store under the
-  session's feet. getInfo must still succeed after anything.
+  and the journal persist across commands.
+  `now_ms` advances over the token-timeout edges. A mid-sequence reset wipes
+  the store under the session's feet. getInfo must still succeed after
+  anything. Its `TOK1` route issues a real clientPIN token and checks the
+  spend, permission, rpId, expiry and revocation transitions from an
+  independent model rather than from `FidoState.paut`.
+- `authenticated_store` drives the real v2 `Managed` / `Fs` / `RescueApplet`
+  paths over `MockFlashBase`: legacy import, `INITV2`/`IMPORTV2`, manifest and
+  activation witnesses, PreOtp→OTP rekey, `close_pre_otp`, compaction and cold
+  mount, capacity exhaustion, and correlated read/program/erase, silent, torn
+  and second-cut histories. Acknowledged values and the witness are held
+  independently of the backend.
 - `fs_ops` drives put / read / delete / meta ops / reboot
   (`into_storage`→`scan`) over one image against a `HashMap` shadow model:
   every read checks the full-length-returned / copy-clamped contract (the
@@ -557,26 +568,21 @@ multi-step):
   checks `ResetNeverWeakensSurvivingState` after boot-time seed provisioning,
   then mounts a second time to cross the reboot boundary again.
 
-`cross_applet` and `fs_ops` are the two stateful targets that had no local seed
-generator; since 2026-10-14 `scripts/external_corpus.py` also emits 11
-`cross_applet` capability-gate seeds and 6 `fs_ops` sequence seeds. The
-`cross_applet` set drives the target's own opcodes — `SET_CAPS`, `refresh`,
-`reset_card`, `factory_wipe` — to prepare the cached mask, then replays both
-directions of its SELECT oracle for every gated applet (disable →
-`FILE_NOT_FOUND`, restore → served) and the device-wide wipe that must shed
-`EF_DEV_CONF`; the `fs_ops` set builds non-empty state (put, `meta_add`) before
-the clamped read, delete, the exact `META_MAX` NoMemory boundary and the reboot
-(`into_storage`→`scan`) are exercised against its `HashMap` model. Both
-directories replay under `-runs=0` and a seeded 60-second run with no oracle
-firing. The same 11 and 6 seeds are re-encoded by hand in
-`fuzz/tests/fixtures/{cross_applet,fs_ops}.rs` and replayed through the shipped
-targets by `miri_cross_applet_seeds` / `miri_fs_ops_seeds` — the two target
-bodies moved to `pub(crate) fn exercise`, exactly as `fido_session`'s already
-was, with no assertion changed — so the refused/served SELECT pair, the factory
-wipe, the clamped read, the `META_MAX` NoMemory boundary and the reboot are
-checked under the Miri UB interpreter on the default build too; the roster rises
-to 73 tests. The 63.20% union is still not remeasured: it comes from a long
-retained campaign, not this bounded replay.
+`cross_applet` and `fs_ops` had no local seed generator until 2026-10-14;
+`scripts/external_corpus.py` now emits the capability-gate and record-lifecycle
+`cross_applet` seeds (22), the six `fs_ops` sequences, 19 `fido_session` seeds
+(12 of them `TOK1`) and 28 `authenticated_store` seeds (18 `V2H1`). The `cross_applet` set drives the
+target's own opcodes — `SET_CAPS`, `refresh`, `reset_card`, `factory_wipe`, the
+OATH lifecycle and the `0xF7` access-code route — and the `fs_ops` set builds
+non-empty state before the clamped read, delete, `META_MAX` boundary and reboot.
+The token and v2 sets are described above. Every directory replays under
+`-runs=0`; the same literals are re-encoded in `fuzz/tests/fixtures/` and
+replayed through the shipped targets by the Miri seed tests, so the refused/
+served SELECT pair, the factory wipe, the clamped read, the `META_MAX` NoMemory
+boundary, the reboot, the OATH HMAC transitions and the token spend/revocation
+transitions are checked under the Miri UB interpreter where the cost permits.
+The `authenticated_store` v2 test stays native-only because `initialize_blank`
+costs about 54 minutes per seed under Miri; that limitation is unchanged.
 
 ```sh
 nix develop .#fuzz -c cargo fuzz list
@@ -645,6 +651,15 @@ per second, with +1 169 / +3 758 / +1 073 / +427 new corpus units and peak RSS
 5 179 / 8 385 / 4 153 / 7 186 files (local, gitignored); the log is
 `target/fuzz-retained.log`. It is a bounded run, not the open-ended retained
 campaign the phase still lists.
+
+The 2026-11-04 slice ran two independent one-hour campaigns per affected target
+(`fido_session`, `cross_applet`, `authenticated_store`): one over the
+accumulated corpus and one from the freshly generated deterministic seeds, under
+two different libFuzzer seeds. Exact execution counts, coverage, corpus growth,
+peak RSS, binary/source hashes and the negative controls are retained in
+`target/fuzz-completion-20261104/`. A `flavours` seed replay and shorter live
+runs record the other build profile; they are not folded into the default
+campaign counts.
 
 Coverage says which *lines* a corpus reached. `scripts/fuzz-dimensions.py` says
 which **inputs** it explored, for `power_cut`: how much of the storage was

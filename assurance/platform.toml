@@ -295,7 +295,7 @@ supports = ["SEC-FIDO-002"]
 [[assumption]]
 id = "PLAT-TOOL-006"
 class = "tool-fidelity"
-statement = "The `fuzz` axis counts a FILE that names the invariant, not a run of it. `fuzz/fuzz_targets/fido_session.rs:1440` asserts ONE clause — `getPinToken` re-issuing the standing token — and `assurance_gate.derive` reads the axis with `grep_word` over `fuzz/fuzz_targets/*.rs`, so `fuzz = 1` is one file mentioning the name and says nothing about coverage, corpus or execution count."
+statement = "The `fuzz` axis counts a FILE that names the invariant, not a run of it. `fuzz/fuzz_targets/fido_session.rs:1486` asserts ONE clause — `getPinToken` re-issuing the standing token — and `assurance_gate.derive` reads the axis with `grep_word` over `fuzz/fuzz_targets/*.rs`, so `fuzz = 1` is one file mentioning the name and says nothing about coverage, corpus or execution count."
 discharge = "A recorded `cargo fuzz run fido_session` with its execution count and corpus size, filed the way `docs/testing.md` files the other targets. The weekly `deep-checks` matrix runs the target; no verdict for it is recorded in this tree."
 discharge_owner = "contributor"
 status = "pending"

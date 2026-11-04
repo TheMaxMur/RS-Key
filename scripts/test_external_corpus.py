@@ -139,6 +139,7 @@ def test_check_sh_replays_through_the_existing_fuzz_row():
 def test_cross_applet_sequences_keep_both_gate_directions_and_the_wipe():
     seeds = {(target, name): data for target, name, data in corpus.records()
              if name.startswith("rs-key-cross-applet-")
+             and "-oath-code-" not in name
              and name != "rs-key-cross-applet-oath-put-calculate-delete"}
     assert {target for target, _ in seeds} == {"cross_applet"}
     assert len(seeds) == 11
@@ -210,7 +211,8 @@ def test_power_cut_negative_space_seeds_keep_their_budgets_and_modes():
 
 def test_authenticated_store_seeds_cover_both_banks_and_recovery():
     seeds = {(target, name): data for target, name, data in corpus.records()
-             if name.startswith("rs-key-authenticated-store-")}
+             if name.startswith("rs-key-authenticated-store-")
+             and "-v2-" not in name}
     assert {target for target, _ in seeds} == {"authenticated_store"}
     assert len(seeds) == 10
     # Little-endian budgets: 0xFFFF is no cut, 64 is the command budget.
@@ -239,3 +241,31 @@ def test_cross_applet_oath_lifecycle_keeps_its_acknowledged_state():
     # DELETE frame (0x0B bytes) and the final CALCULATE frame (0x15 bytes).
     assert data[61:65] == bytes([0x08, 0x0B, 0x00, 0x02])
     assert data[74:78] == bytes([0x08, 0x15, 0x00, 0xA2])
+
+
+def test_cross_applet_oath_code_seeds_drive_the_hmac_route():
+    seeds = {(target, name): data for target, name, data in corpus.records()
+             if name.startswith("rs-key-cross-applet-oath-code-")}
+    assert {target for target, _ in seeds} == {"cross_applet"}
+    assert len(seeds) == 10
+    # The scripted route is the 0xF7 opcode; the next byte is the algorithm.
+    assert {data[0] for data in seeds.values()} == {0xF7}
+    assert {data[1] for data in seeds.values()} == {1, 2, 3}
+    assert seeds["cross_applet", "rs-key-cross-applet-oath-code-sha1"] == bytes.fromhex(
+        "f7010ea5010203040506070801")
+
+
+def test_authenticated_store_v2_seeds_cover_import_activation_rekey_and_compaction():
+    seeds = {(target, name): data for target, name, data in corpus.records()
+             if name.startswith("rs-key-authenticated-store-v2-")}
+    assert {target for target, _ in seeds} == {"authenticated_store"}
+    assert len(seeds) == 18
+    assert all(data.startswith(b"V2H1") for data in seeds.values())
+    assert {name.removeprefix("rs-key-authenticated-store-v2-") for _, name in seeds} == {
+        "legacy-boot", "legacy-administer", "rescue-import", "rescue-initv2",
+        "manifest-cut-recover", "manifest-corrupt", "activation-witness",
+        "root-rekey", "rekey-two-faults", "rekey-two-faults-long",
+        "compaction-cold", "capacity", "silent-write-readback", "torn-write",
+        "read-write-erase", "command-recovery-cut", "corrupt-during-rekey",
+        "corrupt-during-compaction",
+    }

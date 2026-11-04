@@ -1481,6 +1481,17 @@ fn miri_fido_session() {
     for index in 0..7 {
         fido_session::exercise(&fido_session_seeds::assertion_capacity(index));
     }
+    // Three transitions cover the ECDH handshake, the spend, the expiry
+    // boundary and a revocation. The remaining seeds are native replay: the
+    // full set costs roughly an hour under the interpreter.
+    let _full_roster = fido_session_seeds::TOKEN_SEEDS;
+    for seed in [
+        fido_session_seeds::TOKEN_SPEND_MC,
+        fido_session_seeds::TOKEN_INACTIVITY_EXPIRY,
+        fido_session_seeds::TOKEN_RESET_REVOCATION,
+    ] {
+        fido_session::exercise(seed);
+    }
 }
 
 // =========================================================================

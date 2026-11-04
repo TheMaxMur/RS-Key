@@ -77,6 +77,12 @@ use rsk_fido::{Ctx, FidoState, Rng, process_cbor};
 use rsk_fs::Fs;
 use rsk_fs::storage::ram::RamStorage;
 
+// A distinct input route ("TOK1" magic) for the stateful spend/revocation
+// oracle. Every other input keeps the arm/generator semantics below byte for
+// byte; the magic is checked before `split_first`.
+#[path = "fido_session_token.rs"]
+mod token;
+
 type Enc<'a> = Encoder<Cursor<&'a mut [u8]>>;
 type EncRes = Result<(), EncError<EndOfSlice>>;
 
@@ -899,9 +905,17 @@ fn host_key() -> &'static ([u8; 32], [u8; 32]) {
     K.get_or_init(|| pinproto::public_xy(&HOST_SCALAR).expect("a fixed in-range scalar"))
 }
 
+/// The wire value of a clientPIN protocol.
+fn proto_num(proto: PinProto) -> u64 {
+    match proto {
+        PinProto::One => 1,
+        PinProto::Two => 2,
+    }
+}
+
 /// The optional halves of a clientPIN request, in the ascending key order `parse`
-/// enforces: keyAgreement (3), pinUvAuthParam (4), newPinEnc (5), pinHashEnc (6)
-/// and permissions (9). An empty slice or a zero means the key is absent.
+/// enforces: keyAgreement (3), pinUvAuthParam (4), newPinEnc (5), pinHashEnc (6),
+/// permissions (9) and rpId (10). An empty slice or a zero means the key is absent.
 #[derive(Default)]
 struct CpReq<'a> {
     key_agreement: bool,
@@ -909,6 +923,7 @@ struct CpReq<'a> {
     new_pin_enc: &'a [u8],
     pin_hash_enc: &'a [u8],
     permissions: u64,
+    rp_id: Option<&'a str>,
 }
 
 fn cp_body(enc: &mut Enc<'_>, proto: u64, sub: u64, r: &CpReq<'_>) -> EncRes {
@@ -917,7 +932,8 @@ fn cp_body(enc: &mut Enc<'_>, proto: u64, sub: u64, r: &CpReq<'_>) -> EncRes {
         + u64::from(!r.param.is_empty())
         + u64::from(!r.new_pin_enc.is_empty())
         + u64::from(!r.pin_hash_enc.is_empty())
-        + u64::from(r.permissions != 0);
+        + u64::from(r.permissions != 0)
+        + u64::from(r.rp_id.is_some());
     enc.map(fields)?;
     enc.u8(1)?.u64(proto)?.u8(2)?.u64(sub)?;
     if r.key_agreement {
@@ -936,6 +952,9 @@ fn cp_body(enc: &mut Enc<'_>, proto: u64, sub: u64, r: &CpReq<'_>) -> EncRes {
     }
     if r.permissions != 0 {
         enc.u8(9)?.u64(r.permissions)?;
+    }
+    if let Some(rp) = r.rp_id {
+        enc.u8(10)?.str(rp)?;
     }
     Ok(())
 }
@@ -1346,48 +1365,45 @@ impl Sess {
         self.state.begin_using_token(false, self.now_ms);
     }
 
-    /// The clientPIN handshake a platform really runs: getKeyAgreement, ECDH
-    /// against a fixed host scalar, setPIN, then a permissions token, which the
-    /// generated requests then MAC with. It sets `EF_PIN` — the branch every
-    /// PIN-set leg of makeCredential and getAssertion hangs off, and one no
-    /// mutator can reach, since setPIN wants a MAC over an ECDH nobody can guess.
-    fn pin_handshake(&mut self, proto: PinProto) {
-        let p = match proto {
-            PinProto::One => 1,
-            PinProto::Two => 2,
-        };
+    /// getKeyAgreement plus the ECDH against the fixed host scalar. A fresh call
+    /// per issuance also survives the ephemeral regeneration a PIN mismatch does.
+    fn open_shared(&mut self, proto: PinProto) -> Option<[u8; 64]> {
         let mut msg = [0u8; 256];
-
-        let n = cp_msg(&mut msg, p, CP_GET_KEY_AGREEMENT, &CpReq::default());
+        let n = cp_msg(
+            &mut msg,
+            proto_num(proto),
+            CP_GET_KEY_AGREEMENT,
+            &CpReq::default(),
+        );
         let w = self.step(&msg[..n]);
         if self.out[0] != rsk_fido::CTAP2_OK {
-            return;
+            return None;
         }
-        let Some((dx, dy)) = key_agreement_xy(&self.out[1..w]) else {
-            return;
-        };
+        let (dx, dy) = key_agreement_xy(&self.out[1..w])?;
         let mut shared = [0u8; 64];
-        let Ok(slen) = pinproto::ecdh(proto, &HOST_SCALAR, &dx, &dy, &mut shared) else {
-            return;
-        };
-        let secret = &shared[..slen];
-        let iv = [0x5Cu8; pinproto::IV_SIZE];
+        let slen = pinproto::ecdh(proto, &HOST_SCALAR, &dx, &dy, &mut shared).ok()?;
+        assert_eq!(slen, proto.shared_len(), "ECDH shared-secret length");
+        Some(shared)
+    }
 
-        // setPIN: the padded PIN encrypted under the shared secret, MAC'd with it.
+    /// setPIN: the padded PIN encrypted under `secret` and MAC'd with it.
+    fn set_pin_with(&mut self, proto: PinProto, secret: &[u8]) -> bool {
+        let iv = [0x5Cu8; pinproto::IV_SIZE];
         let mut padded = [0u8; 64];
         padded[..PIN.len()].copy_from_slice(PIN);
         let mut new_pin_enc = [0u8; 64 + pinproto::IV_SIZE];
         let Ok(enc_len) = pinproto::encrypt(proto, secret, &iv, &padded, &mut new_pin_enc) else {
-            return;
+            return false;
         };
         let mut mac = [0u8; 32];
         let Ok(mac_len) = pinproto::authenticate(proto, secret, &new_pin_enc[..enc_len], &mut mac)
         else {
-            return;
+            return false;
         };
+        let mut msg = [0u8; 256];
         let n = cp_msg(
             &mut msg,
-            p,
+            proto_num(proto),
             CP_SET_PIN,
             &CpReq {
                 key_agreement: true,
@@ -1397,25 +1413,55 @@ impl Sess {
             },
         );
         self.step(&msg[..n]);
+        self.out[0] == rsk_fido::CTAP2_OK
+    }
 
-        // …then a token: left16(SHA-256(PIN)) under the same secret.
+    /// getPinUvAuthTokenUsingPinWithPermissions over an already-derived `secret`,
+    /// for exactly `permissions` and the optional rpId binding. Returns the token
+    /// the device sealed back, so the caller can MAC with what it really issued.
+    fn issue_with(
+        &mut self,
+        proto: PinProto,
+        secret: &[u8],
+        permissions: u64,
+        rp_id: Option<&str>,
+    ) -> Option<[u8; 32]> {
+        let iv = [0x5Cu8; pinproto::IV_SIZE];
         let mut pin_hash_enc = [0u8; 16 + pinproto::IV_SIZE];
         let Ok(hash_len) =
             pinproto::encrypt(proto, secret, &iv, &sha256(PIN)[..16], &mut pin_hash_enc)
         else {
-            return;
+            return None;
         };
+        let mut msg = [0u8; 256];
         let n = cp_msg(
             &mut msg,
-            p,
+            proto_num(proto),
             CP_GET_PIN_UV_TOKEN_USING_PIN,
             &CpReq {
                 key_agreement: true,
                 pin_hash_enc: &pin_hash_enc[..hash_len],
-                permissions: HANDSHAKE_PERMS,
+                permissions,
+                rp_id,
                 ..CpReq::default()
             },
         );
+        self.issued_token(&msg[..n], proto, secret)
+    }
+
+    /// The clientPIN handshake a platform really runs: getKeyAgreement, ECDH
+    /// against a fixed host scalar, setPIN, then a permissions token, which the
+    /// generated requests then MAC with. It sets `EF_PIN` — the branch every
+    /// PIN-set leg of makeCredential and getAssertion hangs off, and one no
+    /// mutator can reach, since setPIN wants a MAC over an ECDH nobody can guess.
+    fn pin_handshake(&mut self, proto: PinProto) {
+        let Some(shared) = self.open_shared(proto) else {
+            return;
+        };
+        let secret = &shared[..proto.shared_len()];
+        if !self.set_pin_with(proto, secret) {
+            return;
+        }
         // §6.5.5.7 mints a fresh token per issuance (`reset_pin_uv_auth_token`), so
         // the *same* request twice must not answer with the same token — that is the
         // linkability the random IV on the ciphertext exists to prevent, one layer
@@ -1429,10 +1475,10 @@ impl Sess {
         // `NoTokenAfterInvalidation` -> `reset_pin_uv_auth_token` (state.rs:607-622,
         // the owner `formal/README.md` names first) -> here. A re-issued token is a
         // grant the mint invalidated going on authorizing.
-        let Some(first) = self.issued_token(&msg[..n], proto, secret) else {
+        let Some(first) = self.issue_with(proto, secret, HANDSHAKE_PERMS, None) else {
             return;
         };
-        let Some(second) = self.issued_token(&msg[..n], proto, secret) else {
+        let Some(second) = self.issue_with(proto, secret, HANDSHAKE_PERMS, None) else {
             return;
         };
         assert_ne!(
@@ -1574,6 +1620,12 @@ fn assertion_capacity(msg: &[u8], selector: u8) -> usize {
 }
 
 pub(crate) fn exercise(data: &[u8]) {
+    // The token scenario owns its own magic prefixed route so it cannot collide
+    // with any accumulated raw/generated corpus input.
+    if let Some(rest) = data.strip_prefix(token::MAGIC) {
+        token::exercise(rest);
+        return;
+    }
     let Some((&arm, rest)) = data.split_first() else {
         return;
     };

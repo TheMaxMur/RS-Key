@@ -119,9 +119,9 @@ The latest local completion boundary is:
 |---|---|---|
 | 1 | Calibrated condition measurements, source identity, raw maps and eighteen separate ARM Linux profiles | Native MC/DC is unsupported; the decision below selects scoped independence evidence followed by a compiler-based pilot, with implementation deferred; unemitted and device code need separate evidence |
 | 2 | The original 996-outcome/27-group review and the current eighteen-profile reachability audit, including authenticated storage v2 and direct host/test-util inputs; every measured residual has a finite scoped disposition | MC/DC implementation remains deferred by the decision below; raw residuals, primitive/cryptographic assumptions and excluded evidence scopes are recorded in the [current audit](coverage-current.md) |
-| 3 | Persistent write histories plus the bounded read/erase/program, damaged-record, exhaustion, readback and silent-mutation matrix below, now including the selective `Silent` medium, its store read-back oracle, the correlated `Torn` medium (a torn write and the read that answers it), and the 2026-10-21 silent-write-with-refused-read-back and second-cut-during-recovery compositions; owner replay and selected NOR byte sweeps include interrupted recovery | Longer retained campaigns and semantic record-loss detection beyond the current CRC/legacy formats remain open, as do correlated-fault stories beyond the tested combinations; the bounded matrix does not close the whole phase |
+| 3 | Persistent write histories plus the bounded read/erase/program, damaged-record, exhaustion, readback and silent-mutation matrix below, now including the selective `Silent` medium, its store read-back oracle, the correlated `Torn` medium (a torn write and the read that answers it), and the 2026-10-21 silent-write-with-refused-read-back and second-cut-during-recovery compositions; the 2026-11-04 slice adds v2 import/rekey/compaction histories with correlated read/write/erase and cut compositions; owner replay and selected NOR byte sweeps include interrupted recovery | Longer retained campaigns and semantic record-loss detection beyond the current CRC/legacy formats remain open, as do correlated-fault stories beyond the tested combinations; the bounded matrix does not close the whole phase |
 | 4 | Semantic controls through host, fuzz, Miri and image runners; the 2026-10-11 critical slice below adds independent crypto boundaries and destructor observations; the 2026-10-12/14 whole-core shard closure below dispositions all 10 887 desired occurrences with no pending survivor | Device C/assembly mutation execution and resource/timing equivalence remain separate obligations |
-| 5 | Independent OATH positions, journal histories, 576 OpenPGP and 288 F9 command/state/fault inputs, plus the 11 cross_applet capability-gate and 6 fs_ops stateful seeds of the 2026-10-14 slice below, replayed through the shipped targets under Miri; the 2026-10-21 slice adds 53 `power_cut` seeds for the credential/config/PIV/reset drivers, 10 `authenticated_store` v2 seeds, and the `cross_applet` OATH record-lifecycle oracle with its 97-byte seed (replayed under Miri); `scripts/fuzz-union.py` makes the union reproducible and the 2026-10-15 campaigns remeasure it at 23062/36301 (63.53%, `default`) and 22699/36182 (62.74%, `flavours`) | Token spend/revocation in `fido_session`, the OATH SET CODE/VALIDATE HMAC flow, the v2 import/rekey/compaction paths, and longer retained campaigns |
+| 5 | Independent OATH positions, journal histories, 576 OpenPGP and 288 F9 command/state/fault inputs, plus the 11 cross_applet capability-gate and 6 fs_ops stateful seeds of the 2026-10-14 slice below, replayed through the shipped targets under Miri; the 2026-10-21 slice adds 53 `power_cut` seeds for the credential/config/PIV/reset drivers, 10 `authenticated_store` v2 seeds, and the `cross_applet` OATH record-lifecycle oracle with its 97-byte seed (replayed under Miri); `scripts/fuzz-union.py` makes the union reproducible and the 2026-10-15 campaigns remeasure it at 23062/36301 (63.53%, `default`) and 22699/36182 (62.74%, `flavours`); the 2026-11-04 slice adds the `TOK1` token spend/revocation oracle, the OATH SET CODE/VALIDATE HMAC oracle, 18 v2 lifecycle/fault histories and two-hour campaigns per target | Other stateful targets and the open-ended retained campaign remain; the named token, OATH, v2 and two-hour campaign remainders are closed by the 2026-11-04 slice |
 | 6 | Eighteen current host-profile maps with finite source-bound residual reviews, including storage v2; fourteen ordinary release-flavour builds with thirteen image protocol passes; the 2026-10-15 host-tool slice adds argument, transport-failure and machine-readable-output contracts for tools/tui, tools/emu and the Python CLI, reported separately | Display-image execution and device interoperability |
 | 7 | Optimized partitioned images, real presence/CANCEL, resource controls and independently checked crypto | Unoptimized image failure, display execution and silicon-only measurements |
 | 8 | Local runner controls and source-bound reports | Actual CI execution and same-revision release evidence |
@@ -2787,13 +2787,104 @@ lists replay cleanly through the rebuilt target.
 
 These are bounded controls, not the retained campaigns: the 2026-10-21
 30-minute-per-target runs are retained separately under `target/` with their
-corpus counts and final stats. `fido_session`'s token spend/revocation and the
-OATH access-code flow (SET CODE / VALIDATE with its HMAC proof over the card
-challenge) still need their own seeded oracles; the v2 import/activation
-witness, `INITV2`/`IMPORTV2`, `close_pre_otp`, compaction and witness loss remain
-outside this slice, as do legacy semantic-loss limits and Miri replay of the new
-`authenticated_store` seeds (its `initialize_blank` cost is already documented
-in `miri.rs`).
+corpus counts and final stats. The 2026-11-04 section below adds the named
+`fido_session` token, OATH access-code and v2 lifecycle oracles, their
+deterministic seeds and two-hour retained campaigns. Legacy semantic-loss limits
+and Miri replay of the new `authenticated_store` seeds remain outside both
+slices (its `initialize_blank` cost is already documented in `miri.rs`).
+
+## Token spend, OATH HMAC and v2 lifecycle campaigns, 2026-11-04
+
+This slice implements the named Phase-5 remainders: FIDO pinUvAuthToken
+spend/revocation, OATH SET CODE/VALIDATE with a real HMAC, authenticated-storage
+v2 import/activation/rekey/compaction, and retained campaigns over those paths.
+It adds no production code and does not close the whole phase: other stateful
+targets, the open-ended retained campaign and MC/DC remain separate.
+
+**FIDO token.** `fido_session` now routes inputs prefixed `TOK1` to a stateful
+oracle in `fuzz/fuzz_targets/fido_session_token.rs`; every other input keeps the
+existing raw/generated arms unchanged. The route performs a real clientPIN
+handshake under protocols 1 and 2, decrypts the token the device issued, and
+models the requested permissions, rpId binding and timers from its own inputs
+and the replies. It never reads `FidoState.paut` for an expected result. Eleven
+named-transition seed literals in `fuzz/tests/fixtures/fido_session.rs` cover:
+makeCredential and getAssertion spend; the residual `largeBlobWrite` right; an
+rp-bound token refusing another rp without spending; the 29 999/30 000 ms
+inactivity boundary; the 600 000 ms absolute cap; `authenticatorReset`;
+wrong-PIN revocation; a permission-subset reissue; and extra `cm`/`acfg`
+permissions before the spend. A twelfth seed is the fuzzer-found
+`TOK1\x03\xff\x02\x01` regression: a scoped token cannot use the rp-less
+credentialManagement metadata refresh, so the inactivity probe must stay
+unscoped. After a ceremony the model expects exactly `0x33` for a second
+ceremony and the residual large-blob write to commit and read back.
+`miri_fido_session` runs the spend, inactivity and reset transitions under the
+interpreter; the other named seeds and the 12th regression are native replay,
+because the full set costs roughly an hour under Miri.
+
+**OATH access code.** `cross_applet` now has a `0xF7` scripted route that builds
+real SET CODE and VALIDATE APDUs through the shipped dispatcher, parses the
+challenge out of the actual SELECT reply, and computes every proof at run time.
+`cross_applet_oath.rs` carries an independent FIPS SHA-1 plus HMAC-SHA1/256/512
+(the SHA-256/512 arms are built directly on `sha2`); RFC 2202/4231 vectors and
+RFC 3174 SHA-1 vectors pin it. The existing acknowledged PUT/DELETE/RENAME/
+CALCULATE lifecycle and capability/factory-wipe checks are unchanged. Ten seeds
+cover the three algorithms, wrong SET and VALIDATE proofs, a stale challenge,
+malformed/truncated bodies, replacement, removal and the SELECT/card-reset
+boundary. A successful protected CALCULATE is checked against the independent
+RFC 4226 truncation, not just `9000`. The 22 `cross_applet` seeds replay through
+`miri_cross_applet_seeds` and the external corpus row.
+
+**Storage v2.** `authenticated_store` routes inputs prefixed `V2H1` to
+`fuzz/fuzz_targets/authenticated_store_v2.rs`; the existing write/remove and
+bound-counter contract is unchanged. The 18 histories drive the real `Managed`,
+`Fs` and `RescueApplet` entry points over `MockFlashBase<40,4,1024>` with
+`WriteCountCheck::Disabled` and real 1→0 program/erase semantics: legacy import
+through boot and `administer_storage`, rescue `INITV2`/`IMPORTV2`, a cut after
+the manifest and its recovery, manifest corruption, activation-witness repair,
+PreOtp→OTP rekey and `close_pre_otp`, two or three independent rekey write
+faults plus a recovery cut, compaction and cold mount, capacity exhaustion,
+silent write plus refused read-back, a torn write, refused read/write/erase, a
+command cut plus a second recovery cut, and corruption during rekey/compaction.
+The acknowledged owner, neighbour, all four counters and the canonical
+`RSKACT02|FORMAT|epoch` witness are held independently of the backend. Failed
+updates accept only a whole old or whole new value; a read error is not proof of
+rollback. Both arms of every composite history assert their own fire counter.
+Two review findings were fixed in the v2 harness before the retained campaigns:
+the torn arm asked for 16 bytes of an 8-byte item header and therefore
+programmed it whole, and an unreadable recovered owner was scored as "old". The
+arm now lands one 4-byte word and refuses a prefix that covers the whole program;
+the recovery oracle panics on an unreadable owner and requires two cold mounts
+to resolve the same value. The external-corpus gate tests now count the 10 OATH
+SCRIPT and 18 `V2H1` families instead of failing on them.
+
+The single-guard `Managed::boot` fallback removed in the first control is
+refused as `Blocked`, not taken as a silent downgrade; a destructive multi-gate
+downgrade is not claimed. Activation-witness loss is repaired from authenticated
+authority by contract, not refused. The capacity row reaches `MemoryFatal` before
+the 1,287-entry logical ceiling on the 32 KiB fuzz ring; it still checks the
+acknowledged survivors, removal, compaction and a later admission. These limits
+are recorded with the evidence, not hidden behind a pass.
+
+**Retained campaigns.** The final source and binary hashes are retained under
+`target/fuzz-completion-20261104/`. Each target ran two independent one-hour
+campaigns with different libFuzzer seeds: one over the accumulated corpus and
+one from the freshly generated deterministic seeds. The table records the
+observed executions, coverage, corpus growth and peak RSS.
+
+| Target | Run 1 | Run 2 |
+|---|---|---|
+| `fido_session` | one hour, accumulated corpus, seed 1 | one hour, fresh deterministic seeds, seed 2 |
+| `cross_applet` | one hour, accumulated corpus, seed 1 | one hour, fresh deterministic seeds, seed 2 |
+| `authenticated_store` | one hour, accumulated corpus, seed 1 | one hour, fresh deterministic seeds, seed 2 |
+
+Exact execution counts, coverage, corpus growth and peak RSS are retained in
+the artifact report; the tracked prose records the campaign design and scope.
+
+The campaign matrix (scenario, production entry point, seed, oracle, negative
+control and runner) is `target/fuzz-completion-20261104/matrix.md`; the controls'
+failing assertions and the source/binary hashes are beside it. The existing
+`scripts/check.sh` `fuzz targets alive` row builds every target and replays the
+generated corpus, so these seeds are executed by the gate and not merely stored.
 
 ## Host-tool workspaces, 2026-10-15
 

@@ -2,15 +2,17 @@
 // Copyright (C) 2026 RS-Key contributors
 
 //! Hand-encoded seed literals mirroring the `rs-key-cross-applet-*` records that
-//! `cross_applet_sequences()` in `scripts/external_corpus.py` generates. They are
-//! re-encoded here from that generator's source, not imported from Python, so the
-//! Miri replay drives the same refused/served/wipe paths the corpus feeds the
-//! target.
+//! `cross_applet_sequences()`, `cross_applet_privileged_sequences()` and
+//! `cross_applet_oath_code_sequences()` in `scripts/external_corpus.py` generate.
+//! They are re-encoded here from those generators' source, not imported from
+//! Python, so the Miri replay drives the same refused/served/wipe/HMAC paths the
+//! corpus feeds the target.
 //!
 //! The opcodes are `fuzz_targets/cross_applet.rs`'s: `0xF6 hi lo` writes the
 //! capability mask, `0xF3` re-reads it, `0xF1` is `reset_card`, `0xF4` the
-//! device-wide `factory_wipe`, and a `0x00`–`0x07` byte selects that applet by
-//! registration order. `0x023B` is `rsk_devconf::SUPPORTED_CAPS`.
+//! device-wide `factory_wipe`, `0xF7` the scripted OATH access-code route, and
+//! a `0x00`–`0x07` byte selects that applet by registration order. `0x023B` is
+//! `rsk_devconf::SUPPORTED_CAPS`.
 
 /// OpenPGP (index 1, cap `0x0008`) disabled: `SET_CAPS(0x023B & !0x0008)`, refresh,
 /// SELECT. The gate must answer `FILE_NOT_FOUND`.
@@ -66,8 +68,41 @@ const OATH_RECORD_LIFECYCLE: &[u8] = &[
     0x00,
 ];
 
-/// Every seed, in the order `cross_applet_sequences()` yields the gated pairs.
-pub(crate) const SEEDS: [&[u8]; 12] = [
+// `0xF7 alg secret_len fill challenge[8] variants`: the target builds and
+// submits the APDUs and computes every HMAC from the SELECT challenge.
+const OATH_CODE_SHA1: &[u8] = &[
+    0xF7, 0x01, 0x0E, 0xA5, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x01,
+];
+const OATH_CODE_SHA256: &[u8] = &[
+    0xF7, 0x02, 0x20, 0x5A, 0x09, 0x08, 0x07, 0x06, 0x05, 0x04, 0x03, 0x02, 0x01,
+];
+const OATH_CODE_SHA512: &[u8] = &[
+    0xF7, 0x03, 0x40, 0x3C, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x01,
+];
+const OATH_CODE_WRONG_SET: &[u8] = &[
+    0xF7, 0x01, 0x0E, 0xA5, 0x22, 0x22, 0x22, 0x22, 0x22, 0x22, 0x22, 0x22, 0x02,
+];
+const OATH_CODE_WRONG_VALIDATE: &[u8] = &[
+    0xF7, 0x03, 0x14, 0x77, 0x33, 0x33, 0x33, 0x33, 0x33, 0x33, 0x33, 0x33, 0x04,
+];
+const OATH_CODE_STALE: &[u8] = &[
+    0xF7, 0x01, 0x10, 0x44, 0x44, 0x44, 0x44, 0x44, 0x44, 0x44, 0x44, 0x44, 0x08,
+];
+const OATH_CODE_MALFORMED: &[u8] = &[
+    0xF7, 0x02, 0x0E, 0x99, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x10,
+];
+const OATH_CODE_REPLACE: &[u8] = &[
+    0xF7, 0x01, 0x0E, 0xA5, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x20,
+];
+const OATH_CODE_REMOVE: &[u8] = &[
+    0xF7, 0x01, 0x0E, 0xA5, 0x77, 0x77, 0x77, 0x77, 0x77, 0x77, 0x77, 0x77, 0x40,
+];
+const OATH_CODE_RESET: &[u8] = &[
+    0xF7, 0x02, 0x20, 0x5A, 0x88, 0x88, 0x88, 0x88, 0x88, 0x88, 0x88, 0x88, 0x80,
+];
+
+/// Every seed, in the order the cross-applet generators yield them.
+pub(crate) const SEEDS: [&[u8]; 22] = [
     OPENPGP_DISABLED,
     OPENPGP_REENABLED,
     OATH_DISABLED,
@@ -80,4 +115,14 @@ pub(crate) const SEEDS: [&[u8]; 12] = [
     FIDO_REENABLED,
     FACTORY_WIPE_RESTORES_CAPS,
     OATH_RECORD_LIFECYCLE,
+    OATH_CODE_SHA1,
+    OATH_CODE_SHA256,
+    OATH_CODE_SHA512,
+    OATH_CODE_WRONG_SET,
+    OATH_CODE_WRONG_VALIDATE,
+    OATH_CODE_STALE,
+    OATH_CODE_MALFORMED,
+    OATH_CODE_REPLACE,
+    OATH_CODE_REMOVE,
+    OATH_CODE_RESET,
 ];

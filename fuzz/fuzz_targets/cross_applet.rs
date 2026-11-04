@@ -35,6 +35,7 @@
 //! | `0xF4` | `Fs::factory_wipe` as the trusted display runs it — the device-wide reset |
 //! | `0xF5` | `handle_otp_hid(slot, payload)` — the keyboard interface |
 //! | `0xF6` | WRITE CONFIG `USB_ENABLED = be16(hi, lo)` — the capability mask |
+//! | `0xF7` | a scripted OATH SET CODE / VALIDATE route (algorithm, secret, challenge, variants); builds real APDUs and checks the HMACs |
 //! | anything else | a raw APDU, framed by `apdu_frame::next_frame`: one length byte then that many bytes, or `0xFF` for the extended-Lc escape |
 //!
 //! Beyond not panicking, the oracle is the set of rules this crate owns and no
@@ -64,7 +65,9 @@ mod apdu_frame;
 use apdu_frame::next_frame;
 
 mod cross_applet_oath;
+mod cross_applet_oath_script;
 use cross_applet_oath::OathOracle;
+use cross_applet_oath_script::oath_script;
 
 const SERIAL_ID: [u8; 8] = [0x12, 0x34, 0x56, 0x78, 1, 2, 3, 4];
 const SERIAL_HASH: [u8; 32] = [0x22; 32];
@@ -115,6 +118,7 @@ const OP_REFRESH: u8 = 0xF3;
 const OP_FACTORY_WIPE: u8 = 0xF4;
 const OP_OTP_HID: u8 = 0xF5;
 const OP_SET_CAPS: u8 = 0xF6;
+const OP_OATH_SCRIPT: u8 = 0xF7;
 
 /// The board underneath the wiring. Every [`Hooks`] method stays at its default,
 /// which is what a build with none of that hardware does — and `rsa_search`'s
@@ -379,6 +383,29 @@ pub(crate) fn exercise(data: &[u8]) {
                     &mut fs.borrow_mut(),
                     &blob[1..],
                 );
+            }
+            OP_OATH_SCRIPT => {
+                let alg = byte(data, &mut i);
+                let secret_len = byte(data, &mut i);
+                let fill = byte(data, &mut i);
+                let mut host_challenge = [0u8; 8];
+                for b in &mut host_challenge {
+                    *b = byte(data, &mut i);
+                }
+                let variants = byte(data, &mut i);
+                // A disabled OATH answers FILE_NOT_FOUND to SELECT, and a code a
+                // previous record installed is a secret this route cannot know.
+                if ccid.caps_enabled(rsk_devconf::CAP_OATH) && !oath.code_set() {
+                    oath_script(
+                        &mut ccid,
+                        &mut oath,
+                        alg,
+                        secret_len,
+                        fill,
+                        host_challenge,
+                        variants,
+                    );
+                }
             }
             // A raw APDU. The length is its own byte rather than the opcode's:
             // reserving `0x00`–`0x06` would otherwise make every 4-, 5- and

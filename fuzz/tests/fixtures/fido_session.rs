@@ -39,3 +39,74 @@ pub(crate) fn assertion_capacity(index: u8) -> Vec<u8> {
     }
     input
 }
+
+// The `TOK1` route: magic, then variant / protocol / extra permissions / rpId
+// binding. Each literal names the transition it drives in `fido_session_token.rs`.
+
+/// Variant 0, protocol 2, no rpId: makeCredential spends mc|lbw; a second
+/// makeCredential, a getAssertion, credentialManagement and authenticatorConfig
+/// are then refused 0x33, the residual largeBlobWrite still commits, and only an
+/// explicit reissue restores a usable getAssertion token.
+pub(crate) const TOKEN_SPEND_MC: &[u8] = b"TOK1\x00\x00\x00\x00";
+
+/// Variant 0, protocol 1, rpId-bound: the same spend under protocol 1 with an
+/// rpId binding on the token.
+pub(crate) const TOKEN_SPEND_MC_PROTO1_BOUND: &[u8] = b"TOK1\x00\x01\x00\x01";
+
+/// Variant 1, protocol 2, rpId-bound: a getAssertion spend refreshes the usage
+/// timer; the largeBlobWrite 25 s later is still inside the rolling window.
+pub(crate) const TOKEN_RESIDUAL_LBW: &[u8] = b"TOK1\x01\x00\x00\x01";
+
+/// Variant 2, protocol 2: an rp-A-bound makeCredential token refuses an rp-B
+/// ceremony with 0x33 without spending, then succeeds for rp A.
+pub(crate) const TOKEN_RP_REFUSAL: &[u8] = b"TOK1\x02\x00\x00\x01";
+
+/// Variant 3, protocol 2: a non-consuming use 29 999 ms after issuance still
+/// works and refreshes the timer; 30 000 ms after that use the getAssertion is
+/// refused, and a fresh issuance works.
+pub(crate) const TOKEN_INACTIVITY_EXPIRY: &[u8] = b"TOK1\x03\x00\x00\x00";
+
+/// The fuzzer-found regression: a mutated rp-binding byte on the inactivity
+/// variant. A scoped token cannot use the rp-less CM metadata refresh, so the
+/// route keeps that probe unscoped; the timer transition must still hold.
+pub(crate) const TOKEN_INACTIVITY_MUTATED_RP: &[u8] = b"TOK1\x03\xff\x02\x01";
+
+/// Variant 4, protocol 2: 600 s from issuance retires the token under 20 s
+/// credentialManagement refreshes; the stale getAssertion is refused and a fresh
+/// issuance works.
+pub(crate) const TOKEN_ABSOLUTE_EXPIRY: &[u8] = b"TOK1\x04\x00\x00\x00";
+
+/// Variant 5, protocol 1: authenticatorReset clears the token; the pre-reset
+/// getAssertion is refused, a new setPIN + issuance succeeds, and a new
+/// makeCredential proves it.
+pub(crate) const TOKEN_RESET_REVOCATION: &[u8] = b"TOK1\x05\x01\x00\x00";
+
+/// Variant 6, protocol 2: a wrong-PIN token request revokes the standing token;
+/// the old getAssertion is refused and a fresh issuance works.
+pub(crate) const TOKEN_WRONG_PIN_REVOCATION: &[u8] = b"TOK1\x06\x00\x00\x00";
+
+/// Variant 7, protocol 1: a ga-only token refuses mc and cm with 0x33 without
+/// spending, spends on ga, refuses a second ga, then an explicit reissue works
+/// and a cm-only token reaches credentialManagement but not getAssertion.
+pub(crate) const TOKEN_REISSUE_AFTER_REFUSAL: &[u8] = b"TOK1\x07\x01\x00\x00";
+/// Variant 7, protocol 2: the same permission-mask and reissue transitions.
+pub(crate) const TOKEN_REISSUE_AFTER_REFUSAL_PROTO2: &[u8] = b"TOK1\x07\x00\x00\x00";
+
+/// Variant 0 with cm|acfg added by byte 2: the token carries the extra requested
+/// permissions (both pre-spend checks succeed), then the spend still clears them.
+pub(crate) const TOKEN_SPEND_EXTRA_PERMS: &[u8] = b"TOK1\x00\x00\x24\x00";
+
+pub(crate) const TOKEN_SEEDS: &[&[u8]] = &[
+    TOKEN_SPEND_MC,
+    TOKEN_SPEND_MC_PROTO1_BOUND,
+    TOKEN_RESIDUAL_LBW,
+    TOKEN_RP_REFUSAL,
+    TOKEN_INACTIVITY_EXPIRY,
+    TOKEN_INACTIVITY_MUTATED_RP,
+    TOKEN_ABSOLUTE_EXPIRY,
+    TOKEN_RESET_REVOCATION,
+    TOKEN_WRONG_PIN_REVOCATION,
+    TOKEN_REISSUE_AFTER_REFUSAL,
+    TOKEN_REISSUE_AFTER_REFUSAL_PROTO2,
+    TOKEN_SPEND_EXTRA_PERMS,
+];
