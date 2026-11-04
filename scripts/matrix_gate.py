@@ -176,11 +176,11 @@ ROW_TRANCHES = ("p0-launch", "p0b")
 
 #: Floors, AT today's counts rather than under them. A derivation that finds
 #: (almost) nothing satisfies every rule below over an empty roster, which is the
-#: shape seven guards in this tree have shipped with — but 12 against 19 packages
+#: shape seven guards in this tree have shipped with — but 12 against 20 packages
 #: catches only the collapse, never the slide, and losing four boards one at a
 #: time is how an axis quietly stops being an axis. Shrinking one for real is
 #: then a deliberate edit here, in the same diff as the shrink.
-FLOOR_PACKAGES = 19
+FLOOR_PACKAGES = 20
 FLOOR_BOARDS = 6
 FLOOR_ROWS = 40
 #: A `why` or a settling question shorter than this is a placeholder rather than

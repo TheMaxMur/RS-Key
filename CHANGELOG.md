@@ -38,6 +38,21 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ## [Unreleased]
 
+### Added
+
+- **The `display` flavor builds for the V2 board's CST3530 touch controller.**
+  Waveshare's RP2350-Touch-LCD-2.8 moved its touch IC from a CST328 at `0x1A`
+  to a CST3530 at `0x58` in boards shipped after 2026-10-14. The two share the
+  panel, the pins and the reset line, so the old image drew correctly and then
+  ignored every touch. `DISPLAY_TP_CHIP=cst3530` selects the new driver, which
+  differs in three places: the I2C address, four-byte register addressing, and
+  a 9-byte report block at `0xD0070000` where the CST328 had a 7-byte one at
+  `0xD000`. The default stays `cst328`, so an existing board builds the same
+  image as before.
+- `bcdDevice` moves to **0x09DC**: the display flavor gains a second touch
+  driver. Images built without `--features display` are otherwise unchanged,
+  but the counter is shared by every board, so they report the new build too.
+
 ### Fixed
 
 - `rsk` recognizes PC/SC readers carrying the firmware's `(rs-key-0001)` USB

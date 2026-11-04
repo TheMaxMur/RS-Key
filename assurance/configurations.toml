@@ -974,3 +974,20 @@ in `check.sh` builds `firmware` on it at all. The board loop builds `rsk-wipe`, 
 and both `BOARD=` firmware rows pin `waveshare-one`. So the column is real and \
 WHOLLY UNEXERCISED, and what is left to decide is whether the tree should build \
 it, or whether it should be a knob of `firmware-display` instead."""
+
+[[question]]
+column = "firmware-display-v2"
+owner = "contributor"
+settled_by = "evidence"
+text = """
+`firmware-display-v2` is `firmware-display` with ONE build knob moved: \
+`DISPLAY_TP_CHIP=cst3530` instead of the default CST328, because the reference \
+board's V2 revision swapped the touch controller (CST3530 at 7-bit 0x58 with \
+four-byte register addresses, where V1's CST328 answers at 0x1A with two). The \
+cargo-feature closure is identical, but it is not the default build's, so \
+`equivalent` is not available here and `evidence` is what is owed: which \
+`check.sh` rows have to be re-run on THIS image to carry the display column's \
+evidence across, and whether any of them reaches a user-presence gesture at all — \
+on this flavor presence is a panel read, so a suite that presses BOOTSEL proves \
+nothing about it. A harness driving CST3530 reports is what a `covered` claim \
+would need, and none exists."""

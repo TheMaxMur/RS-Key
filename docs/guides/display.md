@@ -99,6 +99,35 @@ blanks the panel and (when a device PIN is set) locks the on-device UI, aborting
 any host prompt it interrupts. See the full knob table in [build.md](../build.md);
 the `display`-only knobs are `WAKE_PIN` / `WAKE_ACTIVE_HIGH`.
 
+### Which touch controller your board has
+
+The reference board exists in two revisions and they differ in exactly one part:
+
+| Board revision | Touch controller | I2C address | Register addresses |
+|---|---|---|---|
+| V1 | CST328 | `0x1A` | 2 bytes (`0xD000`) |
+| V2 (2026-10-14) | CST3530 | `0x58` | 4 bytes (`0xD0070000`) |
+
+Same glass, same panel pins, same reset line — but **a build for the wrong one
+has no touch at all**, not a degraded one: the address NAKs, every read returns
+"no finger", and the on-screen flow stalls at its first prompt while the screen
+itself draws normally. Waveshare lists the chip per revision on the product page
+and the board silkscreen carries the revision; an I2C scan settles it (0x1A is V1,
+0x58 is V2).
+
+Pick the chip at build time — `DISPLAY_TP_CHIP`, which defaults to `cst328`:
+
+```sh
+# V2 board (CST3530)
+env LED_KIND=none FLASH_SIZE=16M DISPLAY_TP_CHIP=cst3530 \
+  cargo build --release -p firmware --features display
+# or, hermetically:
+nix build .#firmware-display-v2      # → result/firmware.uf2
+
+# V1 board (CST328) — the default, and what `firmware-display` ships
+nix build .#firmware-display
+```
+
 Flash it like any other image (BOOTSEL → `picotool load`, [hardware.md](../hardware.md)).
 Two notes:
 
