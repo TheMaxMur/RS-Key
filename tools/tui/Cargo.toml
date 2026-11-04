@@ -20,7 +20,7 @@ ciborium = "0.2"  # CTAP2 CBOR encode/decode
 
 # Native seed backup: the MSE channel (P-256 ECDH -> HKDF -> ChaCha20-Poly1305),
 # the clientPIN protocol-two token (ECDH + HKDF + AES-CBC + HMAC), and BIP-39.
-p256 = { version = "0.13", features = ["ecdh"] }
+p256 = { version = "0.14", features = ["ecdh"] }
 sha2 = "0.10"
 hkdf = "0.12"
 hmac = "0.12"

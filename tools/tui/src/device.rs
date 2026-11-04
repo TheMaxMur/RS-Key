@@ -24,8 +24,8 @@ use hkdf::Hkdf;
 use hmac::{Hmac, Mac};
 use p256::ecdsa::signature::Verifier;
 use p256::ecdsa::{Signature, VerifyingKey};
-use p256::elliptic_curve::sec1::{FromEncodedPoint, ToEncodedPoint};
-use p256::{EncodedPoint, PublicKey, SecretKey};
+use p256::elliptic_curve::sec1::{FromSec1Point, ToSec1Point};
+use p256::{FieldBytes, PublicKey, Sec1Point, SecretKey};
 use pcsc::{Context, Protocols, Scope, ShareMode};
 use rand_core::{OsRng, RngCore};
 use sha2::{Digest, Sha256};
@@ -437,8 +437,16 @@ fn as_u32(v: &Value) -> Option<u32> {
 // ===========================================================================
 
 fn ecdh_pub() -> (SecretKey, [u8; 32], [u8; 32]) {
-    let sk = SecretKey::random(&mut OsRng);
-    let ep = sk.public_key().to_encoded_point(false);
+    // 0.14's `SecretKey::random` wants a rand_core 0.9 RNG; this crate is on 0.6,
+    // so draw the scalar through the existing OsRng and reject the zero case.
+    let mut raw = [0u8; 32];
+    let sk = loop {
+        OsRng.fill_bytes(&mut raw);
+        if let Ok(k) = SecretKey::from_bytes(&FieldBytes::from(raw)) {
+            break k;
+        }
+    };
+    let ep = sk.public_key().to_sec1_point(false);
     let (mut x, mut y) = ([0u8; 32], [0u8; 32]);
     x.copy_from_slice(ep.x().unwrap());
     y.copy_from_slice(ep.y().unwrap());
@@ -446,8 +454,13 @@ fn ecdh_pub() -> (SecretKey, [u8; 32], [u8; 32]) {
 }
 
 fn ecdh_raw(sk: &SecretKey, px: &[u8; 32], py: &[u8; 32]) -> Option<[u8; 32]> {
-    let ep = EncodedPoint::from_affine_coordinates(px.into(), py.into(), false);
-    let peer = Option::<PublicKey>::from(PublicKey::from_encoded_point(&ep))?;
+    // 0.14 dropped `Sec1Point::from_affine_coordinates`; splice `04 ‖ x ‖ y`.
+    let mut sec1 = [0u8; 65];
+    sec1[0] = 0x04;
+    sec1[1..33].copy_from_slice(px);
+    sec1[33..].copy_from_slice(py);
+    let ep = Sec1Point::from_bytes(&sec1).ok()?;
+    let peer = Option::<PublicKey>::from(PublicKey::from_sec1_point(&ep))?;
     let shared = p256::ecdh::diffie_hellman(sk.to_nonzero_scalar(), peer.as_affine());
     let mut z = [0u8; 32];
     z.copy_from_slice(shared.raw_secret_bytes());

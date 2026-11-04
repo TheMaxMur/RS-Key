@@ -717,7 +717,7 @@ async fn main(spawner: Spawner) {
     // 0x09DB: PIV serves a synthesized Card Capability Container (`5FC107`,
     // mandatory per SP 800-73-4 pt1 §3.1.1) where it previously answered 6A82 —
     // the object a Windows key-container open reads.
-    let device_release: u16 = 0x09DB;
+    let device_release: u16 = 0x09DC;
     config.device_release = device_release;
 
     let mut builder = Builder::new(

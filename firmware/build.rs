@@ -72,6 +72,7 @@ struct BoardConfig {
     display_bl_pwm_slice: Option<u8>,
     display_bl_pwm_channel: Option<u8>,
     display_tp_rst: Option<u8>,
+    display_tp_chip: Option<String>,
     display_wake_pin: Option<u8>,
     display_wake_active_high: Option<bool>,
     display_i2c_freq_hz: Option<u32>,
@@ -115,6 +116,7 @@ fn parse_toml(raw: &str) -> BoardConfig {
         display_bl_pwm_slice: None,
         display_bl_pwm_channel: None,
         display_tp_rst: None,
+        display_tp_chip: None,
         display_wake_pin: None,
         display_wake_active_high: None,
         display_i2c_freq_hz: None,
@@ -215,6 +217,7 @@ fn parse_toml(raw: &str) -> BoardConfig {
                 });
             }
             ("display", "tp_rst") => c.display_tp_rst = Some(u8(v)),
+            ("display", "tp_chip") => c.display_tp_chip = Some(u(v).to_string()),
             ("display", "wake_pin") => c.display_wake_pin = Some(u8(v)),
             ("display", "wake_active_high") => c.display_wake_active_high = Some(b(v)),
             ("display", "i2c_freq_hz") => c.display_i2c_freq_hz = Some(u32(v)),
@@ -554,6 +557,27 @@ fn main() {
             println!("cargo:rustc-env=PK_DISPLAY_COLOR_ORDER={}", v);
         }
     }
+    // Which capacitive-touch controller the panel carries. Waveshare shipped two
+    // revisions of the reference board and the difference is the touch part only:
+    // V1 has a CST328 (7-bit 0x1A, 2-byte register addresses), the V2 of
+    // 2026-10-14 replaced it with a CST3530 (7-bit 0x58, 4-byte register
+    // addresses, a different report block). Same glass, same panel pins, so this
+    // is a knob and not a second board file — but it has to be a *compile-time*
+    // knob, because the wrong driver is not a degraded touch screen, it is no
+    // touch at all: every read NAKs and the whole on-screen flow stalls at the
+    // first prompt.
+    {
+        let chip = env::var("DISPLAY_TP_CHIP")
+            .ok()
+            .or_else(|| disp_cfg.and_then(|b| b.display_tp_chip.clone()))
+            .unwrap_or_else(|| "cst328".to_string());
+        match chip.as_str() {
+            "cst328" | "cst3530" => {}
+            other => panic!("DISPLAY_TP_CHIP: {other:?} (want cst328 or cst3530)"),
+        }
+        println!("cargo:rustc-cfg=display_tp=\"{chip}\"");
+        println!("cargo:rustc-check-cfg=cfg(display_tp, values(\"cst328\", \"cst3530\"))");
+    }
 
     // Display knobs flow from `board.toml`/env var into PK_DISPLAY_*; any change
     // lets `env!("PK_DISPLAY_*")` go stale and bake the wrong pins into the
@@ -566,6 +590,7 @@ fn main() {
     println!("cargo:rerun-if-env-changed=PK_DISPLAY_BL_PWM_SLICE");
     println!("cargo:rerun-if-env-changed=PK_DISPLAY_BL_PWM_CHANNEL");
     println!("cargo:rerun-if-env-changed=PK_DISPLAY_TP_RST");
+    println!("cargo:rerun-if-env-changed=DISPLAY_TP_CHIP");
     println!("cargo:rerun-if-env-changed=PK_DISPLAY_I2C_FREQ_HZ");
     println!("cargo:rerun-if-env-changed=PK_DISPLAY_INVERT_COLORS");
     println!("cargo:rerun-if-env-changed=PK_DISPLAY_COLOR_ORDER");

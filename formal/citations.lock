@@ -500,7 +500,7 @@ assurance/platform.toml	crates/rsk-store/src/tests.rs	244-264	#[test]	}
 assurance/platform.toml	crates/rsk-store/src/tests.rs	395-404	#[test]	assert!(!complete);
 assurance/platform.toml	crates/rsk-usb/src/ccid.rs	408-408	match select(fut.as_mut(), Timer::after_millis(WTX_INTERVAL_MS)).await {	match select(fut.as_mut(), Timer::after_millis(WTX_INTERVAL_MS)).await {
 assurance/platform.toml	crates/rsk-usb/src/ctaphid.rs	775-775	Timer::after_millis(KEEPALIVE_MS),	Timer::after_millis(KEEPALIVE_MS),
-assurance/platform.toml	firmware/src/display.rs	198-198	crate::presence::set_cancel_requested(requested);	crate::presence::set_cancel_requested(requested);
+assurance/platform.toml	firmware/src/display.rs	247-247	crate::presence::set_cancel_requested(requested);	crate::presence::set_cancel_requested(requested);
 assurance/platform.toml	firmware/src/handler.rs	44-44	/// reseed. What makes that draw finish is `sample_count = 1000` (`main.rs`), spacing	/// reseed. What makes that draw finish is `sample_count = 1000` (`main.rs`), spacing
 assurance/platform.toml	firmware/src/handler.rs	57-57	const RESEED_INTERVAL: usize = 1 << 16; // 64 KiB	const RESEED_INTERVAL: usize = 1 << 16; // 64 KiB
 assurance/platform.toml	firmware/src/handler.rs	61-61	/// 16 B nonce, SP 800-90A 10.1.2.3), drawn through the `Trng` the caller	/// 16 B nonce, SP 800-90A 10.1.2.3), drawn through the `Trng` the caller

@@ -329,7 +329,7 @@ The files that decide what a release is. A digest here covers the parts the tabl
 |---|---|
 | `.github/workflows/release.yml` | `943eae75595831de403c51f1468be0d255b182a20fb155ab9a9eca956c54270f` |
 | `.github/workflows/release-build.yml` | `1ddbf12b1acfd1e09793a9b574128e2e692cf76351b5e5614545086894655584` |
-| `nix/firmware.nix` | `93468064b0328a06e8059b418e3e220df3ee4f273b4445052494f832eb5e26d8` |
+| `nix/firmware.nix` | `68d48d0411383f37f2db89e637c6a49f359bc1c86d7813c490b6a9c99a98274f` |
 | `scripts/pt.sh` | `c55ba6255421a664c13ba8b1e3b05b01af842d3ba8e95cd986a7a46005c877ed` |
 
 The CI code that runs them, pinned by commit:

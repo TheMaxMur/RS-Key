@@ -142,6 +142,7 @@ The same 40 P0-family rows, counted the other way round: per column rather than 
 | `firmware-strict-up-pqc` | package | yes | 3 | 37 |
 | `firmware-pico` | package | no | 40 | 0 |
 | `firmware-display` | package | yes | 0 | 40 |
+| `firmware-display-v2` | package | no | 0 | 40 |
 | `firmware-2mb` | package | yes | 9 | 31 |
 | `firmware-16mb` | package | yes | 9 | 31 |
 | `firmware-strict-config` | package | yes | 3 | 37 |
