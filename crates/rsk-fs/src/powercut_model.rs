@@ -12,7 +12,7 @@
 use std::collections::{BTreeSet, HashMap};
 
 use super::{delete_landed, meta_add_landed, meta_delete_landed, put_landed};
-use crate::{EF_META, Fs, Storage};
+use crate::{EF_META, Fs, Result, Storage};
 
 /// `EF_META`'s record header: `[fid: u16 BE][len: u16 BE]`, which the model has
 /// to know to predict whether the rebuilt blob will fit. The blob's ceiling comes
@@ -113,17 +113,37 @@ impl PowerCutModel {
         self.val.clear();
         self.meta.clear();
         for fid in self.fids.clone() {
-            if let Some(value) = self.read_value(fs, fid) {
+            let value = self.read_value(fs, fid);
+            let record = self.read_meta(fs, fid);
+            let dead = dev.dead();
+            let value = match value {
+                Ok(value) => value,
+                Err(_) if dead => {
+                    self.recover(dev, fs, None);
+                    return;
+                }
+                Err(_) => panic!("read failed without a power cut"),
+            };
+            let record = match record {
+                Ok(record) => record,
+                Err(_) if dead => {
+                    self.recover(dev, fs, None);
+                    return;
+                }
+                Err(_) => panic!("read failed without a power cut"),
+            };
+            if let Some(value) = value {
                 self.val.insert(fid, value);
             }
-            if let Some(record) = self.read_meta(fs, fid) {
+            if let Some(record) = record {
                 self.meta.insert(fid, record);
             }
-        }
-        // A read that faulted mid-sweep leaves a model of a device that is not
-        // there; boot again and take the picture over.
-        if dev.dead() {
-            self.recover(dev, fs, None);
+            // A read that lost power leaves a model of a device that is not
+            // there; boot again and take the picture over.
+            if dead {
+                self.recover(dev, fs, None);
+                return;
+            }
         }
     }
 
@@ -181,10 +201,11 @@ impl PowerCutModel {
     fn read<D: Device>(&mut self, dev: &mut D, fs: &mut Fs<D::Storage>, fid: u16, cap: usize) {
         let cap = cap.min(READ_MAX);
         let mut buf = [0u8; READ_MAX];
-        let got = fs.read(fid, &mut buf[..cap]);
+        let got = fs.try_read(fid, &mut buf[..cap]);
         if dev.dead() {
             return;
         }
+        let got = got.expect("read failed without a power cut");
         match self.val.get(&fid) {
             Some(want) => {
                 let n = got.expect("present file must read");
@@ -235,10 +256,11 @@ impl PowerCutModel {
 
     fn meta_find<D: Device>(&mut self, dev: &mut D, fs: &mut Fs<D::Storage>, fid: u16) {
         let mut out = [0u8; READ_MAX];
-        let got = fs.meta_find(fid, &mut out);
+        let got = fs.try_meta_find(fid, &mut out);
         if dev.dead() {
             return;
         }
+        let got = got.expect("read failed without a power cut");
         match self.meta.get(&fid) {
             Some(want) => {
                 let n = got.expect("present meta must be found");
@@ -322,6 +344,7 @@ impl PowerCutModel {
                 if dev.dead() {
                     return false;
                 }
+                let got = got.expect("read failed without a power cut");
                 let old = self.val.get(fid).cloned();
                 assert!(
                     put_landed(old.as_deref(), new, got.as_deref()),
@@ -335,6 +358,8 @@ impl PowerCutModel {
                 if dev.dead() {
                     return false;
                 }
+                let got_value = got_value.expect("read failed without a power cut");
+                let got_meta = got_meta.expect("read failed without a power cut");
                 let old_value = self.val.get(fid).cloned();
                 let old_meta = self.meta.get(fid).cloned();
                 assert!(
@@ -354,6 +379,7 @@ impl PowerCutModel {
                 if dev.dead() {
                     return false;
                 }
+                let got = got.expect("read failed without a power cut");
                 let old = self.meta.get(fid).cloned();
                 assert!(
                     meta_add_landed(old.as_deref(), new, *fits, got.as_deref()),
@@ -366,6 +392,7 @@ impl PowerCutModel {
                 if dev.dead() {
                     return false;
                 }
+                let got = got.expect("read failed without a power cut");
                 let old = self.meta.get(fid).cloned();
                 assert!(
                     meta_delete_landed(old.as_deref(), got.as_deref()),
@@ -386,6 +413,8 @@ impl PowerCutModel {
             if dev.dead() {
                 return false;
             }
+            let got = got.expect("read failed without a power cut");
+            let got_meta = got_meta.expect("read failed without a power cut");
             assert_eq!(
                 got,
                 self.val.get(&fid).cloned(),
@@ -398,12 +427,13 @@ impl PowerCutModel {
             );
         }
         let mut live = BTreeSet::new();
-        fs.for_each_key(&mut |key| {
+        let complete = fs.for_each_key(&mut |key| {
             live.insert(key);
         });
         if dev.dead() {
             return false;
         }
+        assert!(complete, "key walk truncated without a power cut");
         let want: BTreeSet<u16> = self.val.keys().copied().collect();
         assert!(
             live.is_superset(&want),
@@ -424,16 +454,18 @@ impl PowerCutModel {
         true
     }
 
-    fn read_value<S: Storage>(&self, fs: &mut Fs<S>, fid: u16) -> Option<Vec<u8>> {
+    fn read_value<S: Storage>(&self, fs: &mut Fs<S>, fid: u16) -> Result<Option<Vec<u8>>> {
         let mut buf = [0u8; READ_MAX];
-        fs.read(fid, &mut buf)
-            .map(|n| buf[..n.min(READ_MAX)].to_vec())
+        Ok(fs
+            .try_read(fid, &mut buf)?
+            .map(|n| buf[..n.min(READ_MAX)].to_vec()))
     }
 
-    fn read_meta<S: Storage>(&self, fs: &mut Fs<S>, fid: u16) -> Option<Vec<u8>> {
+    fn read_meta<S: Storage>(&self, fs: &mut Fs<S>, fid: u16) -> Result<Option<Vec<u8>>> {
         let mut buf = [0u8; READ_MAX];
-        fs.meta_find(fid, &mut buf)
-            .map(|n| buf[..n.min(READ_MAX)].to_vec())
+        Ok(fs
+            .try_meta_find(fid, &mut buf)?
+            .map(|n| buf[..n.min(READ_MAX)].to_vec()))
     }
 
     fn commit_value(&mut self, fid: u16, got: Option<Vec<u8>>) {
