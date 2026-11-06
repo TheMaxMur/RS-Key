@@ -4438,3 +4438,6 @@ mod decisions;
 
 #[path = "clientpin_restart_tests.rs"]
 mod restarts;
+
+#[path = "clientpin_assertion_tests.rs"]
+mod assertion;

@@ -406,3 +406,33 @@ fn every_t9_key_label_has_its_own_glyph() {
 
 #[path = "font_contract_tests.rs"]
 mod contracts;
+
+#[test]
+#[should_panic(expected = "text glyph capacity exceeded")]
+fn a_wide_target_cannot_overrun_the_glyph_placement_array() {
+    struct Wide;
+    impl OriginDimensions for Wide {
+        fn size(&self) -> Size {
+            Size::new(4096, 80)
+        }
+    }
+    impl DrawTarget for Wide {
+        type Color = Rgb565;
+        type Error = core::convert::Infallible;
+        fn draw_iter<I>(&mut self, _: I) -> Result<(), Self::Error>
+        where
+            I: IntoIterator<Item = Pixel<Rgb565>>,
+        {
+            Ok(())
+        }
+    }
+    left(
+        &mut Wide,
+        &"i".repeat(129),
+        EgPoint::new(0, 40),
+        Role::Body,
+        Rgb565::WHITE,
+        Rgb565::BLACK,
+    )
+    .unwrap();
+}

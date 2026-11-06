@@ -1,0 +1,22 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 RS-Key contributors
+
+diff --git a/crates/supercov-engine/src/rust_instrumenter.rs b/crates/supercov-engine/src/rust_instrumenter.rs
+index f1c6d2d..6c83fdc 100644
+--- a/crates/supercov-engine/src/rust_instrumenter.rs
++++ b/crates/supercov-engine/src/rust_instrumenter.rs
+@@ -348,12 +348,11 @@ fn constant_bodies(node: &ast::Expr, name: &ast::NameRef) -> impl Iterator<Item
+     })
+ }
+ 
+-/// A `const` or `static` item's name and value. A file is instrumented only
+-/// where it parses, and there each has a name.
++/// A named `const` or `static` item's name and value.
+ fn match_constant(item: ra_ap_syntax::SyntaxNode) -> Option<(ast::Name, Option<ast::Expr>)> {
+     const NAMED: &str = "a constant of a file that parses is named";
+     if let Some(constant) = ast::Const::cast(item.clone()) {
+-        return Some((constant.name().expect(NAMED), constant.body()));
++        return Some((constant.name()?, constant.body()));
+     }
+     let item = ast::Static::cast(item)?;
+     Some((item.name().expect(NAMED), item.body()))

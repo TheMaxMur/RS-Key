@@ -23,6 +23,31 @@ fn change<F: MultiwriteNorFlash + Clone>(
 }
 
 #[test]
+fn erased_journal_replicas_cannot_reset_a_live_mounted_floor() {
+    let flash = crate::tests::fault_flash_for_authenticated_tests();
+    let mut main = main_on(flash.clone());
+    main.initialize(&KEY, 0, &Directory::new()).unwrap();
+    main.write(&KEY, 0xB000, Some(b"prior")).unwrap();
+    let mut erased = flash.image();
+    let layout = super::super::super::Layout::new(
+        32768..32768 + super::super::super::storage::AUTHORITY_BYTES,
+    )
+    .unwrap();
+    for range in layout.main {
+        erased[usize::try_from(range.start).unwrap()..usize::try_from(range.end).unwrap()]
+            .fill(0xFF);
+    }
+    flash.replace_image_before_read(0, erased.clone());
+    flash.arm(&[]);
+    main.configure(EPOCH, RootArm::PreOtp);
+    let mut out = [0xA5; 5];
+    assert_eq!(main.read(&KEY, 0xB000, &mut out), Err(Error::MemoryFatal));
+    assert_eq!(out, [0xA5; 5]);
+    assert_eq!(flash.image(), erased);
+    assert!(flash.events().iter().all(|event| event.0 == Io::Read));
+}
+
+#[test]
 fn verified_publication_survives_a_second_replica_failure_and_live_replay() {
     for (action, replay_abort) in [
         (Change::Write, false),

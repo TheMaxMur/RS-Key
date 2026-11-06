@@ -540,3 +540,21 @@ fn key_information_reads_each_origin_record_once_and_refreshes_each_response() {
         }
     }
 }
+
+#[test]
+fn a_direct_unwrapped_multi_object_list_leaves_its_first_object_unprefixed() {
+    let mut fs = fs();
+    let aid = full_aid(&[1, 2, 3, 4], OPGP_MFR_UNMANAGED);
+    let mut out = [0xa5; 128];
+    let n = {
+        let mut writer = DoWriter::new(&mut out, &mut fs, &aid);
+        let n = writer.emit_do(&[2, EF_EXT_CAP, EF_EXT_CAP], 1);
+        assert_eq!(writer.len(), n + 2);
+        writer.len()
+    };
+    let mut single = [0; 64];
+    let first = DoWriter::new(&mut single, &mut fs, &aid).build(EF_EXT_CAP);
+    assert_eq!(&out[..first], &single[..first]);
+    assert_eq!(&out[first..first + 2], &[0xc0, first as u8]);
+    assert_eq!(&out[first + 2..n], &single[..first]);
+}

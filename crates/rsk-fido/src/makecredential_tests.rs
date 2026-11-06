@@ -3818,3 +3818,6 @@ fn direct_response_encoding_handles_large_blob_output_in_every_profile() {
         }
     }
 }
+
+#[path = "makecredential_independence_tests.rs"]
+mod independence;

@@ -2254,20 +2254,45 @@ fn undefined_vendor_subcommand_is_invalid_parameter() {
     let mut out = [0u8; 64];
     // 0x10 is the first id past the last one served (CONFIG_COMMANDS, 0x0F).
     for subcmd in [0x00u64, 0x10, 0x7F] {
-        let n = one_byte_req(&mut req, subcmd);
-        let e = call(
-            &mut fs,
-            &mut rng,
-            &mut st,
-            &mut AlwaysConfirm,
-            &req[..n],
-            &mut out,
-        );
-        assert_eq!(
-            e,
-            Err(CtapError::InvalidParameter),
-            "vendor subcommand {subcmd:#04x}"
-        );
+        for parameters in [false, true] {
+            let mut enc = Encoder::new(Cursor::new(&mut req[..]));
+            enc.map(1 + u64::from(parameters))
+                .unwrap()
+                .u8(1)
+                .unwrap()
+                .u64(subcmd)
+                .unwrap();
+            if parameters {
+                enc.u8(2)
+                    .unwrap()
+                    .map(1)
+                    .unwrap()
+                    .u8(1)
+                    .unwrap()
+                    .array(2)
+                    .unwrap()
+                    .null()
+                    .unwrap()
+                    .bool(true)
+                    .unwrap();
+            }
+            let n = enc.writer().position();
+            out.fill(0xA5);
+            let e = call(
+                &mut fs,
+                &mut rng,
+                &mut st,
+                &mut AlwaysConfirm,
+                &req[..n],
+                &mut out,
+            );
+            assert_eq!(
+                e,
+                Err(CtapError::InvalidParameter),
+                "vendor subcommand {subcmd:#04x}, parameters={parameters}"
+            );
+            assert_eq!(out, [0xA5; 64]);
+        }
     }
 }
 

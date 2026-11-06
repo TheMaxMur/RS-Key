@@ -339,3 +339,40 @@ fn cached_counter_tags_refuse_changed_fused_root_bytes_before_releasing_values()
         assert_eq!(&out, b"value");
     }
 }
+
+#[test]
+fn an_addressed_frame_cannot_use_another_valid_private_counter_location() {
+    let flash = crate::tests::fault_flash_for_authenticated_tests();
+    let mut pair = provision(&flash);
+    let other = PRIVATE + 1;
+    pair.write_with_source(source(), RootArm::PreOtp, other, Some(b"other value"))
+        .unwrap();
+    let mut scan = pair.mount.unwrap()[0];
+    let requested = scan
+        .locations
+        .iter()
+        .position(|location| location.is_some_and(|location| location.entry.fid() == PRIVATE))
+        .unwrap();
+    let other_location = scan
+        .locations
+        .iter()
+        .flatten()
+        .find(|location| location.entry.fid() == other)
+        .copied()
+        .unwrap();
+    let mut out = [0xa5; ENTRY_BYTES + 16];
+    assert_eq!(
+        pair.banks[0].read_bound_frame(&scan, other, &mut out),
+        Ok(Some(other_location.entry))
+    );
+    scan.locations[requested] = Some(other_location);
+    flash.arm(&[]);
+    assert_eq!(
+        pair.banks[0].read_bound_frame(&scan, PRIVATE, &mut out),
+        Err(Error::MemoryFatal)
+    );
+    assert_eq!(&out[..ENTRY_BYTES], &other_location.entry.encode().unwrap());
+    assert_eq!(&out[ENTRY_BYTES..ENTRY_BYTES + 11], b"other value");
+    assert!(out[ENTRY_BYTES + 11..].iter().all(|&byte| byte == 0xff));
+    assert!(flash.events().iter().all(|event| event.0 == Io::Read));
+}

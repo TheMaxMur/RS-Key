@@ -7,6 +7,9 @@ use crate::tests::FaultFlash;
 use embassy_futures::block_on;
 use embedded_storage_async::nor_flash::ReadNorFlash;
 
+#[path = "counter_independence_tests.rs"]
+mod independence;
+
 const KEY: [u8; 32] = [0x35; 32];
 const EPOCH: [u8; 16] = [0x4B; 16];
 const IDENTITY: Identity = Identity {
@@ -244,6 +247,7 @@ fn rekey_rejects_changed_status_or_sequence_at_its_peer_scan() {
         .write(&KEY, rsk_fs::counter::EF_COUNTER.get(), Some(b"owner"))
         .unwrap();
     let original = baseline.image();
+    let mut healthy = counters(&baseline);
     baseline.arm(&[]);
     healthy.rekey(&KEY, &next_key, RootArm::Otp).unwrap();
     let trace = baseline.events();
@@ -266,7 +270,7 @@ fn rekey_rejects_changed_status_or_sequence_at_its_peer_scan() {
         .iter()
         .filter(|(io, _, _)| *io == crate::tests::Io::Read)
         .count();
-    for sequence in [0, 2, 3] {
+    for sequence in [0, 2, 3, 4] {
         let flash = crate::tests::fault_flash_for_authenticated_tests();
         flash.replace_image_before_read(0, original.clone());
         assert!(block_on(flash.clone().read(0, &mut [])).is_ok());
@@ -320,6 +324,7 @@ fn rollover_rejects_changed_status_or_sequence_before_copying_the_second_bank() 
         .unwrap()
         + 1;
     let original = baseline.image();
+    let mut healthy = counters(&baseline);
     baseline.arm(&[]);
     healthy
         .write(&KEY, hot, Some(&[0x4B; rsk_fs::MAX_VALUE_BYTES]))

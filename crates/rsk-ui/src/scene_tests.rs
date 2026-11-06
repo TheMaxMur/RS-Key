@@ -1720,3 +1720,29 @@ mod codec;
 
 #[path = "scene_frame_tests.rs"]
 mod frames;
+
+#[test]
+#[should_panic(expected = "scene must be finalized before presentation")]
+fn an_unfinalized_scene_has_no_presentable_records() {
+    Scene::default()
+        .record_damage_rects(&mut [Rect::new(0, 0, 0, 0); DAMAGE_RECT_CAPACITY])
+        .unwrap();
+}
+
+#[test]
+#[should_panic(expected = "scene must be finalized before presentation")]
+fn an_unfinalized_scene_has_no_tile_tag() {
+    Scene::default().tile_tag(0, 0);
+}
+
+#[test]
+#[should_panic(expected = "scene must be finalized before presentation")]
+fn an_unfinalized_scene_cannot_rasterize_a_band() {
+    Scene::default().raster_band(Rect::new(0, 0, 1, 1), 0, 1, &mut [0; 2]);
+}
+
+#[test]
+#[should_panic(expected = "index < usize::from(self.checkpoint_len)")]
+fn seeking_an_unencoded_checkpoint_is_refused_before_indexing() {
+    Scene::default().raster_seek(0, 0, 1, u32::from(BAND_H));
+}

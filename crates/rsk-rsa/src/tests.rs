@@ -3,6 +3,12 @@
 
 use super::*;
 
+#[test]
+#[should_panic(expected = "(2..=MAX_MOD).contains(&half)")]
+fn a_sieve_refuses_a_one_byte_prime_before_indexing_the_seed() {
+    IncrementalSieve::new().reseed(1, &[0]);
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum DropSite {
     Key,

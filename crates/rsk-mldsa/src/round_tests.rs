@@ -6,6 +6,14 @@ use crate::params::{ML_DSA_44, ML_DSA_65};
 use crate::testutil::{Rng, rand_poly_q};
 
 #[test]
+#[should_panic(expected = "power2round input not in [0,q)")]
+fn power2round_refuses_an_unreduced_coefficient() {
+    let mut r = Poly([0; 256]);
+    r.0[0] = Q;
+    power2round(&r);
+}
+
+#[test]
 fn power2round_reconstructs() {
     let mut rng = Rng::new(1);
     for _ in 0..40 {

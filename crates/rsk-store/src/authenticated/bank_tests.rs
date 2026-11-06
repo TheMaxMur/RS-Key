@@ -181,6 +181,7 @@ fn word_flash_preserves_alignment_empty_bounds_and_transfer_errors() {
     bank.program(0, &expected).unwrap();
     for (offset, padding, count) in [
         (0, 0, 512),
+        (0, 0, 511),
         (1, 0, 511),
         (0, 1, 512),
         (3, 3, 257),

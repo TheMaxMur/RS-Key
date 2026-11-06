@@ -1578,3 +1578,26 @@ fn with_no_applet_selected_even_an_sm_class_is_an_unknown_instruction() {
         "one disabled since is none"
     );
 }
+
+#[test]
+#[should_panic(expected = "a response made outside an open chain")]
+fn a_response_cannot_bypass_an_open_command_chain() {
+    let mut echo = Echo { selected: false };
+    let mut applets: [&mut dyn Applet<()>; 1] = [&mut echo];
+    let mut disp = Dispatcher::new();
+    let mut out = [0; 64];
+    let mut res = ResBuf::new(&mut out);
+    let mut select = vec![0, 0xA4, 4, 0, 8];
+    select.extend_from_slice(&[0xA0, 0, 0, 6, 0x47, 0x2F, 0, 1]);
+    assert_eq!(
+        disp.process(&select, &mut applets, &mut (), &mut res),
+        Sw::OK
+    );
+    res.clear();
+    assert_eq!(
+        disp.process(&[0x10, 0x10, 0, 0, 1, 7], &mut applets, &mut (), &mut res),
+        Sw::OK
+    );
+    assert!(disp.chain_open());
+    disp.chain_response(Sw::OK, 64, true, &mut res);
+}

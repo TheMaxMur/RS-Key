@@ -18,6 +18,9 @@ mod pin_recovery_cut_tests;
 #[path = "pin_boundary_decisions_tests.rs"]
 mod pin_boundary_decisions_tests;
 
+#[path = "pin_dek_selection_tests.rs"]
+mod dek_selection;
+
 #[path = "pin_recovery_commands_tests.rs"]
 mod pin_recovery_commands_tests;
 

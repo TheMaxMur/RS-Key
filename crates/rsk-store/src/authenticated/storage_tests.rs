@@ -139,3 +139,30 @@ fn root_closure_requires_both_partition_arms() {
         assert_eq!(store.root_closed(), closed);
     }
 }
+
+#[test]
+#[expect(
+    clippy::unwrap_used,
+    reason = "The helper fixture supplies distinct root arms before checking FID routing."
+)]
+fn the_partition_arm_selector_distinguishes_counter_fids_from_main_fids() {
+    let flash = crate::tests::flash_for_authenticated_tests();
+    let store = Authenticated::new_arms(
+        flash,
+        0..32768,
+        32768..32768 + AUTHORITY_BYTES,
+        Cache::<Uncached, Uncached, Uncached, u16>::new_uncached(),
+        KeySource::new([0x43; 32], root_read, false),
+        [0x4b; 16],
+        RootArm::Otp,
+        RootArm::PreOtp,
+        None,
+        None,
+    )
+    .unwrap();
+    assert_eq!(store.arm(0xB000), RootArm::Otp);
+    assert_eq!(
+        store.arm(rsk_fs::counter::EF_COUNTER.get()),
+        RootArm::PreOtp
+    );
+}

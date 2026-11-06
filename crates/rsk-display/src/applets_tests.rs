@@ -4,6 +4,9 @@
 use super::*;
 use crate::tests::{Env, Pad, center, nowhere};
 
+#[path = "applets_draw_failure_tests.rs"]
+mod draw_failure;
+
 #[test]
 fn every_applet_browse_window_yields_to_a_queued_host_request_or_sleep() {
     let _env = Env::new();

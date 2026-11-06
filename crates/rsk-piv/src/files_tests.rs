@@ -8,6 +8,17 @@ use super::*;
 use rsk_fs::storage::faults::{RemoveStuck, Undead};
 
 #[test]
+fn a_management_key_with_valid_width_but_invalid_touch_policy_is_refused() {
+    for touch in [0, TOUCHPOLICY_CACHED, 0xFF] {
+        let mut record = Secret::<[u8; MGM_RECORD_MAX]>::zeroed();
+        record.expose_mut()[0] = ALGO_AES256;
+        record.expose_mut()[1] = touch;
+        record.expose_mut()[2..34].fill(0x55);
+        assert_eq!(mgm_key(record, 34).map(|_| ()), Err(Sw::MEMORY_FAILURE));
+    }
+}
+
+#[test]
 fn an_early_management_key_wipe_clears_the_live_record() {
     struct NonceRng;
     impl Rng for NonceRng {

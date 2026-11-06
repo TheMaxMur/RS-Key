@@ -262,6 +262,81 @@ fn snapshots_and_rekey_have_only_the_exact_old_and_new_states() {
 }
 
 #[test]
+fn root_replacement_cannot_downgrade_or_change_a_key_without_migration() {
+    for (old_arm, new_arm, key, allowed) in [
+        (RootArm::PreOtp, RootArm::PreOtp, KEY, true),
+        (RootArm::PreOtp, RootArm::PreOtp, NEW_KEY, false),
+        (RootArm::PreOtp, RootArm::Otp, KEY, true),
+        (RootArm::PreOtp, RootArm::Otp, NEW_KEY, true),
+        (RootArm::Otp, RootArm::Otp, KEY, true),
+        (RootArm::Otp, RootArm::Otp, NEW_KEY, false),
+        (RootArm::Otp, RootArm::PreOtp, KEY, false),
+        (RootArm::Otp, RootArm::PreOtp, NEW_KEY, false),
+    ] {
+        let base = Snapshot {
+            arm: old_arm,
+            ..BASE
+        };
+        let target = Snapshot {
+            arm: new_arm,
+            ..TARGET
+        };
+        let mut authority = Authority::New;
+        authority.admit(&KEY, base, None).unwrap();
+        assert_eq!(
+            authority.stage_replace(&KEY, &key, target),
+            if allowed {
+                Ok(())
+            } else {
+                Err(Error::MemoryFatal)
+            }
+        );
+        if allowed {
+            assert!(authority.verify_read(&KEY, base.identity, old_arm).is_err());
+            authority.admit(&key, target, None).unwrap();
+            authority.finish(&key, target).unwrap();
+            authority
+                .verify_read(&key, target.identity, new_arm)
+                .unwrap();
+            if key != KEY {
+                assert!(
+                    authority
+                        .verify_read(&KEY, target.identity, new_arm)
+                        .is_err()
+                );
+            }
+        } else {
+            authority.verify_read(&KEY, base.identity, old_arm).unwrap();
+            authority.finish(&KEY, base).unwrap();
+            assert!(authority.admit(&key, target, None).is_err());
+        }
+    }
+}
+
+#[test]
+fn bootstrap_refuses_a_pending_entry_outside_the_next_generation() {
+    for generation in [BASE.sequence - 1, BASE.sequence, TARGET.sequence + 1] {
+        let pending = Pending {
+            prepared: Prepared {
+                entry: Entry::live(BASE.identity, &KEY, 0xB000, generation, b"new").unwrap(),
+                ..prepared()
+            },
+            ..pending()
+        };
+        let mut authority = Authority::New;
+        assert_eq!(
+            authority.admit(&KEY, BASE, Some(pending)),
+            Err(Error::MemoryFatal)
+        );
+        assert!(!authority.established());
+        authority.admit(&KEY, BASE, None).unwrap();
+        authority
+            .verify_read(&KEY, BASE.identity, BASE.arm)
+            .unwrap();
+    }
+}
+
+#[test]
 fn bootstrap_pending_records_establish_a_floor_before_recovery_writes() {
     let mut a = Authority::New;
     a.admit(&KEY, BASE, Some(pending())).unwrap();

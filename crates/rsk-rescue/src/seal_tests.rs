@@ -546,3 +546,16 @@ fn final_scrub_cannot_reuse_a_stale_marker_or_ignore_a_failed_step() {
         assert!(rebooted.into_storage().compacted);
     }
 }
+
+#[test]
+fn a_lock_without_either_root_key_is_incomplete_not_an_unprovisioned_page() {
+    for raw in [PAGE58_LOCK_VALUE, PAGE58_LATCH_VALUE, 0x010100, 1] {
+        let mut page = Page::blank();
+        page.rows[PAGE58_LOCK1_ROW] = raw;
+        let before = page.rows;
+        assert_eq!(check_provisioning(&mut page), Err(Status::Incomplete));
+        assert_eq!(seal_at_boot(&mut page, Some(0), true), Status::Incomplete);
+        assert_eq!(page.rows, before);
+        assert_eq!(page.writes, 0);
+    }
+}

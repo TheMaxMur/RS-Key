@@ -211,7 +211,22 @@ fn root_migration_materializes_the_bound_hotp_counter_before_resealing_its_owner
         otp_key: Some(&TEST_MKEK),
         latched: false,
     };
-    migrate_seal(&dev, &mut fs, &mut *rng.borrow_mut());
+    let mut before = [0; seal::MAX_BLOB];
+    let length = fs.read_key(KeyFid::new(EF_OATH_CRED), &mut before).unwrap();
+    let detached = medium.borrow().sealed.clone();
+    let generation = fs.write_gen();
+    medium.borrow_mut().refuse_read = true;
+    assert!(migrate_seal(&dev, &mut fs, &mut *rng.borrow_mut()));
+    assert_eq!(fs.write_gen(), generation);
+    let mut after = [0; seal::MAX_BLOB];
+    assert_eq!(
+        fs.read_key(KeyFid::new(EF_OATH_CRED), &mut after),
+        Some(length)
+    );
+    assert_eq!(after, before);
+    assert_eq!(medium.borrow().sealed, detached);
+    medium.borrow_mut().refuse_read = false;
+    assert!(!migrate_seal(&dev, &mut fs, &mut *rng.borrow_mut()));
     assert!(medium.borrow().sealed.is_none());
     let mut otp = OathApplet::new(
         SERIAL,

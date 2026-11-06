@@ -25,6 +25,13 @@ fn persisted_counter_locations_and_slot_bytes_match_format_vectors() {
         let slot = Slot::pin(fid).unwrap();
         assert_eq!(slot.bucket, 0xCD00);
         let mut encoded = [0; 80];
+        let mut absent = [0xA5; 3];
+        assert_eq!(slot.read(&encoded, 0, &mut absent), Ok(None));
+        assert_eq!(absent, [0xA5; 3]);
+        slot.replace(&mut encoded, 0, &[5]).unwrap();
+        assert_eq!(slot.read(&encoded, 0, &mut absent), Ok(Some(1)));
+        assert_eq!(absent, [5, 0xA5, 0xA5]);
+        encoded.fill(0);
         slot.replace(&mut encoded, generation, &[5]).unwrap();
         let mut expected = [0; 80];
         expected[offset..offset + 10].copy_from_slice(&[8, 7, 6, 5, 4, 3, 2, 1, 1, 5]);
@@ -133,6 +140,14 @@ fn only_retry_bytes_may_use_the_pin_overlay() {
             );
         }
         assert!(!only_retries_changed(fid, &before, &before[..length - 1]));
+        for count in [0, retries.len() + 1] {
+            let mut after = before.clone();
+            assert_eq!(
+                apply_retries(fid, &mut after, &vec![1; count]),
+                Err(Error::MemoryFatal)
+            );
+            assert_eq!(after, before);
+        }
     }
 }
 

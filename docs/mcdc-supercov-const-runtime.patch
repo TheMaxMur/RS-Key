@@ -1,0 +1,247 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 RS-Key contributors
+# Isolated Supercov 4.22.0 experiment; apply after the anonymous-const patch.
+# Generates const/runtime twins for the explicitly audited source set.
+# This example uses existing ra_ap_syntax and serde_json dependencies.
+diff --git a/crates/supercov-engine/examples/const_runtime.rs b/crates/supercov-engine/examples/const_runtime.rs
+new file mode 100644
+--- /dev/null
++++ b/crates/supercov-engine/examples/const_runtime.rs
+@@ -0,0 +1,237 @@
++// SPDX-License-Identifier: AGPL-3.0-only
++// Copyright (C) 2026 RS-Key contributors
++
++use ra_ap_syntax::ast::{HasAttrs, HasGenericParams, HasName};
++use ra_ap_syntax::{AstNode, Edition, SourceFile, ast};
++use serde_json::json;
++use std::{env, fs};
++
++fn main() {
++    let arguments: Vec<_> = env::args().collect();
++    assert_eq!(arguments.len(), 4);
++    let source = fs::read_to_string(&arguments[1]).unwrap();
++    assert!(!source.contains("__rsk_mcdc_"));
++    let (tree, edition) = [
++        Edition::Edition2024,
++        Edition::Edition2021,
++        Edition::Edition2018,
++    ]
++    .into_iter()
++    .find_map(|edition| {
++        let parsed = SourceFile::parse(&source, edition);
++        parsed.errors().is_empty().then(|| (parsed.tree(), edition))
++    })
++    .expect("original Rust source parses");
++    let mut replacements = Vec::new();
++    let mut metadata = Vec::new();
++    for function in tree.syntax().descendants().filter_map(ast::Fn::cast) {
++        let Some(constant) = function.const_token() else {
++            continue;
++        };
++        assert!(
++            !function
++                .syntax()
++                .ancestors()
++                .skip(1)
++                .any(|node| ast::Fn::can_cast(node.kind()))
++        );
++        assert!(function.unsafe_token().is_none());
++        let body = function.body().expect("const function has a body");
++        assert!(
++            !body
++                .syntax()
++                .descendants()
++                .any(|node| ast::Static::can_cast(node.kind())),
++            "body-local static identity cannot be cloned"
++        );
++        let declaration: String = function
++            .syntax()
++            .text()
++            .to_string()
++            .chars()
++            .filter(|character| !character.is_whitespace())
++            .collect();
++        for forbidden in [
++            "line!",
++            "column!",
++            "file!",
++            "module_path!",
++            "Location::caller",
++            "track_caller",
++            "export_name",
++            "no_mangle",
++            "link_section",
++            "link_name",
++            "naked",
++        ] {
++            assert!(
++                !declaration.contains(forbidden),
++                "unsupported location or link identity: {forbidden}"
++            );
++        }
++        for call in body.syntax().descendants().filter_map(ast::MacroCall::cast) {
++            let path: String = call
++                .path()
++                .unwrap()
++                .syntax()
++                .text()
++                .to_string()
++                .chars()
++                .filter(|character| !character.is_whitespace())
++                .collect();
++            assert!(
++                ["assert", "debug_assert", "matches"].contains(&path.as_str()),
++                "unsupported macro: {path}"
++            );
++        }
++        let mut previous = String::new();
++        for token in body
++            .syntax()
++            .descendants_with_tokens()
++            .filter_map(|element| element.into_token())
++            .filter(|token| !token.kind().is_trivia())
++        {
++            if token.text() == "!"
++                && previous
++                    .chars()
++                    .all(|character| character.is_alphanumeric() || character == '_')
++                && !previous.is_empty()
++            {
++                assert!(
++                    ["assert", "debug_assert", "matches"].contains(&previous.as_str()),
++                    "unsupported nested macro: {previous}"
++                );
++            }
++            previous = token.text().to_owned();
++        }
++        let name = function.name().unwrap();
++        let params = function.param_list().unwrap();
++        let associated = function
++            .syntax()
++            .ancestors()
++            .any(|node| ast::Impl::can_cast(node.kind()));
++        let mut forwarded = Vec::new();
++        if params.self_param().is_some() {
++            forwarded.push("self".to_owned());
++        }
++        for parameter in params.params() {
++            assert!(parameter.attrs().next().is_none());
++            let pattern = parameter.pat().unwrap();
++            let ast::Pat::IdentPat(pattern) = pattern else {
++                panic!(
++                    "forwarded argument must have a plain binding: {}",
++                    function.syntax()
++                );
++            };
++            assert!(pattern.ref_token().is_none());
++            forwarded.push(pattern.name().unwrap().text().to_string());
++        }
++        let generics: Vec<_> = function
++            .generic_param_list()
++            .into_iter()
++            .flat_map(|list| list.generic_params())
++            .filter_map(|parameter| match parameter {
++                ast::GenericParam::TypeParam(parameter) => {
++                    Some(parameter.name().unwrap().text().to_string())
++                }
++                ast::GenericParam::ConstParam(parameter) => {
++                    Some(parameter.name().unwrap().text().to_string())
++                }
++                ast::GenericParam::LifetimeParam(_) => None,
++            })
++            .collect();
++        let range = function.syntax().text_range();
++        let start = usize::from(range.start());
++        let end = usize::from(range.end());
++        let body_start = usize::from(body.syntax().text_range().start());
++        let body_end = usize::from(body.syntax().text_range().end());
++        let name_start = usize::from(name.syntax().text_range().start());
++        let name_end = usize::from(name.syntax().text_range().end());
++        let const_start = usize::from(constant.text_range().start());
++        let const_end = usize::from(constant.text_range().end());
++        let const_name = format!("__rsk_mcdc_const_{start}_{}", name.text());
++        let runtime_name = format!("__rsk_mcdc_runtime_{start}_{}", name.text());
++        let qualifier = if associated { "Self::" } else { "" };
++        let generic_args = if generics.is_empty() {
++            String::new()
++        } else {
++            format!("::<{}>", generics.join(","))
++        };
++        let tuple = if forwarded.is_empty() {
++            "()".into()
++        } else {
++            format!("({},)", forwarded.join(","))
++        };
++        let wrapper_body = format!(
++            "{{ core::intrinsics::const_eval_select({tuple}, {qualifier}{const_name}{generic_args}, {qualifier}{runtime_name}{generic_args}) }}"
++        );
++        let wrapper = format!(
++            "{}{}{}",
++            &source[start..body_start],
++            wrapper_body,
++            &source[body_end..end]
++        );
++        let const_clone = format!(
++            "{}{}{}",
++            &source[start..name_start],
++            const_name,
++            &source[name_end..end]
++        );
++        let runtime_clone = format!(
++            "{}{}{}{}{}",
++            &source[start..const_start],
++            " ".repeat(const_end - const_start),
++            &source[const_end..name_start],
++            runtime_name,
++            &source[name_end..end]
++        );
++        let line_start = source[..start]
++            .rfind('\n')
++            .map_or(0, |position| position + 1);
++        let indentation = &source[line_start..start];
++        assert!(indentation.chars().all(char::is_whitespace));
++        let replacement =
++            format!("{wrapper}\n{indentation}{const_clone}\n{indentation}{runtime_clone}");
++        metadata.push(json!({"name":name.text().to_string(),"line":source[..start].bytes().filter(|&byte| byte == b'\n').count()+1,
++                             "start":start,"end":end,"body":&source[body_start..body_end],
++                             "const_name":const_name,"runtime_name":runtime_name,"forwarded":forwarded,"generics":generics}));
++        replacements.push((start, end, replacement));
++    }
++    let mut output = source;
++    for (start, end, replacement) in replacements.into_iter().rev() {
++        output.replace_range(start..end, &replacement);
++    }
++    let parsed = SourceFile::parse(&output, edition);
++    assert!(
++        parsed.errors().is_empty(),
++        "generated Rust parses: {:?}",
++        parsed.errors()
++    );
++    let functions: Vec<_> = parsed
++        .tree()
++        .syntax()
++        .descendants()
++        .filter_map(ast::Fn::cast)
++        .collect();
++    for item in &metadata {
++        for field in ["const_name", "runtime_name"] {
++            let name = item[field].as_str().unwrap();
++            let found: Vec<_> = functions
++                .iter()
++                .filter(|function| function.name().unwrap().text() == name)
++                .collect();
++            assert_eq!(found.len(), 1);
++            assert_eq!(
++                found[0].body().unwrap().syntax().text().to_string(),
++                item["body"].as_str().unwrap()
++            );
++            assert_eq!(found[0].const_token().is_some(), field == "const_name");
++        }
++    }
++    fs::write(&arguments[2], output).unwrap();
++    fs::write(
++        &arguments[3],
++        serde_json::to_string_pretty(&metadata).unwrap(),
++    )
++    .unwrap();
++}

@@ -4,6 +4,42 @@
 use super::*;
 
 #[test]
+fn completing_a_reset_outside_scrubbing_preserves_the_current_request() {
+    for stage in 0..7 {
+        let mut session = Session::new();
+        let id = if stage == 0 {
+            0
+        } else {
+            session.submit().unwrap()
+        };
+        if matches!(stage, 2 | 3 | 5 | 6) {
+            assert_eq!(session.next_job(), Some(Job::Dispatch(id)));
+        }
+        if matches!(stage, 3 | 6) {
+            assert!(session.finish(id));
+        }
+        if stage >= 4 {
+            session.abandon(id);
+        }
+        let before = (session.state, session.next_ticket, session.reset_pending);
+        session.reset_complete();
+        assert_eq!(
+            (session.state, session.next_ticket, session.reset_pending),
+            before,
+            "stage {stage}: a completion without a reset lost work"
+        );
+        assert_eq!(
+            session.poll(id),
+            match stage {
+                1 | 2 => Poll::Pending,
+                3 => Poll::Ready,
+                _ => Poll::Abandoned,
+            }
+        );
+    }
+}
+
+#[test]
 fn idle_has_no_work_and_ticket_exhaustion_never_reuses_an_old_ticket() {
     let mut session = Session::new();
     assert_eq!(session.next_job(), None);

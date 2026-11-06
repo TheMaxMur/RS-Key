@@ -8,6 +8,9 @@ use crate::tests::{
     settings_row,
 };
 
+#[path = "status_draw_failure_tests.rs"]
+mod draw_failure;
+
 fn home(status: StatusKind, pin_set: bool, passkeys: u16) -> Screen {
     Screen::Home(HomeView {
         status,

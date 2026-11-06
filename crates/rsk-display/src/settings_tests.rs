@@ -435,11 +435,12 @@ fn a_faulted_phy_probe_does_not_wipe_the_record_the_timeout_shares() {
 }
 
 #[test]
-fn a_quiet_brightness_edit_is_on_flash_before_host_handoff() {
+fn a_quiet_display_or_presence_edit_is_on_flash_before_host_handoff() {
     struct AfterSettle<'a> {
         samples: std::collections::VecDeque<Option<rsk_ui::Point>>,
         fs: &'a RefCell<Fs<rsk_fs::storage::ram::RamStorage>>,
         signal: std::rc::Rc<core::cell::Cell<crate::tests::PanelSignal>>,
+        entry: DisplayEntry,
         checked: bool,
     }
     impl TouchPad for AfterSettle<'_> {
@@ -448,55 +449,67 @@ fn a_quiet_brightness_edit_is_on_flash_before_host_handoff() {
                 return sample;
             }
             if !self.checked {
-                assert_eq!(
-                    stored_display(self.fs)
-                        .expect("quiet edit must precede handoff")
-                        .brightness,
-                    BRIGHTNESS_LEVELS - 1
-                );
+                match self.entry {
+                    DisplayEntry::Brightness => assert_eq!(
+                        stored_display(self.fs)
+                            .expect("quiet edit must precede handoff")
+                            .brightness,
+                        BRIGHTNESS_LEVELS - 1
+                    ),
+                    DisplayEntry::Timeout => assert_eq!(
+                        rsk_phy::load(&mut self.fs.borrow_mut())
+                            .expect("quiet edit must precede handoff")
+                            .presence_timeout,
+                        Some(20)
+                    ),
+                    DisplayEntry::Sleep => unreachable!("not a tested edit"),
+                }
                 self.checked = true;
                 self.signal.set(crate::tests::PanelSignal::HostRequest);
             }
             None
         }
     }
-    let env = Env::new();
-    let Ui {
-        panel, hooks, info, ..
-    } = env.ui(Pad::idle());
-    let mut samples = std::collections::VecDeque::from([None; 4]);
-    for point in [
-        settings_row(
-            rsk_ui::SETTINGS_ROWS,
-            rsk_ui::hit_settings_root,
-            RootEntry::Display,
-        ),
-        settings_row(
-            rsk_ui::DISPLAY_ROWS,
-            rsk_ui::hit_display,
-            DisplayEntry::Brightness,
-        ),
-        center(rsk_ui::ADJ_MINUS_RECT),
-        nowhere(),
-    ] {
-        samples.extend([Some(point), None, None, None, None]);
+    for entry in [DisplayEntry::Brightness, DisplayEntry::Timeout] {
+        let env = Env::new();
+        let Ui {
+            panel,
+            mut hooks,
+            info,
+            ..
+        } = env.ui(Pad::idle());
+        hooks.presence_ms = 30_000;
+        let mut samples = std::collections::VecDeque::from([None; 4]);
+        for point in [
+            settings_row(
+                rsk_ui::SETTINGS_ROWS,
+                rsk_ui::hit_settings_root,
+                RootEntry::Display,
+            ),
+            settings_row(rsk_ui::DISPLAY_ROWS, rsk_ui::hit_display, entry),
+            center(rsk_ui::ADJ_MINUS_RECT),
+            nowhere(),
+        ] {
+            samples.extend([Some(point), None, None, None, None]);
+        }
+        samples.extend(core::iter::repeat_n(
+            None,
+            (SETTINGS_PERSIST_QUIET_MS / TOUCH_POLL_MS + 8) as usize,
+        ));
+        let touch = AfterSettle {
+            samples,
+            fs: &env.fs,
+            signal: std::rc::Rc::clone(&hooks.signal),
+            entry,
+            checked: false,
+        };
+        let mut ui = Ui::new(panel, touch, hooks, info, env.cells());
+        ui.set_brightness(BRIGHTNESS_LEVELS);
+        assert_eq!(Local::new(&mut ui, env.cells()).run_settings(), None);
+        assert!(ui.touch.checked);
+        assert_eq!(env.fs.borrow().write_gen(), 1);
+        assert!(!ui.asleep);
     }
-    samples.extend(core::iter::repeat_n(
-        None,
-        (SETTINGS_PERSIST_QUIET_MS / TOUCH_POLL_MS + 8) as usize,
-    ));
-    let touch = AfterSettle {
-        samples,
-        fs: &env.fs,
-        signal: std::rc::Rc::clone(&hooks.signal),
-        checked: false,
-    };
-    let mut ui = Ui::new(panel, touch, hooks, info, env.cells());
-    ui.set_brightness(BRIGHTNESS_LEVELS);
-    assert_eq!(Local::new(&mut ui, env.cells()).run_settings(), None);
-    assert!(ui.touch.checked);
-    assert_eq!(env.fs.borrow().write_gen(), 1);
-    assert!(!ui.asleep);
 }
 
 #[test]

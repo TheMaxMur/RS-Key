@@ -103,6 +103,47 @@ fn unsupported_pin_width_stays_in_main_without_truncating_the_value() {
 }
 
 #[test]
+fn an_authenticated_retry_bucket_with_the_wrong_width_cannot_be_replaced() {
+    let slot = Slot::pin(FIDO_PIN).unwrap();
+    for length in [slot.bytes() - 1, slot.bytes() + 1] {
+        let (flash, mut mounted) = seeded(FIDO_PIN, &[8; 35]);
+        mounted
+            .counters
+            .write_with_source(
+                mounted.source,
+                mounted.counter_arm,
+                slot.bucket,
+                Some(&vec![0; length]),
+            )
+            .unwrap();
+        let before = flash.image();
+        flash.arm(&[]);
+        let mut spent = [8; 35];
+        spent[0] = 7;
+        assert_eq!(mounted.write(FIDO_PIN, &spent), Err(Error::MemoryFatal));
+        assert_eq!(flash.image(), before);
+        assert!(flash.events().iter().all(|event| event.0 == Io::Read));
+    }
+}
+
+#[test]
+fn a_bound_oath_counter_refuses_every_adjacent_invalid_width_before_writing() {
+    for length in [0, VALUE_BYTES - 1, VALUE_BYTES + 1] {
+        let fid = rsk_fs::counter::OATH_FIRST;
+        let (flash, mut mounted) = seeded(fid, b"sealed owner");
+        let before = flash.image();
+        flash.arm(&[]);
+        assert_eq!(
+            mounted.write_bound_counter(fid, &vec![0; length]),
+            Err(Error::MemoryFatal)
+        );
+        assert_eq!(flash.image(), before);
+        assert!(flash.events().iter().all(|event| event.0 == Io::Read));
+        assert_eq!(mounted.read_bound_counter(fid, &mut []), Ok(None));
+    }
+}
+
+#[test]
 fn replacement_and_delete_recreate_cannot_inherit_old_counter_state() {
     let (flash, mut mounted) = seeded(FIDO_PIN, &[8; 35]);
     let mut spent = [8; 35];

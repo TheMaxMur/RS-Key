@@ -38,6 +38,9 @@ fn prompt(env: &Env, pad: Pad, timeout_ms: u32) -> RefCell<TestUi<'_>> {
     RefCell::new(ui)
 }
 
+#[path = "presence_draw_failure_tests.rs"]
+mod draw_failure;
+
 #[test]
 fn a_deny_tap_is_a_real_decline() {
     // The BOOTSEL button has no decline gesture; the screen does, and it must

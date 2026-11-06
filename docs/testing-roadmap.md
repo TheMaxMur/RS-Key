@@ -113,18 +113,38 @@ comment clarification leaves executable tokens and line coordinates unchanged.
 | 7 | Verify the delivered image and resource limits | 3, 4 and representative configurations from 6 |
 | 8 | Make the evidence reproducible in CI and before release | Incrementally from 1; completion after 2 through 7 |
 
-The latest local completion boundary is:
+The latest local completion boundary includes the
+[2026-11-05 follow-up](#security-testing-follow-up-2026-11-05). Its source repair
+and independence review were transferred from the detached `rs-key-wt-testing`
+worktree at `a25b5de2` into this checkout. The maintainer requested no repeat
+checks during transfer. Recorded gate passes belong to the testing worktree;
+they are not a new gate run on the combined tree.
+
+The later [whole-library MC/DC extension](mcdc-independence.md#whole-library-extension-2026-11-05)
+runs eighteen source-instrumented host profiles and a final default with the
+new tests. Fresh full gates passed on the final Rust tree on 2026-11-06,
+with four host test threads for `check.sh`; the [verification record](mcdc-independence.md#verification)
+qualifies the socket-test amendment and the default-parallel timing boundary.
+Whole-core MC/DC remains incomplete: the native-source default retains 138
+reviewed residuals and 79 source-scope limitations.
+The [combined const/macro and worker follow-up](mcdc-expansion.md) supplements
+the native scope with a fresh 4,255/4,399 host default after guarded `matches!`
+expansion and a separate 29/31
+compiled-condition worker campaign. Its raw residuals and fault/frontend
+boundaries remain explicit. The
+[residual annex](mcdc-residuals.md) preserves each missing vector and its
+producer, profile, arithmetic, type, coupling or cryptographic boundary.
 
 | Phase | Established | Remaining |
 |---|---|---|
-| 1 | Calibrated condition measurements, source identity, raw maps and eighteen separate ARM Linux profiles | Native MC/DC is unsupported; the decision below selects scoped independence evidence followed by a compiler-based pilot, with implementation deferred; unemitted and device code need separate evidence |
-| 2 | The original 996-outcome/27-group review and the current eighteen-profile reachability audit, including authenticated storage v2 and direct host/test-util inputs; every measured residual has a finite scoped disposition | MC/DC implementation remains deferred by the decision below; raw residuals, primitive/cryptographic assumptions and excluded evidence scopes are recorded in the [current audit](coverage-current.md) |
-| 3 | Persistent write histories plus the bounded read/erase/program, damaged-record, exhaustion, readback and silent-mutation matrix below, now including the selective `Silent` medium, its store read-back oracle, the correlated `Torn` medium (a torn write and the read that answers it), and the 2026-10-21 silent-write-with-refused-read-back and second-cut-during-recovery compositions; the 2026-11-04 slice adds v2 import/rekey/compaction histories with correlated read/write/erase and cut compositions; owner replay and selected NOR byte sweeps include interrupted recovery | Longer retained campaigns and semantic record-loss detection beyond the current CRC/legacy formats remain open, as do correlated-fault stories beyond the tested combinations; the bounded matrix does not close the whole phase |
+| 1 | Calibrated condition measurements and eighteen ARM Linux profiles; the 2026-11-05 extension adds calibrated Supercov vectors, eighteen isolated host profiles, const/EC experiments and an ARM runtime pilot with the existing compiler | Whole-core MC/DC remains incomplete; the final default retains 138 reviewed residuals and 79 source-scope limitations, with device/C/assembly scopes separate |
+| 2 | The original 996-outcome/27-group review and eighteen-profile condition-outcome audit, including storage v2 and callable helpers; the six selected security groups have tool witnesses, real OpenPGP PW1/PW2 pairs and an explicit FIDO UV coupling argument; feasible host residuals have new tests and all 138 remaining default conditions have a source-bound disposition | Resolve the remaining instrumentation and device scopes before a whole-core claim; the [MC/DC report](mcdc-independence.md) and [residual annex](mcdc-residuals.md) retain raw counts, coupling and assumptions separately from the older [condition-outcome audit](coverage-current.md) |
+| 3 | Persistent write histories plus the bounded read/erase/program, damaged-record, exhaustion, readback and silent-mutation matrix below, now including the selective `Silent` medium, its store read-back oracle, the correlated `Torn` medium (a torn write and the read that answers it), and the 2026-10-21 silent-write-with-refused-read-back and second-cut-during-recovery compositions; the 2026-11-04 slice adds v2 import/rekey/compaction histories with correlated read/write/erase and cut compositions; owner replay and selected NOR byte sweeps include interrupted recovery; the 2026-11-05 repair fixes read-error and incomplete-walk handling in the power-cut oracle | Semantic record-loss detection beyond the current CRC/legacy formats, further correlated-fault histories and longer retained campaigns remain open; the bounded matrix does not close the whole phase |
 | 4 | Semantic controls through host, fuzz, Miri and image runners; the 2026-10-11 critical slice below adds independent crypto boundaries and destructor observations; the 2026-10-12/14 whole-core shard closure below dispositions all 10 887 desired occurrences with no pending survivor | Device C/assembly mutation execution and resource/timing equivalence remain separate obligations |
-| 5 | Independent OATH positions, journal histories, 576 OpenPGP and 288 F9 command/state/fault inputs, plus the 11 cross_applet capability-gate and 6 fs_ops stateful seeds of the 2026-10-14 slice below, replayed through the shipped targets under Miri; the 2026-10-21 slice adds 53 `power_cut` seeds for the credential/config/PIV/reset drivers, 10 `authenticated_store` v2 seeds, and the `cross_applet` OATH record-lifecycle oracle with its 97-byte seed (replayed under Miri); `scripts/fuzz-union.py` makes the union reproducible and the 2026-10-15 campaigns remeasure it at 23062/36301 (63.53%, `default`) and 22699/36182 (62.74%, `flavours`); the 2026-11-04 slice adds the `TOK1` token spend/revocation oracle, the OATH SET CODE/VALIDATE HMAC oracle, 18 v2 lifecycle/fault histories and two-hour campaigns per target | Other stateful targets and the open-ended retained campaign remain; the named token, OATH, v2 and two-hour campaign remainders are closed by the 2026-11-04 slice |
-| 6 | Eighteen current host-profile maps with finite source-bound residual reviews, including storage v2; fourteen ordinary release-flavour builds with thirteen image protocol passes; the 2026-10-15 host-tool slice adds argument, transport-failure and machine-readable-output contracts for tools/tui, tools/emu and the Python CLI, reported separately | Display-image execution and device interoperability |
-| 7 | Optimized partitioned images, real presence/CANCEL, resource controls and independently checked crypto | Unoptimized image failure, display execution and silicon-only measurements |
-| 8 | Local runner controls and source-bound reports | Actual CI execution and same-revision release evidence |
+| 5 | Independent OATH positions, journal histories, 576 OpenPGP and 288 F9 command/state/fault inputs, plus the 11 cross_applet capability-gate and 6 fs_ops stateful seeds of the 2026-10-14 slice below, replayed through the shipped targets under Miri; the 2026-10-21 slice adds 53 `power_cut` seeds for the credential/config/PIV/reset drivers, 10 `authenticated_store` v2 seeds, and the `cross_applet` OATH record-lifecycle oracle with its 97-byte seed (replayed under Miri); `scripts/fuzz-union.py` makes the union reproducible and the 2026-10-15 campaigns remeasure it at 23062/36301 (63.53%, `default`) and 22699/36182 (62.74%, `flavours`); the 2026-11-04 slice adds the `TOK1` token spend/revocation oracle, the OATH SET CODE/VALIDATE HMAC oracle, 18 v2 lifecycle/fault histories and two-hour campaigns per target; the 2026-11-05 worktree completes two-hour campaigns for `power_cut` and `fs_ops` | Further stateful-surface coverage and the open-ended retained campaign remain, while the finite two-hour campaign queue for the five named targets is complete |
+| 6 | Eighteen current host-profile maps with finite source-bound residual reviews, including storage v2; fourteen ordinary release-flavour builds with thirteen image protocol passes; the 2026-10-15 host-tool slice adds argument, transport-failure and machine-readable-output contracts for tools/tui, tools/emu and the Python CLI, reported separately; selected real-device suites passed on the 4 MiB RP2350 A2 board on 2026-11-05 | Display-image ceremonies, other declared device/configuration scopes and host interoperability beyond the recorded board setup |
+| 7 | Optimized partitioned images, real presence/CANCEL, resource controls and independently checked crypto; the 2026-11-05 full image laboratory passed, the unoptimized build refusal is localized to linker layout checks, and selected physical crypto/residue/TrustZone and secure-boot observations are recorded | An executable unoptimized image under a reviewed layout, display-image ceremonies, device C/assembly mutation/resource evidence and the remaining silicon-only measurements |
+| 8 | Local runner controls and source-bound reports; fresh full gates passed in the main checkout on 2026-11-06 after integrating the repair, review and final test additions | Actual CI execution and same-revision release evidence |
 
 ## Phase 1 Establish trustworthy coverage measurements
 
@@ -173,10 +193,12 @@ are reported as missing evidence rather than success.
 
 ### MC/DC decision recorded on 2026-10-08
 
-**Status: decision recorded; implementation deferred.** This change records the
-method and its acceptance criteria. It adds no instrumentation, tests, tools,
-dependencies, compiler pins, gate rows or CI jobs. Phases 1 and 2 remain open
-on their MC/DC criteria; recording this decision does not discharge them.
+**Status on 2026-10-08: decision recorded; implementation deferred.** That change
+recorded the method and acceptance criteria without adding instrumentation,
+tests, tools, dependencies, compiler pins, gate rows or CI jobs. The
+[2026-11-05 follow-up](#security-testing-follow-up-2026-11-05) started the scoped
+review, now [transferred into this checkout](mcdc-independence.md). Phases 1
+and 2 remain open on their MC/DC criteria.
 
 The selected route has two steps. First, review independence pairs for named
 security decisions using existing command tests and bounded proofs. This can
@@ -187,7 +209,7 @@ Wasm pilot under the scope restrictions below. A repository-wide measurement
 must come from a calibrated instrumenter with an explicit decision inventory; handwritten
 predicate copies and summed condition counters cannot supply that percentage.
 
-The present blocker is the compiler, not the report flag: the retained local
+The compiler route remains blocked, independently of the report flag: the retained local
 probe rejects `mcdc` in `coverage-options`. Upstream has an
 [accepted goal to restore maintained MC/DC support](https://goals.rust-lang.org/2026/mcdc-coverage-support.html),
 which is a development plan rather than evidence that our pinned compiler
@@ -197,9 +219,17 @@ compatibility with our toolchain is not guaranteed. That manual warns that
 requesting MC/DC analysis on insufficiently instrumented inputs can miss
 violations, and lists source-location, macro and pattern-matching limitations.
 
+On 2026-11-05, [Supercov source instrumentation](mcdc-independence.md) supplied
+scoped measurements with the existing stable compiler. It is adopted for the
+six selected security groups, with a retained anonymous-constant fix in the
+external tool. Its reports, source scope and coupled-condition dispositions
+do not establish compiler-native or whole-core MC/DC.
+
 | Option | Decision | Reason |
 |---|---|---|
 | Existing tests with reviewed independence pairs | First step, for a declared security subset | Reuses the actual Rust command paths and establishes a reference for a later instrumenter |
+| Supercov 4.22.0 source probes | Adopted on 2026-11-05 for the selected security decisions | Calibrated vectors and pairs, command-path test additions, explicit UV coupling, and a small external-tool fix; [results and reproduction](mcdc-independence.md) |
+| Floyd 0.2.9 over MIR and condition counters | Pilot completed on 2026-11-05; rejected for adoption | [The pilot](mcdc-floyd-pilot.md) reproduces false independence, merged evaluations, omitted decisions and failures on the selected RS-Key MIR |
 | Maintained upstream rustc MC/DC with cargo-llvm-cov/LLVM | Preferred automatic measurement route when available and calibrated | Keeps decision identity and evaluation tracking in the compiler; availability must be verified |
 | GNATcoverage with a compatible Rust compiler | Alternative pilot if available | Evaluate compiler compatibility, licensing and CI availability before adopting it; an analyzer alone cannot instrument our current binaries |
 | Witness on separately compiled Wasm libraries | Additional pilot candidate, not the Rust-source measurement route | Reconstructs post-codegen decisions from Wasm branches and debug information; source and ARM correspondence must be established separately |
@@ -263,7 +293,8 @@ and the ordinary host suite on the same sources. Retain binary and trace hashes,
 raw maps, unsupported constructs, source correspondence, runtime and memory
 cost. Change main toolchain pins or the gate only as a separately authorized
 step. Until then, preserve the current raw condition reports and continue the
-other roadmap phases; automatic MC/DC remains unmeasured.
+other roadmap phases. The later Supercov measurement covers the declared
+security subset and later host-library profiles; whole-core MC/DC remains incomplete.
 
 **Witness assessment.** The read-only review of
 [pulseengine/witness at `f3c70b7fed95`](https://github.com/pulseengine/witness/tree/f3c70b7fed95a9d3a704e8bb6d940cd49b38de60)
@@ -2885,6 +2916,176 @@ control and runner) is `target/fuzz-completion-20261104/matrix.md`; the controls
 failing assertions and the source/binary hashes are beside it. The existing
 `scripts/check.sh` `fuzz targets alive` row builds every target and replays the
 generated corpus, so these seeds are executed by the gate and not merely stored.
+
+## Security-testing follow-up, 2026-11-05
+
+DeepSeek's results are retained in the detached `rs-key-wt-testing` checkout,
+based on `a25b5de2`, under `target/security-testing-20261105/`. Artifact paths
+in this section are relative to that checkout. The test-util power-cut repair,
+its tests, the independence review and its navigation entry were transferred
+into the main checkout without changing the executable source. Documentation
+retains the measured scope and remaining work. No firmware behaviour change or
+`bcdDevice` bump is part of that diff.
+
+### Retained stateful campaigns
+
+The two priority targets left without two-hour campaigns after the 2026-11-04
+slice now have them. Each target ran twice for 3601 seconds: an accumulated
+corpus with libFuzzer seed 1, then freshly generated deterministic inputs with
+seed 2. All four exit files contain 0, the artifact directories are empty, and
+each binary's before/after SHA-256 matches.
+
+| Target | Starting corpus | Executions | Final cov | Peak RSS |
+|---|---|---:|---:|---:|
+| `power_cut` | accumulated, seed 1 | 347359 | 9325 | 659 MB |
+| `power_cut` | fresh 818 inputs, seed 2 | 531397 | 9285 | 504 MB |
+| `fs_ops` | accumulated, seed 1 | 16381182 | 636 | 652 MB |
+| `fs_ops` | fresh 6 inputs, seed 2 | 16911490 | 636 | 925 MB |
+
+The logs, corpora, hashes and exit files are in `campaigns/`. The earlier
+60-second smoke run is retained separately and is not the fresh-input campaign.
+Together with the preceding token/OATH/v2 slice, this closes the finite
+two-hour campaign queue for the five named targets. Further stateful-surface
+coverage and the open-ended retained campaign remain separate work; execution
+counts and libFuzzer `cov` are not a whole-core source-coverage percentage.
+
+### Power-cut oracle repair
+
+The worktree repairs a false-negative path in `PowerCutModel`: value and
+metadata probes used infallible helpers that could collapse a backend read
+error into absence, while `sweep` ignored key-walk completeness. It now uses
+`try_read`/`try_meta_find` and refuses an incomplete walk while power is live.
+An actual power cut still enters recovery and repeats the observation.
+
+The retained `rsk-fs-tests-final.log` records 168 passing unit tests, including
+24 power-cut tests. Removing the read-error or walk-completeness guard makes
+its corresponding `should_panic` test fail because the expected panic does not
+occur. These failures are recorded in `controls/`; they demonstrate the oracle
+gap in the intended direction.
+
+`mutants-rsk-fs-final.log` reports 17 caught mutations and two timeouts, with
+no missed mutation. The timeout substitutions, `settle -> false` and
+`sweep -> false`, are retained as nontermination observations, not semantic
+kills. The repair and its tests are now present in this checkout.
+
+### Independence review and compiler boundary
+
+The [independence review](mcdc-independence.md) measures six decision groups: FIDO
+token authorization, token expiry, PIV PIN/touch policy, OpenPGP DEK selection,
+presence/CANCEL ownership and storage read-back. It records source hashes and
+test witnesses and Supercov vectors. Real VERIFY/logout now supplies the
+OpenPGP PW1/PW2 pairs with selected-FID assertions. Fresh tokens from real
+clientPIN requests exercise getAssertion's permission and RP checks. The
+FIDO UV check remains explicitly coupled with the revoked GA grant.
+
+PIV's ALWAYS policy also couples `has_pin` with freshness at command boundaries;
+only freshness has a separately observable pair there. Its guard-removal
+controls preserve this distinction. Fs read-error guards distinguish confirmed
+absence from actual failure, while the successful-value predicate is coupled
+to the backend result contract. These qualifications retain the raw tool counts.
+
+The named Boolean decisions now have tool witnesses, including the real Fs
+read-error and complete-walk guards. The report distinguishes short-circuit
+tool credit from independently observable security enforcement, retains
+evaluated/skipped operands and allowing baselines, and names unsupported
+macro/const and ARM scopes. It makes no whole-core percentage claim.
+
+The subsequent [whole-library extension](mcdc-independence.md#whole-library-extension-2026-11-05)
+measures eighteen isolated profiles and a final default: 4,819 tests passed,
+five skipped, with 4,148/4,286 conditions witnessed (96.78%). It adds 85 tool
+condition witnesses
+over the first whole-library baseline, fixes partial CTAPHID reassembly across
+USB reset (`0x0BDF`), and reviews all 138 raw residuals without crediting them
+as pairs. The 79 frontend limitations retain a separate inventory and targeted
+const/EC measurements. The ARM runtime pilot recovers vectors from an isolated
+worker image; it is not whole-image MC/DC. Both full gates and the advisory
+20-mutant in-diff run passed; later test changes have the affected host/Clippy
+rows and final source-instrumented default run.
+
+`mcdc-pilot.log` records `rustc 1.101.0-nightly` rejecting
+`coverage-options=mcdc` with the accepted values `block | branch | condition`.
+The separate condition-mode experiment does not measure independence. No
+compiler pin was changed. Compiler-native MC/DC remains unavailable; the
+selected host-source decisions are now measured by Supercov instead.
+
+The subsequent [Floyd 0.2.9 pilot](mcdc-floyd-pilot.md) ran twenty calibration
+cases and 22 existing tests across six RS-Key crates. It reproduced a false
+independence result contradicted by raw LLVM counters, and could not recover
+the six target decision groups. Its own 103 tests passed. The tool is rejected
+for adoption; these runs do not discharge the independence or native MC/DC
+criteria. The subsequent Supercov results, rather than Floyd, supply the
+scoped measurements and command-path witnesses described above.
+
+### Delivered-image results and remaining configurations
+
+`image-suites.log` ends with `IMAGE SUITES PASSED`, and `image-suites.exit`
+contains 0. The optimized no-touch image passed the hostile NS checks, RSA
+event and authorized-fault recovery checks, basic/stack/operations/cuts image
+scenarios and OTP-seal scenario.
+
+The 8 MiB unoptimized build now fails at link: reviewed code-size/cache
+placement assertions and the 8 KiB scratch-SRAM limit refuse the layout.
+`unoptimized/build-opt0.log` contains the exact linker diagnostics. This
+characterizes the current refusal; it does not satisfy phase 7's requirement
+to execute an unoptimized image. That needs a separately reviewed layout and
+resource budget, without weakening the optimized image's guards. The older
+runtime panic remains evidence about its dated image only.
+
+The 16 MiB `display,no-touch` image boots and passes image `getInfo`.
+Its makeCredential attempt returns `0x2d` while waiting for on-panel presence.
+The image backend has no panel/touch model; host display and emulator tests
+exercise a different execution scope. Display-image approve/deny/cancel/PIN
+therefore remains open, with the attempt in `display-image/run/`.
+
+### Physical board scope
+
+The hardware logs identify an RP2350 A2 QFN60, ROM `312e22fa`, 4096 KiB flash,
+serial `rs-key-0001`, without a display panel. Selected FIDO/U2F, CCID,
+OpenPGP/PIV RSA and EC, OATH/OTP, ML-DSA-44/65/87, reset, soft-lock and
+seed-backup suites passed on that setup. The first makeCredential attempt
+failed; the recorded retry after reset passed. The physical TrustZone
+diagnostic also passed its selected witnesses.
+
+`hw/55_stack_residue.log` finds the OATH HMAC residue with the dead-stack sweep
+stopped and none of the hunted patterns with it running. The SRAM control in
+`hw/54_sram_control.log` settles platform clearing across BOOTSEL using both
+an all-zero dump and a successful SRAM write/read probe. That control does not
+prove the firmware's scrub.
+
+Secure-boot provisioning logs record a lab key in slot 0, both debug-disable
+flags, enforcement and locked key/flag pages. The unsigned-image attempt
+records secure boot enabled, neither debug interface enabled, no booted
+application partition and no FIDO response. The run report says the signed
+image was restored afterwards; this entry does not promote that statement into
+a separately captured signed-recovery or cold-power debug-denial result.
+
+Some summaries say no flash/signing/OTP operations occurred, but their own
+provisioning logs record those operations. Those summaries do not describe
+the board's final state. The signing key must be preserved outside disposable
+build output before the worktree or its artifacts are cleaned up.
+
+The replug helper uses `rsk reboot bootsel` plus `picotool reboot`, not a
+physical supply interruption. These runs do not settle cold-power or
+flash-tear obligations. `29_reset_power_cut.py` was not run because it needs
+a physical power-cut fixture. Display hardware, page-58 read denial, cold-power
+debug denial and other unmeasured platform conditions remain open. No
+platform-registry discharge is inferred from a generic suite pass.
+
+### Verification and integration boundary
+
+`check-final3.exit` and `assurance-final3.exit` both contain 0. Their logs end
+with `ALL CHECKS PASSED` and `ALL ASSURANCE CHECKS PASSED`; the latter reports
+2729 passing tests. The final documentation check reports zero link errors.
+These are results for the testing worktree, which excludes this checkout's
+pre-existing PIV-history edits.
+
+The initial transfer did not repeat checks. The subsequent scoped independence
+review, source reconciliation and fresh full gates in the main checkout are
+recorded in the [MC/DC verification](mcdc-independence.md#verification).
+Remaining work includes display-image ceremonies, an
+executable unoptimized profile, device C/assembly mutation and resource/timing evidence, physical
+measurements beyond the recorded setup, and actual CI/release execution on the
+selected revision. The existing phase completion criteria still apply.
 
 ## Host-tool workspaces, 2026-10-15
 

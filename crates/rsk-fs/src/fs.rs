@@ -1060,3 +1060,7 @@ mod store_steps;
 #[cfg(test)]
 #[path = "store_domain_tests.rs"]
 mod store_domain;
+
+#[cfg(test)]
+#[path = "oracle_independence_tests.rs"]
+mod oracle_independence;

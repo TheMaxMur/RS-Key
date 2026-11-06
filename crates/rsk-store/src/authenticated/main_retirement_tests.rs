@@ -4,6 +4,9 @@
 use super::*;
 use crate::tests::{Effect, FaultFlash, Io, Rule};
 
+#[path = "main_prefix_read_tests.rs"]
+mod prefix_read;
+
 fn provision(flash: &FaultFlash) -> Main<FaultFlash, UncachedMap> {
     let mut main = main_on(flash.clone());
     main.initialize(&KEY, 0, &Directory::new()).unwrap();
@@ -122,3 +125,6 @@ fn every_retirement_read_refusal_is_reported_instead_of_hiding_an_orphan() {
         assert_eq!(flash.hits(), [1]);
     }
 }
+
+#[path = "main_read_geometry_tests.rs"]
+mod read_geometry;

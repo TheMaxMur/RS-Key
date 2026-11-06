@@ -24,6 +24,7 @@ struct Fake {
     damage: Option<(u32, u32)>,
     reads: usize,
     flags: Option<(bool, bool)>,
+    stuck_readable: bool,
 }
 
 impl Stream for Fake {
@@ -33,6 +34,9 @@ impl Stream for Fake {
     }
     fn readable(&mut self) -> Result<bool, Error> {
         if self.starts == 0 {
+            if self.stuck_readable {
+                return Ok(true);
+            }
             return fifo_readable(
                 self.stale == 0 || self.stale > FIFO_WORDS,
                 self.stale >= FIFO_WORDS,
@@ -78,6 +82,9 @@ impl Stream for Fake {
     }
     fn read_word(&mut self) -> u32 {
         if self.starts == 0 {
+            if self.stuck_readable {
+                return 0xbad;
+            }
             self.stale -= 1;
             return 0xbad;
         }
@@ -248,6 +255,18 @@ fn stops_after_stall_stale_overflow_invalid_fill_and_wrong_final_progress() {
         assert_eq!(stream.stops, 2);
         assert_eq!(stream.remaining, 0);
     }
+}
+
+#[test]
+fn a_fifo_that_stays_readable_after_draining_cannot_start_a_transfer() {
+    let mut stream = Fake {
+        stuck_readable: true,
+        ..Fake::default()
+    };
+    let mut out = [0xa5; 16];
+    assert_eq!(read(&mut stream, 64, 4, &mut out), Err(Error::Transfer));
+    assert_eq!(out, [0xa5; 16]);
+    assert_eq!((stream.stops, stream.starts), (2, 0));
 }
 
 #[test]

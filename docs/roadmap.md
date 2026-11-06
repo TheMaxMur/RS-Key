@@ -37,6 +37,25 @@ compound storage failures, stateful fuzzing and tests of the delivered image.
 Its eight phases have explicit completion criteria and remain open. High host
 line coverage alone does not complete this direction.
 
+The [2026-11-05 follow-up](testing-roadmap.md#security-testing-follow-up-2026-11-05)
+records two-hour campaigns for `power_cut` and `fs_ops`, a test-oracle repair,
+Supercov measurements for six security-decision groups, and optimized-image
+and selected RP2350 A2 hardware runs. The repair and review have moved from the
+testing worktree into the main checkout. The measured Boolean subset has
+command-path witnesses and explicit FIDO UV, PIV PIN-state and storage-result
+coupling dispositions.
+The later whole-library extension measures eighteen profiles and a final
+default of 4,148/4,286 conditions witnessed (96.78%). All 138 residuals have a
+[source-bound review](mcdc-residuals.md); they retain their raw counts alongside
+79 frontend limitations. The [combined const/macro and worker follow-up](mcdc-expansion.md)
+adds a fresh 4,255/4,399 host default after guarded `matches!` expansion and a
+separate 29/31 worker measurement,
+with two worker residuals and explicit fault/frontend boundaries. The work
+also fixes partial CTAPHID reassembly across USB reset (`0x0BDF`).
+Panel-image execution, an executable unoptimized image, whole-core MC/DC,
+device C/assembly mutations, the remaining physical measurements and
+CI/release evidence still need their own results.
+
 **Conformance parity.** The bar is a real YubiKey and the specification, in
 that order when they disagree and the spec is on our side, and the other order
 when it is not — matching a behaviour real hosts depend on beats being right

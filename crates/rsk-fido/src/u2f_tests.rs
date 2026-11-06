@@ -14,6 +14,9 @@ use rsk_fs::storage::ram::RamStorage;
 #[path = "u2f_bounds_tests.rs"]
 mod bounds;
 
+#[path = "u2f_independence_tests.rs"]
+mod independence;
+
 struct SeqRng(u64);
 impl Rng for SeqRng {
     fn fill(&mut self, buf: &mut [u8]) {

@@ -1,0 +1,32 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 RS-Key contributors
+
+diff --git a/crates/supercov-engine/src/rust_instrumenter.rs b/crates/supercov-engine/src/rust_instrumenter.rs
+index 6c83fdc..3186853 100644
+--- a/crates/supercov-engine/src/rust_instrumenter.rs
++++ b/crates/supercov-engine/src/rust_instrumenter.rs
+@@ -1370,6 +1370,7 @@ const EXPRESSION_MACROS: &[&str] = &[
+     "vec",
+     "dbg",
+     "matches",
++    "pin",
+ ];
+ 
+ /// Macros whose first argument decides whether the program goes on.
+@@ -1502,6 +1503,16 @@ fn rewrite_expression_macros(
+         if !EXPRESSION_MACROS.contains(&name.as_str()) {
+             continue;
+         }
++        if name == "pin"
++            && !call.path().is_some_and(|path| {
++                matches!(
++                    path.syntax().text().to_string().as_str(),
++                    "core::pin::pin" | "std::pin::pin"
++                )
++            })
++        {
++            continue;
++        }
+         const WHOLE: &str = "a tree parsed without errors has every part its syntax requires";
+         let (bang, arguments) = (
+             call.excl_token().expect(WHOLE),

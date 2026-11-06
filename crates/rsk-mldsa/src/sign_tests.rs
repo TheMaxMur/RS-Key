@@ -3,6 +3,20 @@
 
 use super::*;
 
+#[test]
+#[should_panic(expected = "ctx.len() <= 255")]
+fn expanded_key_refuses_an_oversized_context() {
+    let key = ExpandedKey::<4, 4>::from_seed(&crate::params::ML_DSA_44, &[7; SEED_LEN]);
+    let mut out = [0; crate::params::ML_DSA_44.sig_len];
+    key.sign(
+        &crate::params::ML_DSA_44,
+        b"message",
+        &[0; 256],
+        &[0; 32],
+        &mut out,
+    );
+}
+
 std::thread_local! {
     static DROP_WIPED: core::cell::Cell<Option<bool>> = const { core::cell::Cell::new(None) };
 }

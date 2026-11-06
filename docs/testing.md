@@ -137,6 +137,24 @@ records additional Boolean operands that `--branch` misses outside branch
 conditions. It does not establish an MC/DC percentage. The calibration and
 remaining scope are recorded in the [testing roadmap](testing-roadmap.md#phase-1-establish-trustworthy-coverage-measurements).
 
+The [2026-11-05 security subset](mcdc-independence.md) uses Supercov source
+probes with the existing stable compiler. It records actual vectors/pairs for
+the selected authorization, expiry, presence and storage decisions, plus
+unsupported surfaces and coupled UV, PIV PIN state and storage results. This is
+scoped host-source MC/DC evidence,
+separate from compiler instrumentation and ARM image coverage.
+
+The [whole-library extension](mcdc-independence.md#whole-library-extension-2026-11-05)
+records eighteen isolated profiles and a final default of 4,148/4,286 conditions
+with witnesses (96.78%). The [residual review](mcdc-residuals.md) dispositions
+all 138 missing conditions without changing their raw count. The 79 frontend
+limitations and coupled defenses remain explicit; whole-core MC/DC is incomplete.
+The [combined const/macro follow-up](mcdc-expansion.md) records a fresh default
+of 4,255/4,399 conditions after guarded `matches!` expansion and extends the
+separate ARM worker measurement to
+29/31 compiled conditions in a physical-button/NS-ABI image. Its raw residuals,
+fault boundaries and frontend limitations remain visible.
+
 The [journal slice](testing-roadmap.md#2026-10-06-journal-decisions-and-compound-byte-cuts)
 adds refused fold commits, sparse wrapping windows, checkpoint output limits and
 combined byte-cut/recovery histories over `SeqStorage`. Its raw default Mac report

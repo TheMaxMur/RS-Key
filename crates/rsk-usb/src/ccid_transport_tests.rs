@@ -16,6 +16,9 @@ use core::task::Poll;
 use embassy_futures::block_on;
 use embassy_usb::driver::EndpointType;
 
+#[path = "ccid_epoch_independence_tests.rs"]
+mod epoch_independence;
+
 #[derive(Default)]
 struct Handler {
     reply_delay_ms: Option<u64>,

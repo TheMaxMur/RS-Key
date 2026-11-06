@@ -1,0 +1,38 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 RS-Key contributors
+--- a/crates/rp2350-emu/src/core/execute.rs
++++ b/crates/rp2350-emu/src/core/execute.rs
+@@ -785,8 +785,8 @@
+             0b0110 => {
+                 // CPS: CPSIE/CPSID — affects PRIMASK/FAULTMASK
+                 let im = ((opcode >> 4) & 1) as u32;
+-                let affect_i = opcode & (1 << 0) != 0; // bit 0 = I (PRIMASK)
+-                let affect_f = opcode & (1 << 1) != 0; // bit 1 = F (FAULTMASK)
++                let affect_i = opcode & (1 << 1) != 0; // CPS T1 I=bit1 (PRIMASK).
++                let affect_f = opcode & (1 << 0) != 0; // CPS T1 F=bit0 (FAULTMASK).
+                 if affect_i {
+                     self.regs.primask = im;
+                 }
+--- a/crates/rp2350-emu/src/core/security_tests.rs
++++ b/crates/rp2350-emu/src/core/security_tests.rs
+@@ -534,3 +534,20 @@
+         assert_eq!(cpu.regs.ipsr(), 3);
+     }
+ }
++
++#[test]
++fn mcdc_cps_i_f_bits_change_only_the_requested_mask_in_each_security_state() {
++    for secure in [false,true] {
++        let (mut cpu,mut bus)=machine(0xb672);
++        if secure {cpu.transition_to_secure();}
++        cpu.regs.set_pc(NS_CODE);
++        cpu.regs.primask=0;cpu.regs.faultmask=0;
++        for (index,(opcode,primask,faultmask)) in [(0xb672,1,0),(0xb662,0,0),(0xb671,0,1),(0xb661,0,0)].into_iter().enumerate() {
++            let pc=NS_CODE+2*index as u32;bus.write16(pc,opcode,0);cpu.step(&mut bus);
++            assert_eq!(cpu.regs.pc(),pc+2,"secure={secure},opcode={opcode:04x}");
++            assert_eq!(cpu.regs.primask,primask,"secure={secure},opcode={opcode:04x}");
++            assert_eq!(cpu.regs.faultmask,faultmask,"secure={secure},opcode={opcode:04x}");
++            assert_eq!(cpu.regs.ipsr(),0);
++        }
++    }
++}

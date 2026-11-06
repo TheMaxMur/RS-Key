@@ -111,3 +111,7 @@ impl ReadCache {
         Ok(())
     }
 }
+
+#[cfg(test)]
+#[path = "counter_read_tags_tests.rs"]
+mod tests;
