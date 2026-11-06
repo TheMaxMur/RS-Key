@@ -7,8 +7,9 @@ The 2026-11-06 follow-up measures Rust syntax omitted by the earlier frontend:
 `let-else`, guarded `matches!`, equality assertions and reviewed predicate
 callbacks. The compiler and production firmware are unchanged. This closes the
 reviewed omissions in the current source inventory. It does not establish
-literal whole-firmware MC/DC: raw residuals, other macro/const syntax,
-dependencies, C/assembly and physical-device evidence remain separate.
+literal whole-firmware MC/DC. The [current-source review](#current-source-completion-review)
+reconciles declared macro/const warnings and retained C/assembly evidence;
+raw residuals, dependencies and physical-device evidence remain explicit.
 
 ## Frontend and qualification
 
@@ -54,7 +55,7 @@ the complete functional fixture while admitting only the selected let-else
 condition. The actual ARM collector accepts an intact raw region and refuses
 separate token, length, overflow, loss and pending-record corruptions.
 
-The ARM campaigns used the frozen v8 frontend. The host uses v9's custom-find
+The initial ARM campaigns used the frozen v8 frontend. The host uses v9's custom-find
 correction. Across all 47 firmware input files, their complete generated Rust and
 manifest bytes agree: 527 declared decisions, 662 conditions, 4,444 hits and
 28 limitation records. This establishes correspondence for these firmware
@@ -107,6 +108,61 @@ A pair for a defensive check does not prove that deleting it changes the public
 result: a later scalar-width check can also refuse PIV's empty scalar. These
 measurements retain component contracts, public command paths and apparatus
 controls as distinct evidence scopes.
+
+## Fresh feature matrix
+
+All eighteen profiles now use the same current Rust snapshot, frozen v9
+frontend, 132 const-function adapters and four EC-template expansions. Each
+ordinary adapted suite and its measured full suite passes. Every row retains
+its own raw archive and complete paginated residual queries; no vector crosses
+a profile boundary. All 31 newly tested conditions have pairs in every profile.
+
+| Profile | Passed | Paired conditions | Raw missing | Run |
+|---|---:|---:|---:|---|
+| `default` | 4,840 | 4,806/5,029 | 223 | `run_ca3cc7a656f04845` |
+| `advertise-pqc` | 4,840 | 4,806/5,029 | 223 | `run_b2030fe432f31088` |
+| `fips-profile` | 4,826 | 4,793/5,029 | 236 | `run_becf193d6a15d429` |
+| `fips-profile,advertise-pqc` | 4,826 | 4,793/5,029 | 236 | `run_ce91020c1702df24` |
+| `strong-pin` | 4,844 | 4,799/5,029 | 230 | `run_e08676ca09596e5a` |
+| `strong-pin,advertise-pqc` | 4,844 | 4,799/5,029 | 230 | `run_e791c0df5730b113` |
+| `always-uv` | 4,840 | 4,806/5,029 | 223 | `run_089a6fc9b4440633` |
+| `always-uv,advertise-pqc` | 4,840 | 4,806/5,029 | 223 | `run_978f4607ecdc2463` |
+| `strict-up` | 4,838 | 4,796/5,029 | 233 | `run_580b39d1fae5b668` |
+| `strict-up,advertise-pqc` | 4,838 | 4,796/5,029 | 233 | `run_350992b6934d0a5a` |
+| `display` | 4,845 | 4,808/5,031 | 223 | `run_1787753a4a75658a` |
+| `strict-config` | 4,821 | 4,781/5,003 | 222 | `run_1d70062d8cac5d5b` |
+| `largeblob-ext` | 4,833 | 4,799/5,029 | 230 | `run_f04b3e0ba690dd20` |
+| `preview-sign` | 4,879 | 4,845/5,070 | 225 | `run_ed1621fdf6cba712` |
+| `preview-sign,largeblob-ext` | 4,873 | 4,838/5,070 | 232 | `run_f2be47b20f4532ce` |
+| `display,strong-pin` | 4,849 | 4,801/5,031 | 230 | `run_afbe68f5ad84d3b3` |
+| `display,fips-profile` | 4,831 | 4,795/5,031 | 236 | `run_32fba98bae015ed9` |
+| `fido-conformance` | 4,838 | 4,796/5,029 | 233 | `run_ce419e8f90ea1067` |
+
+Every row has five skipped tests, valid and unstale evidence, zero reported
+evidence corruptions, and 79 declared frontend warnings. The raw reports keep
+complete=false and structurallyComplete=false. Every residual is matched to
+its existing profile-specific source argument or a newly reviewed invariant.
+
+The complexity callback at `crates/rsk-fido/src/pinpolicy.rs:33` has one further
+profile-specific exclusion: strong-pin/fips-profile makes PIN_COMPLEXITY_POLICY
+true, so the outer OR never calls record.get(1).is_some_and. Its absent outcomes
+are not feasible callback invocations in those builds. The default has both
+outcomes separately; its vectors are not donated to the stricter profiles.
+
+Disk-full attempts are retained separately. Some failed publication or probe
+header validation; one reported valid evidence while missing known new test
+witnesses. It is excluded from this table despite that flag. A cached retry
+also failed on an unknown obligation and receives no credit. Replacements use
+fresh frontend preparation. Admission requires all 31 known pairs and a full
+residual-identity reconciliation, as well as successful tests and raw validation.
+
+All twenty added test functions also pass in every ordinary adapted suite,
+including the expected-panic apparatus controls. Resource scheduling limits
+concurrent evidence writers; these runs establish functional/coverage results,
+not wall-clock performance comparisons.
+
+The fresh matrix and its source hashes, failed attempts and per-profile reviews
+are retained under `target/mcdc-completion-20261106/profiles/`.
 
 ## Host residuals exposed by this frontend
 
@@ -189,7 +245,8 @@ There are **45 identities with a pair in at least one admitted single image**
 and **39 with a source-bound explanation below**. The 42 feasible pair gaps
 identified after the baseline campaigns now have measured opposite outcomes;
 three pairs already existed in those baselines. This is not a 45/84 firmware coverage
-percentage. The 31 separate ELF reports retain 180 raw regions. Vectors may be
+percentage. The 31 separate ELF reports retain 183 raw regions after the
+[display admission/cancellation follow-up](#display-execution). Vectors may be
 combined only when the exact ELF SHA-256 agrees; different profile or fixture
 images never form a pair.
 
@@ -218,12 +275,10 @@ None of these observations is a physical fault-injection result.
 
 ## ARM residuals exposed by this frontend
 
-These 39 identities remain raw missing outcomes. Thirty-seven have one-sided
-execution evidence. Worker line 701 has no feasible false outcome under its
-current producer, but its reachable true path was not executed in this campaign;
-it remains part of the separate display-ceremony execution scope. Worker line
-773 has no current producer and is inactive. This pair-gap review does not
-establish complete execution coverage. Width conversions below are
+These 39 identities remain raw missing outcomes. Thirty-eight have one-sided
+execution evidence, including the later real CCID Secure request at worker:701.
+Worker:773 has no current producer and is inactive. This pair-gap review does
+not establish complete execution coverage. Width conversions below are
 specific to the 32-bit ARM image; ownership arguments refer to the reviewed
 actual callers. A direct private-state overwrite is not a feasible producer.
 
@@ -247,7 +302,7 @@ actual callers. A direct private-state overwrite is not a feasible producer.
 | `firmware/src/trustzone/usb/endpoints.rs:128`, `firmware/src/trustzone/usb/endpoints.rs:158` | The preceding allocated-endpoint guard establishes the slot; exclusive ownership prevents intervening removal. |
 | `firmware/src/worker.rs:229`, `firmware/src/worker.rs:285` | The u32/usize conversions are lossless on this target. |
 | `firmware/src/worker.rs:282` | Ready is visible only after the Dispatch EXCHANGE guard drops. Polling is serialized and core1 does not own EXCHANGE. |
-| `firmware/src/worker.rs:701` | pin_ref_ready accepts exactly P2 0x80..0x83, the same set accepted by secure_pin_meta. The reachable true path remains unexecuted in this campaign. |
+| `firmware/src/worker.rs:701` | pin_ref_ready accepts exactly P2 0x80..0x83, the same set accepted by secure_pin_meta. A real selected-OpenPGP Secure request executes its true path; native CCID ABORT cancels the ceremony. |
 | `firmware/src/worker.rs:773` | The legacy SecureOtpHidHandler is never instantiated by the current producer. This is inactive source, not an executed true-only condition. |
 | `firmware/trustzone/nonsecure/src/keyboard.rs:76` | Frame sets req_ready before signaling. The sole consumer shares the NS executor, with no await between wait and take; reset preserves the request. |
 | `firmware/trustzone/nonsecure/src/keyboard.rs:104` | The character is masked to 0xff before conversion to u8. |
@@ -257,7 +312,7 @@ actual callers. A direct private-state overwrite is not a feasible producer.
 
 ## Retained evidence and remaining scope
 
-All new laboratory artifacts are under `target/mcdc-whole-fw-20261106/`:
+The initial laboratory artifacts are under `target/mcdc-whole-fw-20261106/`:
 `patch-qualification.json`, frozen tool sources/binaries, debug/release/range
 calibrations, `firmware-v8-v9-correspondence.json`, `batch-plan.json`,
 `new-firmware-evidence.json`, per-image sources/ELFs/depinfo/raw regions,
@@ -269,12 +324,13 @@ depinfo archives with hashes. The completed tool Cargo cache was also pruned
 after checking all five frozen v9 executables and archiving its depinfo.
 
 The 28 firmware and 79 host frontend limitation records remain declared.
-Compile-time code and arbitrary macro expansion still need a separate reviewed
-adapter or compiler support. The consumer policy is bound to current source.
-The earlier profile measurements were not rerun with this frontend and cannot
-inherit the new default or component pairs. Dependencies and machine-level
-C/assembly coverage are not included. Source pairs and invariants also do not
-replace independence review for coupled conditions, hardware faults or timing.
+Their [current-source review](#declared-frontend-warnings) distinguishes existing
+adapters, compile-time evaluation and macro bodies without owned Boolean
+control. The consumer policy is bound to current source. Earlier profile
+measurements retain their original frontend; fresh profiles are recorded
+separately. The [C/assembly correspondence](#owned-c-and-assembly-correspondence)
+is a separate component scope. Source pairs and invariants do not replace
+independence review for coupled conditions, hardware faults or timing.
 
 ## Verification
 
@@ -304,4 +360,255 @@ mutation-kill result. Failed environment attempts and the successful
 
 The frontend patch hashes and all foreign working changes match their saved
 baselines. Production Rust, compiler pins, firmware behavior and device release
-are unchanged. No commit, push or hardware operation was performed.
+are unchanged. The source/test additions were committed as `cd540fab`.
+No push or hardware operation was performed.
+
+The later documentation-only completion composes those full-gate results for
+the unchanged Rust/checker tree with fresh documentation build/link checks and
+all current prose/registry rows from check-assurance.sh. The unchanged assurance
+pytest suite is not repeated for this documentation update.
+
+## Current-source completion review
+
+The follow-up reconciles the finite owned firmware-source inventory, including every
+declared frontend warning. Measured pairs and reviewed missing outcomes remain
+distinct. The default still reports 4,806/5,029 pairs and 223 raw residuals;
+no source argument is substituted for a vector. This is completion of this
+source-inventory work, with explicit exceptions, rather than literal 100%
+MC/DC of the complete delivered binary.
+
+### Declared frontend warnings
+
+The review retains all 79 host and 28 firmware records, including their exact
+original IDs, reasons and source hashes. Its join uses record identity and
+path; a warning's reported line may belong to the adapted measurement copy.
+No additional unadapted owned runtime Boolean control decision was found
+inside these 107 records in the current source.
+
+| Declared records | Current-source disposition |
+|---:|---|
+| 51 host const records | All 132 original const functions have retained adapters; all original file hashes match. Adapter presence does not imply that every path executed. |
+| 8 other host const records | Fixed table geometry, feature expressions, FID assertions, const-generic dimensions and the compile-time flash read-size assertion. |
+| 12 host macro records | cfg/env values fixed for each build; their surrounding runtime predicates are measured separately. |
+| 5 EC macro records | Generated coordinate constants or followed literal includes; four Boolean-bearing runtime template expansions retain their separate adapters. |
+| 2 other host macro records | AES templates delegate operations and errors; SHA templates perform integer arithmetic and bitwise operations. Neither hides an owned Rust Boolean control predicate. |
+| 1 host fixture record | Included Wycheproof text is data. |
+| 9 firmware const records | Build validation, const-generic dimensions and aggregate initialization. |
+| 1 firmware PIN record | The separately measured runtime codec described below. |
+| 1 allocator record | Arithmetic, three for loops and dependency delegation; no explicit Boolean control predicate in the owned body. |
+| 8 firmware macro records | Static addresses, direct register writes, pinning an existing future, GPIO constructors or unconditional PIO output/wrap. |
+| 5 firmware macro records | Build cfg/env values. |
+| 2 firmware macro records | Straight-line assembly or generated diagnostic constants. |
+| 2 firmware macro records | Pinned critical-section/Embassy expansions emit direct wrappers; owned implementation bodies remain ordinary measured source. |
+
+Actual compile-time assertions remain compile-time assertions. Artificially
+executing them after rewriting them as runtime code would not establish a
+production runtime pair. The allocator's for loops, AES error propagation,
+integer bit operations, dependency internals and generated machine branches
+remain distinct from this Rust Boolean MC/DC criterion.
+
+### Firmware inventory reconciliation
+
+The complete current frontend manifest contains 527 decisions and 662
+conditions. Matching exact decision IDs and condition indices gives:
+
+| Conditions | Evidence inventory |
+|---:|---|
+| 530 | Earlier native firmware batch conditions, with their original image-specific evidence and dispositions. |
+| 6 | Earlier supplementary obligations, including the independent native timer observer. |
+| 84 | Newly admitted source forms described above. |
+| 42 | Previously unaccounted display/bench and compile-time conditions. |
+
+The last 42 conditions comprise 24 compile-time conditions, 15 feasible runtime
+conditions and three runtime exceptions. They were absent from both earlier
+batch inventories; empty vectors do not establish their infeasibility.
+The compile-time set consists of display GPIO, clock, backlight and presence
+assertions, plus loops and the contains helper inside main's const block.
+Its exact identities and original source hashes remain in the reconciliation
+record. The display/LED collision checks additionally belong to a configuration
+rejected by the existing compile_error. They receive no runtime pair credit.
+
+A single feature manifest also omits 13 real conditions retained by the older
+inventory: flash_storage's two debug assertions; six non-display compile-time
+conditions in main; presence's timer-frequency const assertion; main's
+build-fixed presence selection; and three presence GPIO component conditions.
+The latter retain their original same-image constructor/input pairs. Keeping
+these conditions gives a **537-decision, 675-condition firmware-directory Rust
+source union**. Target-specific library variants are reviewed separately below.
+This is a source inventory across configurations, not a merged execution report.
+
+Five other earlier keys are explicitly excluded as laboratory calibration:
+two conditions at Non-secure diagnostics:36 and three at Non-secure main:456/457.
+Neither repeated expression text nor a matching line alone transfers evidence;
+identities, indices and current source hashes are checked. In particular,
+main:354's const BUILD_LED_POWER_ENABLED must not inherit main:912's runtime
+observation merely because their expression text agrees.
+
+### PIN codec adapter
+
+A fresh button/TrustZone image uses the frozen v9 frontend and current sources.
+The four original const bodies remain available for compile-time evaluation;
+const_eval_select sends runtime consumers through the corresponding measured
+bodies. A separate Rust compiler wrapper enables the laboratory intrinsic only
+for firmware. Dependencies compile without RUSTC_BOOTSTRAP, preserving the
+ordinary ARM cfg selection. A clean build excludes reuse of bootstrap-dependent
+Cargo artifacts. Product sources, dependency versions and compiler pins are
+unchanged.
+
+All 1,536 typed codec rows match an independent Python SHA-256 chain over decoded
+state, clamping, encoded words and round-trip results. All **five production
+codec conditions** have measured pairs. The two conditions in the round_trips
+verification helper are separately paired; they are not two more production
+conditions. Eleven compile-time assertion conditions remain raw unpaired in the
+18-condition source manifest. This component result does not cover every RAM
+lock lifecycle or physical reboot schedule.
+
+### Display execution
+
+The reachable worker:701 path now executes in the retained display ELF
+`18c9c0652c620b8083f372d4c6110069bff9417d1b51dd25416f4d475ac36bbc`.
+A real CCID Secure request first refuses without a selected applet. After
+selecting OpenPGP, its valid PIN-verify prefix passes the actual readiness check
+and reaches secure_pin_meta. Native CCID CONTROL ABORT cancels the pending
+ceremony, followed by its matching bulk acknowledgement. The PIN status and
+retry count remain unchanged; OpenPGP challenge and FIDO getInfo work afterward.
+
+The three added raw regions bring the 31 separate source-extension ELF reports
+to **183 regions**. Of the 39 source-bound missing outcomes, 38 now have their
+reachable side observed. Worker:773 remains inactive because its legacy handler
+has no current producer. Worker:701 still has no feasible false outcome: its
+preceding readiness check accepts the same P2 set as secure_pin_meta. These
+earlier observations cover request admission and cancellation, without claiming
+successful PIN typing or complete display-ceremony coverage.
+
+### Remaining display and bench decisions
+
+Four further image reports, prepared with the frozen v9 frontend, close the
+15 feasible runtime gaps found by the full inventory reconciliation. Each
+report joins only regions from its own ELF.
+
+| Image selection | Measured conditions | Result |
+|---|---|---|
+| worker-display-no-wake | worker:108 first operand; both worker:121 operands; worker:686/698; both worker:704 IDs; worker:720 | 8/9 raw pairs; the other worker:108 operand has no active OTP_REQ producer. |
+| sweep-bench-remaining | sweep:37/114 and both sweep:117 operands | 4/4 raw pairs, with the bounds-domain qualification below. |
+| vendor-bench-remaining | vendor:170/195/208 | 3/3 raw pairs. |
+| main-display-remaining | main:1107/1109 | Each decision's configured outcome executes; 0/2 pairs, retained as configuration exceptions. |
+
+The worker image is
+`01aa29c4bb66566675dc19bd9b8efeb8a00a53102ffefee482c12a06382a7c94`,
+with the supported display/TrustZone configuration WAKE_PIN=none, LED_KIND=none
+and FLASH_SIZE=16M. A laboratory TouchPad adapter supplies only Point/None input.
+All 35 rsk-display source files are byte-identical to the product. Original
+debounce, 800 ms hold, PIN layout, Presence and PinEntry results execute unchanged;
+an RAII guard disables the input script on every ordinary return. Fresh owned
+flash retains the default unscrambled layout. No physical CST328/I2C claim follows.
+
+Actual USB/IP CCID Secure requests refuse an unsupported operation and an
+unselected PIN reference without reading touch input. Deny consumes release
+and the Deny point. Both approval cases consume the hold, six digit/release
+gestures for 123456 and OK/release. An INS 0x21 template fails assembly with
+the PIN status still 63C3; the normal INS 0x20 template runs the real VERIFY,
+returns 9000 and leaves PIN status 9000. A following OpenPGP challenge succeeds.
+These checks distinguish an actual Deny or entered PIN from a generic cancellation.
+
+For worker:121, a real queued request gives pending=true before and after the
+2,500 ms UI floor. After the worker fully drains it, a boot timestamp already
+older than that floor gives actual pending=false with elapsed>=floor. Thus the
+first operand's pair does not rely only on an omitted second operand whose
+actual value was false. The legacy OTP_REQ operand remains false: the actual
+Non-secure keyboard producer submits through abi::OTP and Secure REQ.
+
+Native vendor commands stop and restart the sweep, scan real zero/nonzero dead
+stack bytes, and exercise matching zero and nonmatching 0xAA patterns of equal
+length. At sweep:117, the final seven addresses fail the eight-byte bounds
+guard; an eight-byte pattern matches and mismatches inside the bounds. The tool
+credits both operands under its evaluated-vector criterion. Holding the second
+operand actually true beyond top would leave its valid read domain: the bounds
+term therefore retains a safety-domain coupling qualification, rather than a
+counterfactual out-of-bounds read or an unconstrained unique-cause claim.
+Vendor selectors 4/3 exercise refusal/OTP admission, selectors 3/2 produce the
+expected 24/20-byte OTP/HKDF summaries, and pattern lengths 7/8 exercise refusal
+and scan admission.
+
+The first display attempts are retained without pair credit. The emulator does
+not model the wake GPIO's pull-up; default active-low GP25 therefore cancelled
+both attempted gestures after only the release sample. The supported
+WAKE_PIN=none configuration removes that unmodelled input, without replacing
+the ceremony's result. Failed disk-full builds and report writes are also
+separate from the four completed reports.
+
+### Target-specific library variants
+
+The current crate-source cfg review finds one additional ARM-only runtime
+Boolean condition outside the firmware-directory inventory:
+`crates/rsk-rsa/src/lib.rs:606`, the public-modexp wrapper's if ok. Its host
+fallback always returns true and cannot supply this pair. Other target-specific
+RSA wrappers contain FFI, conversions and for loops without additional Boolean
+control. The crypto target dependency selects an external SHA backend; the
+pointer-width sites are tests, and display's not(test) changes its external
+sleep implementation. Their source hashes and cfg sites are retained separately.
+
+A fresh button/TrustZone image, SHA-256
+`d609c4b7781b3e25113dfcce88eebb6518430334b5a70db05aa7e4430005fef2`,
+measures the actual ARM Rust wrapper with a runtime owned by rsk-rsa. Both
+outcomes form **one same-image runtime pair**. With modulus 2^255+67, base 2
+and exponent 65537, all 32 result bytes match independent Python pow. A second
+call with base equal to the modulus receives the real C precondition refusal;
+the wrapper returns false and preserves every byte of its 0xA5 output canary.
+No FFI return or private Boolean state is substituted. Buffer widths remain
+valid; base<n is deliberately violated for this negative component input.
+Ordinary signature callers reduce their bases modulo n, so this is not a
+healthy wire-producer witness for that refusal.
+
+Six ARM-only debug assertions contribute twelve further source conditions:
+lib.rs:383, 481, 482, 483, 580 and 581. Release compilation excludes them;
+they receive no runtime pair credit. These target-library dispositions remain
+separate from the 675 firmware-directory conditions and the host denominator.
+The retained S/NS/combined images, raw 4 KiB region, independent oracle,
+current-source hashes and dependency identities are checked. The only extra
+RSA dependency edge is the laboratory runtime's already-pinned critical-section;
+production dependencies and Rust sources are unchanged.
+
+### Owned C and assembly correspondence
+
+The complete current inventory is five files: gateway.c and the RSA C,
+assembly, declaration header and configuration header. Current source bytes
+match the retained measured originals; only the documented uninstrumented
+fixtures and naked-entry profiling exclusion differ in the laboratory copy.
+The independent arithmetic/ISA witness verifier passes again against the
+retained image and records.
+
+The existing results therefore apply to these current sources: **8/8 RSA C
+compound conditions, 4/4 gateway compound conditions, both branch counts for
+31/31 C predicates and both outcomes for 19/19 compiled assembly predicates**.
+The two other assembly sites are build-excluded by the unchanged configuration.
+The gateway's zero-capacity/writability coupling retains its separate argument;
+Clang's short-circuit pair is not a feasible unique-cause pair for that redundant
+term. Direct C wrappers and the unconditional register-wiping NS entry introduce
+no additional Boolean control predicate. The unused exponent-one C API defect
+and its eight diagnostic exclusions remain recorded in the
+[C/assembly report](mcdc-expansion.md#arm-c-and-assembly-follow-up).
+
+### Evidence boundary
+
+The additional evidence is retained in `target/mcdc-completion-20261106/`:
+source-scope-review.json, host-raw-manifest.json, owned-c-source-correspondence.json,
+owned-c-verified.json, arm-completion.json, the image-specific unions and raw
+display regions, and the fresh PIN image, adapter, compiler wrapper and independent
+codec oracle. The firmware-inventory-reconciliation.json and
+remaining-source-correspondence.json records retain the complete inventory and
+the four later image reports, with their original source and dependency hashes.
+The target-library-variant-review.json record and batches/rsa-target-wrapper
+retain the separate ARM-only Rust wrapper measurement and cfg review.
+Failed environment/build attempts remain separate from admitted
+measurements. Completed Cargo caches may be removed after retaining depinfo;
+raw records, source snapshots and loaded images remain.
+
+The reviewed exceptions depend on today's producers, types, arithmetic bounds,
+configuration and pinned expansions. A relevant source change reopens its
+argument. The raw reports keep complete=false and structurallyComplete=false.
+Compiler-native coverage, dependency internals, arbitrary future macro expansion,
+general match/?/for branch coverage, timing/layout equivalence and physical-device
+fault correspondence are separate obligations. The standalone rsk-wipe eraser
+image and host-tool workspaces retain their separate scopes. No cross-profile or cross-image
+vectors are used to manufacture a pair.
