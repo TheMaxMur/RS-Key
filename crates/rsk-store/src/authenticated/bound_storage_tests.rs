@@ -470,3 +470,18 @@ fn replaying_both_counter_banks_during_a_live_mount_cannot_restore_pin_retries()
     assert!(mounted.last_error());
     assert_eq!(out, [0xA5; 4]);
 }
+
+#[test]
+fn absent_pin_owner_reads_as_absent_without_writing_or_latching_an_error() {
+    let flash = crate::tests::fault_flash_for_authenticated_tests();
+    let mut mounted = store(&flash);
+    mounted.initialize_blank().unwrap();
+    let before = flash.image();
+    flash.arm(&[]);
+    let mut output = [0xa5; 35];
+    assert_eq!(mounted.read(FIDO_PIN, &mut output), None);
+    assert!(!mounted.last_error());
+    assert_eq!(output, [0xa5; 35]);
+    assert_eq!(flash.image(), before);
+    assert!(flash.events().iter().all(|event| event.0 == Io::Read));
+}

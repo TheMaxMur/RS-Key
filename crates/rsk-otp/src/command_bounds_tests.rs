@@ -288,3 +288,29 @@ fn an_unmapped_character_keeps_the_entire_ticket_in_ascii() {
     assert!(app.apply_scanmap(&mut fs, &mut ticket));
     assert_eq!(ticket, [0x40; 4]);
 }
+
+#[test]
+fn a_correctly_sealed_empty_slot_is_absent_without_a_write() {
+    let mut fs = new_fs();
+    let device = Device {
+        serial_hash: &SERIAL_HASH,
+        serial_id: &SERIAL,
+        otp_key: None,
+        latched: false,
+    };
+    assert!(seal::seal_put(
+        &device,
+        &mut fs,
+        &mut CountRng(7),
+        KeyFid::new(EF_OTP_SLOT1),
+        &SlotRecord::vacant()
+    ));
+    let generation = fs.write_gen();
+    let mut record = SlotRecord::vacant();
+    assert_eq!(record.try_read(&device, &mut fs, EF_OTP_SLOT1), Ok(Some(0)));
+    assert_eq!(
+        try_read_slot(&device, &mut fs, EF_OTP_SLOT1, &mut record),
+        Ok(None)
+    );
+    assert_eq!(fs.write_gen(), generation);
+}

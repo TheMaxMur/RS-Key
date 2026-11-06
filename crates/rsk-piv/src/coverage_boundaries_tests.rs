@@ -267,3 +267,70 @@ fn direct_retry_reads_refuse_indices_without_a_complete_pair() {
     }
     assert_eq!(fs.write_gen(), generation);
 }
+
+#[test]
+fn an_empty_ec_scalar_tlv_cannot_retire_the_authenticated_slot() {
+    let rng = RefCell::new(TestRng(7));
+    let presence = RefCell::new(AlwaysConfirm);
+    let mut app = PivApplet::new(SERIAL, HASH, None, &rng, &presence);
+    let mut fs = new_fs();
+    select(&mut app, &mut fs);
+    auth_mgm(&mut app, &mut fs);
+    let fid = key_fid(SLOT_AUTHENTICATION);
+    fs.put_key(fid, rsk_fs::Sealed::wrap(&[0xa5; 32])).unwrap();
+    let generation = fs.write_gen();
+    assert_eq!(
+        run(
+            &mut app,
+            &mut fs,
+            INS_IMPORT_ASYM,
+            ALGO_ECCP256,
+            SLOT_AUTHENTICATION,
+            &[6, 0]
+        ),
+        (Sw::WRONG_DATA, vec![])
+    );
+    assert_eq!(fs.write_gen(), generation);
+    let mut retained = [0; 32];
+    assert_eq!(fs.read_key(fid, &mut retained), Some(32));
+    assert_eq!(retained, [0xa5; 32]);
+}
+
+#[test]
+fn a_short_management_head_recovers_default_touch_from_a_legacy_key() {
+    for protect in [false, true] {
+        for length in [1, 2] {
+            let mut fs = new_fs();
+            let dev = Device {
+                serial_hash: &HASH,
+                serial_id: &SERIAL,
+                otp_key: None,
+                latched: false,
+            };
+            let mut rng = TestRng(7);
+            files::scan_files(&dev, &mut fs, &mut rng).unwrap();
+            assert!(mgm_read(&dev, &mut fs).unwrap().policy.is_none());
+            fs.meta_add(
+                key_fid(SLOT_CARDMGM).get(),
+                &[ALGO_AES192, TOUCHPOLICY_ALWAYS][..length],
+            )
+            .unwrap();
+            if protect {
+                assert_eq!(protect_mgm_key(&dev, &mut fs, &mut rng), Sw::OK);
+                assert_eq!(
+                    mgm_read(&dev, &mut fs).unwrap().policy,
+                    Some((ALGO_AES256, TOUCHPOLICY_NEVER))
+                );
+            } else {
+                files::scan_files(&dev, &mut fs, &mut rng).unwrap();
+            }
+            let mut head = [0xa5; 8];
+            assert_eq!(
+                fs.meta_find(key_fid(SLOT_CARDMGM).get(), &mut head),
+                Some(3)
+            );
+            assert_eq!(head[2], TOUCHPOLICY_NEVER);
+            assert_eq!(head[0], if protect { ALGO_AES256 } else { ALGO_AES192 });
+        }
+    }
+}

@@ -190,3 +190,46 @@ fn a_password_safe_value_beyond_one_octet_cannot_be_stored() {
     expected.extend([0xA5; 255]);
     assert_eq!(answer, expected);
 }
+
+#[test]
+fn rename_skips_an_unrelated_tlv_before_the_second_name() {
+    let (mut fs, _) = new_cut_fs();
+    let rng = RefCell::new(CountRng(7));
+    let touch = RefCell::new(AlwaysConfirm);
+    let mut app = OathApplet::new(SERIAL, [0x22; 32], None, &rng, &touch);
+    assert_eq!(
+        put(
+            &mut app,
+            &mut fs,
+            &put_data(b"old", 0x21, 6, SECRET_SHA1, false, None)
+        ),
+        Sw::OK
+    );
+    let body = [
+        tlv(TAG_NAME, b"old"),
+        tlv(TAG_CHALLENGE, b"ignored"),
+        tlv(TAG_NAME, b"new"),
+    ]
+    .concat();
+    assert_eq!(
+        run(&mut app, &mut fs, &apdu(INS_RENAME, 0, 0, &body)),
+        (Sw::OK, vec![])
+    );
+    let mut expected = vec![TAG_NAME_LIST, 4, 0x21];
+    expected.extend(b"new");
+    assert_eq!(
+        run(&mut app, &mut fs, &apdu(INS_LIST, 0, 0, &[])),
+        (Sw::OK, expected)
+    );
+    let challenge = [
+        tlv(TAG_NAME, b"new"),
+        tlv(TAG_CHALLENGE, &0u64.to_be_bytes()),
+    ]
+    .concat();
+    let mut expected = vec![TAG_RESPONSE + 1, 5, 6];
+    expected.extend(755224u32.to_be_bytes());
+    assert_eq!(
+        run(&mut app, &mut fs, &apdu(INS_CALCULATE, 0, 1, &challenge)),
+        (Sw::OK, expected)
+    );
+}

@@ -547,3 +547,52 @@ fn staged_write_admits_only_its_exact_phase_and_outcome() {
         }
     }
 }
+
+#[test]
+fn out_of_order_preparation_calls_preserve_the_original_authority() {
+    let mut a = stable();
+    assert_eq!(a.locate(prepared()), Err(Error::MemoryFatal));
+    assert_eq!(a.observe_prepare(), Err(Error::MemoryFatal));
+    a.verify_read(&KEY, BASE.identity, BASE.arm).unwrap();
+    a.stage_write(&KEY, prepared().entry, TARGET.digest)
+        .unwrap();
+    assert_eq!(
+        a.stage_write(&KEY, prepared().entry, TARGET.digest),
+        Err(Error::MemoryFatal)
+    );
+    assert_eq!(a.stage_replace(&KEY, &KEY, TARGET), Err(Error::MemoryFatal));
+    a.locate(prepared()).unwrap();
+    assert_eq!(a.locate(prepared()), Err(Error::MemoryFatal));
+    a.observe_prepare().unwrap();
+    a.admit(&KEY, TARGET, None).unwrap();
+    a.finish(&KEY, TARGET).unwrap();
+    a.verify_read(&KEY, TARGET.identity, TARGET.arm).unwrap();
+    assert!(a.admit(&KEY, BASE, None).is_err());
+}
+
+#[test]
+fn read_cache_changes_context_only_through_admitted_bounds() {
+    use super::super::read_tags::ReadTags;
+    let a = stable().read_bound(BASE.identity, BASE.arm).unwrap();
+    let mut next = Authority::New;
+    next.admit(&KEY, TARGET, None).unwrap();
+    let b = next.read_bound(TARGET.identity, TARGET.arm).unwrap();
+    let old = Entry::live(BASE.identity, &KEY, 0xB000, BASE.sequence, b"old").unwrap();
+    let new = prepared().entry;
+    let mut cache = ReadTags::new();
+    cache.bind(a, [0x11; 32]);
+    cache.insert(a, old, [0x22; 32]);
+    assert_eq!(cache.mount_tag(a), Some([0x11; 32]));
+    assert_eq!(cache.mount_tag(b), None);
+    cache.bind(b, [0x33; 32]);
+    assert_eq!(cache.mount_tag(b), Some([0x33; 32]));
+    assert_eq!(cache.find(b, old), None);
+    assert_eq!(cache.mount_tag(a), None);
+    cache.bind(a, [0x44; 32]);
+    cache.insert(a, old, [0x22; 32]);
+    cache.insert(b, new, [0x55; 32]);
+    assert_eq!(cache.mount_tag(b), None);
+    assert_eq!(cache.find(b, old), None);
+    assert_eq!(cache.find(a, old), None);
+    assert_eq!(cache.find(b, new), Some([0x55; 32]));
+}

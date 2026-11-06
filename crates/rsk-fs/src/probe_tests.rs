@@ -205,3 +205,36 @@ fn a_provisioned_traced_inventory_can_be_rescanned_without_losing_records() {
 fn a_healthy_run_cannot_be_assigned_a_fault_landing() {
     let _ = landing(&[], Fault::Healthy);
 }
+
+#[test]
+#[should_panic(expected = "provision is not deterministic")]
+fn a_changing_provisioner_cannot_supply_a_fault_oracle_baseline() {
+    let generation = Cell::new(0u8);
+    sweep(
+        |fs| {
+            let value = generation.get();
+            generation.set(value + 1);
+            fs.put(RECORD, &[value]).unwrap();
+        },
+        |fs, ()| fs.read(RECORD, &mut [0; 1]).map(|_| vec![]),
+        &[],
+    );
+}
+
+#[test]
+#[should_panic(expected = "the command read differently before the fault landed")]
+fn a_changing_read_prefix_cannot_supply_a_fault_oracle_baseline() {
+    let other = RECORD + 1;
+    let first = Cell::new(true);
+    sweep(
+        |fs| {
+            fs.put(RECORD, b"first").unwrap();
+            fs.put(other, b"other").unwrap();
+        },
+        |fs, ()| {
+            let fid = if first.replace(false) { RECORD } else { other };
+            fs.read(fid, &mut [0; 5]).map(|_| vec![])
+        },
+        &[],
+    );
+}

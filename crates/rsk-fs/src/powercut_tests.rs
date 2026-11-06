@@ -703,3 +703,57 @@ fn a_second_cut_inside_recovery_does_not_hide_the_first() {
         assert_eq!(&b, b"neighbour");
     }
 }
+
+#[test]
+fn explicit_reads_refuse_unmodelled_length_and_content_changes() {
+    for metadata in [false, true] {
+        for changed in [b"longer".as_slice(), b"lost".as_slice()] {
+            let mut dev = RamDevice::new(Tear::Before);
+            let mut fs = dev.mount();
+            let mut model = PowerCutModel::new(&FIDS, META_MAX);
+            let initial = if metadata {
+                Op::MetaAdd(A, b"kept".to_vec())
+            } else {
+                Op::Put(A, b"kept".to_vec())
+            };
+            model.step(&mut dev, &mut fs, initial);
+            if metadata {
+                fs.meta_add(A, changed).unwrap();
+            } else {
+                fs.put(A, changed).unwrap();
+            }
+            let op = if metadata {
+                Op::MetaFind(A)
+            } else {
+                Op::Read(A, 16)
+            };
+            let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                model.step(&mut dev, &mut fs, op)
+            }))
+            .expect_err("model accepted an unacknowledged replacement");
+            let text = panic.downcast_ref::<String>().unwrap();
+            assert!(
+                text.starts_with("assertion `left == right` failed\n"),
+                "{text}"
+            );
+            if changed.len() != 4 {
+                assert!(text.contains("left: 6\n right: 4"), "{text}");
+            } else {
+                assert!(text.contains("left: [108, 111, 115, 116]"), "{text}");
+                assert!(text.contains("right: [107, 101, 112, 116]"), "{text}");
+            }
+        }
+    }
+}
+
+#[test]
+#[should_panic(expected = "committed meta lost or changed")]
+fn recovery_refuses_unacknowledged_metadata_with_the_value_intact() {
+    let mut dev = RamDevice::new(Tear::Before);
+    let mut fs = dev.mount();
+    let mut model = PowerCutModel::new(&FIDS, META_MAX);
+    model.step(&mut dev, &mut fs, Op::Put(A, b"value".to_vec()));
+    model.step(&mut dev, &mut fs, Op::MetaAdd(A, b"policy".to_vec()));
+    fs.meta_add(A, b"forged").unwrap();
+    model.reboot(&mut dev, &mut fs);
+}

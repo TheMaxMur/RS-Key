@@ -608,3 +608,22 @@ fn unknown_and_wrong_width_cached_points_do_not_emit_cose_bytes() {
     }
     assert!(CredKey::from_raw(i64::MAX, &[1; 32]).is_none());
 }
+
+#[test]
+fn a_cached_ec_point_with_a_valid_prefix_still_requires_both_coordinates() {
+    for length in [64, 66] {
+        let mut point = [0; 66];
+        point[0] = 0x04;
+        let mut output = [0xa5; 128];
+        let mut encoder = Encoder::new(&mut output[..]);
+        let error = cose_public_from_point(
+            i64::from(CURVE_P256),
+            ALG_ES256,
+            &point[..length],
+            &mut encoder,
+        )
+        .unwrap_err();
+        assert_eq!(error.to_string(), "bad cached point");
+        assert_eq!(output, [0xa5; 128]);
+    }
+}

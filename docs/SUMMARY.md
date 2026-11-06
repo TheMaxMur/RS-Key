@@ -74,6 +74,7 @@
   - [Security-decision MC/DC](mcdc-independence.md)
   - [MC/DC residual review](mcdc-residuals.md)
   - [Const, macro and worker MC/DC](mcdc-expansion.md)
+  - [MC/DC source-decision extension](mcdc-source-decisions.md)
   - [Floyd MC/DC pilot](mcdc-floyd-pilot.md)
   - [Current host-profile coverage](coverage-current.md)
 - [Reproducing the evidence](reproducing.md)

@@ -135,9 +135,16 @@ boundaries remain explicit. The
 [residual annex](mcdc-residuals.md) preserves each missing vector and its
 producer, profile, arithmetic, type, coupling or cryptographic boundary.
 
+The [2026-11-06 source-decision extension](mcdc-source-decisions.md) adds the
+reviewed frontend forms and measures all 42 feasible new ARM omissions.
+Its 84 new firmware identities have 45 image-specific pairs and 39 explicit
+source boundaries. Twenty new host tests close all 31 feasible new omissions:
+the extended default has 4,806/5,029 pairs and 223 reviewed raw residuals
+(144 earlier plus 79 newly exposed). Earlier profiles do not inherit these pairs.
+
 | Phase | Established | Remaining |
 |---|---|---|
-| 1 | Calibrated condition measurements and eighteen ARM Linux profiles; the 2026-11-05 extension adds calibrated Supercov vectors, eighteen isolated host profiles, const/EC experiments and an ARM runtime pilot with the existing compiler | Whole-core MC/DC remains incomplete; the final default retains 138 reviewed residuals and 79 source-scope limitations, with device/C/assembly scopes separate |
+| 1 | Calibrated condition measurements and eighteen ARM Linux profiles; the 2026-11-05 extension adds calibrated Supercov vectors, eighteen isolated host profiles, const/EC experiments and an ARM runtime pilot with the existing compiler | Whole-core MC/DC remains incomplete; the earlier native-source default retains 138 reviewed residuals and 79 source-scope limitations, with device/C/assembly scopes separate |
 | 2 | The original 996-outcome/27-group review and eighteen-profile condition-outcome audit, including storage v2 and callable helpers; the six selected security groups have tool witnesses, real OpenPGP PW1/PW2 pairs and an explicit FIDO UV coupling argument; feasible host residuals have new tests and all 138 remaining default conditions have a source-bound disposition | Resolve the remaining instrumentation and device scopes before a whole-core claim; the [MC/DC report](mcdc-independence.md) and [residual annex](mcdc-residuals.md) retain raw counts, coupling and assumptions separately from the older [condition-outcome audit](coverage-current.md) |
 | 3 | Persistent write histories plus the bounded read/erase/program, damaged-record, exhaustion, readback and silent-mutation matrix below, now including the selective `Silent` medium, its store read-back oracle, the correlated `Torn` medium (a torn write and the read that answers it), and the 2026-10-21 silent-write-with-refused-read-back and second-cut-during-recovery compositions; the 2026-11-04 slice adds v2 import/rekey/compaction histories with correlated read/write/erase and cut compositions; owner replay and selected NOR byte sweeps include interrupted recovery; the 2026-11-05 repair fixes read-error and incomplete-walk handling in the power-cut oracle | Semantic record-loss detection beyond the current CRC/legacy formats, further correlated-fault histories and longer retained campaigns remain open; the bounded matrix does not close the whole phase |
 | 4 | Semantic controls through host, fuzz, Miri and image runners; the 2026-10-11 critical slice below adds independent crypto boundaries and destructor observations; the 2026-10-12/14 whole-core shard closure below dispositions all 10 887 desired occurrences with no pending survivor | Device C/assembly mutation execution and resource/timing equivalence remain separate obligations |

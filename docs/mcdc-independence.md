@@ -12,6 +12,11 @@ couplings are recorded separately from tool credit. This is a declared host-sour
 subset, not whole-core coverage, compiler instrumentation, ARM image coverage
 or a qualification claim.
 
+The [2026-11-06 source-decision extension](mcdc-source-decisions.md) measures
+previously omitted let-else, equality assertions and predicate callbacks. Its
+host results and separate ARM campaigns retain their expanded denominators
+and source-bound residuals.
+
 ## Tool, sources and calibration
 
 The compiler is the existing Nix `rustc 1.99.1 (58cf8f9c3 2026-10-13)`, LLVM

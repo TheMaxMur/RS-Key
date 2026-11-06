@@ -1601,3 +1601,50 @@ fn a_response_cannot_bypass_an_open_command_chain() {
     assert!(disp.chain_open());
     disp.chain_response(Sw::OK, 64, true, &mut res);
 }
+
+#[test]
+fn disabling_an_applet_during_a_chain_refuses_and_discards_the_accumulated_body() {
+    let mut echo = Echo { selected: false };
+    let mut applets: [&mut dyn Applet<()>; 1] = [&mut echo];
+    let mut dispatcher = Dispatcher::new();
+    let mut output = [0; 64];
+    let mut response = ResBuf::new(&mut output);
+    let select = [0, 0xa4, 4, 0, 8, 0xa0, 0, 0, 6, 0x47, 0x2f, 0, 1];
+    assert_eq!(
+        dispatcher.process(&select, &mut applets, &mut (), &mut response),
+        Sw::OK
+    );
+    assert_eq!(
+        dispatcher.process(
+            &[0x10, 0x10, 0, 0, 2, 0xaa, 0xbb],
+            &mut applets,
+            &mut (),
+            &mut response
+        ),
+        Sw::OK
+    );
+    assert!(dispatcher.chain_open());
+    dispatcher.set_enabled(0);
+    assert_eq!(
+        dispatcher.process(
+            &[0, 0x10, 0, 0, 1, 0xcc],
+            &mut applets,
+            &mut (),
+            &mut response
+        ),
+        Sw::INS_NOT_SUPPORTED
+    );
+    assert!(response.is_empty());
+    assert!(!dispatcher.chain_open());
+    dispatcher.set_enabled(u32::MAX);
+    assert_eq!(
+        dispatcher.process(
+            &[0, 0x10, 0, 0, 1, 0xdd],
+            &mut applets,
+            &mut (),
+            &mut response
+        ),
+        Sw::OK
+    );
+    assert_eq!(response.as_slice(), &[0xdd]);
+}

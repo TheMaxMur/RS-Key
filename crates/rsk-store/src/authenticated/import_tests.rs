@@ -385,3 +385,46 @@ fn frozen_import_directory_never_repairs_media_before_admission() {
     assert_eq!(flash.events().len(), 32);
     key.wipe();
 }
+
+#[expect(
+    clippy::unwrap_used,
+    reason = "Admitted legacy maps exercise backup verification through import recovery."
+)]
+#[test]
+fn an_incorrect_same_width_backup_is_recovered_only_before_activation() {
+    for activated in [false, true] {
+        let (flash, mut import, mut authenticated) = prepared_import();
+        write_legacy_counter(&flash, b"counter");
+        import.stage([0x4B; 16]).unwrap();
+        block_on(import.main.store_item(
+            import.buffer.expose_mut(),
+            &BACKUP_FIRST,
+            &b"changed".as_slice(),
+        ))
+        .unwrap();
+        if activated {
+            let activation = activation_bytes([0x4B; 16]).unwrap();
+            block_on(import.main.store_item(
+                import.buffer.expose_mut(),
+                &ACTIVATION_FID,
+                &activation.as_slice(),
+            ))
+            .unwrap();
+        }
+        let before = flash.image();
+        let result = import.resume(&mut authenticated);
+        if activated {
+            assert_eq!(result, Err(Error::MemoryFatal));
+            assert_eq!(flash.image(), before);
+        } else {
+            assert_eq!(result, Ok(()));
+            let mut output = [0xa5; 7];
+            assert_eq!(
+                authenticated.read(rsk_fs::counter::EF_COUNTER.get(), &mut output),
+                Some(7)
+            );
+            assert_eq!(&output, b"counter");
+            assert!(!authenticated.last_error());
+        }
+    }
+}

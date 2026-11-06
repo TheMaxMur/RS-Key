@@ -3040,3 +3040,20 @@ fn legacy_large_blob_key_credentials_do_not_expose_the_retired_field() {
     }
     assert_eq!(decoder.position(), n);
 }
+
+#[test]
+fn enumerate_credentials_refuses_a_present_but_short_rp_hash_without_writing() {
+    let (mut fs, _) = setup();
+    let mut state = armed(PERM_CM);
+    let mut parameters = vec![0xa1, 1, 0x58, 31];
+    parameters.extend([0xa5; 31]);
+    let request = cm_request(0x04, Some(&parameters), &TOKEN);
+    let generation = fs.write_gen();
+    let mut output = [0xa5; 256];
+    assert_eq!(
+        run(&mut fs, &mut state, &request, &mut output),
+        Err(CtapError::MissingParameter)
+    );
+    assert_eq!(fs.write_gen(), generation);
+    assert_eq!(output, [0xa5; 256]);
+}

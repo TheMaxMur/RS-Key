@@ -170,3 +170,31 @@ fn hint_positions_must_increase_strictly_within_each_row() {
     assert_eq!(decoded[0].0[8], 1);
     assert_eq!(decoded[0].0.iter().sum::<i32>(), 2);
 }
+
+#[cfg(debug_assertions)]
+#[test]
+#[should_panic(expected = "bit_pack bad size")]
+fn pack_refuses_a_short_output_before_encoding() {
+    bit_pack(&Poly::zero(), 0, 1, &mut [0; 31]);
+}
+
+#[cfg(debug_assertions)]
+#[test]
+#[should_panic(expected = "bit_unpack bad size")]
+fn unpack_refuses_a_short_input_before_decoding() {
+    let _ = bit_unpack(&[0; 31], 0, 1);
+}
+
+#[cfg(debug_assertions)]
+#[test]
+#[should_panic(expected = "hint_bit_pack bad size")]
+fn hint_pack_refuses_a_short_output_before_encoding() {
+    hint_bit_pack::<1>(1, &[Poly::zero()], &mut [0; 1]);
+}
+
+#[cfg(debug_assertions)]
+#[test]
+#[should_panic(expected = "hint_bit_unpack bad size")]
+fn hint_unpack_refuses_a_short_input_before_decoding() {
+    let _ = hint_bit_unpack::<1>(1, &[0; 1]);
+}

@@ -9,6 +9,11 @@ extends the isolated ARM runtime from boot/getInfo to real SG, USB, OTP,
 button and reboot paths. These are source measurements with explicit
 frontend and fault boundaries. They do not establish whole-firmware MC/DC.
 
+The [2026-11-06 source-decision extension](mcdc-source-decisions.md) measures
+previously omitted let-else, equality assertions and predicate callbacks. Its
+host results and separate ARM campaigns retain their expanded denominators
+and source-bound residuals.
+
 ## Combined host measurement
 
 The source snapshot contains the final assertion-component test. All 132

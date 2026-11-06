@@ -419,3 +419,33 @@ fn the_keygen_probe_byte_matches_the_public_key_hash() {
     hash.finalize_xof().read(&mut expected);
     assert_eq!(std::hint::black_box(&key).probe_byte(), expected[0]);
 }
+
+#[cfg(debug_assertions)]
+#[test]
+fn expanded_key_refuses_short_encoding_buffers_before_writing() {
+    use std::panic::{AssertUnwindSafe, catch_unwind};
+    let p = &ML_DSA_44;
+    let key = ExpandedKey::<4, 4>::from_seed(p, &[7; SEED_LEN]);
+    for signing in [false, true] {
+        let expected = if signing { p.sig_len } else { p.pk_len };
+        let mut output = vec![0xa5; expected - 1];
+        let panic = catch_unwind(AssertUnwindSafe(|| {
+            if signing {
+                key.sign(p, b"message", &[], &[0; SEED_LEN], &mut output);
+            } else {
+                key.write_public_key(p, &mut output);
+            }
+        }))
+        .expect_err("undersized encoding buffer accepted");
+        let text = panic.downcast_ref::<String>().unwrap();
+        assert!(
+            text.starts_with("assertion `left == right` failed\n"),
+            "{text}"
+        );
+        assert!(
+            text.contains(&format!("left: {}\n right: {expected}", expected - 1)),
+            "{text}"
+        );
+        assert_eq!(output, vec![0xa5; expected - 1]);
+    }
+}
