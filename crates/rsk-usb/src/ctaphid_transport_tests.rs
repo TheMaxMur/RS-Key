@@ -17,6 +17,9 @@ use core::task::{Context, Poll, Waker};
 use embassy_futures::block_on;
 use embassy_usb::class::hid::{Config, HidBootProtocol, HidReaderWriter, HidSubclass, State};
 
+#[path = "ctaphid_epoch_independence_tests.rs"]
+mod epoch_independence;
+
 const OWNER: u32 = 0x1122_3344;
 const OTHER: u32 = 0x5566_7788;
 

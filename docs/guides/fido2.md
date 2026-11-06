@@ -1,5 +1,9 @@
 # FIDO2 / WebAuthn / U2F
 
+Build `0x0BDF` discards partial CTAPHID requests when the USB session changes.
+An old continuation is ignored, and the new session can start on another
+channel immediately.
+
 Build `0x0BB6` avoids an unused public-point calculation during U2F
 authentication and attestation signing. Existing credentials work across the
 upgrade; presence checks and durable U2F counters are unchanged.

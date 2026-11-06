@@ -826,7 +826,7 @@ async fn main(spawner: Spawner) {
     let phy = _phy;
     let rng_ref = RNG_CELL.init(RefCell::new(rng));
 
-    let device_release: u16 = 0x0BDE;
+    let device_release: u16 = 0x0BDF;
 
     {
         let (manufacturer, product) = if usb_vid == YUBICO_VID {

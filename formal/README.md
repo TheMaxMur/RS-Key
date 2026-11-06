@@ -2192,7 +2192,7 @@ mid-transaction is a legal resync (a takeover, not a splice: B's fresh buffer
 holds B's chunks). The bounded IN-endpoint write that fixed the runtime
 interface wedge (0x075D, `TX_TIMEOUT_MS`) is a liveness property, and **no
 liveness proof is claimed from CTAPHID evidence**. It lives on `write_frames`
-(`crates/rsk-usb/src/ctaphid.rs:1087-1099`), the response path, where two host
+(`crates/rsk-usb/src/ctaphid.rs:1088-1100`), the response path, where two host
 regressions pin the abandon and the drain
 (`crates/rsk-usb/src/ctaphid_tests.rs:479,501`) — not on the async `run` loop
 (`crates/rsk-usb/src/ctaphid.rs:657`), which neither of them enters. No mutation

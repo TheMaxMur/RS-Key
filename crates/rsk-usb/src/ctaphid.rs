@@ -709,6 +709,7 @@ impl<'d, D: Driver<'d>, H: MsgHandler> CtapHid<'d, D, H> {
     fn reset_if_new_session(&mut self) {
         let epoch = H::session_epoch();
         if epoch != self.session_epoch {
+            self.asm.abort();
             self.asm.scrub();
             self.lock = ChannelLock::default();
             if self.pending_frame != Some(epoch) {

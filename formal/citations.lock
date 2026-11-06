@@ -24,7 +24,7 @@ assurance/board/PLAT-TIMER-002.toml	crates/rsk-fido/src/journal.rs	561-561	appen
 assurance/board/PLAT-TIMER-002.toml	crates/rsk-fido/src/vendor.rs	493-493	journal::vendor_read(ctx, out)	journal::vendor_read(ctx, out)
 assurance/board/PLAT-TIMER-002.toml	crates/rsk-fido/src/vendor.rs	530-530	journal::append(ctx, journal::EV_AUDIT_CFG, 0, &[]);	journal::append(ctx, journal::EV_AUDIT_CFG, 0, &[]);
 assurance/board/PLAT-TIMER-002.toml	crates/rsk-usb/src/ccid.rs	546-546	match select(fut.as_mut(), Timer::after_millis(WTX_INTERVAL_MS)).await {	match select(fut.as_mut(), Timer::after_millis(WTX_INTERVAL_MS)).await {
-assurance/board/PLAT-TIMER-002.toml	crates/rsk-usb/src/ctaphid.rs	959-959	match select3(fut.as_mut(), Timer::after_millis(KEEPALIVE_MS), async {	match select3(fut.as_mut(), Timer::after_millis(KEEPALIVE_MS), async {
+assurance/board/PLAT-TIMER-002.toml	crates/rsk-usb/src/ctaphid.rs	960-960	match select3(fut.as_mut(), Timer::after_millis(KEEPALIVE_MS), async {	match select3(fut.as_mut(), Timer::after_millis(KEEPALIVE_MS), async {
 assurance/board/PLAT-TIMER-002.toml	firmware/src/led.rs	618-618	Timer::after_millis(5).await;	Timer::after_millis(5).await;
 assurance/board/PLAT-TIMER-002.toml	firmware/src/led.rs	692-692	const PERIOD_US: u64 = 2000;	const PERIOD_US: u64 = 2000;
 assurance/board/PLAT-TIMER-002.toml	firmware/src/led.rs	727-727	Timer::after_millis(5).await;	Timer::after_millis(5).await;
@@ -71,7 +71,7 @@ assurance/bundle/SEC-FIDO-002.toml	crates/rsk-device/src/presence_tests.rs	393-3
 assurance/bundle/SEC-FIDO-002.toml	crates/rsk-device/src/presence_tests.rs	471-471	let mut board = TestBoard::new(&arb, vec![false]).with_events(vec![	let mut board = TestBoard::new(&arb, vec![false]).with_events(vec![
 assurance/bundle/SEC-FIDO-002.toml	crates/rsk-display/src/presence.rs	41-44	let saved = self.hooks.led_status();	self.hooks.set_up_pending(true);
 assurance/bundle/SEC-FIDO-002.toml	crates/rsk-usb/src/ctaphid.rs	100-104	pub fn is_cancel_frame(frame: &[u8; HID_RPT_SIZE], n: usize, cid: u32) -> bool {	}
-assurance/bundle/SEC-FIDO-002.toml	crates/rsk-usb/src/ctaphid.rs	956-958	&& epoch == H::session_epoch()	{
+assurance/bundle/SEC-FIDO-002.toml	crates/rsk-usb/src/ctaphid.rs	957-959	&& epoch == H::session_epoch()	{
 assurance/bundle/SEC-FIDO-002.toml	firmware/src/presence.rs	19-19	//! Kani harnesses for `NoCrossTransportTouchConsumption`. What stays here is the	//! Kani harnesses for `NoCrossTransportTouchConsumption`. What stays here is the
 assurance/bundle/SEC-FIDO-002.toml	firmware/src/presence.rs	103-105	/// User presence via BOOTSEL (default) or a dedicated GPIO button.	pub struct ButtonPresence {
 assurance/bundle/SEC-FIDO-002.toml	firmware/src/presence.rs	208-264	pub fn poll_pressed(&mut self) -> bool {	}
@@ -532,7 +532,7 @@ assurance/platform.toml	crates/rsk-store/src/lib.rs	190-192	let main_done = for_
 assurance/platform.toml	crates/rsk-store/src/tests.rs	61-64	/// Every read from here on fails, unconditionally and for every address —	/// memoise as absence.
 assurance/platform.toml	crates/rsk-store/src/tests.rs	442-451	#[test]	assert!(!complete);
 assurance/platform.toml	crates/rsk-usb/src/ccid.rs	546-546	match select(fut.as_mut(), Timer::after_millis(WTX_INTERVAL_MS)).await {	match select(fut.as_mut(), Timer::after_millis(WTX_INTERVAL_MS)).await {
-assurance/platform.toml	crates/rsk-usb/src/ctaphid.rs	959-959	match select3(fut.as_mut(), Timer::after_millis(KEEPALIVE_MS), async {	match select3(fut.as_mut(), Timer::after_millis(KEEPALIVE_MS), async {
+assurance/platform.toml	crates/rsk-usb/src/ctaphid.rs	960-960	match select3(fut.as_mut(), Timer::after_millis(KEEPALIVE_MS), async {	match select3(fut.as_mut(), Timer::after_millis(KEEPALIVE_MS), async {
 assurance/platform.toml	firmware/src/display.rs	203-203	crate::presence::set_cancel_requested(requested);	crate::presence::set_cancel_requested(requested);
 assurance/platform.toml	firmware/src/handler.rs	44-44	/// reseed. What makes that draw finish is `sample_count = 1000` (`main.rs`), spacing	/// reseed. What makes that draw finish is `sample_count = 1000` (`main.rs`), spacing
 assurance/platform.toml	firmware/src/handler.rs	57-57	const RESEED_INTERVAL: usize = 1 << 16; // 64 KiB	const RESEED_INTERVAL: usize = 1 << 16; // 64 KiB
@@ -657,7 +657,7 @@ crates/rsk-usb/src/transport_refinement_kani.rs	crates/rsk-usb/src/ctaphid.rs	48
 crates/rsk-usb/src/transport_refinement_kani.rs	crates/rsk-usb/src/ctaphid.rs	503-505	if cid != self.cid {	}
 crates/rsk-usb/src/transport_refinement_kani.rs	crates/rsk-usb/src/ctaphid.rs	507-510	if seq != self.seq {	}
 crates/rsk-usb/src/transport_refinement_kani.rs	crates/rsk-usb/src/ctaphid.rs	514-520	let n = CONT_DATA.min(self.bcnt.saturating_sub(self.cur));	dst.copy_from_slice(src);
-crates/rsk-usb/src/transport_refinement_kani.rs	crates/rsk-usb/src/ctaphid.rs	728-756	async fn on_frame(&mut self, f: &[u8; HID_RPT_SIZE]) {	}
+crates/rsk-usb/src/transport_refinement_kani.rs	crates/rsk-usb/src/ctaphid.rs	729-757	async fn on_frame(&mut self, f: &[u8; HID_RPT_SIZE]) {	}
 formal/README.md	crates/rsk-devconf/src/lib.rs	310-317	// MERGE onto the stored record; do not replace it. ykman sends only the fields	let m = merged_dev_conf(fs, stripped.get(..n).unwrap_or_default(), &mut merged)?;
 formal/README.md	crates/rsk-device/src/ccid.rs	80-87	/// Refines `RSKeyAdminSurface!AdminSurfaceAlwaysReachable` — SEC-ADM-001.	rsk_devconf::CAP_PIV,
 formal/README.md	crates/rsk-device/src/ccid.rs	104-122	pub struct CcidApplets<'a, S: Storage, R: rsk_sdk::Rng + 'static, VP: rsk_vendor::Platform> {	enabled_caps: u16,
@@ -833,7 +833,7 @@ formal/README.md	crates/rsk-usb/src/ctaphid.rs	484-486	if bcnt > CTAP_MAX_MESSAG
 formal/README.md	crates/rsk-usb/src/ctaphid.rs	503-505	if cid != self.cid {	}
 formal/README.md	crates/rsk-usb/src/ctaphid.rs	507-510	if seq != self.seq {	}
 formal/README.md	crates/rsk-usb/src/ctaphid.rs	657-657	pub async fn run(&mut self) -> ! {	pub async fn run(&mut self) -> ! {
-formal/README.md	crates/rsk-usb/src/ctaphid.rs	1087-1099	async fn write_frames<S, T, F>(sink: &mut S, cid: u32, cmd: u8, data: &[u8], mut timeout: F)	}
+formal/README.md	crates/rsk-usb/src/ctaphid.rs	1088-1100	async fn write_frames<S, T, F>(sink: &mut S, cid: u32, cmd: u8, data: &[u8], mut timeout: F)	}
 formal/README.md	crates/rsk-usb/src/ctaphid_tests.rs	479-479	fn write_frames_abandons_when_host_stalls() {	fn write_frames_abandons_when_host_stalls() {
 formal/README.md	crates/rsk-usb/src/ctaphid_tests.rs	501-501	fn write_frames_writes_every_frame_when_host_drains() {	fn write_frames_writes_every_frame_when_host_drains() {
 formal/README.md	firmware/src/main.rs	651-688	let usb_itf = if storage_ready {	// and everything past it carries only `mkek_source`.
@@ -1084,7 +1084,7 @@ formal/RSKeySecurityState.tla	crates/rsk-fido/src/vendor.rs	874-874	if try_backu
 formal/RSKeySecurityState.tla	crates/rsk-fido/src/vendor.rs	980-987	// no MSE handshake — and say what the touch actually authorises.	.map_err(|_| CtapError::Other)?;
 formal/RSKeySecurityState.tla	crates/rsk-fido/src/vendor.rs	1056-1062	/// `EF_BACKUP_SEALED` marker so the seed can no longer be exported **or** shown as	fs.put(EF_BACKUP_SEALED, &[1]).is_ok()
 formal/RSKeySecurityState.tla	crates/rsk-fs/src/fs.rs	447-450	/// A FID can be yielded MORE THAN ONCE — the log-structured backend walks	/// below does).
-formal/RSKeySecurityState.tla	crates/rsk-usb/src/ctaphid.rs	984-986	if matches!(read, Ok(k) if is_cancel_frame(watch.expose(), k, cid)) {	cancelled |= monitor;
+formal/RSKeySecurityState.tla	crates/rsk-usb/src/ctaphid.rs	985-987	if matches!(read, Ok(k) if is_cancel_frame(watch.expose(), k, cid)) {	cancelled |= monitor;
 formal/RSKeySecurityState.tla	firmware/src/main.rs	741-741	let _ = rsk_fido::seed::ensure_seed(&dev, &mut fs, &mut rng);	let _ = rsk_fido::seed::ensure_seed(&dev, &mut fs, &mut rng);
 formal/RSKeySecurityState.tla	firmware/src/presence.rs	103-110	/// User presence via BOOTSEL (default) or a dedicated GPIO button.	}
 formal/RSKeySecurityState.tla	firmware/src/worker.rs	527-532	crate::presence::set_wait_scope(match ex.kind {	});
@@ -1126,7 +1126,7 @@ formal/RSKeyTransport.tla	crates/rsk-usb/src/ctaphid.rs	484-486	if bcnt > CTAP_M
 formal/RSKeyTransport.tla	crates/rsk-usb/src/ctaphid.rs	503-505	if cid != self.cid {	}
 formal/RSKeyTransport.tla	crates/rsk-usb/src/ctaphid.rs	507-510	if seq != self.seq {	}
 formal/RSKeyTransport.tla	crates/rsk-usb/src/ctaphid.rs	657-657	pub async fn run(&mut self) -> ! {	pub async fn run(&mut self) -> ! {
-formal/RSKeyTransport.tla	crates/rsk-usb/src/ctaphid.rs	1087-1099	async fn write_frames<S, T, F>(sink: &mut S, cid: u32, cmd: u8, data: &[u8], mut timeout: F)	}
+formal/RSKeyTransport.tla	crates/rsk-usb/src/ctaphid.rs	1088-1100	async fn write_frames<S, T, F>(sink: &mut S, cid: u32, cmd: u8, data: &[u8], mut timeout: F)	}
 formal/RSKeyTransport.tla	crates/rsk-usb/src/ctaphid_tests.rs	479-479	fn write_frames_abandons_when_host_stalls() {	fn write_frames_abandons_when_host_stalls() {
 formal/RSKeyTransport.tla	crates/rsk-usb/src/ctaphid_tests.rs	501-501	fn write_frames_writes_every_frame_when_host_drains() {	fn write_frames_writes_every_frame_when_host_drains() {
 formal/RSKeyTrustedDisplay.tla	crates/rsk-display/src/power.rs	53-63	pub(super) fn armed_touch(&mut self) -> Option<rsk_ui::Point> {	}
@@ -1227,4 +1227,4 @@ scripts/test_token_refinement_gate.py	firmware/src/main.rs	1204-1204	let fido_st
 scripts/token_refinement_gate.py	crates/rsk-device/src/ctap.rs	122-122	*st = rsk_fido::FidoState::new();	*st = rsk_fido::FidoState::new();
 scripts/token_refinement_gate.py	firmware/src/main.rs	1204-1204	let fido_state_ref = FIDO_STATE.init(RefCell::new(rsk_fido::FidoState::new()));	let fido_state_ref = FIDO_STATE.init(RefCell::new(rsk_fido::FidoState::new()));
 scripts/trace_map.py	crates/rsk-sdk/src/applet.rs	449-449	let reselect = self.current == Some(i);	let reselect = self.current == Some(i);
-tools/emu/src/hid.rs	crates/rsk-usb/src/ctaphid.rs	728-756	async fn on_frame(&mut self, f: &[u8; HID_RPT_SIZE]) {	}
+tools/emu/src/hid.rs	crates/rsk-usb/src/ctaphid.rs	729-757	async fn on_frame(&mut self, f: &[u8; HID_RPT_SIZE]) {	}

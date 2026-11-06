@@ -38,6 +38,10 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ## [Unreleased]
 
+- Abort partial CTAPHID reassembly when the USB session changes, before wiping
+  its buffer (bcdDevice 0x0BDF). A new channel can start immediately and a stale
+  continuation no longer produces a response in the new session.
+
 - Expand hostile Non-secure image checks to peripheral grants, DMA channels and
   atomic register aliases, with live NS RAM controls (bcdDevice 0x0BDE).
   Identify SecureFault addresses separately from bus faults, compare complete

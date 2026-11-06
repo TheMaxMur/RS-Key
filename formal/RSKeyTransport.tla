@@ -45,7 +45,7 @@
 (* IN-endpoint write that fixed the runtime interface wedge (0x075D,          *)
 (* TX_TIMEOUT_MS) is a LIVENESS property, and NO liveness proof is claimed    *)
 (* from this module or from any other CTAPHID evidence. It lives on           *)
-(* `write_frames` (crates/rsk-usb/src/ctaphid.rs:1087-1099), where two host     *)
+(* `write_frames` (crates/rsk-usb/src/ctaphid.rs:1088-1100), where two host     *)
 (* regressions pin the abandon and the drain                                  *)
 (* (crates/rsk-usb/src/ctaphid_tests.rs:479,501) -- over `write_frames`, not  *)
 (* over the async `run` loop (crates/rsk-usb/src/ctaphid.rs:657), which       *)

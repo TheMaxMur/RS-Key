@@ -98,6 +98,10 @@ applet authorization in Secure before new work is accepted. Persisted keys and
 the FIDO per-boot PIN mismatch budget survive a bus event. The ordinary image
 retains its existing transport configuration.
 
+The same event aborts partial CTAPHID reassembly and clears its channel lock.
+Continuations from the old session are ignored until a new init frame starts
+a message.
+
 Standard ISO-7816 short APDUs. SELECT is always `00 A4 04 00 Lc <AID> 00`; a
 `P2` of `04` selects too, where a YubiKey 5.8.0 answers `6D00`, because PicoForge
 sends it ([limitations](limitations.md)). The
