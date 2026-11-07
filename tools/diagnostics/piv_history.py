@@ -40,20 +40,27 @@ class Backend:
         self.process = None
         self.log = None
         self.boot = 0
+        self.port = None
 
     def inspect(self, command):
-        with socket.create_connection(("127.0.0.1", self.args.port + 2), timeout=120) as link:
+        with socket.create_connection(("127.0.0.1", self.port + 2), timeout=120) as link:
             link.sendall((command + "\n").encode())
             return link.makefile("rb").readline(32768).decode().strip()
 
     def start(self):
-        for port in range(self.args.port, self.args.port + (3 if self.args.image else 2)):
+        self.port = self.args.port
+        if self.port > 65532:
+            raise ValueError("history exhausted its local TCP port range")
+        # Image inspection closes from the server side, leaving TIME_WAIT behind.
+        # Every boot, including the next seed, needs its own listener ports.
+        self.args.port += 3
+        for port in range(self.port, self.port + (3 if self.args.image else 2)):
             with socket.socket() as probe:
                 probe.bind(("127.0.0.1", port))
         command = [str(self.args.emulator), "--store", str(self.directory / "flash.store"),
-                   "--fido-port", str(self.args.port), "--ccid-port", str(self.args.port + 1)]
+                   "--fido-port", str(self.port), "--ccid-port", str(self.port + 1)]
         if self.args.image:
-            command += ["--image", str(self.args.image), "--inspect-port", str(self.args.port + 2),
+            command += ["--image", str(self.args.image), "--inspect-port", str(self.port + 2),
                         "--seed", f"{self.seed:016x}"]
         log_path = self.directory / f"boot-{self.boot}.log"
         self.log = log_path.open("w")
@@ -77,7 +84,7 @@ class Backend:
             time.sleep(0.05)
         else:
             raise TimeoutError(f"emulator readiness: {log_path}")
-        os.environ["RSK_EMU_CCID"] = f"127.0.0.1:{self.args.port + 1}"
+        os.environ["RSK_EMU_CCID"] = f"127.0.0.1:{self.port + 1}"
         connection = emu.EmuCard()
         connection.connect()
         return connection

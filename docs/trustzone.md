@@ -131,11 +131,11 @@ isolation cases. Neither emulation nor a successful build substitutes for those
 board measurements. Both `DEBUG_DISABLE` and `SECURE_DEBUG_DISABLE` are required
 by the production provisioning policy.
 
-The retained PIV RESET `6581` remains unresolved. The 2026-11-03 board run
-reproduced it after the upgrade; a subsequent run passed without RSA. Neither
-result identifies the storage failure or establishes a migration defect. Preserve
-the first failure with `tests/102_piv_factory_reset.py`; another successful run
-does not discharge it.
+The maintainer archived the PIV RESET `6581` investigation on 2026-11-04
+after follow-up hardware and emulator attempts did not reproduce it. The latest
+physical series completed 200 RESET/RSA cycles. It is no longer an active task
+or release blocker; no firmware fix is claimed. Reopen only with fresh failure
+data or a reproducible case. The [investigation history](trustzone-history.md#piv-reset-recheck-on-2026-11-04) is retained.
 
 ## Attacker and trusted code
 

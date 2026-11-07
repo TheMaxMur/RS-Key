@@ -1350,3 +1350,73 @@ scratch code while allowing the corresponding data-region controls. All 7,936
 initial code/padding bytes matched the load image. These emulator probes do not
 prove the silicon assumptions or all core1 and temporary flash-window behavior;
 `PLAT-TZ-009` remains pending.
+
+## PIV RESET recheck on 2026-11-04
+
+Revision `91824c76` completed 32 applet-model histories of 257 operations each,
+including RSA, object-size boundaries, PIN changes, deletions and cold restarts.
+Another applet-model process completed 1,000 consecutive
+`102_piv_factory_reset.py --churn 8 --rsa --vary-churn` cycles without restarting.
+All factory retry pairs, key/object removals and replacement F9 certificates
+passed. A separate process completed 100 runs of the original `80_piv.py --rsa`
+workload, including P-384, ECDH, attestation and full-size CCID messages.
+A further applet-model store retained 48 synthetic non-PIV records byte for
+byte through 100 RESET/RSA cycles and a fresh mount.
+
+The exact combined no-touch ARM image also completed four histories of 65
+operations each. Its first attempt had stopped at a runner error, not RESET:
+the inspection listener's `TIME_WAIT` prevented the next boot from binding the
+same TCP port. The runner now advances its listener ports across boots and seeds.
+Its regression test fails at that rebind when the advance is removed.
+
+Rebuilt historical source images also completed eight synthetic upgrades from
+`0x0BD6`: four retained flash/OTP states each loaded by `0x0BDD` and `0x0BDE`.
+The states had zero, eight, 64 or 257 prior object rewrites. Each upgrade retained
+the PIN, a working P-256 signing key, RSA public metadata, F9 and the object;
+the original `80_piv.py --rsa` workload then passed, including its first RESET.
+The old source used its original pinned Rust 1.96 environment. These synthetic
+states do not reconstruct the unavailable physical flash state at the refusal.
+
+On the physical `rs-key-0001`, ordinary build `0x0BDE` completed 100 approved
+RESET/RSA cycles with eight varied-size object writes per cycle. Every RESET
+returned `9000`; the factory retry pairs, deleted keys/objects and replacement
+F9 certificate checks passed. The run took about 25 minutes and left PIV at its
+factory defaults. No firmware or OTP writes were performed during this run.
+
+An isolated diagnostic build records the first 32 internal error-site/code
+pairs, including failed write/remove FIDs before filesystem recovery. It does
+not expose record payloads. Exact ARM controls distinguished a refused
+retry-file write from a flash readback mismatch: both returned `6581`, with
+different retained traces. The board candidate `0xDBE2` disables those fault
+injections; its exact ARM image refused both injection commands and completed
+a healthy RESET with an empty trace. These controls validate the capture
+mechanism, not a cause for the physical refusal.
+
+The subsequent approved physical `0xDBE2` series completed another 100 RESET/RSA
+cycles with eight varied-size object writes per cycle in about 20 minutes.
+Every RESET returned `9000`; the trace captured immediately after each RESET,
+before subsequent public queries, was empty. All factory-default oracles passed.
+Host-only controls separately checked that the capture runner stops after the
+first refused RESET or internal error and does not attribute a pre-RESET failure
+to the preceding successful cycle.
+
+The ordinary touch-enabled `0x0BDE` image was restored with verified programming.
+Its immediate HID INIT check received an unexpected command; that first check
+remains a failed handover observation, with no saved response bytes to establish
+the cause. A later fresh-process check matched the INIT nonce, read getInfo and
+confirmed that the private trace command was refused, without another reboot
+or flash. The public rescue status remained `UNPROVISIONED`, and both PIN/PUK
+retry pairs were `3/3`. No signing or OTP writes were performed. This handover
+observation is separate from PIV RESET and is not a `6581` reproduction.
+
+These results are retained in `target/piv-6581-20261104/`. They did not
+reproduce the physical `6581`, and no production PIV behavior was changed.
+The earlier `6F04` capture localizes one historical refusal to retry-file
+provisioning; it does not establish that the later post-upgrade refusal had
+the same internal cause.
+
+On 2026-11-04 the maintainer ended the investigation after the unsuccessful
+follow-up reproduction attempts. The RESET findings are archived as
+unreproduced, removed from active plans and release blockers. Their cause is
+unknown; no firmware fix is claimed. Do not schedule further reproduction work
+without a fresh failure capture or a reproducible case.

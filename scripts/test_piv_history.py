@@ -136,3 +136,50 @@ def test_replay_refuses_a_changed_emulator_transport(tmp_path, monkeypatch, caps
     assert error.value.code == 2
     assert "replay identity differs: runner_sha256" in capsys.readouterr().err
     assert len(records) == 1, "changed transport must be rejected before executing the history"
+
+
+def test_image_reboots_and_new_seeds_do_not_rebind_retained_listener_ports(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    root = Path(__file__).resolve().parents[1]
+    monkeypatch.setattr(sys, "path", list(sys.path))
+    spec = importlib.util.spec_from_file_location(
+        "piv_history_ports", root / "tools/diagnostics/piv_history.py")
+    diagnostic = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(diagnostic)
+    bound = set()
+    launches = []
+
+    class Probe:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            pass
+
+        def bind(self, address):
+            if address in bound:
+                raise OSError("image listener still in TIME_WAIT")
+            bound.add(address)
+
+    def launch(command, **kwargs):
+        launches.append(command)
+        return SimpleNamespace(poll=lambda: None, terminate=lambda: None,
+                               wait=lambda **kwargs: None)
+
+    monkeypatch.setattr(diagnostic.socket, "socket", lambda *args: Probe())
+    monkeypatch.setattr(diagnostic.subprocess, "Popen", launch)
+    monkeypatch.setattr(diagnostic.Backend, "inspect", lambda *args: "ok ready=true dead=false")
+    monkeypatch.setattr(diagnostic.emu, "EmuCard", lambda: SimpleNamespace(
+        connect=lambda: None, disconnect=lambda: None))
+    monkeypatch.setenv("RSK_EMU_CCID", "unused")
+    args = SimpleNamespace(port=20029, image=tmp_path / "image", emulator=tmp_path / "emulator")
+    first = diagnostic.Backend(args, tmp_path, 1)
+    first.reboot(first.start())
+    first.stop()
+    second = diagnostic.Backend(args, tmp_path, 2)
+    second.start()
+    second.stop()
+    ports = [int(command[command.index("--inspect-port") + 1]) for command in launches]
+    assert len(ports) == len(set(ports)) == 3
+    assert diagnostic.os.environ["RSK_EMU_CCID"] == f"127.0.0.1:{ports[-1] - 1}"
