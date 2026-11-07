@@ -38,6 +38,11 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ## [Unreleased]
 
+- Run display firmware images with `rsk-emu --image --display`: capture ST7789
+  pixels from PIO, deliver CST328 touch reports over I2C1, and show the panel in
+  SDL. Add headless image-time tap input and a display-image laboratory for
+  consent, cancellation and the device, FIDO and CCID PIN paths.
+
 - Cancel the background RSA prime candidate at Lucas progress boundaries once
   the key is complete (bcdDevice 0x0BE1). Retain the Miller-Rabin and extra-strong
   Lucas acceptance checks and wipe the abandoned candidate before core1 idles.

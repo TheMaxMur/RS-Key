@@ -32,6 +32,7 @@ cargo run --manifest-path tools/emu/Cargo.toml --target "$HOST" -- --store ./my.
                       strings, the ATR, the OpenPGP AID vendor — as the
                       VIDPID=Yubikey5 build does. `ykman` needs it.
   --power-cut <n>     cut the flash's power after n bytes of writes
+  --headless          capture --image --display without an SDL window
   --image <elf>       serve that firmware ELF on an emulated RP2350 instead of
                       the applet stack (below)
   --rom <file>        the bootrom --image boots (default: picoem's pinned A4)
@@ -233,8 +234,19 @@ python tests/emu.py tests/10_fido_getinfo.py
 - **Presence and identity are the image's.** A `--features no-touch` build
   confirms presence; a touch build waits for BOOTSEL, which each line on the
   terminal holds down for half a second under `--touch`, and a keepalive asking
-  for the touch says so there. The Yubico identity is a `VIDPID=Yubikey5` build. `--display`, the pad, `--auto-touch-ms`, `--security-trace`, `--yubico`
+  for the touch says so there. The Yubico identity is a `VIDPID=Yubikey5` build. `--auto-touch-ms`, `--security-trace`, `--yubico`
   and `--power-cut` are refused by name.
+- **Display images** use `--image display.elf --display`. The Waveshare board's
+  PIO0 serial pins drive an ST7789 GRAM model; the window presents those captured
+  RGB565 pixels and the PWM backlight. Mouse contacts reach the firmware through
+  the CST328 registers on I2C1. Space presses the active-low wake button. The
+  image executes its own rendering, hit tests, PIN verification and USB replies.
+  `--headless` suppresses only the window. `--taps` and `--taps-port` retain their
+  existing grammar, with durations measured on the image clock. A scripted pad
+  owns touch input exclusively. Rendering requires single-cycle PIO observation,
+  so display images run more slowly than the ordinary image backend. The image
+  samples mouse contacts and Space on its own clock. Brief presses in the window
+  can fall between those polls.
 - **`--usbip`** offers the image's current descriptors. Attach and detach
   power-cycle a running image; in BOOTSEL they warm-boot back into the ROM
   loader. A socket replug always cold-boots. Successful control and data
@@ -324,6 +336,40 @@ leak through the same assertion, upgrades a release's OATH, FIDO signing key
 and OpenPGP PIN on the same flash, and reboots from cycle/byte-cut snapshots in
 new processes. `--only` selects a scenario. Logs, image hashes and measured
 results stay in the new `--work` directory; no board is enumerated.
+
+The display laboratory takes an ordinary Waveshare display ELF, built without
+`no-touch`, and owns a fresh flash file and loopback endpoints:
+
+```sh
+nix develop -c env BOARD=waveshare-touch-lcd LED_KIND=none FLASH_SIZE=16M \
+  bash scripts/build.sh --features display
+nix develop -c cargo build --manifest-path tools/emu/Cargo.toml \
+  --locked --release --target "$HOST"
+nix develop -c python tools/emu/image_display.py \
+  --emulator "tools/emu/target/$HOST/release/rsk-emu" \
+  --image target/trustzone/combined.elf --work /tmp/rsk-display-image --only ceremonies
+```
+
+`--only ceremonies` checks registration refusal/cancellation and approval, then
+tests the sign-in hold and verifies signatures. Registration's **Save** is a
+single tap; sign-in's **Hold to approve** requires 800 ms. `--only stale` checks
+that a held finger from a cancelled sign-in cannot approve its successor.
+`--only physical` drives a sliding contact, a lift and a foreign-channel CANCEL;
+`--only timeout` sets the on-panel deadline and checks expiry on the image clock.
+`--only pin` exercises device-PIN setup, mismatch, cancellation, wrong entry,
+persistent retries and unlock after reboot. `--only fido-pin` drives clientPIN
+0x06 and uses its decrypted token; `--only ccid-pin` drives actual CCID Secure
+VERIFY for OpenPGP and PIV, including refusal, cancellation and retry counts.
+PIN scenarios enable scrambling and locate digits in the captured pixels using
+the public font asset. They never read the firmware's keypad layout or PIN
+buffer. SRAM scans have a planted-PIN control through the same checker.
+
+Each run retains the exact ELF, emulator and Python sources, raw RGB565 frames,
+PNGs, hashes, transport samples and sampled stack bounds in a new output folder.
+The panel model supports this board's RGB565 command sequence and scan orders;
+unsupported commands and formats fail explicitly. I2C1 models the firmware's
+blocking CST328 transactions, FIFO status and interrupts. These models do not
+establish electrical timing, panel overclock tolerance or physical calibration.
 
 `--only operations` runs a second matrix against both backends. Every image
 command records both cores' minimum SP and checks their ELF/MSPLIM bounds:

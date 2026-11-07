@@ -103,6 +103,15 @@ fn disabling_both_transports_serves_nothing() {
 fn flags_that_only_an_image_understands_need_one() {
     refuses(&["--rom", "bootrom.bin"], "add --image");
     refuses(&["--inspect-port", "7801"], "add --image");
+    refuses(&["--headless"], "requires --image and --display");
+    refuses(
+        &["--display", "--headless"],
+        "requires --image and --display",
+    );
+    refuses(
+        &["--image", "absent.elf", "--headless"],
+        "requires --image and --display",
+    );
 }
 
 #[test]

@@ -74,11 +74,16 @@ pub struct Options {
     pub serial: [u8; 8],
     pub trace: bool,
     pub inspect_port: Option<u16>,
+    pub display: bool,
+    pub headless: bool,
+    pub taps: Vec<crate::taps::Tap>,
+    pub taps_port: Option<u16>,
 }
 
 /// Why a power-up ended, and so what the next one keeps.
 #[derive(Debug, PartialEq, Eq)]
 enum End {
+    Quit,
     /// A reset the image asked for: the watchdog scratch survives it.
     Warm {
         bootsel: bool,
@@ -230,6 +235,8 @@ struct CcidFlight {
 }
 
 struct Board {
+    view: Option<super::window::View>,
+    display_input: Option<super::touch::SharedTouch>,
     opts: Options,
     rom: Vec<u8>,
     elf: Arc<Elf>,
@@ -273,6 +280,7 @@ pub fn run(opts: Options) -> Result<(), String> {
         let end = board.serve()?;
         board.unplug()?;
         let scratch = match end {
+            End::Quit => return Ok(()),
             End::Warm { .. } => Some(board.chip.scratch()),
             End::PowerCycle => {
                 board.hid.owners.clear();
@@ -367,9 +375,34 @@ impl Board {
             std::thread::spawn(move || inspect::listen(listener, chip));
         }
 
-        let chip = Chip::power_up(&rom, elf.clone(), &seed, &flash, rows, None)?;
+        let display_input = opts.display.then(super::touch::SharedTouch::default);
+        if let Some(input) = &display_input {
+            let receiver = if let Some(port) = opts.taps_port {
+                let listener = TcpListener::bind((opts.host.as_str(), port))
+                    .map_err(|e| format!("cannot bind tap port: {e}"))?;
+                eprintln!(
+                    "emu: image pad on {}",
+                    listener.local_addr().map_err(|e| e.to_string())?
+                );
+                let (tx, rx) = mpsc::sync_channel(1);
+                std::thread::spawn(move || crate::taps::serve(listener, tx));
+                Some(rx)
+            } else {
+                None
+            };
+            if receiver.is_some() || !opts.taps.is_empty() {
+                input.lock().unwrap().pad =
+                    Some(super::taps::Pad::new(opts.taps.clone(), receiver));
+            }
+        }
+        let mut chip = Chip::power_up(&rom, elf.clone(), &seed, &flash, rows, None)?;
+        if let Some(input) = &display_input {
+            chip.enable_panel(input.clone())?;
+        }
         let hc = Hc::new(chip.usb.clone());
         Ok(Self {
+            display_input,
+            view: (opts.display && !opts.headless).then(super::window::View::new),
             opts,
             rom,
             elf,
@@ -428,10 +461,13 @@ impl Board {
     }
 
     fn power_up(&mut self, scratch: Option<[u32; SCRATCH_REGS]>) -> Result<(), String> {
+        if let Some(input) = &self.display_input {
+            input.lock().unwrap().reboot(self.chip.now_ns());
+        }
         let rows = self.chip.otp_rows();
         // Replaying one entropy stream can regenerate the key a reset just deleted.
         let seed = next_boot_seed(&self.seed);
-        let chip = Chip::power_up(
+        let mut chip = Chip::power_up(
             &self.rom,
             self.elf.clone(),
             &seed,
@@ -439,6 +475,9 @@ impl Board {
             rows,
             scratch,
         )?;
+        if let Some(input) = &self.display_input {
+            chip.enable_panel(input.clone())?;
+        }
         self.chip = chip;
         self.boot_mode = BootMode::Image;
         self.announced = false;
@@ -477,6 +516,11 @@ impl Board {
         let mut next = self.next_event();
         let mut steps = 0u64;
         loop {
+            if let Some(view) = &mut self.view
+                && !view.pump(&mut self.chip)
+            {
+                return Ok(End::Quit);
+            }
             let mut asked = false;
             while let Ok(r) = self.rx.try_recv() {
                 asked = true;
@@ -719,6 +763,39 @@ impl Board {
 
     fn inspect(&mut self, command: Command, dead: bool) -> Result<String, String> {
         match command {
+            Command::PanelWake(down) => {
+                if self.chip.panel.is_none() {
+                    return Err("panel model is disabled".into());
+                }
+                self.chip.press_wake(down);
+                Ok(format!("wake_pressed={down}"))
+            }
+            Command::PanelTouch { x, y, hold_ms } => {
+                let touch = self.chip.touch.as_ref().ok_or("touch model is disabled")?;
+                let mut touch = touch.lock().unwrap();
+                if touch.pad.is_some() {
+                    return Err("scripted pad owns the touch input".into());
+                }
+                touch.point = Some((x, y));
+                touch.until_ns = self.chip.now_ns() + hold_ms * 1_000_000;
+                Ok("held=touch".into())
+            }
+            Command::PanelRelease => {
+                let touch = self.chip.touch.as_ref().ok_or("touch model is disabled")?;
+                let mut touch = touch.lock().unwrap();
+                if touch.pad.is_some() {
+                    return Err("scripted pad owns the touch input".into());
+                }
+                touch.point = None;
+                Ok("released=touch".into())
+            }
+            Command::Panel => self.chip.panel_status(),
+            Command::PanelRead => self
+                .chip
+                .panel
+                .as_ref()
+                .map(|p| p.read())
+                .ok_or_else(|| "panel model is disabled".into()),
             Command::Where => Ok(self.chip.whereabouts()),
             Command::Status => Ok(format!(
                 "cycle={} emulated_ns={} ready={} dead={} bootloader={} power_ups={} programmed_bytes={} last_cut={} fatal_fenced={}",

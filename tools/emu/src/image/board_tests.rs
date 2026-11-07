@@ -4,7 +4,15 @@
 use super::*;
 
 fn board() -> Board {
-    let image = std::env::temp_dir().join(format!("rsk-emu-board-{}.elf", std::process::id()));
+    board_with_taps(Vec::new())
+}
+
+fn board_with_taps(taps: Vec<crate::taps::Tap>) -> Board {
+    let image = std::env::temp_dir().join(format!(
+        "rsk-emu-board-{}-{:?}.elf",
+        std::process::id(),
+        std::thread::current().id()
+    ));
     let mut elf = [0; 52];
     elf[..6].copy_from_slice(&[0x7F, b'E', b'L', b'F', 1, 1]);
     std::fs::write(&image, elf).unwrap();
@@ -21,6 +29,10 @@ fn board() -> Board {
         serial: *b"RSKEMU\0\x01",
         trace: false,
         inspect_port: None,
+        display: !taps.is_empty(),
+        headless: true,
+        taps,
+        taps_port: None,
     });
     std::fs::remove_file(image).unwrap();
     result.unwrap()
@@ -60,4 +72,29 @@ fn transport_handover_preserves_bootloader_but_a_replug_cold_boots() {
     board.power_up(None).unwrap();
     assert!(matches!(board.boot_mode, BootMode::Image));
     assert!(!board.announced);
+}
+
+#[test]
+fn a_tap_script_owns_the_finger_across_an_image_reboot() {
+    let mut board = board_with_taps(vec![crate::taps::Tap::at(10, 10)]);
+    let input = board.display_input.clone().unwrap();
+    assert!(input.lock().unwrap().pad.is_some());
+    assert_eq!(
+        board.inspect(
+            Command::PanelTouch {
+                x: 10,
+                y: 10,
+                hold_ms: 800
+            },
+            false
+        ),
+        Err("scripted pad owns the touch input".into())
+    );
+    board.power_up(None).unwrap();
+    assert!(Arc::ptr_eq(board.chip.touch.as_ref().unwrap(), &input));
+    assert!(input.lock().unwrap().pad.is_some());
+    assert_eq!(
+        board.inspect(Command::PanelRelease, false),
+        Err("scripted pad owns the touch input".into())
+    );
 }

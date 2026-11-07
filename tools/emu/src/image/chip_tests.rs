@@ -43,6 +43,27 @@ fn chip(size: u32) -> Chip {
     .unwrap()
 }
 
+#[test]
+fn display_board_releases_wake_and_observes_pwm_instead_of_an_invented_brightness() {
+    let mut chip = chip(12);
+    chip.enable_panel(super::super::touch::SharedTouch::default())
+        .unwrap();
+    chip.step(1).unwrap();
+    assert_ne!(chip.emu.gpio_read_all() & u64::from(WAKE_BUTTON), 0);
+    chip.press_wake(true);
+    chip.step(1).unwrap();
+    assert_eq!(chip.emu.gpio_read_all() & u64::from(WAKE_BUTTON), 0);
+    chip.press_wake(false);
+    chip.step(1).unwrap();
+    assert_ne!(chip.emu.gpio_read_all() & u64::from(WAKE_BUTTON), 0);
+    chip.emu.bus.write32(BACKLIGHT_TOP, 255, 0);
+    chip.emu.bus.write32(BACKLIGHT_CC, 128, 0);
+    chip.emu.bus.write32(BACKLIGHT_CSR, 1, 0);
+    assert_eq!(chip.backlight(), (128, 255));
+    chip.emu.bus.write32(BACKLIGHT_CSR, 0, 0);
+    assert_eq!(chip.backlight(), (0, 255));
+}
+
 fn stack_chip(nonsecure: bool) -> Chip {
     const NS_VECTOR: u32 = 0x1000_1000;
     let mut chip = chip(12);

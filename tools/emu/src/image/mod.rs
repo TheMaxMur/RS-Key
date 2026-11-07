@@ -15,14 +15,18 @@ mod hc;
 mod inspect;
 mod ioqspi;
 mod otp;
+mod panel;
 mod psm;
 mod qspi;
 mod sha256;
 mod sockets;
+mod taps;
+mod touch;
 mod transport;
 mod trng;
 mod usb;
 mod watchdog;
+mod window;
 mod xip;
 
 use std::collections::HashMap;

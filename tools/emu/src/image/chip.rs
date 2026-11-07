@@ -42,6 +42,10 @@ const QSPI_SD1: u32 = 1 << 29;
 const REBOOT_TYPE_BOOTSEL: u32 = 0x2;
 const IPSR_HARDFAULT: u32 = 3;
 const CPACR_CP7: u32 = 0x3 << 14;
+const WAKE_BUTTON: u32 = 1 << 25;
+const BACKLIGHT_CSR: u32 = 0x400A_8000;
+const BACKLIGHT_CC: u32 = 0x400A_800C;
+const BACKLIGHT_TOP: u32 = 0x400A_8010;
 
 /// Why the chip stopped running what it was running.
 #[derive(Debug, PartialEq, Eq)]
@@ -76,6 +80,8 @@ pub struct Chip {
     otp_burns_seen: usize,
     emu_ns: f64,
     stacks: Option<Stacks>,
+    pub panel: Option<super::panel::Panel>,
+    pub touch: Option<super::touch::SharedTouch>,
 }
 
 impl Chip {
@@ -178,6 +184,8 @@ impl Chip {
             otp_burns_seen: 0,
             emu_ns: 0.0,
             stacks: None,
+            panel: None,
+            touch: None,
         })
     }
 
@@ -222,11 +230,93 @@ impl Chip {
         s
     }
 
+    pub fn enable_panel(&mut self, touch: super::touch::SharedTouch) -> Result<(), String> {
+        // The board's active-low wake button is released until driven externally.
+        self.emu.bus.gpio_external_mask |= WAKE_BUTTON;
+        self.press_wake(false);
+        self.emu
+            .mount_mmio(
+                super::touch::I2C1_BASE,
+                0x1000,
+                MmioAliasing::Atomic,
+                super::touch::I2c::new(touch.clone()),
+            )
+            .map_err(|e| e.to_string())?;
+        self.touch = Some(touch);
+        self.panel = Some(super::panel::Panel::default());
+        Ok(())
+    }
+
+    pub fn panel_status(&mut self) -> Result<String, String> {
+        let panel = self
+            .panel
+            .as_ref()
+            .ok_or("panel model is disabled")?
+            .status();
+        let pwm = self.emu.bus.read32(BACKLIGHT_CSR, 0);
+        let (duty, top) = self.backlight();
+        let touch = self
+            .touch
+            .as_ref()
+            .ok_or("touch model is disabled")?
+            .lock()
+            .unwrap();
+        Ok(format!(
+            "{panel} backlight={duty} pwm_enabled={} pwm_top={top} touch_reports={} touch_normal={} touch_reset={}",
+            pwm & 1 != 0,
+            touch.reports,
+            touch.normal,
+            touch.reset
+        ))
+    }
+
+    pub fn backlight(&mut self) -> (u32, u32) {
+        let enabled = self.emu.bus.read32(BACKLIGHT_CSR, 0) & 1 != 0;
+        let duty = self.emu.bus.read32(BACKLIGHT_CC, 0) & 0xFFFF;
+        let top = self.emu.bus.read32(BACKLIGHT_TOP, 0);
+        (if enabled { duty.min(top) } else { 0 }, top)
+    }
+
+    pub fn press_wake(&mut self, down: bool) {
+        if down {
+            self.emu
+                .bus
+                .gpio_external_in
+                .fetch_and(!WAKE_BUTTON, Ordering::Relaxed);
+        } else {
+            self.emu
+                .bus
+                .gpio_external_in
+                .fetch_or(WAKE_BUTTON, Ordering::Relaxed);
+        }
+    }
+
     /// Run `cycles` of emulated time.
     pub fn step(&mut self, cycles: u32) -> Result<(), String> {
         let cycles = cycles.max(1);
-        self.emu.step_quantum = cycles;
-        self.emu.step().map_err(|e| e.to_string())?;
+        if let Some(panel) = &mut self.panel {
+            // The 80 MHz serial output can cross several edges in a CPU quantum.
+            self.emu.step_quantum = 1;
+            for _ in 0..cycles {
+                if let Some(touch) = &self.touch {
+                    touch.lock().unwrap().now_ns = self.emu_ns as u64;
+                }
+                self.emu.step().map_err(|e| e.to_string())?;
+                let pins = self.emu.gpio_read_all();
+                panel.sample(pins);
+                if let Some(touch) = &self.touch {
+                    touch.lock().unwrap().sample(pins);
+                }
+                self.emu_ns += 1e9 / f64::from(self.emu.bus.sys_clk_hz());
+                if let Some(error) = &panel.error {
+                    return Err(format!("panel model: {error}"));
+                }
+            }
+        } else {
+            self.emu.step_quantum = cycles;
+            self.emu.step().map_err(|e| e.to_string())?;
+            self.emu_ns += f64::from(cycles) * 1e9 / f64::from(self.emu.bus.sys_clk_hz());
+        }
         if let Some(stacks) = &mut self.stacks {
             if !self.emu.core(1).is_secure() {
                 return Err("Non-secure core1 stack measurement is unsupported".into());
@@ -238,7 +328,6 @@ impl Chip {
                 stack.sample(probe::stack_registers(self.emu.core(0), false)?.0);
             }
         }
-        self.emu_ns += f64::from(cycles) * 1e9 / f64::from(self.emu.bus.sys_clk_hz());
         if self.core1_hold {
             self.core1_hold = false;
             self.emu.bus.atomics.clear_halted(1);

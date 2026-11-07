@@ -24,6 +24,11 @@ const MAX_LINE: u64 = 4096;
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Command {
+    Panel,
+    PanelRead,
+    PanelTouch { x: u16, y: u16, hold_ms: u64 },
+    PanelRelease,
+    PanelWake(bool),
     Status,
     Where,
     Begin,
@@ -46,6 +51,20 @@ pub fn parse(line: &str) -> Result<Command, String> {
     let args: Vec<_> = line.split_whitespace().collect();
     let number = |s: &str| s.parse::<u64>().map_err(|_| "invalid unsigned count");
     match args.as_slice() {
+        ["panel"] => Ok(Command::Panel),
+        ["panel-read"] => Ok(Command::PanelRead),
+        ["panel-release"] => Ok(Command::PanelRelease),
+        ["panel-wake", "down"] => Ok(Command::PanelWake(true)),
+        ["panel-wake", "up"] => Ok(Command::PanelWake(false)),
+        ["panel-touch", x, y, hold] => {
+            let x = u16::try_from(number(x)?).map_err(|_| "touch X leaves panel")?;
+            let y = u16::try_from(number(y)?).map_err(|_| "touch Y leaves panel")?;
+            let hold_ms = number(hold)?;
+            if usize::from(x) >= super::panel::WIDTH || usize::from(y) >= super::panel::HEIGHT || hold_ms == 0 || hold_ms > 60_000 {
+                return Err("touch leaves panel or hold is outside 1..60000 ms".into());
+            }
+            Ok(Command::PanelTouch { x, y, hold_ms })
+        }
         ["status"] => Ok(Command::Status),
         ["where"] => Ok(Command::Where),
         ["begin"] => Ok(Command::Begin),
@@ -86,7 +105,7 @@ pub fn parse(line: &str) -> Result<Command, String> {
         ["cut-cycles", n] => Ok(Command::CutCycles(number(n)?)),
         ["cut-program", n] => Ok(Command::CutProgram(number(n)?)),
         ["cut-program-cycles", n] => Ok(Command::CutProgramCycles(number(n)?)),
-        _ => Err("expected status, where, begin, end, transport-begin, transport-end, usb-reset, usb-disconnect, usb-connect, usb-control SETUP_HEX, scan HEX, read ADDRESS N, plant ADDRESS HEX, cut-cycles N, cut-program N or cut-program-cycles N".into()),
+        _ => Err("expected panel, panel-read, panel-touch X Y HOLD_MS, panel-release, panel-wake up|down, status, where, begin, end, transport-begin, transport-end, usb-reset, usb-disconnect, usb-connect, usb-control SETUP_HEX, scan HEX, read ADDRESS N, plant ADDRESS HEX, cut-cycles N, cut-program N or cut-program-cycles N".into()),
     }
 }
 

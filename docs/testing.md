@@ -1488,6 +1488,18 @@ Neither backend models XIP-cache misses. Measure getInfo latency on an idle
 board with `nix develop -c python tests/105_fido_getinfo_latency.py`.
 `tests/emu.py` refuses this suite: host wall time cannot establish board latency.
 
+#### Display image testing
+
+`--image display.elf --display --headless` runs an ordinary Waveshare display
+build without opening a window. `tools/emu/image_display.py` reads ST7789 pixels and sends
+touches through I2C1. It drives registration, sign-in, cancellation and PIN
+entry over the firmware's USB endpoints. Its shuffled-keypad tests read the
+visible digits, and its SRAM checks include a planted-PIN control. Each run
+retains the ELF, emulator, frame captures, stack and transport samples.
+See the [image laboratory instructions](../tools/emu/README.md#image-laboratory).
+These results cover the modelled board; electrical and optical measurements
+still need hardware.
+
 The picoem pin's empty-`PULL` batching was compared on 2026-10-02 using two
 independent release builds, `d83e668` and `4b1953f`, and the same partitioned
 `bcdDevice 0x0A8B` no-touch ELF. Three 10-second idle samples per build reduced

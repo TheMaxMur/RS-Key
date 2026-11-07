@@ -162,8 +162,8 @@ and retains twelve release-elided debug-assert conditions without pair credit.
 | 3 | Persistent write histories plus the bounded read/erase/program, damaged-record, exhaustion, readback and silent-mutation matrix below, now including the selective `Silent` medium, its store read-back oracle, the correlated `Torn` medium (a torn write and the read that answers it), and the 2026-10-21 silent-write-with-refused-read-back and second-cut-during-recovery compositions; the 2026-11-04 slice adds v2 import/rekey/compaction histories with correlated read/write/erase and cut compositions; owner replay and selected NOR byte sweeps include interrupted recovery; the 2026-11-05 repair fixes read-error and incomplete-walk handling in the power-cut oracle | Semantic record-loss detection beyond the current CRC/legacy formats, further correlated-fault histories and longer retained campaigns remain open; the bounded matrix does not close the whole phase |
 | 4 | Semantic controls through host, fuzz, Miri and image runners; the 2026-10-11 critical slice below adds independent crypto boundaries and destructor observations; the 2026-10-12/14 whole-core shard closure below dispositions all 10 887 desired occurrences with no pending survivor | Device C/assembly mutation execution and resource/timing equivalence remain separate obligations |
 | 5 | Independent OATH positions, journal histories, 576 OpenPGP and 288 F9 command/state/fault inputs, plus the 11 cross_applet capability-gate and 6 fs_ops stateful seeds of the 2026-10-14 slice below, replayed through the shipped targets under Miri; the 2026-10-21 slice adds 53 `power_cut` seeds for the credential/config/PIV/reset drivers, 10 `authenticated_store` v2 seeds, and the `cross_applet` OATH record-lifecycle oracle with its 97-byte seed (replayed under Miri); `scripts/fuzz-union.py` makes the union reproducible and the 2026-10-15 campaigns remeasure it at 23062/36301 (63.53%, `default`) and 22699/36182 (62.74%, `flavours`); the 2026-11-04 slice adds the `TOK1` token spend/revocation oracle, the OATH SET CODE/VALIDATE HMAC oracle, 18 v2 lifecycle/fault histories and two-hour campaigns per target; the 2026-11-05 worktree completes two-hour campaigns for `power_cut` and `fs_ops` | Further stateful-surface coverage and the open-ended retained campaign remain, while the finite two-hour campaign queue for the five named targets is complete |
-| 6 | Eighteen current host-profile maps with finite source-bound residual reviews, including storage v2; fourteen ordinary release-flavour builds with thirteen image protocol passes; the 2026-10-15 host-tool slice adds argument, transport-failure and machine-readable-output contracts for tools/tui, tools/emu and the Python CLI, reported separately; selected real-device suites passed on the 4 MiB RP2350 A2 board on 2026-11-05 | Display-image ceremonies, other declared device/configuration scopes and host interoperability beyond the recorded board setup |
-| 7 | Optimized partitioned images, real presence/CANCEL, resource controls and independently checked crypto; the 2026-11-05 full image laboratory passed, the 2026-11-06 unoptimized laboratory passed basic differential/residue, ML-DSA-87 stack and all interrupted-write points, the 2026-11-07 Rust-O0 follow-up passes all 119 original operation labels under its recorded domain profile, and selected physical crypto/residue/TrustZone and secure-boot observations are recorded | Display-image ceremonies, device C/assembly mutation/resource evidence and the remaining silicon-only measurements |
+| 6 | Eighteen current host-profile maps with finite source-bound residual reviews, including storage v2; fourteen ordinary release-flavour builds with thirteen image protocol passes; the 2026-10-15 host-tool slice adds argument, transport-failure and machine-readable-output contracts for tools/tui, tools/emu and the Python CLI, reported separately; selected real-device suites passed on the 4 MiB RP2350 A2 board on 2026-11-05 | Other declared device/configuration scopes and host interoperability beyond the recorded board setup |
+| 7 | Optimized partitioned images, real presence/CANCEL, resource controls and independently checked crypto; the 2026-11-05 full image laboratory passed, the 2026-11-06 unoptimized laboratory passed basic differential/residue, ML-DSA-87 stack and all interrupted-write points, the 2026-11-07 Rust-O0 follow-up passes all 119 original operation labels under its recorded domain profile, and selected physical crypto/residue/TrustZone and secure-boot observations are recorded | Desktop mouse verification, device C/assembly mutation/resource evidence and the remaining silicon-only measurements |
 | 8 | Local runner controls and source-bound reports; fresh full gates passed in the main checkout on 2026-11-06 after integrating the repair, review and final test additions | Actual CI execution and same-revision release evidence |
 
 ## Phase 1 Establish trustworthy coverage measurements
@@ -3260,9 +3260,27 @@ Its makeCredential attempt returns `0x2d` while waiting for on-panel presence.
 The current 16 MiB display build compiles and its retained Secure ELF has
 119,328 stack bytes against the unchanged 116 KiB floor. That build/stack
 result does not repeat the earlier image ceremonies.
-The image backend has no panel/touch model; host display and emulator tests
-exercise a different execution scope. Display-image approve/deny/cancel/PIN
-therefore remains open, with the attempt in `display-image/run/`.
+That run stopped before the image could drive the panel. The display image
+follow-up used an ordinary 16 MiB Waveshare ELF (`bcdDevice 0x0BE1`) with local
+models for the ST7789, CST328 and wake button. It exercised registration
+approval and refusal, CTAPHID cancellation, sign-in holds and stale contacts,
+device PIN, FIDO built-in UV, and OpenPGP/PIV CCID Secure VERIFY. The runner
+read the shuffled digits from captured frames and retained the USB replies,
+sampled stack bounds and planted-PIN residue controls.
+
+The initial image runs used a local fix for narrow PIO TX FIFO writes in picoem.
+The repeat used the published `rsk-seam` revision (`315bc027`), a locked Cargo
+build and a freshly built 16 MiB display ELF. All seven headless scenario groups
+passed, including timeout, slide and lift, and cancellation on another channel.
+The SDL window path was also exercised on the same ELF with synthetic events
+queued in SDL2 using its dummy video driver. Mouse clicks denied and approved
+registration, CTAPHID CANCEL ended the prompt, and a short mouse hold left
+sign-in pending until a fresh hold produced a verifiable signature. The local
+PIN flow used the shuffled keypad. It rejected mismatched confirmation and
+an incorrect unlock PIN, retained the retry count across reboot, and unlocked
+with the correct PIN. Space blanked and woke the panel. An SDL quit event
+exited cleanly. Desktop mouse input, panel electrical timing and touch
+calibration remain unverified.
 
 ### Physical board scope
 

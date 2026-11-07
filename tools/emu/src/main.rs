@@ -74,6 +74,7 @@ usage: rsk-emu [options]
   --auto-touch-ms <n> mark presence pending, then approve it after n milliseconds
   --display           open the trusted display in a window; presence is an
                       on-screen hold, exactly as on a screen board
+  --headless          capture --image --display without opening an SDL window
   --taps <file>       drive that panel from a script instead of the mouse: one
                       contact per line, `x,y[,hold_ms[,gap_ms]]`, # comments
   --taps-port <n>     drive it from a socket instead, same grammar one line at a
@@ -130,6 +131,7 @@ fn main() {
     let mut image: Option<PathBuf> = None;
     let mut rom: Option<PathBuf> = None;
     let mut inspect_port = None;
+    let mut headless = false;
 
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
@@ -149,6 +151,7 @@ fn main() {
             "--touch" => touch = true,
             "--auto-touch-ms" => auto_touch = Some(parse_millis(&value("--auto-touch-ms"))),
             "--display" => cfg.display = true,
+            "--headless" => headless = true,
             "--taps" => tap_script = Some(read_taps(&value("--taps"))),
             "--taps-port" => tap_port = Some(parse_port(&value("--taps-port"))),
             // Renders and exits: no store, no sockets, nothing to serve.
@@ -178,6 +181,9 @@ fn main() {
     if fido_port == 0 && ccid_port == 0 {
         die("both transports are disabled — nothing to serve");
     }
+    if headless && (!cfg.display || image.is_none()) {
+        die("--headless requires --image and --display");
+    }
     if auto_touch.is_some() && (touch || cfg.display) {
         die("--auto-touch-ms is mutually exclusive with --touch and --display");
     }
@@ -203,11 +209,7 @@ fn main() {
         eprintln!("emu: DETERMINISTIC SEED — every key this run mints is predictable");
     }
     if let Some(image) = image {
-        refuse_for_image(
-            &cfg,
-            auto_touch.is_some(),
-            tap_script.is_some() || tap_port.is_some(),
-        );
+        refuse_for_image(&cfg, auto_touch.is_some());
         let opts = image::Options {
             image,
             rom,
@@ -221,6 +223,10 @@ fn main() {
             serial: cfg.serial,
             trace: cfg.trace,
             inspect_port,
+            display: cfg.display,
+            headless,
+            taps: tap_script.unwrap_or_default(),
+            taps_port: tap_port,
         };
         if let Err(e) = image::run(opts) {
             die(&e);
@@ -331,13 +337,9 @@ fn main() {
 }
 
 /// What `--image` has no use for, refused by name: the image carries its own
-/// presence, identity and panel, and the snapshots are the applet backend's.
-fn refuse_for_image(cfg: &Config, auto_touch: bool, taps: bool) {
+/// presence and identity, and the snapshots are the applet backend's.
+fn refuse_for_image(cfg: &Config, auto_touch: bool) {
     let refused = [
-        (
-            cfg.display || taps,
-            "--display and the pad drive the applet backend's window; the image's panel is not emulated",
-        ),
         (
             auto_touch,
             "--auto-touch-ms: presence is the image's — a `--features no-touch` build confirms it, --touch presses BOOTSEL",

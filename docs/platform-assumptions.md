@@ -170,9 +170,9 @@ That price is worth stating for the `unsafe` rows, because the input is a whole 
 | `PLAT-TRNG-001` | `578a924` | **stale** | `Cargo.lock`, `firmware/src/handler.rs`, `firmware/src/main.rs` | `PLAT-TRNG-002` |
 | `PLAT-TZ-001` | `9d78a48` | **fresh** | — | `PLAT-TZ-009` |
 | `PLAT-TZ-002` | `a11a376` | **fresh** | — | — |
-| `PLAT-TZ-003` | `a11a376` | **stale** | `firmware/src/worker.rs` | — |
+| `PLAT-TZ-003` | `a11a376` | **stale** | `firmware/src/worker.rs`, `tools/emu/image_assurance.py` | — |
 | `PLAT-TZ-004` | `a11a376` | **stale** | `firmware/trustzone/nonsecure/src/main.rs` | — |
-| `PLAT-TZ-005` | `a11a376` | **stale** | `firmware/src/worker.rs`, `firmware/trustzone/nonsecure/src/main.rs` | — |
+| `PLAT-TZ-005` | `a11a376` | **stale** | `firmware/src/worker.rs`, `firmware/trustzone/nonsecure/src/main.rs`, `tools/emu/image_assurance.py` | — |
 | `PLAT-TZ-006` | `af1f0cd` | **stale** | `firmware/src/core1.rs` | `PLAT-TZ-009` |
 | `PLAT-TZ-007` | `a11a376` | **fresh** | — | — |
 | `PLAT-TZ-008` | `9d78a48` | **stale** | `firmware/src/worker.rs` | — |

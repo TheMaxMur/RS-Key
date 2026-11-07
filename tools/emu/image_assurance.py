@@ -95,7 +95,7 @@ class ImageDeadline:
 
 
 class Device:
-    def __init__(self, binary, image, store, directory, label, usbip=None, rom=None):
+    def __init__(self, binary, image, store, directory, label, usbip=None, rom=None, display=False, taps_port=None, headless=True):
         self.fido_port, self.ccid_port, self.inspect_port = port(), port(), port()
         self.log_path = directory / f"{label}.log"
         self.log = self.log_path.open("w")
@@ -103,6 +103,12 @@ class Device:
                 "--fido-port", str(self.fido_port), "--ccid-port", str(self.ccid_port)]
         if image:
             args += ["--image", str(image), "--inspect-port", str(self.inspect_port)]
+            if display:
+                args += ["--display"]
+                if headless:
+                    args += ["--headless"]
+            if taps_port:
+                args += ["--taps-port", str(taps_port)]
             if rom:
                 args += ["--rom", str(rom)]
         if usbip:

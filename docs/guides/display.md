@@ -81,6 +81,19 @@ takes six taps to reach can be replayed instead of performed:
 The images themselves are regenerated with `rsk-emu --screenshots docs/images`
 when a screen changes.
 
+To run the compiled firmware itself, build the ordinary display image below,
+then launch it with `rsk-emu --image target/trustzone/combined.elf --display`.
+The window shows pixels captured from the firmware's PIO serial output. Mouse
+contacts become CST328 I2C reports; Space drives the board's wake GPIO. Add
+`--headless` for scripted runs. In image mode, tap-script hold and gap durations
+follow the emulated clock, so a slow host cannot turn a short contact into a
+long approval hold. See [display image testing](../testing.md#display-image-testing)
+for the runner and its limits.
+
+This exercises firmware instructions, rendering and USB framing against models
+of the panel and touch controller. Physical display timing, electrical I2C
+behaviour and touch calibration still require the board.
+
 ## Building and flashing
 
 The panel takes over the addressable-LED pin, so the display flavor is built

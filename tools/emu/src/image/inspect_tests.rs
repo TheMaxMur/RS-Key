@@ -4,6 +4,38 @@
 use super::*;
 
 #[test]
+fn panel_input_is_bounded_to_physical_pixels_and_a_finite_image_time_hold() {
+    assert_eq!(parse("panel"), Ok(Command::Panel));
+    assert_eq!(parse("panel-read"), Ok(Command::PanelRead));
+    assert_eq!(parse("panel-release"), Ok(Command::PanelRelease));
+    assert_eq!(parse("panel-wake down"), Ok(Command::PanelWake(true)));
+    assert_eq!(parse("panel-wake up"), Ok(Command::PanelWake(false)));
+    assert_eq!(
+        parse("panel-touch 239 319 60000"),
+        Ok(Command::PanelTouch {
+            x: 239,
+            y: 319,
+            hold_ms: 60_000
+        })
+    );
+    for bad in [
+        "panel extra",
+        "panel-read extra",
+        "panel-release extra",
+        "panel-wake",
+        "panel-wake toggle",
+        "panel-touch 240 0 1",
+        "panel-touch 0 320 1",
+        "panel-touch -1 0 1",
+        "panel-touch 0 0 0",
+        "panel-touch 0 0 60001",
+        "panel-touch 65536 0 1",
+    ] {
+        assert!(parse(bad).is_err(), "{bad}");
+    }
+}
+
+#[test]
 fn usb_events_require_an_exact_command_and_an_eight_byte_setup_packet() {
     assert_eq!(parse("usb-reset"), Ok(Command::UsbReset));
     assert_eq!(parse("usb-disconnect"), Ok(Command::UsbDisconnect));
