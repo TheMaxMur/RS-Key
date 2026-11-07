@@ -23,7 +23,10 @@ use crate::reduce::{
     center_mod, full_reduce32, mont_reduce, partial_reduce32, to_mont, to_mont_inplace,
 };
 use crate::round::{high_bits, low_bits, make_hint, power2round, use_hint};
-use crate::sample::{expand_mask, expand_s, matrix_mul_streaming, sample_in_ball, shake256};
+use crate::sample::{
+    expand_mask, expand_s, matrix_mul_streaming, matrix_mul_streaming_into, sample_in_ball,
+    shake256,
+};
 
 /// The largest `pk_len` across the supported parameter sets (ML-DSA-87 = 2592),
 /// used for the transient pk buffer that feeds `tr = H(pk)` during keygen.
@@ -81,16 +84,21 @@ impl<const K: usize, const L: usize> ZeroizeOnDrop for ExpandedKey<K, L> {}
 
 /// NTT each element of a vector (out of place — the inputs are needed later).
 fn ntt_vec<const M: usize>(v: &[Poly; M]) -> [Poly; M] {
-    core::array::from_fn(|i| {
-        let mut p = v[i].clone();
-        ntt_inplace(&mut p);
-        p
-    })
+    let mut out = zero_vec();
+    for (dst, src) in out.iter_mut().zip(v) {
+        *dst = src.clone();
+        ntt_inplace(dst);
+    }
+    out
 }
 
 /// Lift each element of a vector into the Montgomery domain.
 fn to_mont_vec<const M: usize>(v: &[Poly; M]) -> [Poly; M] {
-    core::array::from_fn(|i| to_mont(&v[i]))
+    let mut out = zero_vec();
+    for (dst, src) in out.iter_mut().zip(v) {
+        *dst = to_mont(src);
+    }
+    out
 }
 
 /// The ∞-norm (max centered magnitude) over a vector of polynomials.
@@ -163,24 +171,31 @@ impl<const K: usize, const L: usize> ExpandedKey<K, L> {
         h.read(&mut self.cap_k);
 
         // (s1, s2) ← ExpandS(ρ′); t ← invNTT(Â ∘ NTT(s1)) + s2
-        let (s1, s2) = expand_s::<K, L>(p.eta, rho_prime.expose());
+        // The final fields hold normal-domain samples until each precompute below.
+        expand_s::<K, L>(
+            p.eta,
+            rho_prime.expose(),
+            &mut self.s1_hat_mont,
+            &mut self.s2_hat_mont,
+        );
         rho_prime.wipe(); // ExpandS seed → whole SK; the XOF state `h` still holds it
-        let s1_hat = ntt_vec(&s1);
-        let mut t = matrix_mul_streaming::<K, L>(&self.rho, &s1_hat);
-        reduce_vec(&mut t);
+        for poly in &mut self.s1_hat_mont {
+            ntt_inplace(poly);
+        }
+        matrix_mul_streaming_into(&self.rho, &self.s1_hat_mont, &mut self.t1);
+        reduce_vec(&mut self.t1);
         for k in 0..K {
-            inv_ntt_inplace(&mut t[k]);
+            inv_ntt_inplace(&mut self.t1[k]);
             for n in 0..256 {
-                t[k].0[n] = full_reduce32(t[k].0[n] + s2[k].0[n]);
+                self.t1[k].0[n] = full_reduce32(self.t1[k].0[n] + self.s2_hat_mont[k].0[n]);
             }
         }
 
-        // (t1, t0) ← Power2Round(t)
-        let mut t0: [Poly; K] = zero_vec();
+        // (t1, t0) ← Power2Round(t); keep t0 in its final field until the NTT below.
         for k in 0..K {
-            let (hi, lo) = power2round(&t[k]);
+            let (hi, lo) = power2round(&self.t1[k]);
             self.t1[k] = hi;
-            t0[k] = lo;
+            self.t0_hat_mont[k] = lo;
         }
 
         // tr ← H(pkEncode(ρ, t1))
@@ -190,17 +205,14 @@ impl<const K: usize, const L: usize> ExpandedKey<K, L> {
         shake256(&[&pk[..pk_len]]).read(&mut self.tr);
 
         // Montgomery-domain NTT precomputes for signing, each built in its field.
-        for (dst, src) in self.s1_hat_mont.iter_mut().zip(&s1_hat) {
-            dst.0 = src.0;
+        for dst in &mut self.s1_hat_mont {
             to_mont_inplace(dst);
         }
-        for (dst, src) in self.s2_hat_mont.iter_mut().zip(&s2) {
-            dst.0 = src.0;
+        for dst in &mut self.s2_hat_mont {
             ntt_inplace(dst);
             to_mont_inplace(dst);
         }
-        for (dst, src) in self.t0_hat_mont.iter_mut().zip(&t0) {
-            dst.0 = src.0;
+        for dst in &mut self.t0_hat_mont {
             ntt_inplace(dst);
             to_mont_inplace(dst);
         }
@@ -262,8 +274,10 @@ impl<const K: usize, const L: usize> ExpandedKey<K, L> {
 
         loop {
             // y ← ExpandMask(ρ′′, κ); w ← invNTT(Â ∘ NTT(y))
-            let y = expand_mask::<L>(p.gamma1, rho_pp.expose(), kappa);
-            let mut w = matrix_mul_streaming::<K, L>(&self.rho, &ntt_vec(&y));
+            let mut y = zero_vec();
+            expand_mask::<L>(p.gamma1, rho_pp.expose(), kappa, &mut y);
+            let mut w: [Poly; K] = zero_vec();
+            matrix_mul_streaming_into(&self.rho, &ntt_vec(&y), &mut w);
             reduce_vec(&mut w);
             for wk in &mut w {
                 inv_ntt_inplace(wk);
@@ -288,45 +302,44 @@ impl<const K: usize, const L: usize> ExpandedKey<K, L> {
             ntt_inplace(&mut c_hat);
 
             // ⟨⟨c·s1⟩⟩ and ⟨⟨c·s2⟩⟩
-            let c_s1: [Poly; L] = core::array::from_fn(|l| {
-                let mut r = pointwise_mont(&c_hat, &self.s1_hat_mont[l]);
-                inv_ntt_inplace(&mut r);
-                r
-            });
-            let c_s2: [Poly; K] = core::array::from_fn(|k| {
-                let mut r = pointwise_mont(&c_hat, &self.s2_hat_mont[k]);
-                inv_ntt_inplace(&mut r);
-                r
-            });
+            let mut z: [Poly; L] = zero_vec();
+            for (dst, secret) in z.iter_mut().zip(&self.s1_hat_mont) {
+                *dst = pointwise_mont(&c_hat, secret);
+                inv_ntt_inplace(dst);
+            }
+            let mut c_s2: [Poly; K] = zero_vec();
+            for (dst, secret) in c_s2.iter_mut().zip(&self.s2_hat_mont) {
+                *dst = pointwise_mont(&c_hat, secret);
+                inv_ntt_inplace(dst);
+            }
 
             // z ← y + ⟨⟨c·s1⟩⟩; r0 ← LowBits(w − ⟨⟨c·s2⟩⟩)
-            let mut z: [Poly; L] = zero_vec();
             for l in 0..L {
                 for n in 0..256 {
-                    z[l].0[n] = partial_reduce32(y[l].0[n] + c_s1[l].0[n]);
+                    z[l].0[n] = partial_reduce32(y[l].0[n] + z[l].0[n]);
                 }
             }
-            let mut r0: [Poly; K] = zero_vec();
+            // LowBits scratch becomes the hint vector after its norm is checked.
+            let mut h: [Poly; K] = zero_vec();
             for k in 0..K {
                 for n in 0..256 {
-                    r0[k].0[n] = low_bits(p.gamma2, partial_reduce32(w[k].0[n] - c_s2[k].0[n]));
+                    h[k].0[n] = low_bits(p.gamma2, partial_reduce32(w[k].0[n] - c_s2[k].0[n]));
                 }
             }
 
             // Validity: reject on ||z||∞ ≥ γ1−β or ||r0||∞ ≥ γ2−β.
-            if infinity_norm(&z) >= (p.gamma1 - p.beta) || infinity_norm(&r0) >= (p.gamma2 - p.beta)
+            if infinity_norm(&z) >= (p.gamma1 - p.beta) || infinity_norm(&h) >= (p.gamma2 - p.beta)
             {
                 kappa += L as u16;
                 continue;
             }
 
             // ⟨⟨c·t0⟩⟩; h ← MakeHint(−⟨⟨c·t0⟩⟩, w − ⟨⟨c·s2⟩⟩ + ⟨⟨c·t0⟩⟩)
-            let c_t0: [Poly; K] = core::array::from_fn(|k| {
-                let mut r = pointwise_mont(&c_hat, &self.t0_hat_mont[k]);
-                inv_ntt_inplace(&mut r);
-                r
-            });
-            let mut h: [Poly; K] = zero_vec();
+            let mut c_t0: [Poly; K] = zero_vec();
+            for (dst, secret) in c_t0.iter_mut().zip(&self.t0_hat_mont) {
+                *dst = pointwise_mont(&c_hat, secret);
+                inv_ntt_inplace(dst);
+            }
             for k in 0..K {
                 for n in 0..256 {
                     h[k].0[n] = i32::from(make_hint(

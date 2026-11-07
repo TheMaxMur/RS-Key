@@ -43,10 +43,12 @@ fn config_descriptor() -> Vec<u8> {
             &mut msos,
             &mut control,
         );
+        let mut ccid_buffers = rsk_usb::ccid::Buffers::new();
         let classes = declare(
             &mut builder,
             &mut kbd_state,
             &mut fido_state,
+            &mut ccid_buffers,
             None,
             &jobs,
             rsk_usb::ccid::ATR_RSKEY,
@@ -511,13 +513,21 @@ fn on_the_wire<T>(script: impl AsyncFnOnce(&mut Host) -> T) -> T {
         &mut builder,
         leak(HidState::new()),
         leak(HidState::new()),
+        leak(rsk_usb::ccid::Buffers::new()),
         None,
         &jobs,
         rsk_usb::ccid::ATR_RSKEY,
     );
     let mut usb = builder.build();
     let (reader, writer) = fido.split();
-    let mut ctap = CtapHid::new(reader, writer, Scripted, touch_pending, cancel_touch);
+    let mut ctap = CtapHid::new(
+        reader,
+        writer,
+        Scripted,
+        touch_pending,
+        cancel_touch,
+        leak(rsk_usb::ctaphid::Buffers::new()),
+    );
 
     let fido_eps = interfaces_in(&config_descriptor()).swap_remove(1).endpoints;
     let ep = |dir_in: bool| {

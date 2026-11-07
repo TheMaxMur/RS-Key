@@ -437,7 +437,8 @@ static USR_LED: StaticCell<embassy_rp::gpio::Output<'static>> = StaticCell::new(
 // `EXCHANGE` in worker.rs). Within the thread executor, `borrow_mut()` never spans
 // an `.await`: flash ops resolve immediately via `block_on`, and all dispatch is
 // synchronous. Clippy's `await_holding_refcell_ref` lint catches regressions.
-static FS: StaticCell<RefCell<Store>> = StaticCell::new();
+static FS: static_cell::ConstStaticCell<RefCell<Store>> =
+    static_cell::ConstStaticCell::new(RefCell::new(Fs::new(flash_storage::FlashStorage)));
 static FLASH_CELL: StaticCell<RefCell<flash_storage::AsyncFlash>> = StaticCell::new();
 static RNG_CELL: StaticCell<RefCell<FidoRng>> = StaticCell::new();
 static PRESENCE: StaticCell<RefCell<presence::Presence>> = StaticCell::new();
@@ -487,15 +488,90 @@ fn arm_stack_limit() {
     unsafe { cortex_m::register::msplim::write(&raw const _stack_end as u32) };
 }
 
-static WORKER_STATE: StaticCell<Worker<'static>> = StaticCell::new();
+struct WorkerInit {
+    fs: &'static RefCell<Store>,
+    rng: &'static RefCell<handler::FidoRng>,
+    presence: &'static RefCell<presence::Presence>,
+    platform: &'static RefCell<rescue_platform::RescuePlatform>,
+    hooks: &'static RefCell<handler::DeviceHooks>,
+    fido_state: &'static RefCell<rsk_fido::FidoState>,
+    serial_id: [u8; 8],
+    serial_hash: [u8; 32],
+    mkek_source: Option<FusedKey>,
+    devk_source: Option<FusedKey>,
+    kv_total: u32,
+    openpgp_mfr: u16,
+}
 
-// The worker is spawned, not awaited at the tail of `main`, so `main` returns and
-// its ~100 KiB one-time init stack frame is reclaimed off the shared MSP before any
-// crypto runs. Awaiting it inline keeps the initialization frame under dispatch.
+#[inline(never)]
+fn initialize_worker(init: WorkerInit) -> Worker<'static> {
+    let WorkerInit {
+        fs,
+        rng,
+        presence,
+        platform,
+        hooks,
+        fido_state,
+        serial_id,
+        serial_hash,
+        mkek_source,
+        devk_source,
+        kv_total,
+        openpgp_mfr,
+    } = init;
+    // Return this constructor frame before the worker polls command futures.
+    static CTAP_STATE: StaticCell<handler::Ctap<'static>> = StaticCell::new();
+    static CCID_STATE: StaticCell<handler::Ccid<'static>> = StaticCell::new();
+    let ctap = CTAP_STATE.init_with(|| {
+        handler::Ctap::new(
+            fs,
+            rng,
+            hooks,
+            presence,
+            fido_state,
+            vendor::VendorPlatform,
+            serial_id,
+            serial_hash,
+            mkek_source,
+            devk_source,
+        )
+    });
+    let ccid = CCID_STATE.init_with(|| {
+        handler::Ccid::new(
+            fs,
+            rng,
+            hooks,
+            presence,
+            fido_state,
+            platform,
+            vendor::VendorPlatform,
+            serial_id,
+            serial_hash,
+            mkek_source,
+            devk_source,
+            kv_total,
+            flash_storage::FLASH_SIZE as u32,
+            openpgp_mfr,
+        )
+    });
+    Worker::new(ctap, ccid, rng, presence)
+}
+
+// The first poll runs after main returns its peripheral-initialization frame.
 // Run below USB/transport priorities so their keepalives can preempt crypto.
-
 #[embassy_executor::task]
-async fn worker_task(worker: &'static mut Worker<'static>) {
+async fn worker_task(
+    init: WorkerInit,
+    spawner: Spawner,
+    usb: embassy_rp::Peri<'static, embassy_rp::peripherals::USB>,
+    seal_restart: bool,
+) {
+    let mut worker = initialize_worker(init);
+    if seal_restart {
+        worker.reboot(1).await;
+    }
+    trustzone::usb::init(usb);
+    spawner.spawn(trustzone::launch().unwrap());
     worker.run().await;
 }
 
@@ -524,18 +600,17 @@ fn initialize_storage(
     serial_hash: [u8; 32],
     latched: bool,
 ) -> &'static RefCell<Store> {
-    FS.init_with(|| {
-        RefCell::new(Fs::new(flash_storage::new_storage(
-            flash,
-            kvmain_range(),
-            kvcnt_range(),
-            rsk_store::authenticated::KeySource::new(
-                serial_hash,
-                flash_storage::read_storage_root,
-                latched,
-            ),
-        )))
-    })
+    flash_storage::initialize_storage(
+        flash,
+        kvmain_range(),
+        kvcnt_range(),
+        rsk_store::authenticated::KeySource::new(
+            serial_hash,
+            flash_storage::read_storage_root,
+            latched,
+        ),
+    );
+    FS.take()
 }
 
 static STORAGE_READY: embassy_sync::signal::Signal<
@@ -826,7 +901,7 @@ async fn main(spawner: Spawner) {
     let phy = _phy;
     let rng_ref = RNG_CELL.init(RefCell::new(rng));
 
-    let device_release: u16 = 0x0BDF;
+    let device_release: u16 = 0x0BE0;
 
     {
         let (manufacturer, product) = if usb_vid == YUBICO_VID {
@@ -1202,32 +1277,28 @@ async fn main(spawner: Spawner) {
     let (kvm, kvc) = (kvmain_range(), kvcnt_range());
     let kv_total = (kvm.end - kvm.start) + (kvc.end - kvc.start);
     let fido_state_ref = FIDO_STATE.init(RefCell::new(rsk_fido::FidoState::new()));
-    // Built in its cell: `init` of a value built here kept a second copy in this frame.
-    let worker = WORKER_STATE.init_with(|| {
-        Worker::new(
-            fs_ref,
-            rng_ref,
-            presence_ref,
-            platform_ref,
-            hooks_ref,
-            fido_state_ref,
-            serial_id,
-            serial_hash,
-            mkek_source,
-            devk_source,
-            kv_total,
-            openpgp_mfr,
+    spawner.spawn(
+        worker_task(
+            WorkerInit {
+                fs: fs_ref,
+                rng: rng_ref,
+                presence: presence_ref,
+                platform: platform_ref,
+                hooks: hooks_ref,
+                fido_state: fido_state_ref,
+                serial_id,
+                serial_hash,
+                mkek_source,
+                devk_source,
+                kv_total,
+                openpgp_mfr,
+            },
+            spawner,
+            p.USB,
+            seal_restart,
         )
-    });
-    if seal_restart {
-        worker.reboot(1).await;
-    }
-
-    {
-        trustzone::usb::init(p.USB);
-        spawner.spawn(worker_task(worker).unwrap());
-        spawner.spawn(trustzone::launch().unwrap());
-    }
+        .unwrap(),
+    );
 }
 
 #[cortex_m_rt::entry]

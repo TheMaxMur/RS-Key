@@ -7,7 +7,7 @@ contained. Adding a new `unsafe` requires updating this page. (Safe Rust rules
 out memory-corruption bugs in this code. It is not a security audit; see the
 [threat model](threat-model.md).)
 
-**Runtime sites: 79.** Thirty in the applet firmware and tools, thirty-seven in Secure startup and Non-secure transport, and twelve in disposable hardware diagnostics. Fourteen are in `main.rs` and `presence.rs`:
+**Runtime sites: 80.** Thirty-one in the applet firmware and tools, thirty-seven in Secure startup and Non-secure transport, and twelve in disposable hardware diagnostics. Fourteen are in `main.rs` and `presence.rs`:
 the heap init and its zeroing
 allocator (5), and the eight GPIO-pin `steal`s (the presence button, the LED power-enable rail, the nuisance
 USR LED, the display build's wake button, and — display builds only — the panel's
@@ -15,6 +15,7 @@ CS/DC/RST/TP_RST control lines). Three for the per-core prime sieves; one
 stack limit per core, core0's in `main.rs` too; two for the dead-stack sweep and
 its probe; three in the RSA assembly FFI; two in the standalone flash-wipe tool.
 One reads an uncached flash byte. Three align and clear complete response buffers.
+One restricts the shared flash context and backend to core0.
 
 ```mermaid
 flowchart TB
@@ -457,8 +458,9 @@ serialization.
 No filled packet is moved or returned, and no wipe is narrowed to the data length.
 
 The Non-secure exchange gateway uses the same primitive through a borrowed `ReplyGuard`.
-Its full 7612-byte span is cleared on normal completion, abandonment and future
-Drop, before releasing the pending ticket. The host reply-buffer harness covers alignments, byte edges, canaries, errors
+It borrows the complete ABI-sized span from one buffer under the exchange mutex,
+up to 7612 bytes, and clears it on completion, abandonment and future Drop before
+releasing the pending ticket. The host reply-buffer harness covers alignments, byte edges, canaries, errors
 and pending-future destruction. These are three shared source
 sites compiled in both worlds; no new pointer primitive or smaller wipe is added.
 
@@ -480,3 +482,22 @@ the complete section read-only executable, including during flash operations.
 value or covered by the ordinary runtime data-copy range.
 *Containment:* one startup call, linker size and overlap assertions, no mutable
 alias after initialization, and no change to shared RAM or existing capacities.
+
+### 80. Core0 flash context — `PLAT-UNSAFE-017`
+
+`firmware/src/flash_storage.rs` implements `Sync` for the private
+`Core0Context`, holding the flash/SHA/QMI/backend references in `Cell<Option<Context>>`.
+The context accessors check `SIO.CPUID == 0` before touching the cell;
+the backend accessor checks through `get` before borrowing the referenced `RefCell`.
+Installation is single-shot, before storage boot and
+USB admission; later operations only copy the installed references to the
+existing static flash, SHA, QMI and backend `RefCell`s. Core1 fails before cell access.
+
+*Safe alternative:* storing the references in every flash handle prevents
+compile-time construction of the large backend. A global lock over the flash
+operations would change interrupt and borrowing behavior. The context holds
+immutable references; the peripherals and backend retain checked borrows.
+*Containment:* the cells and context type are private, no accessor returns a
+reference to its `Option`, and the non-`Send` references and backend borrow cannot be
+transferred between Rust threads. The static backend is bound
+to its runtime key source once; unbound operations fail before flash I/O.

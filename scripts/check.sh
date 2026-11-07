@@ -105,14 +105,14 @@ embassy_revs_match() {
 
 # The shipping image must fit the 2560K code region (firmware/memory.x); this
 # ceiling is a *ratchet* well under that hard limit. It hugs the current image
-# (949 KiB) plus a small margin, so a runaway — an accidental fat dependency
+# (1008 KiB) plus a small margin, so a runaway — an accidental fat dependency
 # (one extra EC curve is ~150 KiB) — or any surprise growth trips it, while
 # ordinary build noise does not. Ratchet discipline: when the image shrinks,
 # lower this to lock the win in; when a real feature grows it, raise this in the
 # same commit. Measured on the default (shipping) build before the display/
 # no-touch rebuilds overwrite the ELF; arm-none-eabi-size ships in the dev shell.
-# Combined S/NS image, including aligned Ed25519 padding: measured 949 KiB.
-FIRMWARE_FLASH_BUDGET_KIB=952
+# Combined S/NS image, including aligned Ed25519 padding: measured 1008 KiB.
+FIRMWARE_FLASH_BUDGET_KIB=1024
 firmware_size_budget() {
   local elf="target/trustzone/combined.elf"
   local bytes kib
@@ -584,7 +584,7 @@ run "firmware stack floor"     firmware_stack_floor
 run "no debug vendor command in the image" debug_vendor_commands_absent
 run "partition table fences the store" partition_table_fences_the_store
 run "sealed image retires its unsigned IMAGE_DEF" release_image_retires_its_unsigned_image_def
-# Reads the image the row above just sealed, and it has to be HERE: the 16 MB,
+# Reads the image the row above just sealed, and it has to be HERE: the 2 MB, 16 MB,
 # display and no-touch builds below overwrite this path, so the same row run with
 # the Python gates would audit the no-touch binary and say nothing about the one
 # that ships.
@@ -606,6 +606,10 @@ run "image segments and allocator" python scripts/elf_gate.py
 # exemptions. Recorded rather than handled: the row's window is above that build,
 # and those two absences are absences OF THE DEFAULT IMAGE.
 run "registered owners in the shipped image" python scripts/owner_binding_gate.py
+# Keep the compact backend constructor linked at the existing 2 MiB geometry.
+run "build firmware (2M)"      env FLASH_SIZE=2M KVMAIN=896K bash scripts/build.sh
+run "firmware stack floor (2M)" firmware_stack_floor
+run "partition table fences the store (2M)" partition_table_fences_the_store
 # The 16 MB geometry is the one that broke: the store used to end at the top of
 # the XIP window, where the bootrom's RP2350-E10 absolute block lives, and
 # `picotool partition create` refuses a table claiming it — a build the release

@@ -62,6 +62,10 @@ pub struct KeySource {
 }
 
 impl KeySource {
+    pub(super) const fn unavailable() -> Self {
+        Self::new([0; 32], |_| RootRead::Unreadable, true)
+    }
+
     pub const fn new(
         serial_hash: [u8; 32],
         read: fn(&mut [u8; 32]) -> RootRead,

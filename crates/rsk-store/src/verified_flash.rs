@@ -25,7 +25,7 @@ impl<E: NorFlashError> NorFlashError for VerifyError<E> {
 #[derive(Clone)]
 pub struct VerifiedFlash<F>(F);
 impl<F: NorFlash> VerifiedFlash<F> {
-    pub fn new(flash: F) -> Self {
+    pub const fn new(flash: F) -> Self {
         const {
             assert!(F::READ_SIZE > 0 && F::READ_SIZE <= READBACK_BYTES);
         }

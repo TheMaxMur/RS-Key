@@ -40,8 +40,9 @@ pub(super) fn erased(flash: &mut SharedFlash, range: Range<u32>) -> Result<bool>
     }
     let mut at = range.start;
     while at < range.end {
-        flash.quad.borrow_mut().ensure_mode();
-        let _owner = flash.inner.borrow_mut();
+        let context = flash.context();
+        context.quad.borrow_mut().ensure_mode();
+        let _owner = context.inner.borrow_mut();
         let count = usize::try_from(range.end - at)
             .map_err(|_| Error::MemoryFatal)?
             .min(CHUNK);
@@ -116,7 +117,7 @@ pub(super) fn digest(
     end: u32,
     prefix: &[u8],
 ) -> Result<Option<[u8; 32]>> {
-    let owner = flash.sha256;
+    let owner = flash.context().sha256;
     let mut exclusive = owner.try_borrow_mut().map_err(|_| Error::MemoryFatal)?;
     if !exclusive.available {
         return Err(Error::MemoryFatal);
@@ -143,8 +144,9 @@ pub(super) fn digest(
     while at < range.end {
         // Keep mode checks and wait bounds at the existing chunk boundaries.
         if at >= boundary && at.is_multiple_of(4) && (range.end - at).is_multiple_of(4) {
-            flash.quad.borrow_mut().ensure_mode();
-            let _owner = flash.inner.borrow_mut();
+            let context = flash.context();
+            context.quad.borrow_mut().ensure_mode();
+            let _owner = context.inner.borrow_mut();
             let count = usize::try_from(range.end - at)
                 .map_err(|_| Error::MemoryFatal)?
                 .min(CHUNK);

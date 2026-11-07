@@ -1,4 +1,4 @@
-# Local changes to sequential-storage 8.0.0, confined to src/{map,lib,item}.rs.
+# Local changes to sequential-storage 8.0.0, confined to src/{map,lib,item}.rs and src/cache/mod.rs.
 # The root, fuzz and emulator workspaces all use these exact vendored files.
 #
 # 1. Warm key pointers only after a complete scan; propagate read refusals.
@@ -16,7 +16,10 @@
 #    enumeration; returned entries retain full CRC checks and excluded keys
 #    never warm the pointer cache; discard an interrupted walk before reuse.
 #
-# Regenerate against pristine crates.io 8.0.0 src/{map,lib,item}.rs; preserve CRLF.
+# 10. Allow the composite cache constructor in const static store initializers.
+#     The cache fields and runtime behavior are unchanged.
+#
+# Regenerate against pristine crates.io 8.0.0 sources; preserve CRLF.
 
 --- a/src/map.rs
 +++ b/src/map.rs
@@ -893,3 +896,15 @@
  }
  
  pub(crate) struct ItemHeaderIter {
+
+--- a/src/cache/mod.rs
++++ b/src/cache/mod.rs
+@@ -105,7 +105,7 @@
+     Cache<PAGE, POINTERS, KEYS, KEY>
+ {
+     /// Create a new cache object from the given subcaches
+-    pub fn new(page_states: PAGE, page_pointers: POINTERS, key_pointers: KEYS) -> Self {
++    pub const fn new(page_states: PAGE, page_pointers: POINTERS, key_pointers: KEYS) -> Self {
+         Self {
+             dirt_tracker: DirtTracker::new(),
+             page_states,

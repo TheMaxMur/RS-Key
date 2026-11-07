@@ -71,7 +71,7 @@ pub struct Main<F: NorFlash + MultiwriteNorFlash, C: CacheImpl<u16>> {
 
 impl<F: NorFlash + MultiwriteNorFlash, C: CacheImpl<u16>> Main<F, C> {
     #[inline(always)]
-    pub fn new(
+    pub const fn new(
         map: MapStorage<u16, VerifiedFlash<F>, C>,
         journals: [Journal<F>; 2],
         epoch: [u8; super::EPOCH_BYTES],

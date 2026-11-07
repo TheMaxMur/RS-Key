@@ -162,6 +162,7 @@ fn with_hid_handler<H: MsgHandler>(
     let trace = Trace::default();
     trace.borrow_mut().reads.extend(reads);
     let mut state = State::new();
+    let mut buffers = Buffers::new();
     let mut config = [0; 256];
     let mut bos = [0; 256];
     let mut msos = [0; 256];
@@ -187,7 +188,7 @@ fn with_hid_handler<H: MsgHandler>(
         },
     );
     let (reader, writer) = io.split();
-    let mut hid = CtapHid::new(reader, writer, handler, || false, cancel);
+    let mut hid = CtapHid::new(reader, writer, handler, || false, cancel, &mut buffers);
     test(&mut hid, &trace);
 }
 

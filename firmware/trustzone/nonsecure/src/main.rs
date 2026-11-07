@@ -42,7 +42,7 @@ use rsk_usb::{
     ccid::{ApduHandler, Ccid, SecureResult},
     ctaphid::{CtapHid, MsgHandler},
 };
-use static_cell::StaticCell;
+use static_cell::{ConstStaticCell, StaticCell};
 
 type Drv = usb::Driver;
 
@@ -71,10 +71,17 @@ unsafe extern "C" {
     fn rsk_tz_control(action: u32, ticket: u32) -> u32;
 }
 
-static LOCK: Mutex<CriticalSectionRawMutex, ()> = Mutex::new(());
 const FIDO_REPLY_BYTES: usize = rsk_usb::ctaphid::CTAP_MAX_MESSAGE + abi::REPLY_HEADER;
 const CCID_REPLY_BYTES: usize =
     rsk_usb::ccid::MAX_CCID_MSG - rsk_usb::ccid::HEADER + abi::REPLY_HEADER;
+const EXCHANGE_REPLY_BYTES: usize = if FIDO_REPLY_BYTES > CCID_REPLY_BYTES {
+    FIDO_REPLY_BYTES
+} else {
+    CCID_REPLY_BYTES
+};
+// The gateway already serializes exchanges; one wiped buffer avoids large futures.
+static LOCK: Mutex<CriticalSectionRawMutex, [u8; EXCHANGE_REPLY_BYTES]> =
+    Mutex::new([0; EXCHANGE_REPLY_BYTES]);
 
 struct Reply {
     len: usize,
@@ -94,7 +101,7 @@ async fn exchange<const REPLY_BYTES: usize>(
     data: &[u8],
     out: &mut [u8],
 ) -> Reply {
-    let _lock = LOCK.lock().await;
+    let mut buffer = LOCK.lock().await;
     let epoch = session::epoch();
     let length = u32::try_from(data.len()).unwrap();
     let ticket = loop {
@@ -111,8 +118,7 @@ async fn exchange<const REPLY_BYTES: usize>(
         notify::wait(observed).await;
     };
     let _pending = session::Pending::new(ticket, kind);
-    let mut buffer = [0u8; REPLY_BYTES];
-    let mut reply = reply::ReplyGuard::new(&mut buffer);
+    let mut reply = reply::ReplyGuard::new(buffer.get_mut(..REPLY_BYTES).unwrap());
     let len = loop {
         let observed = notify::generation();
         // SAFETY: the whole output slice is valid NS RAM for the gateway to fill.
@@ -345,6 +351,8 @@ fn init() {
         )
     });
     static CCID: StaticCell<Ccid<'static, Drv, CcidClient>> = StaticCell::new();
+    static CCID_BUFFERS: ConstStaticCell<rsk_usb::ccid::Buffers> =
+        ConstStaticCell::new(rsk_usb::ccid::Buffers::new());
     usb::allocate_for(usb::Transport::Ccid);
     let ccid = (identity.interfaces() & rsk_phy::USB_ITF_CCID != 0).then(|| {
         let atr = if identity.yubico_atr() {
@@ -358,6 +366,7 @@ fn init() {
                 CcidClient,
                 atr,
                 u8::from(identity.pinpad_verify()),
+                CCID_BUFFERS.take(),
             )
         })
     });
@@ -367,9 +376,20 @@ fn init() {
     }));
     let usb = builder.build();
     static CTAP: StaticCell<CtapHid<'static, Drv, CtapClient>> = StaticCell::new();
+    static CTAP_BUFFERS: ConstStaticCell<rsk_usb::ctaphid::Buffers> =
+        ConstStaticCell::new(rsk_usb::ctaphid::Buffers::new());
     let ctap = hid.map(|hid| {
         let (reader, writer) = hid.split();
-        CTAP.init_with(|| CtapHid::new(reader, writer, CtapClient, up_pending, cancel))
+        CTAP.init_with(|| {
+            CtapHid::new(
+                reader,
+                writer,
+                CtapClient,
+                up_pending,
+                cancel,
+                CTAP_BUFFERS.take(),
+            )
+        })
     });
     notify::init();
     interrupt::SWI_IRQ_1.set_priority(Priority::P2);

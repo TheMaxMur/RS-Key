@@ -18,6 +18,16 @@ struct Current {
     directory: Directory<MAX_COUNTER_ENTRIES>,
 }
 
+impl Current {
+    const fn new() -> Self {
+        Self {
+            source: 0,
+            scans: [CounterScan::new(); 2],
+            directory: Directory::new(),
+        }
+    }
+}
+
 /// Both replicas must agree durably before any counter value is acknowledged.
 pub struct Counters<F: NorFlash + MultiwriteNorFlash> {
     banks: [CounterBank<F>; 2],
@@ -33,14 +43,22 @@ impl<F: NorFlash + MultiwriteNorFlash> Counters<F> {
         if identity.partition != Partition::Counter {
             return Err(Error::MemoryFatal);
         }
-        Ok(Self {
+        Ok(Self::from_banks(banks, identity, arm))
+    }
+
+    pub(super) const fn from_banks(
+        banks: [CounterBank<F>; 2],
+        identity: Identity,
+        arm: RootArm,
+    ) -> Self {
+        Self {
             banks,
             identity,
             arm,
             mount: None,
             authority: Authority::New,
             read_cache: read::tags::ReadCache::new(),
-        })
+        }
     }
 
     pub(super) fn configure(&mut self, epoch: [u8; super::EPOCH_BYTES], arm: RootArm) {
@@ -80,10 +98,10 @@ impl<F: NorFlash + MultiwriteNorFlash> Counters<F> {
         })
     }
 
-    fn resolve(&mut self, key: &[u8; 32]) -> Result<Option<Current>> {
-        if let Some(scans) = self.mount.take() {
+    fn resolve_mounted(&mut self, key: &[u8; 32], current: &mut Current) -> Result<bool> {
+        if let Some(scans) = &self.mount {
             let mut unchanged = true;
-            for (bank, scan) in self.banks.iter_mut().zip(&scans) {
+            for (bank, scan) in self.banks.iter_mut().zip(scans) {
                 let fingerprint = bank.raw_fingerprint(scan.next)?;
                 unchanged &= scan
                     .raw_fingerprint
@@ -93,7 +111,6 @@ impl<F: NorFlash + MultiwriteNorFlash> Counters<F> {
             if unchanged {
                 // Full media equality reuses the mounted directory only under its fresh MAC.
                 self.authority.verify_read(key, self.identity, self.arm)?;
-                let mut directory = Directory::new();
                 for location in scans
                     .first()
                     .ok_or(Error::MemoryFatal)?
@@ -101,39 +118,46 @@ impl<F: NorFlash + MultiwriteNorFlash> Counters<F> {
                     .iter()
                     .flatten()
                 {
-                    directory.apply(location.entry)?;
+                    current.directory.apply(location.entry)?;
                 }
-                self.mount = Some(scans);
-                return Ok(Some(Current {
-                    source: 0,
-                    scans,
-                    directory,
-                }));
+                current.source = 0;
+                current.scans = *scans;
+                return Ok(true);
             }
         }
-        let current = self.resolve_uncached(key)?;
-        if let Some(current) = &current {
-            let sequence = current
-                .scans
-                .get(current.source)
-                .ok_or(Error::MemoryFatal)?
-                .sequence
-                .ok_or(Error::MemoryFatal)?;
-            let snapshot = self.snapshot(&current.directory, sequence)?;
-            self.authority.cancel_unpublished(key, snapshot)?;
-            self.mount = Some(current.scans);
-        }
-        Ok(current)
+        Ok(false)
     }
 
-    fn resolve_uncached(&mut self, key: &[u8; 32]) -> Result<Option<Current>> {
+    // The caller owns the large result so unoptimized returns cannot duplicate it.
+    fn resolve(&mut self, key: &[u8; 32], current: &mut Current) -> Result<()> {
+        current.directory.clear();
+        let mounted = self.resolve_mounted(key, current);
+        if matches!(mounted, Ok(true)) {
+            return Ok(());
+        }
+        self.mount = None;
+        mounted?;
+        self.resolve_uncached(key, current)?;
+        let sequence = current
+            .scans
+            .get(current.source)
+            .ok_or(Error::MemoryFatal)?
+            .sequence
+            .ok_or(Error::MemoryFatal)?;
+        let snapshot = self.snapshot(&current.directory, sequence)?;
+        self.authority.cancel_unpublished(key, snapshot)?;
+        self.mount = Some(current.scans);
+        Ok(())
+    }
+
+    fn resolve_uncached(&mut self, key: &[u8; 32], current: &mut Current) -> Result<()> {
         let [zero, one] = &mut self.banks;
         let mut zero_dir = Directory::new();
         let mut one_dir = Directory::new();
-        let zero_scan = zero.scan(key, &mut zero_dir)?;
-        let one_scan = one.scan(key, &mut one_dir)?;
-        let scans = [zero_scan, one_scan];
-        for scan in &scans {
+        let [zero_scan, one_scan] = &mut current.scans;
+        zero.scan_into(key, &mut zero_dir, zero_scan)?;
+        one.scan_into(key, &mut one_dir, one_scan)?;
+        for scan in [&*zero_scan, &*one_scan] {
             if let Some(header) = scan.checkpoint
                 && (header.identity != self.identity || header.arm != self.arm)
             {
@@ -141,10 +165,7 @@ impl<F: NorFlash + MultiwriteNorFlash> Counters<F> {
             }
         }
         if zero_scan.status == JournalStatus::Empty && one_scan.status == JournalStatus::Empty {
-            if self.authority.established() {
-                return Err(Error::MemoryFatal);
-            }
-            return Ok(None);
+            return Err(Error::MemoryFatal);
         }
         let zero_seq = (zero_scan.status == JournalStatus::Complete)
             .then_some(zero_scan.sequence)
@@ -158,7 +179,8 @@ impl<F: NorFlash + MultiwriteNorFlash> Counters<F> {
             (None, Some(one)) => (1, one),
             (None, None) => return Err(Error::MemoryFatal),
         };
-        if scans
+        if current
+            .scans
             .iter()
             .filter_map(|scan| scan.lower_bound)
             .any(|bound| bound > sequence)
@@ -171,20 +193,18 @@ impl<F: NorFlash + MultiwriteNorFlash> Counters<F> {
         if synchronized && !ct_eq(&zero_digest, &one_digest) {
             return Err(Error::MemoryFatal);
         }
-        let directory = if source == 0 { zero_dir } else { one_dir };
+        current.source = source;
+        current.directory = if source == 0 { zero_dir } else { one_dir };
+        let directory = &current.directory;
         self.authority
-            .admit(key, self.snapshot(&directory, sequence)?, None)?;
+            .admit(key, self.snapshot(directory, sequence)?, None)?;
         if synchronized {
-            return Ok(Some(Current {
-                source,
-                scans,
-                directory,
-            }));
+            return Ok(());
         }
-        let checkpoint = self.checkpoint(&directory, key, sequence)?;
-        let source_scan = scans.get(source).ok_or(Error::MemoryFatal)?;
+        let checkpoint = self.checkpoint(directory, key, sequence)?;
+        let source_scan = current.scans.get(source).ok_or(Error::MemoryFatal)?;
         let (read, write) = self.source_target(source)?;
-        write.write_snapshot(checkpoint, key, &directory, |entry, out| {
+        write.write_snapshot(checkpoint, key, directory, |entry, out| {
             let length = read.read_value(source_scan, key, entry.fid(), out)?;
             if length != Some(out.len()) {
                 return Err(Error::MemoryFatal);
@@ -192,7 +212,11 @@ impl<F: NorFlash + MultiwriteNorFlash> Counters<F> {
             Ok(())
         })?;
         let mut repaired = Directory::new();
-        let repaired_scan = write.scan(key, &mut repaired)?;
+        let repaired_scan = current
+            .scans
+            .get_mut(1 - source)
+            .ok_or(Error::MemoryFatal)?;
+        write.scan_into(key, &mut repaired, repaired_scan)?;
         if repaired_scan.status != JournalStatus::Complete
             || repaired_scan.sequence != Some(sequence)
             || !ct_eq(
@@ -202,13 +226,7 @@ impl<F: NorFlash + MultiwriteNorFlash> Counters<F> {
         {
             return Err(Error::MemoryFatal);
         }
-        let mut scans = scans;
-        *scans.get_mut(1 - source).ok_or(Error::MemoryFatal)? = repaired_scan;
-        Ok(Some(Current {
-            source,
-            scans,
-            directory,
-        }))
+        Ok(())
     }
 
     pub fn initialize(
@@ -226,7 +244,8 @@ impl<F: NorFlash + MultiwriteNorFlash> Counters<F> {
         let [zero, one] = &mut self.banks;
         zero.write_snapshot(checkpoint, key, directory, &mut load)?;
         one.write_snapshot(checkpoint, key, directory, &mut load)?;
-        self.resolve(key)?.ok_or(Error::MemoryFatal)?;
+        let mut current = const { Current::new() };
+        self.resolve(key, &mut current)?;
         Ok(())
     }
 
@@ -253,7 +272,8 @@ impl<F: NorFlash + MultiwriteNorFlash> Counters<F> {
     }
 
     pub fn read(&mut self, key: &[u8; 32], fid: u16, out: &mut [u8]) -> Result<Option<usize>> {
-        let current = self.resolve(key)?.ok_or(Error::MemoryFatal)?;
+        let mut current = const { Current::new() };
+        self.resolve(key, &mut current)?;
         let scan = current
             .scans
             .get(current.source)
@@ -268,7 +288,8 @@ impl<F: NorFlash + MultiwriteNorFlash> Counters<F> {
 
     pub fn rekey(&mut self, old: &[u8; 32], new: &[u8; 32], arm: RootArm) -> Result<()> {
         self.read_cache.clear();
-        let current = self.resolve(old)?.ok_or(Error::MemoryFatal)?;
+        let mut current = const { Current::new() };
+        self.resolve(old, &mut current)?;
         self.mount = None;
         let source_scan = current
             .scans
@@ -320,12 +341,13 @@ impl<F: NorFlash + MultiwriteNorFlash> Counters<F> {
             }
             Ok(())
         })?;
-        self.resolve(new)?.ok_or(Error::MemoryFatal)?;
+        self.resolve(new, &mut current)?;
         Ok(())
     }
 
     pub fn write(&mut self, key: &[u8; 32], fid: u16, value: Option<&[u8]>) -> Result<()> {
-        let mut current = self.resolve(key)?.ok_or(Error::MemoryFatal)?;
+        let mut current = const { Current::new() };
+        self.resolve(key, &mut current)?;
         self.mount = None;
         let source_scan = current
             .scans
@@ -412,7 +434,7 @@ impl<F: NorFlash + MultiwriteNorFlash> Counters<F> {
                 Ok(())
             })?;
         }
-        self.resolve(key)?.ok_or(Error::MemoryFatal)?;
+        self.resolve(key, &mut current)?;
         Ok(())
     }
 }

@@ -18,12 +18,57 @@ pub struct Managed<F: NorFlash + MultiwriteNorFlash + Clone, C: CacheImpl<u16>> 
     flash: F,
     main_range: Range<u32>,
     counter_range: Range<u32>,
-    source: KeySource,
+    source: Option<KeySource>,
     ready: bool,
     last_error: bool,
 }
 
 impl<F: NorFlash + MultiwriteNorFlash + Clone, C: CacheImpl<u16>> Managed<F, C> {
+    /// No flash or root reads occur until the boot source has been bound.
+    pub const fn new_unbound(
+        flash: F,
+        layout: super::StoreLayout<F>,
+        cache: C,
+        digest: Option<super::BankDigest<F>>,
+        erased: Option<super::BankErased<F>>,
+    ) -> Self
+    where
+        F: Copy,
+    {
+        let main_range = layout.main_range.start..layout.main_range.end;
+        let counter_range = layout.counter_range.start..layout.counter_range.end;
+        Self {
+            active: Some(Authenticated::new_unbound(
+                flash, layout, cache, digest, erased,
+            )),
+            flash,
+            main_range,
+            counter_range,
+            source: None,
+            ready: false,
+            last_error: false,
+        }
+    }
+
+    pub fn bind_source(&mut self, source: KeySource) -> Result<()> {
+        if self.source.is_some() {
+            return Err(Error::Blocked);
+        }
+        super::StoreLayout::<F>::new(
+            self.main_range.clone(),
+            self.counter_range.clone(),
+            self.flash.capacity(),
+        )?;
+        let active = self.active.as_mut().ok_or(Error::MemoryFatal)?;
+        active.source = source;
+        self.source = Some(source);
+        Ok(())
+    }
+
+    fn key_source(&self) -> Result<KeySource> {
+        self.source.ok_or(Error::MemoryFatal)
+    }
+
     #[inline(always)]
     pub fn new(
         flash: F,
@@ -99,13 +144,13 @@ impl<F: NorFlash + MultiwriteNorFlash + Clone, C: CacheImpl<u16>> Managed<F, C> 
             flash,
             main_range,
             counter_range,
-            source,
+            source: Some(source),
             last_error: false,
         }
     }
 
     fn headers(&mut self) -> Result<[Option<Checkpoint>; 4]> {
-        self.source.current_arm()?;
+        self.key_source()?.current_arm()?;
         let layout = Layout::new(self.counter_range.clone())?;
         let [main_zero, main_one] = layout.main;
         let [counter_zero, counter_one] = layout.counter;
@@ -124,7 +169,7 @@ impl<F: NorFlash + MultiwriteNorFlash + Clone, C: CacheImpl<u16>> Managed<F, C> 
             } else {
                 Partition::Counter
             };
-            let Ok(mut key) = self.source.key(decoded.arm) else {
+            let Ok(mut key) = self.key_source()?.key(decoded.arm) else {
                 continue;
             };
             let verified = Checkpoint::verify(&bytes, key.expose());
@@ -188,13 +233,13 @@ impl<F: NorFlash + MultiwriteNorFlash + Clone, C: CacheImpl<u16>> Managed<F, C> 
             self.flash.clone(),
             self.main_range.clone(),
             self.counter_range.clone(),
-            self.source,
+            self.key_source()?,
         )?;
         match self.open_authority() {
             Ok(()) => {}
             Err(_) => {
                 // Only a previously authenticated, explicitly started import may resume.
-                self.source.current_arm()?;
+                self.key_source()?.current_arm()?;
                 if !import.has_manifest()? {
                     return Err(Error::MemoryFatal);
                 }
@@ -222,7 +267,7 @@ impl<F: NorFlash + MultiwriteNorFlash + Clone, C: CacheImpl<u16>> Managed<F, C> 
             let Some(header) = headers.get(index).copied().flatten() else {
                 continue;
             };
-            let mut key = self.source.key(header.arm)?;
+            let mut key = self.key_source()?.key(header.arm)?;
             let result = if index < 2 {
                 let directory = &mut self
                     .active
@@ -325,9 +370,9 @@ impl<F: NorFlash + MultiwriteNorFlash + Clone, C: CacheImpl<u16>> Storage for Ma
             self.flash.clone(),
             self.main_range.clone(),
             self.counter_range.clone(),
-            self.source,
+            self.key_source()?,
         )?;
-        self.source.current_arm()?;
+        self.key_source()?.current_arm()?;
         if import.has_manifest()?
             || import.has_activation()?
             || self.headers()?.iter().any(Option::is_some)
@@ -353,12 +398,12 @@ impl<F: NorFlash + MultiwriteNorFlash + Clone, C: CacheImpl<u16>> Storage for Ma
         if self.ready {
             return Err(Error::Blocked);
         }
-        self.source.current_arm()?;
+        self.key_source()?.current_arm()?;
         let mut import = Import::new(
             self.flash.clone(),
             self.main_range.clone(),
             self.counter_range.clone(),
-            self.source,
+            self.key_source()?,
         )?;
         if import.has_manifest()? {
             return self.mount();

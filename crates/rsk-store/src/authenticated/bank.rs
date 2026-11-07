@@ -57,8 +57,22 @@ pub struct RawBank<F: NorFlash + MultiwriteNorFlash> {
 
 impl<F: NorFlash + MultiwriteNorFlash> RawBank<F> {
     pub fn new(flash: F, range: Range<u32>) -> Result<Self> {
-        let erase = u32::try_from(F::ERASE_SIZE).map_err(|_| Error::MemoryFatal)?;
-        if erase == 0
+        if !Self::valid_range(&range, flash.capacity()) {
+            return Err(Error::MemoryFatal);
+        }
+        Ok(Self::from_range(flash, range))
+    }
+
+    pub(super) const fn valid_range(range: &Range<u32>, capacity: usize) -> bool {
+        if F::ERASE_SIZE > u32::MAX as usize {
+            return false;
+        }
+        #[expect(
+            clippy::cast_possible_truncation,
+            reason = "erase size was checked against u32::MAX"
+        )]
+        let erase = F::ERASE_SIZE as u32;
+        !(erase == 0
             || F::READ_SIZE == 0
             || F::READ_SIZE > IO_CHUNK
             || !IO_CHUNK.is_multiple_of(F::READ_SIZE)
@@ -70,17 +84,17 @@ impl<F: NorFlash + MultiwriteNorFlash> RawBank<F> {
             || range.start >= range.end
             || !range.start.is_multiple_of(erase)
             || !range.end.is_multiple_of(erase)
-            || usize::try_from(range.end).map_err(|_| Error::MemoryFatal)? > flash.capacity()
-        {
-            return Err(Error::MemoryFatal);
-        }
-        Ok(Self {
+            || range.end as u64 > capacity as u64)
+    }
+
+    pub(super) const fn from_range(flash: F, range: Range<u32>) -> Self {
+        Self {
             flash: VerifiedFlash::new(flash),
             range,
             digest: None,
             erased: None,
             append_proof: None,
-        })
+        }
     }
 
     pub fn range(&self) -> Range<u32> {

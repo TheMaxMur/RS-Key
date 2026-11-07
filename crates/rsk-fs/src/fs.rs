@@ -150,7 +150,7 @@ pub struct Fs<S: Storage> {
 }
 
 impl<S: Storage> Fs<S> {
-    pub fn new(storage: S) -> Self {
+    pub const fn new(storage: S) -> Self {
         Fs {
             storage,
             dynamic: Vec::new(),

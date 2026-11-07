@@ -11,6 +11,15 @@ const IDENTITY: Identity = Identity {
 };
 
 #[test]
+fn an_unavailable_key_source_never_selects_or_derives_a_root() {
+    let source = KeySource::unavailable();
+    assert_eq!(source.current_arm(), Err(Error::MemoryFatal));
+    for arm in [RootArm::PreOtp, RootArm::Otp] {
+        assert_eq!(source.key(arm).err(), Some(Error::MemoryFatal));
+    }
+}
+
+#[test]
 fn deleting_an_absent_owner_preserves_empty_and_nonempty_directories() {
     let mut directory = Directory::<1>::new();
     for live in [false, true] {

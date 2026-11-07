@@ -206,7 +206,7 @@ pub fn configure(out: &Path, memory: &mut String, code_size: u32, flash_size: u3
          KEEP(*(.text._RNvNtNtCs*_14num_bigint_dig10algorithms3mac9karatsuba*))\n\
          KEEP(*(.text._RNvNtNtCs*_14num_bigint_dig10algorithms3sub8sub_sign*))\n\
          __rsk_flash_read_start = .;\n\
-         KEEP(*(.text._RNCNvXs_NtCs*_8firmware13flash_storageNtB*_11SharedFlashNtNtCs*_22embedded_storage_async9nor_flash12ReadNorFlash4read0*))\n\
+         KEEP(*(.text._RNCNvXs*_NtCs*_8firmware13flash_storageNtB*_11SharedFlashNtNtCs*_22embedded_storage_async9nor_flash12ReadNorFlash4read0*))\n\
          __rsk_flash_read_end = .;\n\
          . = ALIGN(32); __rsk_exec_end = .;\n\
          } > RAM AT> FLASH\n\

@@ -47,8 +47,8 @@ impl Default for Poly {
 }
 
 /// A length-`M` vector of ring elements, all zero.
-pub(crate) fn zero_vec<const M: usize>() -> [Poly; M] {
-    core::array::from_fn(|_| Poly::zero())
+pub(crate) const fn zero_vec<const M: usize>() -> [Poly; M] {
+    [const { Poly::zero() }; M]
 }
 
 /// Pointwise Montgomery product: `out[n] = mont_reduce(a[n]·b[n])`. Exactly one

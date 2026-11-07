@@ -50,7 +50,7 @@ mod main;
 pub use main::Main;
 
 mod storage;
-pub use storage::{Authenticated, Layout};
+pub use storage::{Authenticated, Layout, StoreLayout};
 
 mod import;
 mod legacy;

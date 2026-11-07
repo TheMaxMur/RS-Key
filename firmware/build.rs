@@ -15,6 +15,7 @@ use std::path::PathBuf;
 /// encodes. A `FLASH_SIZE` equal to this (with the default `KVMAIN`) writes that
 /// file byte-for-byte.
 const DEFAULT_FLASH_SIZE: u32 = 4 * 1024 * 1024;
+const SMALL_FLASH_SIZE: u32 = 2 * 1024 * 1024;
 
 /// Default KVMAIN — the rsk-fs main partition (creds/keys/DOs) the checked-in
 /// `memory.x` encodes. `KVMAIN` overrides it (shrink it to free code space on a
@@ -28,7 +29,7 @@ const DEFAULT_KVMAIN: u32 = 1408 * 1024;
 const KVCNT_LEN: u32 = 128 * 1024;
 
 /// Smallest code region the flash/KVMAIN split may leave. The shipping image is
-/// ~900 KiB; anything under this can't link, so [`assert_layout_fits`] rejects the
+/// about 1 MiB; anything under this can't link, so [`assert_layout_fits`] rejects the
 /// split here with a fix hint instead of leaving a cryptic linker overflow.
 const MIN_CODE: u32 = 1024 * 1024;
 
@@ -320,6 +321,10 @@ fn main() {
     // for any other FLASH_SIZE or KVMAIN we splice a recomputed MEMORY block
     // (code = usable_flash − KVMAIN − KVCNT) into it and keep the rest verbatim.
     let flash_size = resolve_flash_size();
+    println!("cargo:rustc-check-cfg=cfg(rsk_small_flash)");
+    if flash_size <= SMALL_FLASH_SIZE {
+        println!("cargo:rustc-cfg=rsk_small_flash");
+    }
     let kvmain_len = resolve_kvmain_len();
     assert_layout_fits(flash_size, kvmain_len);
     let template = std::fs::read_to_string("memory.x").expect("read memory.x");
@@ -333,12 +338,8 @@ fn main() {
     if env::var("RSK_TZ_TEST_DELAY").as_deref() == Ok("1") {
         println!("cargo:rustc-cfg=rsk_tz_test_delay");
     }
-    trustzone_build::configure(
-        &out,
-        &mut memory_x,
-        usable_flash(flash_size) - kvmain_len - KVCNT_LEN,
-        flash_size,
-    );
+    let main_start = usable_flash(flash_size) - kvmain_len - KVCNT_LEN;
+    trustzone_build::configure(&out, &mut memory_x, main_start, flash_size);
     File::create(out.join("memory.x"))
         .unwrap()
         .write_all(memory_x.as_bytes())
@@ -349,6 +350,8 @@ fn main() {
     println!("cargo:rustc-env=PK_FLASH_SIZE={flash_size}");
     println!("cargo:rerun-if-env-changed=FLASH_SIZE");
     println!("cargo:rustc-env=PK_KVMAIN_LEN={kvmain_len}");
+    println!("cargo:rustc-env=PK_KVMAIN_START={main_start}");
+    println!("cargo:rustc-env=PK_KVCNT_START={}", main_start + kvmain_len);
     println!("cargo:rerun-if-env-changed=KVMAIN");
 
     let (vid, pid, manufacturer, product) = resolve_identity();

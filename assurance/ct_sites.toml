@@ -33,11 +33,11 @@ statement = "The canonical comparator's inlined copies lower to a loop whose onl
 # in the list for the same reason: they are frames the chains name.
 
 [[caller]]
-symbol = "<rsk_oath::OathApplet>::cmd_set_code::<rsk_store::authenticated::managed::Managed<firmware::flash_storage::SharedFlash, sequential_storage::cache::Cache<sequential_storage::cache::page_states::ArrayPageStates<352>, sequential_storage::cache::page_pointers::ArrayPagePointers<352>, sequential_storage::cache::key_pointers::ArrayKeyPointers<u16, 1287>, u16>>>"
+symbol = "<rsk_oath::OathApplet>::cmd_set_code::<firmware::flash_storage::FlashStorage>"
 surface = "OATH SET CODE"
 
 [[caller]]
-symbol = "<rsk_oath::OathApplet>::cmd_validate::<rsk_store::authenticated::managed::Managed<firmware::flash_storage::SharedFlash, sequential_storage::cache::Cache<sequential_storage::cache::page_states::ArrayPageStates<352>, sequential_storage::cache::page_pointers::ArrayPagePointers<352>, sequential_storage::cache::key_pointers::ArrayKeyPointers<u16, 1287>, u16>>>"
+symbol = "<rsk_oath::OathApplet>::cmd_validate::<firmware::flash_storage::FlashStorage>"
 surface = "OATH VALIDATE"
 
 [[caller]]
@@ -45,47 +45,47 @@ symbol = "<rsk_oath::OathApplet>::otp_pin_matches"
 surface = "OATH PIN match helper"
 
 [[caller]]
-symbol = "<rsk_oath::OathApplet>::spend_and_match_otp_pin::<rsk_store::authenticated::managed::Managed<firmware::flash_storage::SharedFlash, sequential_storage::cache::Cache<sequential_storage::cache::page_states::ArrayPageStates<352>, sequential_storage::cache::page_pointers::ArrayPagePointers<352>, sequential_storage::cache::key_pointers::ArrayKeyPointers<u16, 1287>, u16>>>"
+symbol = "<rsk_oath::OathApplet>::spend_and_match_otp_pin::<firmware::flash_storage::FlashStorage>"
 surface = "OATH PIN-gated code match"
 
 [[caller]]
-symbol = "<rsk_otp::OtpApplet as rsk_sdk::applet::Applet<rsk_fs::fs::Fs<rsk_store::authenticated::managed::Managed<firmware::flash_storage::SharedFlash, sequential_storage::cache::Cache<sequential_storage::cache::page_states::ArrayPageStates<352>, sequential_storage::cache::page_pointers::ArrayPagePointers<352>, sequential_storage::cache::key_pointers::ArrayKeyPointers<u16, 1287>, u16>>>>>::process"
+symbol = "<rsk_otp::OtpApplet as rsk_sdk::applet::Applet<rsk_fs::fs::Fs<firmware::flash_storage::FlashStorage>>>::process"
 surface = "OTP applet APDU dispatch onto the access-code comparator"
 
 [[caller]]
-symbol = "<rsk_otp::OtpApplet>::cmd_configure::<rsk_store::authenticated::managed::Managed<firmware::flash_storage::SharedFlash, sequential_storage::cache::Cache<sequential_storage::cache::page_states::ArrayPageStates<352>, sequential_storage::cache::page_pointers::ArrayPagePointers<352>, sequential_storage::cache::key_pointers::ArrayKeyPointers<u16, 1287>, u16>>>"
+symbol = "<rsk_otp::OtpApplet>::cmd_configure::<firmware::flash_storage::FlashStorage>"
 surface = "OTP slot configure access code"
 
 [[caller]]
-symbol = "<rsk_otp::OtpApplet>::cmd_otp::<rsk_store::authenticated::managed::Managed<firmware::flash_storage::SharedFlash, sequential_storage::cache::Cache<sequential_storage::cache::page_states::ArrayPageStates<352>, sequential_storage::cache::page_pointers::ArrayPagePointers<352>, sequential_storage::cache::key_pointers::ArrayKeyPointers<u16, 1287>, u16>>>"
+symbol = "<rsk_otp::OtpApplet>::cmd_otp::<firmware::flash_storage::FlashStorage>"
 surface = "OTP command dispatch access code"
 
 [[caller]]
-symbol = "<rsk_otp::OtpApplet>::cmd_swap::<rsk_store::authenticated::managed::Managed<firmware::flash_storage::SharedFlash, sequential_storage::cache::Cache<sequential_storage::cache::page_states::ArrayPageStates<352>, sequential_storage::cache::page_pointers::ArrayPagePointers<352>, sequential_storage::cache::key_pointers::ArrayKeyPointers<u16, 1287>, u16>>>"
+symbol = "<rsk_otp::OtpApplet>::cmd_swap::<firmware::flash_storage::FlashStorage>"
 surface = "OTP slot swap access code"
 
 [[caller]]
-symbol = "<rsk_otp::OtpApplet>::cmd_swap::<rsk_store::authenticated::managed::Managed<firmware::flash_storage::SharedFlash, sequential_storage::cache::Cache<sequential_storage::cache::page_states::ArrayPageStates<352>, sequential_storage::cache::page_pointers::ArrayPagePointers<352>, sequential_storage::cache::key_pointers::ArrayKeyPointers<u16, 1287>, u16>>>::{closure#1}"
+symbol = "<rsk_otp::OtpApplet>::cmd_swap::<firmware::flash_storage::FlashStorage>::{closure#1}"
 surface = "OTP slot swap access code, inner"
 
 [[caller]]
-symbol = "<rsk_otp::OtpApplet>::cmd_update::<rsk_store::authenticated::managed::Managed<firmware::flash_storage::SharedFlash, sequential_storage::cache::Cache<sequential_storage::cache::page_states::ArrayPageStates<352>, sequential_storage::cache::page_pointers::ArrayPagePointers<352>, sequential_storage::cache::key_pointers::ArrayKeyPointers<u16, 1287>, u16>>>"
+symbol = "<rsk_otp::OtpApplet>::cmd_update::<firmware::flash_storage::FlashStorage>"
 surface = "OTP slot update access code"
 
 [[caller]]
-symbol = "<rsk_otp::OtpApplet>::code_clears_every_slot::<rsk_store::authenticated::managed::Managed<firmware::flash_storage::SharedFlash, sequential_storage::cache::Cache<sequential_storage::cache::page_states::ArrayPageStates<352>, sequential_storage::cache::page_pointers::ArrayPagePointers<352>, sequential_storage::cache::key_pointers::ArrayKeyPointers<u16, 1287>, u16>>>"
+symbol = "<rsk_otp::OtpApplet>::code_clears_every_slot::<firmware::flash_storage::FlashStorage>"
 surface = "OTP access-code sweep"
 
 [[caller]]
-symbol = "<rsk_piv::PivApplet>::get_metadata::<rsk_store::authenticated::managed::Managed<firmware::flash_storage::SharedFlash, sequential_storage::cache::Cache<sequential_storage::cache::page_states::ArrayPageStates<352>, sequential_storage::cache::page_pointers::ArrayPagePointers<352>, sequential_storage::cache::key_pointers::ArrayKeyPointers<u16, 1287>, u16>>>"
+symbol = "<rsk_piv::PivApplet>::get_metadata::<firmware::flash_storage::FlashStorage>"
 surface = "PIV slot metadata default-value check"
 
 [[caller]]
-symbol = "<rsk_piv::auth::GenAuth<rsk_store::authenticated::managed::Managed<firmware::flash_storage::SharedFlash, sequential_storage::cache::Cache<sequential_storage::cache::page_states::ArrayPageStates<352>, sequential_storage::cache::page_pointers::ArrayPagePointers<352>, sequential_storage::cache::key_pointers::ArrayKeyPointers<u16, 1287>, u16>>>>::mutual_auth"
+symbol = "<rsk_piv::auth::GenAuth<firmware::flash_storage::FlashStorage>>::mutual_auth"
 surface = "PIV mutual authenticate"
 
 [[caller]]
-symbol = "<rsk_piv::auth::GenAuth<rsk_store::authenticated::managed::Managed<firmware::flash_storage::SharedFlash, sequential_storage::cache::Cache<sequential_storage::cache::page_states::ArrayPageStates<352>, sequential_storage::cache::page_pointers::ArrayPagePointers<352>, sequential_storage::cache::key_pointers::ArrayKeyPointers<u16, 1287>, u16>>>>::single_auth_verify"
+symbol = "<rsk_piv::auth::GenAuth<firmware::flash_storage::FlashStorage>>::single_auth_verify"
 surface = "PIV single authenticate"
 
 [[caller]]
@@ -129,7 +129,7 @@ symbol = "<rsk_store::authenticated::counter_bank::CounterBank<firmware::flash_s
 surface = "PIN/HOTP counter entry identity before copying its physical frame"
 
 [[caller]]
-symbol = "<rsk_store::authenticated::counter_bank::CounterBank<firmware::flash_storage::SharedFlash>>::scan"
+symbol = "<rsk_store::authenticated::counter_bank::CounterBank<firmware::flash_storage::SharedFlash>>::scan_into"
 surface = "storage v2 complete counter-bank authentication before counter reads or updates"
 
 [[caller]]
@@ -173,7 +173,11 @@ symbol = "<rsk_store::authenticated::counters::Counters<firmware::flash_storage:
 surface = "storage v2 replicated counter authority agreement and recovery"
 
 [[caller]]
-symbol = "<rsk_store::authenticated::counters::Counters<firmware::flash_storage::SharedFlash>>::resolve::{closure#0}"
+symbol = "<rsk_store::authenticated::counters::Counters<firmware::flash_storage::SharedFlash>>::resolve_mounted"
+surface = "storage v2 fresh counter-bank fingerprints and root binding before mounted-directory reuse"
+
+[[caller]]
+symbol = "<rsk_store::authenticated::counters::Counters<firmware::flash_storage::SharedFlash>>::resolve_mounted::{closure#0}"
 surface = "storage v2 freshly observed counter-bank fingerprints before mounted-directory reuse"
 
 [[caller]]
@@ -297,11 +301,11 @@ symbol = "rsk_crypto::pinproto::verify"
 surface = "CTAP pinUvAuthProtocol MAC verify"
 
 [[caller]]
-symbol = "rsk_devconf::lock::lock_change::<rsk_store::authenticated::managed::Managed<firmware::flash_storage::SharedFlash, sequential_storage::cache::Cache<sequential_storage::cache::page_states::ArrayPageStates<352>, sequential_storage::cache::page_pointers::ArrayPagePointers<352>, sequential_storage::cache::key_pointers::ArrayKeyPointers<u16, 1287>, u16>>>"
+symbol = "rsk_devconf::lock::lock_change::<firmware::flash_storage::FlashStorage>"
 surface = "management configuration lock code verify"
 
 [[caller]]
-symbol = "rsk_fido::clientpin::pin_verifier_matches::<rsk_store::authenticated::managed::Managed<firmware::flash_storage::SharedFlash, sequential_storage::cache::Cache<sequential_storage::cache::page_states::ArrayPageStates<352>, sequential_storage::cache::page_pointers::ArrayPagePointers<352>, sequential_storage::cache::key_pointers::ArrayKeyPointers<u16, 1287>, u16>>, firmware::handler::FidoRng>"
+symbol = "rsk_fido::clientpin::pin_verifier_matches::<firmware::flash_storage::FlashStorage, firmware::handler::FidoRng>"
 surface = "FIDO device-local PIN verify"
 
 [[caller]]
@@ -309,15 +313,15 @@ symbol = "rsk_fido::clientpin::pinproto_ct_eq"
 surface = "FIDO's forwarder onto the canonical comparator"
 
 [[caller]]
-symbol = "rsk_fido::clientpin::spend_and_verify_device_pin::<rsk_store::authenticated::managed::Managed<firmware::flash_storage::SharedFlash, sequential_storage::cache::Cache<sequential_storage::cache::page_states::ArrayPageStates<352>, sequential_storage::cache::page_pointers::ArrayPagePointers<352>, sequential_storage::cache::key_pointers::ArrayKeyPointers<u16, 1287>, u16>>>"
+symbol = "rsk_fido::clientpin::spend_and_verify_device_pin::<firmware::flash_storage::FlashStorage>"
 surface = "FIDO device-PIN hash verify"
 
 [[caller]]
-symbol = "rsk_fido::clientpin::spend_and_verify_pin_at::<rsk_store::authenticated::managed::Managed<firmware::flash_storage::SharedFlash, sequential_storage::cache::Cache<sequential_storage::cache::page_states::ArrayPageStates<352>, sequential_storage::cache::page_pointers::ArrayPagePointers<352>, sequential_storage::cache::key_pointers::ArrayKeyPointers<u16, 1287>, u16>>>"
+symbol = "rsk_fido::clientpin::spend_and_verify_pin_at::<firmware::flash_storage::FlashStorage>"
 surface = "FIDO clientPIN hash verify, panel path"
 
 [[caller]]
-symbol = "rsk_fido::clientpin::spend_and_verify_pin_hash::<rsk_store::authenticated::managed::Managed<firmware::flash_storage::SharedFlash, sequential_storage::cache::Cache<sequential_storage::cache::page_states::ArrayPageStates<352>, sequential_storage::cache::page_pointers::ArrayPagePointers<352>, sequential_storage::cache::key_pointers::ArrayKeyPointers<u16, 1287>, u16>>, firmware::handler::FidoRng>"
+symbol = "rsk_fido::clientpin::spend_and_verify_pin_hash::<firmware::flash_storage::FlashStorage, firmware::handler::FidoRng>"
 surface = "FIDO clientPIN hash verify"
 
 [[caller]]
@@ -325,11 +329,11 @@ symbol = "rsk_fido::keyderiv::verify_key"
 surface = "FIDO credential key-handle verify"
 
 [[caller]]
-symbol = "rsk_fido::vendor::device_pin_gate::<rsk_store::authenticated::managed::Managed<firmware::flash_storage::SharedFlash, sequential_storage::cache::Cache<sequential_storage::cache::page_states::ArrayPageStates<352>, sequential_storage::cache::page_pointers::ArrayPagePointers<352>, sequential_storage::cache::key_pointers::ArrayKeyPointers<u16, 1287>, u16>>, firmware::handler::FidoRng>"
+symbol = "rsk_fido::vendor::device_pin_gate::<firmware::flash_storage::FlashStorage, firmware::handler::FidoRng>"
 surface = "vendor device-PIN gate, pad path"
 
 [[caller]]
-symbol = "rsk_fido::vendor::pin_gate::<rsk_store::authenticated::managed::Managed<firmware::flash_storage::SharedFlash, sequential_storage::cache::Cache<sequential_storage::cache::page_states::ArrayPageStates<352>, sequential_storage::cache::page_pointers::ArrayPagePointers<352>, sequential_storage::cache::key_pointers::ArrayKeyPointers<u16, 1287>, u16>>, firmware::handler::FidoRng>"
+symbol = "rsk_fido::vendor::pin_gate::<firmware::flash_storage::FlashStorage, firmware::handler::FidoRng>"
 surface = "vendor device-PIN gate"
 
 [[caller]]
@@ -337,11 +341,11 @@ symbol = "rsk_oath::ct_eq"
 surface = "OATH's forwarder onto the canonical comparator"
 
 [[caller]]
-symbol = "rsk_openpgp::init::neutralize_default_reset_code::<rsk_store::authenticated::managed::Managed<firmware::flash_storage::SharedFlash, sequential_storage::cache::Cache<sequential_storage::cache::page_states::ArrayPageStates<352>, sequential_storage::cache::page_pointers::ArrayPagePointers<352>, sequential_storage::cache::key_pointers::ArrayKeyPointers<u16, 1287>, u16>>>"
+symbol = "rsk_openpgp::init::neutralize_default_reset_code::<firmware::flash_storage::FlashStorage>"
 surface = "OpenPGP default reset-code neutralisation"
 
 [[caller]]
-symbol = "rsk_openpgp::pin::check_pin::<rsk_store::authenticated::managed::Managed<firmware::flash_storage::SharedFlash, sequential_storage::cache::Cache<sequential_storage::cache::page_states::ArrayPageStates<352>, sequential_storage::cache::page_pointers::ArrayPagePointers<352>, sequential_storage::cache::key_pointers::ArrayKeyPointers<u16, 1287>, u16>>>"
+symbol = "rsk_openpgp::pin::check_pin::<firmware::flash_storage::FlashStorage>"
 surface = "OpenPGP PW1/PW3/RC verify"
 
 [[caller]]
@@ -349,7 +353,7 @@ symbol = "rsk_openpgp::pin::ct_eq"
 surface = "OpenPGP's forwarder onto the canonical comparator"
 
 [[caller]]
-symbol = "rsk_piv::check_ref::<rsk_store::authenticated::managed::Managed<firmware::flash_storage::SharedFlash, sequential_storage::cache::Cache<sequential_storage::cache::page_states::ArrayPageStates<352>, sequential_storage::cache::page_pointers::ArrayPagePointers<352>, sequential_storage::cache::key_pointers::ArrayKeyPointers<u16, 1287>, u16>>>"
+symbol = "rsk_piv::check_ref::<firmware::flash_storage::FlashStorage>"
 surface = "PIV PIN/PUK reference verify"
 
 [[caller]]
@@ -357,7 +361,7 @@ symbol = "rsk_piv::ct_eq"
 surface = "PIV's forwarder onto the canonical comparator"
 
 [[caller]]
-symbol = "rsk_store::authenticated::counter_bank::scan::scan::<firmware::flash_storage::SharedFlash>"
+symbol = "rsk_store::authenticated::counter_bank::scan::scan_into::<firmware::flash_storage::SharedFlash>"
 surface = "storage v2 counter scan engine complete-directory digest verification"
 
 [[caller]]

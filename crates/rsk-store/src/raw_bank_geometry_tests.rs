@@ -5,23 +5,32 @@ use super::*;
 use crate::authenticated::CHECKPOINT_BYTES;
 
 #[derive(Clone)]
-pub(super) struct Geometry<const READ: usize, const WRITE: usize, const ERASE: usize>(
-    pub(super) FaultFlash,
-);
+pub(super) struct Geometry<
+    const READ: usize,
+    const WRITE: usize,
+    const ERASE: usize,
+    const CAPACITY: usize = 0,
+>(pub(super) FaultFlash);
 
-impl<const R: usize, const W: usize, const E: usize> ErrorType for Geometry<R, W, E> {
+impl<const R: usize, const W: usize, const E: usize, const C: usize> ErrorType
+    for Geometry<R, W, E, C>
+{
     type Error = FlashFault;
 }
-impl<const R: usize, const W: usize, const E: usize> ReadNorFlash for Geometry<R, W, E> {
+impl<const R: usize, const W: usize, const E: usize, const C: usize> ReadNorFlash
+    for Geometry<R, W, E, C>
+{
     const READ_SIZE: usize = R;
     async fn read(&mut self, offset: u32, bytes: &mut [u8]) -> Result2<()> {
         self.0.read(offset, bytes).await
     }
     fn capacity(&self) -> usize {
-        self.0.capacity()
+        if C == 0 { self.0.capacity() } else { C }
     }
 }
-impl<const R: usize, const W: usize, const E: usize> NorFlash for Geometry<R, W, E> {
+impl<const R: usize, const W: usize, const E: usize, const C: usize> NorFlash
+    for Geometry<R, W, E, C>
+{
     const WRITE_SIZE: usize = W;
     const ERASE_SIZE: usize = E;
     async fn write(&mut self, offset: u32, bytes: &[u8]) -> Result2<()> {
@@ -31,7 +40,23 @@ impl<const R: usize, const W: usize, const E: usize> NorFlash for Geometry<R, W,
         self.0.erase(from, to).await
     }
 }
-impl<const R: usize, const W: usize, const E: usize> MultiwriteNorFlash for Geometry<R, W, E> {}
+impl<const R: usize, const W: usize, const E: usize, const C: usize> MultiwriteNorFlash
+    for Geometry<R, W, E, C>
+{
+}
+
+#[test]
+fn the_largest_representable_erase_geometry_is_admitted_without_io() {
+    let flash = FaultFlash::new();
+    assert!(
+        RawBank::new(
+            Geometry::<1, 1, { u32::MAX as usize }, { u32::MAX as usize }>(flash.clone()),
+            0..u32::MAX,
+        )
+        .is_ok()
+    );
+    assert!(flash.events().is_empty());
+}
 
 #[test]
 fn unsupported_raw_bank_geometry_refuses_before_io() {
@@ -49,7 +74,10 @@ fn unsupported_raw_bank_geometry_refuses_before_io() {
     refuse!(4, 4, 6);
     refuse!(1, 8, 4);
     #[cfg(target_pointer_width = "64")]
-    refuse!(1, 4, usize::MAX);
+    {
+        refuse!(1, 4, usize::MAX);
+        refuse!(1, 4, u32::MAX as usize + 1 + SECTOR);
+    }
     assert!(flash.events().is_empty());
     let mut admitted = RawBank::new(Geometry::<4, 4, SECTOR>(flash.clone()), MAIN).unwrap();
     admitted.program(3, b"bounded").unwrap();

@@ -14,12 +14,11 @@ use embassy_sync::signal::Signal;
 use embassy_time::{Duration, Instant};
 use zeroize::Zeroize;
 
-use rsk_crypto::FusedKey;
 use rsk_device::click::Clicks;
 use rsk_secret::WipeGuard;
 use rsk_usb::ctaphid::CTAP_MAX_MESSAGE;
 
-use crate::handler::{Ccid, Ctap, DeviceHooks, FidoRng, Store};
+use crate::handler::{Ccid, Ctap, FidoRng};
 use crate::otp_kbd;
 use crate::presence::Presence;
 
@@ -156,8 +155,8 @@ fn secure_pin_meta(p2: u8) -> Option<(&'static str, usize)> {
 /// one synchronous dispatch), and runs each request to completion while the
 /// high-priority transports stream keepalives.
 pub struct Worker<'a> {
-    ctap: Ctap<'a>,
-    ccid: Ccid<'a>,
+    ctap: &'a mut Ctap<'a>,
+    ccid: &'a mut Ccid<'a>,
     /// The TRNG/DRBG, kept for the secure-reboot wipe (the DRBG state is the one
     /// long-lived RAM secret outside the applet layer).
     rng: &'a RefCell<FidoRng>,
@@ -361,57 +360,15 @@ pub extern "C" fn rsk_tz_control_impl(action: u32, ticket: u32) -> u32 {
 }
 
 impl<'a> Worker<'a> {
-    /// `presence` is the one BOOTSEL button, shared (through its `RefCell`) by the
-    /// FIDO handler (CTAP user presence), the OpenPGP applet (the UIF DOs), the
-    /// OTP applet (CHAL_BTN_TRIG) and the OATH applet (PROP_TOUCH credentials) —
-    /// they all ask through the one `rsk_sdk::UserPresence` that the
-    /// `&RefCell<ButtonPresence>` coerces to.
-    #[allow(clippy::too_many_arguments)] // one-time wiring from main
     pub fn new(
-        fs: &'a RefCell<Store>,
+        ctap: &'a mut Ctap<'a>,
+        ccid: &'a mut Ccid<'a>,
         rng: &'a RefCell<FidoRng>,
         presence: &'a RefCell<Presence>,
-        platform: &'a RefCell<crate::rescue_platform::RescuePlatform>,
-        hooks: &'a RefCell<DeviceHooks>,
-        // The device's one FIDO session state. Both handlers below borrow it: two
-        // copies would give a host two per-boot PIN-mismatch budgets.
-        fido_state: &'a RefCell<rsk_fido::FidoState>,
-        serial_id: [u8; 8],
-        serial_hash: [u8; 32],
-        mkek_source: Option<FusedKey>,
-        devk_source: Option<FusedKey>,
-        kv_total: u32,
-        openpgp_mfr: u16,
     ) -> Self {
         Self {
-            ctap: Ctap::new(
-                fs,
-                rng,
-                hooks,
-                presence,
-                fido_state,
-                crate::vendor::VendorPlatform,
-                serial_id,
-                serial_hash,
-                mkek_source,
-                devk_source,
-            ),
-            ccid: Ccid::new(
-                fs,
-                rng,
-                hooks,
-                presence,
-                fido_state,
-                platform,
-                crate::vendor::VendorPlatform,
-                serial_id,
-                serial_hash,
-                mkek_source,
-                devk_source,
-                kv_total,
-                crate::flash_storage::FLASH_SIZE as u32,
-                openpgp_mfr,
-            ),
+            ctap,
+            ccid,
             rng,
             presence,
             clicks: Clicks::new(),

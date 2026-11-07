@@ -10,7 +10,7 @@ mod quad;
 mod sha256;
 mod stream;
 
-use core::cell::RefCell;
+use core::cell::{Cell, RefCell, RefMut};
 use core::ops::Range;
 
 use embassy_embedded_hal::adapter::BlockingAsync;
@@ -72,7 +72,68 @@ type MainCache = Cache<
     u16,
 >;
 /// The store this board runs.
-pub type FlashStorage = rsk_store::authenticated::Managed<SharedFlash, MainCache>;
+type Backend = rsk_store::authenticated::Managed<SharedFlash, MainCache>;
+pub struct FlashStorage;
+
+#[derive(Clone, Copy)]
+struct Context {
+    inner: &'static RefCell<AsyncFlash>,
+    sha256: &'static RefCell<sha256::Engine>,
+    quad: &'static RefCell<quad::Engine>,
+    backend: &'static RefCell<Backend>,
+}
+
+struct Core0Context {
+    context: Cell<Option<Context>>,
+}
+
+// SAFETY: every accessor checks core0 before the cell; installation is
+// single-shot before storage boot, and RefCell borrows cannot cross cores.
+unsafe impl Sync for Core0Context {}
+
+impl Core0Context {
+    fn install(&self, context: Context) {
+        assert_eq!(rp_pac::SIO.cpuid().read(), 0);
+        assert!(self.context.get().is_none());
+        self.context.set(Some(context));
+    }
+
+    fn get(&self) -> Context {
+        assert_eq!(rp_pac::SIO.cpuid().read(), 0);
+        self.context
+            .get()
+            .expect("flash context must precede storage boot")
+    }
+
+    fn backend(&self) -> RefMut<'_, Backend> {
+        self.get().backend.borrow_mut()
+    }
+}
+
+static CONTEXT: Core0Context = Core0Context {
+    context: Cell::new(None),
+};
+
+#[cfg(not(rsk_small_flash))]
+const fn unbound_storage() -> Backend {
+    let main_start = crate::env_u32(env!("PK_KVMAIN_START"));
+    let counter_start = crate::env_u32(env!("PK_KVCNT_START"));
+    let layout = match rsk_store::authenticated::StoreLayout::new(
+        main_start..counter_start,
+        counter_start..counter_start + COUNTER_LEN as u32,
+        FLASH_SIZE,
+    ) {
+        Ok(layout) => layout,
+        Err(_) => panic!("invalid static storage layout"),
+    };
+    Backend::new_unbound(
+        SharedFlash,
+        layout,
+        main_cache(),
+        Some(sha256::digest),
+        Some(sha256::erased),
+    )
+}
 
 /// A `'static`, shared handle to the one flash peripheral, so the two partitions can
 /// each own a `MapStorage` over it. `MapStorage` takes its flash *by value* and the
@@ -81,10 +142,12 @@ pub type FlashStorage = rsk_store::authenticated::Managed<SharedFlash, MainCache
 /// on the first poll and `block_on` never yields to another task, so the borrow can't
 /// overlap with the other partition's.
 #[derive(Clone, Copy)]
-pub struct SharedFlash {
-    inner: &'static RefCell<AsyncFlash>,
-    sha256: &'static RefCell<sha256::Engine>,
-    quad: &'static RefCell<quad::Engine>,
+pub struct SharedFlash;
+
+impl SharedFlash {
+    fn context(&self) -> Context {
+        CONTEXT.get()
+    }
 }
 
 impl ErrorType for SharedFlash {
@@ -102,13 +165,14 @@ impl ReadNorFlash for SharedFlash {
         offset: u32,
         bytes: &mut [u8],
     ) -> core::result::Result<(), Self::Error> {
+        let context = self.context();
         if let [byte] = bytes {
-            let _owner = self.inner.borrow_mut();
+            let _owner = context.inner.borrow_mut();
             *byte = stream::read_byte(offset)?;
             return Ok(());
         }
         if let [first, second] = bytes {
-            let _owner = self.inner.borrow_mut();
+            let _owner = context.inner.borrow_mut();
             [*first, *second] = stream::read_pair(offset)?;
             return Ok(());
         }
@@ -116,14 +180,14 @@ impl ReadNorFlash for SharedFlash {
             && offset.is_multiple_of(4)
             && bytes.len().is_multiple_of(4)
         {
-            self.quad.borrow_mut().ensure_mode();
-            let _owner = self.inner.borrow_mut();
+            context.quad.borrow_mut().ensure_mode();
+            let _owner = context.inner.borrow_mut();
             return stream::read(offset, bytes);
         }
-        block_on(self.inner.borrow_mut().read(offset, bytes))
+        block_on(context.inner.borrow_mut().read(offset, bytes))
     }
     fn capacity(&self) -> usize {
-        self.inner.borrow().capacity()
+        FLASH_SIZE
     }
 }
 impl NorFlash for SharedFlash {
@@ -132,14 +196,14 @@ impl NorFlash for SharedFlash {
     async fn erase(&mut self, from: u32, to: u32) -> core::result::Result<(), Self::Error> {
         {
             crate::trustzone::mpu::with_flash_code(|| {
-                block_on(self.inner.borrow_mut().erase(from, to))
+                block_on(self.context().inner.borrow_mut().erase(from, to))
             })
         }
     }
     async fn write(&mut self, offset: u32, bytes: &[u8]) -> core::result::Result<(), Self::Error> {
         {
             crate::trustzone::mpu::with_flash_code(|| {
-                block_on(self.inner.borrow_mut().write(offset, bytes))
+                block_on(self.context().inner.borrow_mut().write(offset, bytes))
             })
         }
     }
@@ -154,34 +218,118 @@ pub fn wrap_flash(flash: Flash<'static, FLASH, Blocking, FLASH_SIZE>) -> AsyncFl
 
 /// Build the store over this board's two partitions. `main_range` /
 /// `counter_range` are the erase-aligned windows from `memory.x`.
-pub fn new_storage(
+pub fn initialize_storage(
     flash: &'static RefCell<AsyncFlash>,
     main_range: Range<u32>,
     counter_range: Range<u32>,
     source: rsk_store::authenticated::KeySource,
-) -> FlashStorage {
+) {
     debug_assert!((main_range.end - main_range.start) as usize == MAIN_LEN);
     debug_assert!((counter_range.end - counter_range.start) as usize == COUNTER_LEN);
     static QUAD: static_cell::StaticCell<RefCell<quad::Engine>> = static_cell::StaticCell::new();
     let quad = QUAD.init(RefCell::new(quad::Engine::new(flash)));
     static HASH: static_cell::StaticCell<RefCell<sha256::Engine>> = static_cell::StaticCell::new();
     let sha256 = HASH.init(RefCell::new(sha256::Engine::new()));
-    FlashStorage::new_unmounted_with_reads(
-        SharedFlash {
-            inner: flash,
-            sha256,
-            quad,
-        },
-        main_range,
+    #[cfg(not(rsk_small_flash))]
+    static BACKEND: static_cell::ConstStaticCell<RefCell<Backend>> =
+        static_cell::ConstStaticCell::new(RefCell::new(unbound_storage()));
+    #[cfg(not(rsk_small_flash))]
+    let backend = BACKEND.take();
+    #[cfg(rsk_small_flash)]
+    let backend = {
+        // Runtime layout fields keep the large zero arrays out of the flash image.
+        static BACKEND: static_cell::StaticCell<RefCell<Backend>> = static_cell::StaticCell::new();
+        BACKEND.init_with(|| {
+            let layout = rsk_store::authenticated::StoreLayout::new(
+                main_range.clone(),
+                counter_range.clone(),
+                flash.borrow().capacity(),
+            )
+            .expect("invalid storage layout");
+            RefCell::new(Backend::new_unbound(
+                SharedFlash,
+                layout,
+                main_cache(),
+                Some(sha256::digest),
+                Some(sha256::erased),
+            ))
+        })
+    };
+    CONTEXT.install(Context {
+        inner: flash,
+        sha256,
+        quad,
+        backend,
+    });
+    let main_start = crate::env_u32(env!("PK_KVMAIN_START"));
+    let counter_start = crate::env_u32(env!("PK_KVCNT_START"));
+    assert_eq!(main_range, main_start..counter_start);
+    assert_eq!(
         counter_range,
-        source,
-        main_cache,
-        Some(sha256::digest),
-        Some(sha256::erased),
-    )
+        counter_start..counter_start + COUNTER_LEN as u32
+    );
+    assert!(CONTEXT.backend().bind_source(source).is_ok());
 }
 
-fn main_cache() -> MainCache {
+impl rsk_fs::Storage for FlashStorage {
+    const MAX_VALUE: usize = Backend::MAX_VALUE;
+
+    fn mount(&mut self) -> rsk_sdk::error::Result<()> {
+        CONTEXT.backend().mount()
+    }
+    fn boot(&mut self, epoch: [u8; 16]) -> rsk_sdk::error::Result<()> {
+        CONTEXT.backend().boot(epoch)
+    }
+    fn state(&self) -> rsk_fs::storage::StorageState {
+        CONTEXT.backend().state()
+    }
+    fn root_closed(&self) -> bool {
+        CONTEXT.backend().root_closed()
+    }
+    fn administer(
+        &mut self,
+        action: rsk_fs::storage::StorageAction,
+        epoch: [u8; 16],
+    ) -> rsk_sdk::error::Result<()> {
+        CONTEXT.backend().administer(action, epoch)
+    }
+    fn read(&mut self, fid: u16, bytes: &mut [u8]) -> Option<usize> {
+        CONTEXT.backend().read(fid, bytes)
+    }
+    fn write(&mut self, fid: u16, bytes: &[u8]) -> rsk_sdk::error::Result<()> {
+        CONTEXT.backend().write(fid, bytes)
+    }
+    fn remove(&mut self, fid: u16) -> rsk_sdk::error::Result<()> {
+        CONTEXT.backend().remove(fid)
+    }
+    fn read_bound_counter(
+        &mut self,
+        fid: u16,
+        out: &mut [u8],
+    ) -> rsk_sdk::error::Result<Option<usize>> {
+        CONTEXT.backend().read_bound_counter(fid, out)
+    }
+    fn write_bound_counter(&mut self, fid: u16, sealed: &[u8]) -> rsk_sdk::error::Result<bool> {
+        CONTEXT.backend().write_bound_counter(fid, sealed)
+    }
+    fn size(&mut self, fid: u16) -> Option<usize> {
+        CONTEXT.backend().size(fid)
+    }
+    fn exists(&mut self, fid: u16) -> bool {
+        CONTEXT.backend().exists(fid)
+    }
+    fn last_error(&self) -> bool {
+        CONTEXT.backend().last_error()
+    }
+    fn for_each_key(&mut self, f: &mut dyn FnMut(u16)) -> bool {
+        CONTEXT.backend().for_each_key(f)
+    }
+    fn compact(&mut self) -> rsk_sdk::error::Result<()> {
+        CONTEXT.backend().compact()
+    }
+}
+
+const fn main_cache() -> MainCache {
     MainCache::new(
         ArrayPageStates::new(),
         ArrayPagePointers::new(),

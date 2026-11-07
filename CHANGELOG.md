@@ -38,6 +38,20 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ## [Unreleased]
 
+- Initialize the storage backend, filesystem and USB message buffers in static
+  memory instead of returning large values through constructor stack frames
+  (bcdDevice 0x0BE0). Bind the storage key source once before boot admission.
+  Resolve counter banks into caller-owned results and group SHA-256 expansion
+  and rounds to bound the unoptimized core1 stack. Build applet handlers on the
+  worker's first poll and share the wiped Non-secure reply buffer
+  under the existing exchange mutex. Reuse CTAPHID reply await sites and avoid
+  temporary ML-DSA polynomial-vector copies during key expansion and signing.
+  Reuse dead signing scratch while preserving byte-exact signatures. The
+  constant initializers raise the approved image budget from 952 to 1024 KiB;
+  the Secure and Non-secure stack floors are unchanged. Boards with at most
+  2 MiB flash construct the backend at runtime to preserve their code space
+  without moving either storage partition.
+
 - Abort partial CTAPHID reassembly when the USB session changes, before wiping
   its buffer (bcdDevice 0x0BDF). A new channel can start immediately and a stale
   continuation no longer produces a response in the new session.

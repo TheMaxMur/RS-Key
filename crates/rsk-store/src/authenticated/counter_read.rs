@@ -106,7 +106,8 @@ impl<F: NorFlash + MultiwriteNorFlash> Counters<F> {
         }
         let proof = source.prepare_read(self.arm, true)?;
         let key = proof.persisted_key()?;
-        let current = self.resolve(key)?.ok_or(Error::MemoryFatal)?;
+        let mut current = const { Current::new() };
+        self.resolve(key, &mut current)?;
         let bound = self.authority.read_bound(self.identity, self.arm)?;
         self.read_cache.bind(&proof, bound)?;
         let scan = current

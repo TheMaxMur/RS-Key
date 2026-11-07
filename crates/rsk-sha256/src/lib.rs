@@ -32,154 +32,94 @@ const ROUND: [u32; 64] = [
     0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2,
 ];
 
+// Keep unoptimized frames bounded while preserving literal-index release rounds.
+#[inline]
+fn schedule_word(a: u32, x: u32, b: u32, y: u32) -> u32 {
+    a.wrapping_add(x.rotate_right(7) ^ x.rotate_right(18) ^ (x >> 3))
+        .wrapping_add(b)
+        .wrapping_add(y.rotate_right(17) ^ y.rotate_right(19) ^ (y >> 10))
+}
+
+#[inline]
+fn round_first(e: u32, f: u32, g: u32, h: u32, constant: u32, word: u32) -> u32 {
+    h.wrapping_add(e.rotate_right(6) ^ e.rotate_right(11) ^ e.rotate_right(25))
+        .wrapping_add(g ^ (e & (f ^ g)))
+        .wrapping_add(constant)
+        .wrapping_add(word)
+}
+
+#[inline]
+fn round_second(a: u32, b: u32, c: u32) -> u32 {
+    (a.rotate_right(2) ^ a.rotate_right(13) ^ a.rotate_right(22))
+        .wrapping_add((a & b) | (c & (a | b)))
+}
+
+// Eight-word groups keep literal indices without retaining every temporary.
+#[inline]
+fn expand8<const START: usize>(w: &mut [u32; 64]) {
+    macro_rules! expand {
+        ($i:expr) => {{
+            w[$i] = schedule_word(w[$i - 16], w[$i - 15], w[$i - 7], w[$i - 2]);
+        }};
+    }
+    expand!(START);
+    expand!(START + 1);
+    expand!(START + 2);
+    expand!(START + 3);
+    expand!(START + 4);
+    expand!(START + 5);
+    expand!(START + 6);
+    expand!(START + 7);
+}
+
+#[inline]
+fn rounds8<const START: usize>(working: &mut [u32; 8], w: &[u32; 64]) {
+    let [mut a, mut b, mut c, mut d, mut e, mut f, mut g, mut h] = *working;
+    macro_rules! round {
+        ($a:ident, $b:ident, $c:ident, $d:ident, $e:ident, $f:ident, $g:ident, $h:ident, $i:expr) => {{
+            let t1 = round_first($e, $f, $g, $h, ROUND[$i], w[$i]);
+            let t2 = round_second($a, $b, $c);
+            $d = $d.wrapping_add(t1);
+            $h = t1.wrapping_add(t2);
+        }};
+    }
+    round!(a, b, c, d, e, f, g, h, START);
+    round!(h, a, b, c, d, e, f, g, START + 1);
+    round!(g, h, a, b, c, d, e, f, START + 2);
+    round!(f, g, h, a, b, c, d, e, START + 3);
+    round!(e, f, g, h, a, b, c, d, START + 4);
+    round!(d, e, f, g, h, a, b, c, START + 5);
+    round!(c, d, e, f, g, h, a, b, START + 6);
+    round!(b, c, d, e, f, g, h, a, START + 7);
+    *working = [a, b, c, d, e, f, g, h];
+}
+
 fn compress(state: &mut [u32; 8], block: &Block<Sha256Core>) {
     let mut schedule = Secret::new([0u32; 64]);
     let w = schedule.expose_mut();
     for (word, bytes) in w.iter_mut().zip(block.as_chunks::<4>().0.iter()) {
         *word = u32::from_be_bytes(*bytes);
     }
-    // Literal indices expose complete initialization to the optimizer.
-    macro_rules! expand {
-        ($i:expr) => {{
-            let x = w[$i - 15];
-            let y = w[$i - 2];
-            w[$i] = w[$i - 16]
-                .wrapping_add(x.rotate_right(7) ^ x.rotate_right(18) ^ (x >> 3))
-                .wrapping_add(w[$i - 7])
-                .wrapping_add(y.rotate_right(17) ^ y.rotate_right(19) ^ (y >> 10));
-        }};
-    }
-    expand!(16);
-    expand!(17);
-    expand!(18);
-    expand!(19);
-    expand!(20);
-    expand!(21);
-    expand!(22);
-    expand!(23);
-    expand!(24);
-    expand!(25);
-    expand!(26);
-    expand!(27);
-    expand!(28);
-    expand!(29);
-    expand!(30);
-    expand!(31);
-    expand!(32);
-    expand!(33);
-    expand!(34);
-    expand!(35);
-    expand!(36);
-    expand!(37);
-    expand!(38);
-    expand!(39);
-    expand!(40);
-    expand!(41);
-    expand!(42);
-    expand!(43);
-    expand!(44);
-    expand!(45);
-    expand!(46);
-    expand!(47);
-    expand!(48);
-    expand!(49);
-    expand!(50);
-    expand!(51);
-    expand!(52);
-    expand!(53);
-    expand!(54);
-    expand!(55);
-    expand!(56);
-    expand!(57);
-    expand!(58);
-    expand!(59);
-    expand!(60);
-    expand!(61);
-    expand!(62);
-    expand!(63);
+    expand8::<16>(w);
+    expand8::<24>(w);
+    expand8::<32>(w);
+    expand8::<40>(w);
+    expand8::<48>(w);
+    expand8::<56>(w);
     // Avoid rematerializing the schedule solely for its final wipe.
     let w = core::hint::black_box(w);
-    let [mut a, mut b, mut c, mut d, mut e, mut f, mut g, mut h] = *state;
-    // Rotating the register roles saves the seven state moves in each round.
-    macro_rules! round {
-        ($a:ident, $b:ident, $c:ident, $d:ident, $e:ident, $f:ident, $g:ident, $h:ident, $i:expr) => {{
-            let t1 = $h
-                .wrapping_add($e.rotate_right(6) ^ $e.rotate_right(11) ^ $e.rotate_right(25))
-                .wrapping_add($g ^ ($e & ($f ^ $g)))
-                .wrapping_add(ROUND[$i])
-                .wrapping_add(w[$i]);
-            let t2 = ($a.rotate_right(2) ^ $a.rotate_right(13) ^ $a.rotate_right(22))
-                .wrapping_add(($a & $b) | ($c & ($a | $b)));
-            $d = $d.wrapping_add(t1);
-            $h = t1.wrapping_add(t2);
-        }};
-    }
-    round!(a, b, c, d, e, f, g, h, 0);
-    round!(h, a, b, c, d, e, f, g, 1);
-    round!(g, h, a, b, c, d, e, f, 2);
-    round!(f, g, h, a, b, c, d, e, 3);
-    round!(e, f, g, h, a, b, c, d, 4);
-    round!(d, e, f, g, h, a, b, c, 5);
-    round!(c, d, e, f, g, h, a, b, 6);
-    round!(b, c, d, e, f, g, h, a, 7);
-    round!(a, b, c, d, e, f, g, h, 8);
-    round!(h, a, b, c, d, e, f, g, 9);
-    round!(g, h, a, b, c, d, e, f, 10);
-    round!(f, g, h, a, b, c, d, e, 11);
-    round!(e, f, g, h, a, b, c, d, 12);
-    round!(d, e, f, g, h, a, b, c, 13);
-    round!(c, d, e, f, g, h, a, b, 14);
-    round!(b, c, d, e, f, g, h, a, 15);
-    round!(a, b, c, d, e, f, g, h, 16);
-    round!(h, a, b, c, d, e, f, g, 17);
-    round!(g, h, a, b, c, d, e, f, 18);
-    round!(f, g, h, a, b, c, d, e, 19);
-    round!(e, f, g, h, a, b, c, d, 20);
-    round!(d, e, f, g, h, a, b, c, 21);
-    round!(c, d, e, f, g, h, a, b, 22);
-    round!(b, c, d, e, f, g, h, a, 23);
-    round!(a, b, c, d, e, f, g, h, 24);
-    round!(h, a, b, c, d, e, f, g, 25);
-    round!(g, h, a, b, c, d, e, f, 26);
-    round!(f, g, h, a, b, c, d, e, 27);
-    round!(e, f, g, h, a, b, c, d, 28);
-    round!(d, e, f, g, h, a, b, c, 29);
-    round!(c, d, e, f, g, h, a, b, 30);
-    round!(b, c, d, e, f, g, h, a, 31);
-    round!(a, b, c, d, e, f, g, h, 32);
-    round!(h, a, b, c, d, e, f, g, 33);
-    round!(g, h, a, b, c, d, e, f, 34);
-    round!(f, g, h, a, b, c, d, e, 35);
-    round!(e, f, g, h, a, b, c, d, 36);
-    round!(d, e, f, g, h, a, b, c, 37);
-    round!(c, d, e, f, g, h, a, b, 38);
-    round!(b, c, d, e, f, g, h, a, 39);
-    round!(a, b, c, d, e, f, g, h, 40);
-    round!(h, a, b, c, d, e, f, g, 41);
-    round!(g, h, a, b, c, d, e, f, 42);
-    round!(f, g, h, a, b, c, d, e, 43);
-    round!(e, f, g, h, a, b, c, d, 44);
-    round!(d, e, f, g, h, a, b, c, 45);
-    round!(c, d, e, f, g, h, a, b, 46);
-    round!(b, c, d, e, f, g, h, a, 47);
-    round!(a, b, c, d, e, f, g, h, 48);
-    round!(h, a, b, c, d, e, f, g, 49);
-    round!(g, h, a, b, c, d, e, f, 50);
-    round!(f, g, h, a, b, c, d, e, 51);
-    round!(e, f, g, h, a, b, c, d, 52);
-    round!(d, e, f, g, h, a, b, c, 53);
-    round!(c, d, e, f, g, h, a, b, 54);
-    round!(b, c, d, e, f, g, h, a, 55);
-    round!(a, b, c, d, e, f, g, h, 56);
-    round!(h, a, b, c, d, e, f, g, 57);
-    round!(g, h, a, b, c, d, e, f, 58);
-    round!(f, g, h, a, b, c, d, e, 59);
-    round!(e, f, g, h, a, b, c, d, 60);
-    round!(d, e, f, g, h, a, b, c, 61);
-    round!(c, d, e, f, g, h, a, b, 62);
-    round!(b, c, d, e, f, g, h, a, 63);
-    for (word, value) in state.iter_mut().zip([a, b, c, d, e, f, g, h]) {
-        *word = word.wrapping_add(value);
+    let mut working = Secret::new([0u32; 8]);
+    working.expose_mut().copy_from_slice(state);
+    rounds8::<0>(working.expose_mut(), w);
+    rounds8::<8>(working.expose_mut(), w);
+    rounds8::<16>(working.expose_mut(), w);
+    rounds8::<24>(working.expose_mut(), w);
+    rounds8::<32>(working.expose_mut(), w);
+    rounds8::<40>(working.expose_mut(), w);
+    rounds8::<48>(working.expose_mut(), w);
+    rounds8::<56>(working.expose_mut(), w);
+    for (word, value) in state.iter_mut().zip(working.expose()) {
+        *word = word.wrapping_add(*value);
     }
 }
 

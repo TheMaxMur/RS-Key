@@ -85,6 +85,19 @@ the design intends and not something this repository has shown.
 
 ## Boot sequence
 
+The backend, filesystem and CTAPHID/CCID message buffers are constructed in
+their final static owners. Boards with at most 2 MiB flash construct the backend
+at runtime to keep its large zero arrays out of the flash image; larger boards
+use a constant initializer. Boot installs the flash/SHA/QMI reference set on
+Secure core0 and binds the backend's key source once before recovering storage.
+An unbound backend refuses reads and administration before flash I/O. The board
+storage handle borrows the backend for each synchronous operation; USB
+transports borrow their statically initialized message buffers.
+The worker's first poll builds applet handlers in separate static cells. Its
+constructor returns before command futures run; main has already returned its
+peripheral-initialization frame. Non-secure exchanges borrow one response buffer
+under their existing mutex and clear the complete ABI-sized span on every exit.
+
 Getting to that runtime state has a strict order. The bootrom verifies the
 signed image, then the firmware provisions and recovers **all** persistent state
 (OTP keys, the KV store, the phy record, the TRNG, the seal migrations and the
@@ -413,6 +426,17 @@ larger unrelated values before finding the requested FID. This avoids a small
 buffer failure, repeated binding proof and full-buffer retry, and lets the first
 verified value seed its read tag. Tag hits retain the bounded span and the
 existing recovery checks.
+
+TrustZone build `0x0BE0` gives counter resolution and scanning caller-owned
+results, avoiding repeated large return-value copies in unoptimized builds.
+Software SHA-256 groups its literal-index schedule and register rotation in
+eight-word helpers that can inline in optimized builds. This bounds unoptimized
+core1 frames; chaining state, schedule and working state retain `Secret` owners.
+Persistent encodings are unchanged.
+ML-DSA zero vectors use constant elements. Key expansion fills its final fields
+before converting them to the NTT/Montgomery domain; signing fills vectors
+without array-constructor copies and reuses the product and LowBits buffers
+for the response and hints. Polynomial owners still wipe on every exit.
 
 TrustZone build `0x0ADC` also unrolls SHA-256 schedule expansion. A placement
 hint avoids rebuilding the expanded schedule solely for its final wipe. The hint

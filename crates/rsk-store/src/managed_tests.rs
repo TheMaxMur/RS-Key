@@ -35,6 +35,9 @@ mod automatic_boot;
 #[path = "managed_api_tests.rs"]
 mod api;
 
+#[path = "unbound_tests.rs"]
+mod unbound;
+
 #[test]
 fn construction_and_mount_can_use_separate_frames_without_exposing_unmounted_data() {
     let flash = provision_legacy();

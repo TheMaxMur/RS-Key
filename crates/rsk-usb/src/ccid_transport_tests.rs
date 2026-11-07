@@ -154,7 +154,8 @@ fn with_ccid_handler<H: ApduHandler>(
     for _ in 0..2 {
         builder.function(0xff, 0, 0).interface();
     }
-    let mut ccid = Ccid::new(&mut builder, handler, ATR_RSKEY, pin_support);
+    let mut buffers = Buffers::new();
+    let mut ccid = Ccid::new(&mut builder, handler, ATR_RSKEY, pin_support, &mut buffers);
     assert_eq!(ccid.interface_number(), 2);
     test(&mut ccid, &trace);
     drop(ccid);

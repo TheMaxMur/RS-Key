@@ -25,23 +25,68 @@ pub struct Layout {
 }
 
 impl Layout {
-    pub fn new(counter_range: Range<u32>) -> Result<Self> {
-        if counter_range.end.checked_sub(counter_range.start) != Some(AUTHORITY_BYTES) {
-            return Err(Error::MemoryFatal);
+    pub const fn new(counter_range: Range<u32>) -> Result<Self> {
+        match counter_range.end.checked_sub(counter_range.start) {
+            Some(AUTHORITY_BYTES) => {}
+            _ => return Err(Error::MemoryFatal),
         }
+        // The checked full span bounds every intermediate bank boundary.
         let first = counter_range.start;
-        let second = first
-            .checked_add(MAIN_BANK_BYTES)
-            .ok_or(Error::MemoryFatal)?;
-        let third = second
-            .checked_add(MAIN_BANK_BYTES)
-            .ok_or(Error::MemoryFatal)?;
-        let fourth = third
-            .checked_add(COUNTER_BANK_BYTES)
-            .ok_or(Error::MemoryFatal)?;
+        let second = first + MAIN_BANK_BYTES;
+        let third = second + MAIN_BANK_BYTES;
+        let fourth = third + COUNTER_BANK_BYTES;
         Ok(Self {
             main: [first..second, second..third],
             counter: [third..fourth, fourth..counter_range.end],
+        })
+    }
+}
+
+/// Validated physical bounds for constructing an unbound store in static memory.
+pub struct StoreLayout<F: NorFlash + MultiwriteNorFlash> {
+    pub(super) main_range: Range<u32>,
+    pub(super) counter_range: Range<u32>,
+    main: [Range<u32>; 2],
+    counter: [Range<u32>; 2],
+    map: MapConfig<VerifiedFlash<F>>,
+}
+
+impl<F: NorFlash + MultiwriteNorFlash> StoreLayout<F> {
+    pub const fn new(
+        main_range: Range<u32>,
+        counter_range: Range<u32>,
+        capacity: usize,
+    ) -> Result<Self> {
+        if main_range.start >= main_range.end
+            || main_range.end > counter_range.start
+            || !RawBank::<F>::valid_range(&main_range, capacity)
+            || !RawBank::<F>::valid_range(&counter_range, capacity)
+        {
+            return Err(Error::MemoryFatal);
+        }
+        let layout = match Layout::new(counter_range.start..counter_range.end) {
+            Ok(layout) => layout,
+            Err(error) => return Err(error),
+        };
+        let [main_zero, main_one] = &layout.main;
+        let [counter_zero, counter_one] = &layout.counter;
+        if !RawBank::<F>::valid_range(main_zero, capacity)
+            || !RawBank::<F>::valid_range(main_one, capacity)
+            || !RawBank::<F>::valid_range(counter_zero, capacity)
+            || !RawBank::<F>::valid_range(counter_one, capacity)
+        {
+            return Err(Error::MemoryFatal);
+        }
+        let map = match MapConfig::try_new(main_range.start..main_range.end) {
+            Ok(map) => map,
+            Err(_) => return Err(Error::MemoryFatal),
+        };
+        Ok(Self {
+            main_range,
+            counter_range,
+            main: layout.main,
+            counter: layout.counter,
+            map,
         })
     }
 }
@@ -60,6 +105,66 @@ pub struct Authenticated<F: NorFlash + MultiwriteNorFlash + Clone, C: CacheImpl<
 }
 
 impl<F: NorFlash + MultiwriteNorFlash + Clone, C: CacheImpl<u16>> Authenticated<F, C> {
+    pub(super) const fn new_unbound(
+        flash: F,
+        layout: StoreLayout<F>,
+        cache: C,
+        digest: Option<super::BankDigest<F>>,
+        erased: Option<super::BankErased<F>>,
+    ) -> Self
+    where
+        F: Copy,
+    {
+        let StoreLayout {
+            main_range,
+            counter_range,
+            main,
+            counter,
+            map,
+        } = layout;
+        let [main_zero, main_one] = main;
+        let [counter_zero, counter_one] = counter;
+        let mut zero = RawBank::from_range(flash, main_zero);
+        let mut one = RawBank::from_range(flash, main_one);
+        zero.digest = digest;
+        one.digest = digest;
+        let mut counter_zero = RawBank::from_range(flash, counter_zero);
+        let mut counter_one = RawBank::from_range(flash, counter_one);
+        counter_zero.digest = digest;
+        counter_one.digest = digest;
+        counter_zero.erased = erased;
+        counter_one.erased = erased;
+        Self {
+            main: Main::new(
+                MapStorage::new(VerifiedFlash::new(flash), map, cache),
+                [
+                    Journal::new(zero, Partition::Main),
+                    Journal::new(one, Partition::Main),
+                ],
+                [0; super::EPOCH_BYTES],
+                RootArm::PreOtp,
+            ),
+            counters: Counters::from_banks(
+                [
+                    CounterBank::new(counter_zero),
+                    CounterBank::new(counter_one),
+                ],
+                Identity {
+                    partition: Partition::Counter,
+                    epoch: [0; super::EPOCH_BYTES],
+                },
+                RootArm::PreOtp,
+            ),
+            source: KeySource::unavailable(),
+            main_arm: RootArm::PreOtp,
+            counter_arm: RootArm::PreOtp,
+            last_error: false,
+            flash,
+            main_range,
+            counter_range,
+        }
+    }
+
     #[inline(always)]
     pub fn new(
         flash: F,

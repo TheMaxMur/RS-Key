@@ -267,6 +267,7 @@ fn declare<'d>(
     builder: &mut Builder<'d, UsbIpDriver>,
     kbd_state: &'d mut HidState<'d>,
     fido_state: &'d mut HidState<'d>,
+    ccid_buffers: &'d mut rsk_usb::ccid::Buffers,
     otp: Option<&'d mut crate::otp_kbd::OtpHandler>,
     jobs: &Jobs,
     atr: &'static [u8],
@@ -304,7 +305,7 @@ fn declare<'d>(
     // `bPINSupport = 0`: no pad. `--display` does give the emulator a touchscreen,
     // but the card interface would then have to collect the PIN on it and does
     // not — advertising VERIFY would light up a host flow that collects nothing.
-    let ccid = Ccid::new(builder, CardJobs(jobs.clone()), atr, 0x00);
+    let ccid = Ccid::new(builder, CardJobs(jobs.clone()), atr, 0x00, ccid_buffers);
     (kbd, fido, ccid)
 }
 
@@ -399,6 +400,7 @@ pub fn serve(addr: String, jobs: Jobs, signals: Arc<Signals>, yubico: bool) {
         &mut builder,
         Box::leak(Box::new(HidState::new())),
         Box::leak(Box::new(HidState::new())),
+        Box::leak(Box::new(rsk_usb::ccid::Buffers::new())),
         Some(Box::leak(Box::new(otp.handler(signals.clone())))),
         &jobs,
         atr,
@@ -411,6 +413,7 @@ pub fn serve(addr: String, jobs: Jobs, signals: Arc<Signals>, yubico: bool) {
         HidJobs(jobs.clone()),
         up_pending,
         request_cancel,
+        Box::leak(Box::new(rsk_usb::ctaphid::Buffers::new())),
     );
 
     let mut port = PoweredPort {

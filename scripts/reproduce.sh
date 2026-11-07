@@ -188,6 +188,7 @@ CLAIM_JOBS=(
 CLAIM_ROWS=(
   "^bash scripts/build\\.sh( --features [a-z0-9,-]+)?$|gate|builds the combined S/NS image from pinned local sources without a board or signing key"
   "^env FLASH_SIZE=16M bash scripts/build\\.sh$|gate|builds the 16 MB combined image locally"
+  "^env FLASH_SIZE=2M KVMAIN=896K bash scripts/build\\.sh$|gate|builds the documented 2 MB combined image locally"
   "^env LED_KIND=none FLASH_SIZE=16M bash scripts/build\\.sh --features display$|gate|builds the combined display image locally"
   "^cargo |gate|"
   "^env .*cargo |gate|"

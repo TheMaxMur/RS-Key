@@ -37,7 +37,7 @@ pub struct Journal<F: NorFlash + MultiwriteNorFlash> {
 }
 
 impl<F: NorFlash + MultiwriteNorFlash> Journal<F> {
-    pub fn new(bank: RawBank<F>, partition: Partition) -> Self {
+    pub const fn new(bank: RawBank<F>, partition: Partition) -> Self {
         Self { bank, partition }
     }
 

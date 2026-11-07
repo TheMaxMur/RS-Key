@@ -68,11 +68,12 @@ fn read_scan_value<F: NorFlash + MultiwriteNorFlash>(
     Ok(Some(padded))
 }
 
-pub(super) fn scan<F: NorFlash + MultiwriteNorFlash>(
+pub(super) fn scan_into<F: NorFlash + MultiwriteNorFlash>(
     reader: &mut RawBank<F>,
     key: &[u8; 32],
     directory: &mut Directory<MAX_COUNTER_ENTRIES>,
-) -> Result<CounterScan> {
+    scan: &mut CounterScan,
+) -> Result<()> {
     reader.append_proof = None;
     directory.clear();
     let mut header = [0; CHECKPOINT_BYTES];
@@ -81,27 +82,18 @@ pub(super) fn scan<F: NorFlash + MultiwriteNorFlash>(
     fingerprint.update(RAW_DOMAIN);
     fingerprint.update(&reader.capacity().to_le_bytes());
     fingerprint.update(&header);
-    let mut scan = CounterScan {
-        status: JournalStatus::Dirty,
-        checkpoint: None,
-        sequence: None,
-        lower_bound: None,
-        next: 0,
-        locations: [None; MAX_COUNTER_ENTRIES],
-        fingerprint: None,
-        raw_fingerprint: None,
-    };
+    *scan = const { CounterScan::new() };
     if header.iter().all(|&byte| byte == 0xFF) {
         if reader.read_erased(0)? {
             scan.status = JournalStatus::Empty;
         }
-        return Ok(scan);
+        return Ok(());
     }
     let Ok(checkpoint) = Checkpoint::verify(&header, key) else {
-        return Ok(scan);
+        return Ok(());
     };
     if checkpoint.identity.partition != Partition::Counter {
-        return Ok(scan);
+        return Ok(());
     }
     scan.checkpoint = Some(checkpoint);
     scan.lower_bound = Some(checkpoint.sequence);
@@ -113,14 +105,14 @@ pub(super) fn scan<F: NorFlash + MultiwriteNorFlash>(
         reader.read(at, &mut encoded)?;
         fingerprint.update(&encoded);
         let Ok(entry) = Entry::decode(&encoded) else {
-            return Ok(scan);
+            return Ok(());
         };
         let Ok(index) = counter_index(entry.fid()) else {
-            return Ok(scan);
+            return Ok(());
         };
         if entry.length().is_none() || directory.push_snapshot(entry, checkpoint.sequence).is_err()
         {
-            return Ok(scan);
+            return Ok(());
         }
         let value_at = at
             .checked_add(u32::try_from(ENTRY_BYTES).map_err(|_| Error::MemoryFatal)?)
@@ -135,7 +127,7 @@ pub(super) fn scan<F: NorFlash + MultiwriteNorFlash>(
             &mut fingerprint,
         )?
         else {
-            return Ok(scan);
+            return Ok(());
         };
         *scan.locations.get_mut(index).ok_or(Error::MemoryFatal)? = Some(CounterLocation {
             entry,
@@ -149,7 +141,7 @@ pub(super) fn scan<F: NorFlash + MultiwriteNorFlash>(
         &directory.digest(checkpoint.identity, key, checkpoint.sequence)?,
         &checkpoint.digest,
     ) {
-        return Ok(scan);
+        return Ok(());
     }
     scan.sequence = Some(checkpoint.sequence);
     scan.next = at;
@@ -164,10 +156,10 @@ pub(super) fn scan<F: NorFlash + MultiwriteNorFlash>(
         }
         fingerprint.update(&encoded);
         let Ok(entry) = Entry::decode(&encoded) else {
-            return Ok(scan);
+            return Ok(());
         };
         let Ok(index) = counter_index(entry.fid()) else {
-            return Ok(scan);
+            return Ok(());
         };
         let sequence = scan
             .sequence
@@ -175,7 +167,7 @@ pub(super) fn scan<F: NorFlash + MultiwriteNorFlash>(
             .checked_add(1)
             .ok_or(Error::MemoryFatal)?;
         if entry.generation() != sequence {
-            return Ok(scan);
+            return Ok(());
         }
         let value_at = at
             .checked_add(u32::try_from(ENTRY_BYTES).map_err(|_| Error::MemoryFatal)?)
@@ -190,10 +182,10 @@ pub(super) fn scan<F: NorFlash + MultiwriteNorFlash>(
             &mut fingerprint,
         )?
         else {
-            return Ok(scan);
+            return Ok(());
         };
         if directory.apply(entry).is_err() {
-            return Ok(scan);
+            return Ok(());
         }
         *scan.locations.get_mut(index).ok_or(Error::MemoryFatal)? =
             entry.length().map(|_| CounterLocation {
@@ -215,14 +207,14 @@ fn finish_scan<F: NorFlash + MultiwriteNorFlash>(
     reader: &mut RawBank<F>,
     key: &[u8; 32],
     fingerprint: Sha256State,
-    mut scan: CounterScan,
+    scan: &mut CounterScan,
     at: u32,
-) -> Result<CounterScan> {
+) -> Result<()> {
     if !reader.read_erased(at)? {
-        return Ok(scan);
+        return Ok(());
     }
     scan.fingerprint = Some(reader.remember_prefix(fingerprint, at, key));
     scan.raw_fingerprint = reader.append_proof.as_ref().map(|proof| proof.raw_digest());
     scan.status = JournalStatus::Complete;
-    Ok(scan)
+    Ok(())
 }

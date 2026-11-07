@@ -341,6 +341,27 @@ pub fn process_message(msg: &[u8], atr: &[u8], status: &mut u8, out: &mut [u8]) 
     }
 }
 
+/// Message storage kept in its final owner before constructing the transport.
+pub struct Buffers {
+    rx: [u8; MAX_CCID_MSG],
+    tx: [u8; MAX_CCID_MSG],
+}
+
+impl Buffers {
+    pub const fn new() -> Self {
+        Self {
+            rx: [0; MAX_CCID_MSG],
+            tx: [0; MAX_CCID_MSG],
+        }
+    }
+}
+
+impl Default for Buffers {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// CCID transport bound to a bulk OUT/IN pair plus an interrupt IN endpoint,
 /// dispatching `XfrBlock` APDUs to `H`.
 pub struct Ccid<'d, D: Driver<'d>, H: ApduHandler> {
@@ -352,8 +373,8 @@ pub struct Ccid<'d, D: Driver<'d>, H: ApduHandler> {
     handler: H,
     status: u8,
     atr: &'static [u8],
-    rx: [u8; MAX_CCID_MSG],
-    tx: [u8; MAX_CCID_MSG],
+    rx: &'d mut [u8; MAX_CCID_MSG],
+    tx: &'d mut [u8; MAX_CCID_MSG],
 }
 
 impl<'d, D: Driver<'d>, H: ApduHandler> Ccid<'d, D, H> {
@@ -369,7 +390,11 @@ impl<'d, D: Driver<'d>, H: ApduHandler> Ccid<'d, D, H> {
         handler: H,
         atr: &'static [u8],
         pin_support: u8,
+        buffers: &'d mut Buffers,
     ) -> Self {
+        let Buffers { rx, tx } = buffers;
+        rx.fill(0);
+        tx.fill(0);
         let mut func = builder.function(USB_CLASS_SMART_CARD, 0, 0);
         let mut iface = func.interface();
         let interface = u8::from(iface.interface_number());
@@ -395,8 +420,8 @@ impl<'d, D: Driver<'d>, H: ApduHandler> Ccid<'d, D, H> {
             handler,
             status: STATUS_INACTIVE,
             atr,
-            rx: [0; MAX_CCID_MSG],
-            tx: [0; MAX_CCID_MSG],
+            rx,
+            tx,
         }
     }
 
@@ -432,7 +457,7 @@ impl<'d, D: Driver<'d>, H: ApduHandler> Ccid<'d, D, H> {
                         && let Some(accepted) = H::acknowledge_abort(seq)
                     {
                         put_header(
-                            &mut self.tx,
+                            self.tx.as_mut_slice(),
                             CCID_SLOT_STATUS_RET,
                             0,
                             seq,
@@ -446,7 +471,7 @@ impl<'d, D: Driver<'d>, H: ApduHandler> Ccid<'d, D, H> {
                         .await;
                     } else if H::abort_pending() {
                         put_header(
-                            &mut self.tx,
+                            self.tx.as_mut_slice(),
                             CCID_DATA_BLOCK_RET,
                             0,
                             seq,
@@ -458,7 +483,9 @@ impl<'d, D: Driver<'d>, H: ApduHandler> Ccid<'d, D, H> {
                             Timer::after_millis(TX_TIMEOUT_MS),
                         )
                         .await;
-                    } else if let Some(n) = refuse_short_xfr(msg, self.status, &mut self.tx) {
+                    } else if let Some(n) =
+                        refuse_short_xfr(msg, self.status, self.tx.as_mut_slice())
+                    {
                         let _ = select(
                             self.write_ep
                                 .write_transfer(self.tx.get(..n).unwrap_or_default(), false),
@@ -480,7 +507,7 @@ impl<'d, D: Driver<'d>, H: ApduHandler> Ccid<'d, D, H> {
                             self.rx.get(..total).unwrap_or_default(),
                             self.atr,
                             &mut self.status,
-                            &mut self.tx,
+                            self.tx.as_mut_slice(),
                         );
                         if n > 0 {
                             // A short packet (or ZLP on an exact multiple) ends the
@@ -504,7 +531,13 @@ impl<'d, D: Driver<'d>, H: ApduHandler> Ccid<'d, D, H> {
                     // does, on the power/status/params responses) discarded the one
                     // reply whose whole job is to resynchronise (audit run-36).
                     let seq = self.rx[6];
-                    put_header(&mut self.tx, CCID_DATA_BLOCK_RET, 2, seq, self.status);
+                    put_header(
+                        self.tx.as_mut_slice(),
+                        CCID_DATA_BLOCK_RET,
+                        2,
+                        seq,
+                        self.status,
+                    );
                     self.tx[HEADER] = 0x6F;
                     self.tx[HEADER + 1] = 0x00;
                     let _ = select(
@@ -535,6 +568,7 @@ impl<'d, D: Driver<'d>, H: ApduHandler> Ccid<'d, D, H> {
             status,
             ..
         } = self;
+        let tx = &mut **tx;
         let seq = rx[6];
         let n = {
             // The APDU can carry an imported private key: wiped once the handler is
@@ -612,6 +646,7 @@ impl<'d, D: Driver<'d>, H: ApduHandler> Ccid<'d, D, H> {
             status,
             ..
         } = self;
+        let tx = &mut **tx;
         let seq = rx[6];
         let result = {
             // No PIN in here (the pad collects it on-device); wiped as `run_xfr`'s is.

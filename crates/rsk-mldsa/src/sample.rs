@@ -132,25 +132,35 @@ fn rej_bounded_poly(eta: i32, parts: &[&[u8]]) -> Poly {
 pub(crate) fn expand_s<const K: usize, const L: usize>(
     eta: i32,
     rho: &[u8; 64],
-) -> ([Poly; L], [Poly; K]) {
+    s1: &mut [Poly; L],
+    s2: &mut [Poly; K],
+) {
     // IntegerToBytes(r, 2) little-endian; r and r+L are both < 256.
-    let s1 = core::array::from_fn(|r| rej_bounded_poly(eta, &[rho, &[r as u8], &[0]]));
-    let s2 = core::array::from_fn(|r| rej_bounded_poly(eta, &[rho, &[(r + L) as u8], &[0]]));
-    (s1, s2)
+    for (r, out) in s1.iter_mut().enumerate() {
+        *out = rej_bounded_poly(eta, &[rho, &[r as u8], &[0]]);
+    }
+    for (r, out) in s2.iter_mut().enumerate() {
+        *out = rej_bounded_poly(eta, &[rho, &[(r + L) as u8], &[0]]);
+    }
 }
 
 /// ExpandMask (Alg 34): the masking vector y ∈ R^l with coefficients in
 /// (−γ1, γ1], for signing-loop iteration counter `mu`.
-pub(crate) fn expand_mask<const L: usize>(gamma1: i32, rho: &[u8; 64], mu: u16) -> [Poly; L] {
+pub(crate) fn expand_mask<const L: usize>(
+    gamma1: i32,
+    rho: &[u8; 64],
+    mu: u16,
+    out: &mut [Poly; L],
+) {
     let c = 1 + bit_length(gamma1 - 1); // 18 (γ1=2^17) or 20 (γ1=2^19)
-    core::array::from_fn(|r| {
+    for (r, dst) in out.iter_mut().enumerate() {
         let mut v = [0u8; 32 * 20];
         let n = mu + r as u16;
         let mut xof = shake256(&[rho, &n.to_le_bytes()]);
         xof.read(&mut v[..32 * c]);
         // a+b+1 = 2γ1 is a power of two, so every decode is in range — never Err.
-        bit_unpack(&v[..32 * c], gamma1 - 1, gamma1).expect("ExpandMask decode in range")
-    })
+        *dst = bit_unpack(&v[..32 * c], gamma1 - 1, gamma1).expect("ExpandMask decode in range");
+    }
 }
 
 /// Streaming matrix-vector product `w = Â·û` in the NTT domain (the pointwise
@@ -159,13 +169,29 @@ pub(crate) fn expand_mask<const L: usize>(gamma1: i32, rho: &[u8; 64], mu: u16) 
 /// one A-polynomial plus the SHAKE128 state resident, not k·l. This is the core
 /// stack saving over the by-value reference. `û` need not be in Montgomery form;
 /// it is lifted here (exactly one operand carries the 2^32 factor).
-#[allow(clippy::needless_range_loop)] // i, j index different arrays and seed Â[i][j]
 pub(crate) fn matrix_mul_streaming<const K: usize, const L: usize>(
     rho: &[u8; 32],
     u_hat: &[Poly; L],
 ) -> [Poly; K] {
-    let u_mont: [Poly; L] = core::array::from_fn(|j| to_mont(&u_hat[j]));
     let mut w: [Poly; K] = zero_vec();
+    matrix_mul_streaming_into(rho, u_hat, &mut w);
+    w
+}
+
+/// The streaming product in its final storage, without a returned vector copy.
+#[allow(clippy::needless_range_loop)] // i, j index different arrays and seed Â[i][j]
+pub(crate) fn matrix_mul_streaming_into<const K: usize, const L: usize>(
+    rho: &[u8; 32],
+    u_hat: &[Poly; L],
+    w: &mut [Poly; K],
+) {
+    let mut u_mont: [Poly; L] = zero_vec();
+    for (dst, src) in u_mont.iter_mut().zip(u_hat) {
+        *dst = to_mont(src);
+    }
+    for row in w.iter_mut() {
+        row.0.fill(0);
+    }
     for i in 0..K {
         for j in 0..L {
             let a_ij = rej_ntt_poly(rho, j as u8, i as u8); // Â[i][j] on the fly
@@ -174,7 +200,6 @@ pub(crate) fn matrix_mul_streaming<const K: usize, const L: usize>(
             }
         }
     }
-    w
 }
 
 #[cfg(test)]

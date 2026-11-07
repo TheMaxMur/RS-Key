@@ -40,6 +40,19 @@ pub struct CounterScan {
 }
 
 impl CounterScan {
+    pub(super) const fn new() -> Self {
+        Self {
+            status: JournalStatus::Dirty,
+            checkpoint: None,
+            sequence: None,
+            lower_bound: None,
+            next: 0,
+            locations: [None; MAX_COUNTER_ENTRIES],
+            fingerprint: None,
+            raw_fingerprint: None,
+        }
+    }
+
     pub(super) fn entry(&self, fid: u16) -> Option<Entry> {
         self.locations
             .get(scan::counter_index(fid).ok()?)?
@@ -55,7 +68,7 @@ pub struct CounterBank<F: NorFlash + MultiwriteNorFlash> {
 }
 
 impl<F: NorFlash + MultiwriteNorFlash> CounterBank<F> {
-    pub fn new(bank: RawBank<F>) -> Self {
+    pub const fn new(bank: RawBank<F>) -> Self {
         Self { bank }
     }
     pub fn capacity(&self) -> u32 {
@@ -155,7 +168,18 @@ impl<F: NorFlash + MultiwriteNorFlash> CounterBank<F> {
         key: &[u8; 32],
         directory: &mut Directory<MAX_COUNTER_ENTRIES>,
     ) -> Result<CounterScan> {
-        scan::scan(&mut self.bank, key, directory)
+        let mut scan = const { CounterScan::new() };
+        self.scan_into(key, directory, &mut scan)?;
+        Ok(scan)
+    }
+
+    pub(super) fn scan_into(
+        &mut self,
+        key: &[u8; 32],
+        directory: &mut Directory<MAX_COUNTER_ENTRIES>,
+        scan: &mut CounterScan,
+    ) -> Result<()> {
+        scan::scan_into(&mut self.bank, key, directory, scan)
     }
 
     pub fn read_value(

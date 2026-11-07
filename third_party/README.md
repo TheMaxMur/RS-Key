@@ -12,7 +12,8 @@ unrelated kinds live here:
   `sequential-storage.patch`, wired into `[patch.crates-io]` by the root,
   `fuzz/` and `tools/emu/` manifests. All three, or the emulator runs a
   different KV store from the firmware. The patch file's own header is the
-  record of what each change is and why the fork stays inside `src/map.rs` and `src/lib.rs`.
+  record of the map/item repairs and the const cache constructor used for static
+  store initialization; `src/cache/mod.rs` changes no runtime cache behavior.
   `p384/` plus `p384.patch` specialize 32-bit P-384 field products with a
   constant-time CIOS product and symmetric square kernels; the same three
   workspaces resolve that fork.

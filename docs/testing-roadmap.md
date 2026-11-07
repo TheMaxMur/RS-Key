@@ -163,7 +163,7 @@ and retains twelve release-elided debug-assert conditions without pair credit.
 | 4 | Semantic controls through host, fuzz, Miri and image runners; the 2026-10-11 critical slice below adds independent crypto boundaries and destructor observations; the 2026-10-12/14 whole-core shard closure below dispositions all 10 887 desired occurrences with no pending survivor | Device C/assembly mutation execution and resource/timing equivalence remain separate obligations |
 | 5 | Independent OATH positions, journal histories, 576 OpenPGP and 288 F9 command/state/fault inputs, plus the 11 cross_applet capability-gate and 6 fs_ops stateful seeds of the 2026-10-14 slice below, replayed through the shipped targets under Miri; the 2026-10-21 slice adds 53 `power_cut` seeds for the credential/config/PIV/reset drivers, 10 `authenticated_store` v2 seeds, and the `cross_applet` OATH record-lifecycle oracle with its 97-byte seed (replayed under Miri); `scripts/fuzz-union.py` makes the union reproducible and the 2026-10-15 campaigns remeasure it at 23062/36301 (63.53%, `default`) and 22699/36182 (62.74%, `flavours`); the 2026-11-04 slice adds the `TOK1` token spend/revocation oracle, the OATH SET CODE/VALIDATE HMAC oracle, 18 v2 lifecycle/fault histories and two-hour campaigns per target; the 2026-11-05 worktree completes two-hour campaigns for `power_cut` and `fs_ops` | Further stateful-surface coverage and the open-ended retained campaign remain, while the finite two-hour campaign queue for the five named targets is complete |
 | 6 | Eighteen current host-profile maps with finite source-bound residual reviews, including storage v2; fourteen ordinary release-flavour builds with thirteen image protocol passes; the 2026-10-15 host-tool slice adds argument, transport-failure and machine-readable-output contracts for tools/tui, tools/emu and the Python CLI, reported separately; selected real-device suites passed on the 4 MiB RP2350 A2 board on 2026-11-05 | Display-image ceremonies, other declared device/configuration scopes and host interoperability beyond the recorded board setup |
-| 7 | Optimized partitioned images, real presence/CANCEL, resource controls and independently checked crypto; the 2026-11-05 full image laboratory passed, the unoptimized build refusal is localized to linker layout checks, and selected physical crypto/residue/TrustZone and secure-boot observations are recorded | An executable unoptimized image under a reviewed layout, display-image ceremonies, device C/assembly mutation/resource evidence and the remaining silicon-only measurements |
+| 7 | Optimized partitioned images, real presence/CANCEL, resource controls and independently checked crypto; the 2026-11-05 full image laboratory passed, the 2026-11-06 unoptimized laboratory image now boots and passes basic differential/residue, ML-DSA-87 stack and all interrupted-write points after bounded-construction fixes, and selected physical crypto/residue/TrustZone and secure-boot observations are recorded | The remaining unoptimized operation scenario, display-image ceremonies, device C/assembly mutation/resource evidence and the remaining silicon-only measurements |
 | 8 | Local runner controls and source-bound reports; fresh full gates passed in the main checkout on 2026-11-06 after integrating the repair, review and final test additions | Actual CI execution and same-revision release evidence |
 
 ## Phase 1 Establish trustworthy coverage measurements
@@ -3043,7 +3043,7 @@ contains 0. The optimized no-touch image passed the hostile NS checks, RSA
 event and authorized-fault recovery checks, basic/stack/operations/cuts image
 scenarios and OTP-seal scenario.
 
-The 8 MiB unoptimized build now fails at link: reviewed code-size/cache
+The 2026-11-05 8 MiB unoptimized build fails at link: reviewed code-size/cache
 placement assertions and the 8 KiB scratch-SRAM limit refuse the layout.
 `unoptimized/build-opt0.log` contains the exact linker diagnostics. This
 characterizes the current refusal; it does not satisfy phase 7's requirement
@@ -3051,8 +3051,213 @@ to execute an unoptimized image. That needs a separately reviewed layout and
 resource budget, without weakening the optimized image's guards. The older
 runtime panic remains evidence about its dated image only.
 
-The 16 MiB `display,no-touch` image boots and passes image `getInfo`.
+On 2026-11-06, the experiment was repeated at `60978542` with every target Rust
+compilation at `opt-level=0`, including package overrides, and LTO disabled.
+The verbose compiler commands were audited; prebuilt Rust runtime libraries
+and the explicitly `-O2` device C/assembly remain separate. The production
+layout refuses both crypto placement and main-SRAM overflow. Its failed link
+map contains 98,230 bytes of P-521 multiplication/squaring for the 7,936-byte
+scratch code region.
+
+An isolated source copy uses a separate TrustZone linker layout for the
+laboratory firmware: 8 MiB flash, 192 KiB of NS flash, large crypto routines in
+Secure flash and P-521 carry addition in scratch. Its journal-digest callback
+also moves to checked Secure flash; the low-level quad reader, flash routines
+and memory helpers remain in RX SRAM. The retained source comparison identifies
+only `firmware/trustzone/build.rs` and that callback's section annotation.
+The 448/64 KiB S/NS main-RAM split, SAU/MPU code, NSC boundary, scratch bounds
+and contiguous RAM initialization remain enforced. The production layout is
+unchanged. This produces a partitioned ELF, but does not make its resource use
+equivalent to the optimized image.
+
+The initial full-zero ELF does not reach USB readiness. The unmodified emulator times
+out; an isolated diagnostic copy of the same pinned CPU model identifies the
+first out-of-SRAM stack witness at `0x1001c9d8`, in the store's
+`StaticCell::init_with` monomorph. Its prologue reserves 320,632 bytes plus
+a 16-byte register save, against the linked 101,632-byte Secure stack. MSP
+reaches `0x1ffca578`. The exact ELF disassembly independently confirms the
+frame size. The CPU model subsequently repeats zero-cycle fault handling, so
+the timeout alone is not credited as a stack-overflow oracle. Optimizing only
+the Secure firmware binary moves the failure to NS startup: SP reaches
+`0x2006e920`, below the NS stack floor `0x20070000`, with STKOF set.
+Optimizing both firmware binaries while leaving the library profiles at zero
+also fails before readiness with NS SP `0x2006f628` and STKOF set. These mixed
+profiles do not substitute for the full-zero criterion.
+
+The freshly built optimized control passes the unchanged basic image suite:
+native/image OATH and OpenPGP retry transcripts agree, the independent OATH
+answer matches, hunted key/HMAC-pad patterns are absent and the planted SRAM
+leak is detected and cleared. At that source state, no unoptimized scenario
+passed. Local evidence is retained under
+`secrets/sqlite-image-20261106/evidence/`, including compiler audits, layout
+and diagnostic patches, distinct ELFs, register witnesses and control reports.
+
+The subsequent `0x0BE0` changes construct the storage backend, filesystem and
+USB buffers in their static owners, bind the key source before admission,
+fill counter scan/results through caller-owned outputs, split SHA-256 helpers
+and applet initialization frames, and share the wiped NS gateway reply buffer.
+The full-zero laboratory image then reaches USB readiness and passes the
+unchanged basic scenario: native/image OATH and OpenPGP retry transcripts,
+the independent OATH answer and both residue controls. The image's OATH
+Secure stack use is 38,188 bytes within its linked 129,664-byte stack; NS uses
+11,952 bytes. Its import ELF also halts without starting stale NS transports or
+writing flash. The shipped code-size budget is raised from 952 to 1024 KiB
+with maintainer approval for the constant initializers. The code partition
+and S/NS SRAM split remain unchanged.
+
+The first command sweep also completes P-256/P-384/P-521/secp256k1/Ed25519
+creation and signing before exposing ML-DSA vector-construction stack frames.
+The CTAPHID dispatch now shares reply/call await sites, and the ML-DSA
+expansion writes secret vectors and matrix output into their final fields.
+Signing also reuses dead product/LowBits vectors. All 70 existing ML-DSA tests
+pass. The `b35a0135aa3c…` image and current `a02770f4f308…` checked emulator
+then pass the unchanged ML-DSA-87 stack scenario from a fresh store, with the
+signature independently verified. Secure high-water marks are 121,344 bytes
+for creation and 117,984 for signing, within 129,664 bytes; NS uses 23,712 of
+31,912 bytes. The compiler audit covers 458 target invocations and 126 crate
+names at zero optimization without LTO. Prebuilt Rust runtime and explicitly
+optimized C/assembly remain separate.
+
+The same image and emulator then pass all 46 original interrupted-write points.
+Three independent groups retain every original assertion, byte-prefix and
+acknowledgment control; 52 cases include six repeated controls. The measured
+replacement programs 2,816 bytes. Every cut is recovered both in-process and
+from its raw persisted snapshot. The combined point set is held to the exact
+unmodified runner's roster; deleting program-byte point 63 makes that check
+fail for the missing point. This discharges the laboratory interrupted-write
+criterion, not physical NOR behavior. The full operation scenario remains
+separate. Each new
+multi-boot campaign uses a copied, hash-identified ELF and emulator: one early
+campaign accidentally reused a mutable build path and is excluded. Evidence
+for this continuation is in `secrets/sqlite-init-20261106/evidence/`.
+
+The original full-zero operation run completes FIDO creation/signing for all
+eight algorithms and the authorization/PIN refusal checks, then reaches the
+1,200-second host watchdog during CTAP reset. Its observed Secure stack is
+76,648 bytes and the emulator continues executing SHA-256 without a fault.
+That is a host-time failure, not a passing full operation scenario. A local
+follow-up uses a 3,600-second host watchdog while retaining the 120-second
+firmware-clock bound, USB-gap assertions and all cryptographic/resource
+oracles. It separates the original FIDO function from the remaining original
+operation functions after completing the interrupted reset. The ordinary gate
+and its default watchdog stay unchanged.
+
+That follow-up completes all 44 FIDO labels. Reset takes 82.96 seconds on the
+firmware clock and 1,435 seconds on the host, with USB keepalives retained.
+The remaining domain then exposes a separate core1 overflow during PIV RSA-2048
+generation: the measured use is 24,344 bytes in a 16,416-byte stack. A diagnostic
+adapter stops at the first MSPLIM crossing inside software SHA-256 compression.
+Eight-word expansion/round groups reduce that unoptimized compression frame
+from 20,232 to 904 bytes, with 2,488-byte round-group frames. The unchanged
+independent SHA/HMAC/HKDF tests pass; replacing either group or compression with
+a no-op fails those tests. The new `dd6757da24fa…` image passes basic, import,
+ML-DSA-87 stack and all 46 interrupted-write points again. PIV and OpenPGP
+RSA-2048 generation, signing, core1 wind-down and residue checks also pass.
+The current compiler audit covers 479 target invocations at zero optimization
+without LTO. Earlier image results remain tied to their original hashes. The
+full unoptimized operation claim is refused by the wind-down failures below.
+
+The current image also passes all 44 FIDO labels and 24 backup/OTP labels.
+Reset takes 83.75 seconds on the image clock and 1,564 seconds on the host;
+USB keepalives and the unchanged 120-second image deadline hold. The ordinary
+optimized `fbaa104c7c9a…` control passes the original basic, ML-DSA-87 stack
+and whole-operation scenarios with the default 1,200-second host watchdog.
+Its native/image rosters exactly match the original 110/119 labels. The
+unoptimized PIV RSA-3072 case also passes generation, signing and cleanup.
+OpenPGP RSA-3072 returns a key but fails the unchanged 30-second image-clock
+core1 wind-down assertion. Its measured core1 stack use is 14,560 bytes within
+16,416 bytes; that row is a timing failure, not a passing operation. Core1
+checks STOP between candidates, and a candidate's library Lucas test has no
+cancellation seam. The failed run does not capture its exact instruction at
+the deadline, so that implementation constraint is not a measured diagnosis
+of that particular tail. PIV RSA-4096 also returns a key and fails the same
+30-second assertion, with the same 14,560-byte core1 maximum. Read-only
+sampling observes STOP raised and BUSY retained for at least 36.41 image
+seconds, with one unchanged candidate-attempt counter and no additional find.
+That observation belongs to PIV RSA-4096, not the earlier OpenPGP failure.
+
+A separate OpenPGP continuation reopens a copy of the persisted RSA-3072
+store, verifies a signature from that key, then passes RSA-4096 generation,
+core1 wind-down, signature verification and factor-residue checks. The
+30-second wind-down assertion stays unchanged. A read-only snapshot during
+the two RSA-4096 searches also checks all four active 2048-bit candidates
+with OpenSSL; all are accepted as probable primes, with 11/9 positive and
+negative oracle controls. These diagnostics and the separate cold boot do
+not replace the original failed rows or establish their pre-reboot cleanup.
+The persisted PIV RSA-4096 key also signs successfully after an independent
+cold boot of a store copy. Its residue check and planted 256-byte factor
+control pass. The two original timing failures remain red; the strict full
+operation verifier refuses the pass claim at the incomplete PIV domain.
+
+A separate device-backend slice executes two source mutants in rebuilt
+partitioned images: omitting the C CRT recombination and setting the assembly
+multiply accumulator's initial carry to one. Both fail the existing PIV
+pairwise-consistency trial signature: a valid RSA-2048 import returns `6a80`
+instead of `9000`, before persistence. The baseline, C compiled with `-O0`,
+and restored images each pass RSA-2048/3072/4096 import, independent signature
+verification and factor-residue checks. Restoring the sources reproduces the
+baseline ELF byte for byte. Seven linked assembly functions have identical
+instruction bytes between the C `-O2` and `-O0` controls; the C CRT function
+changes from 328 to 476 bytes. Maximum measured core0 stack use across these
+six operations is 17,544 and 17,520 bytes respectively. Rust remains optimized
+in this separate slice, and core1 stays idle. The C `-O0` image leaves
+122,816 bytes for the Secure stack, 64 bytes below the existing 120 KiB floor.
+The actual `check.sh` stack row rejects it; baseline and restoration pass.
+No floor changes, and this control is not an accepted shipping profile.
+These are two targeted mutation
+controls and a C optimization comparison, not an exhaustive C/assembly roster,
+a combined all-language unoptimized run, or a timing-equivalence result.
+The patches, image hashes and raw refusals are in `casm-slice-summary.json`
+and its retained case directories.
+
+The optimized follow-up also repeats the boundary scenarios on current
+sources. Both hostile NS matrices refuse all 166 protected addresses, with
+their own RAM positive controls; the direct USB-controller and DMA probes,
+gateway checks and authorized-fault/cold-recovery sequence pass. The RSA
+private-operation barrier passes ABORT, USB reset and disconnect, including
+independently verified subsequent signatures. All 19 OTP-sealing scenarios
+pass on `fbaa104c7c9a…`, including torn roots, replay refusal and interrupted
+migration. These writes affect emulator-owned flash/OTP files only. The
+TrustZone probes use newly built disposable images, and the RSA barrier is
+the original runner's temporary source instrumentation. Their results are
+retained separately from the unoptimized campaigns.
+
+Verification uses the main gate's prefix, its resumed tail after rebinding
+constant-time symbols, and final affected lint/test rows. The tail ends with
+`ALL CHECKS PASSED`; this is a composed verdict. All 420 store tests, 70 ML-DSA
+tests and 141 USB tests pass. The final host suite passes 4,883 tests with five
+ignored. The current in-diff roster has 148 mutants: 133 are caught, 14 do not
+compile, and one is the equivalent SHA-256 majority
+formula with OR changed to XOR under the existing mask. Two initially missed
+erase-width boundaries now have regression cases and are caught on rerun.
+A separate pure guard-removal control fails the refusal assertion, while an
+over-strict guard fails the valid maximum; both restore green. The raw mutation
+runner's exit 2 is retained for the equivalent mutant. The final SHA-256 pass
+rechecks four mutants; previously caught or unviable unchanged mutants are
+composed with that result rather than rerun.
+
+A late compatibility check finds that the constant backend overflows the
+documented `FLASH_SIZE=2M KVMAIN=896K` code region. Boards with at most 2 MiB
+flash now construct that backend at runtime. The ordinary image is 950 KiB;
+both storage partitions retain their offsets and capacities. The final no-touch
+image passes the basic and ML-DSA-87 stack scenarios. The existing `check.sh`
+matrix now builds this profile and checks its stack floors and partition fence.
+Removing the small-flash selector makes that actual build row fail at the
+Secure linker bound; restoring it makes all three rows pass.
+
+The subsequent ordinary `b1c28371b8ea…` and full-zero `54e091e43be7…` images
+have the same load addresses, bounds and loaded bytes as the earlier campaign
+images except for source-line fields in panic locations. The comparison includes
+every load segment and the appended partition table. A changed executable byte
+is refused even after updating its manifest hash. These controls are retained in
+`large-flash-equivalence.json` and `small-flash-gate-control.json`. The new
+large-image basic scenarios pass; the earlier campaign hashes remain explicit.
+
+An earlier 16 MiB `display,no-touch` image boots and passes image `getInfo`.
 Its makeCredential attempt returns `0x2d` while waiting for on-panel presence.
+The current 16 MiB display build compiles and its retained Secure ELF has
+119,328 stack bytes against the unchanged 116 KiB floor. That build/stack
+result does not repeat the earlier image ceremonies.
 The image backend has no panel/touch model; host display and emulator tests
 exercise a different execution scope. Display-image approve/deny/cancel/PIN
 therefore remains open, with the attempt in `display-image/run/`.
@@ -3102,8 +3307,9 @@ pre-existing PIV-history edits.
 The initial transfer did not repeat checks. The subsequent scoped independence
 review, source reconciliation and fresh full gates in the main checkout are
 recorded in the [MC/DC verification](mcdc-independence.md#verification).
-Remaining work includes display-image ceremonies, an
-executable unoptimized profile, device C/assembly mutation and resource/timing evidence, physical
+Remaining work includes display-image ceremonies, completing the unoptimized
+operation sweep under its recorded host-time profile, device C/assembly mutation
+and resource/timing evidence, physical
 measurements beyond the recorded setup, and actual CI/release execution on the
 selected revision. The existing phase completion criteria still apply.
 
