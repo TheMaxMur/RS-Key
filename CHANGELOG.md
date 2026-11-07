@@ -38,6 +38,11 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ## [Unreleased]
 
+- Cancel the background RSA prime candidate at Lucas progress boundaries once
+  the key is complete (bcdDevice 0x0BE1). Retain the Miller-Rabin and extra-strong
+  Lucas acceptance checks and wipe the abandoned candidate before core1 idles.
+  This bounds the unfinished Lucas sequence without delaying the key response.
+
 - Initialize the storage backend, filesystem and USB message buffers in static
   memory instead of returning large values through constructor stack frames
   (bcdDevice 0x0BE0). Bind the storage key source once before boot admission.

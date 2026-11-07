@@ -1,5 +1,9 @@
 # OpenPGP card
 
+Build `0x0BE1` lets the background RSA prime search observe cancellation inside
+its Lucas test after a key is complete. Prime acceptance, key formats and
+authorization are unchanged; the abandoned candidate is wiped before core1 idles.
+
 Build `0x0BD6` reduces Brainpool arithmetic and counter-rotation work.
 Retry charging, durable restoration, migration and key cleanup are unchanged.
 

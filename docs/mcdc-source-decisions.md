@@ -541,7 +541,7 @@ separate from the four completed reports.
 
 The current crate-source cfg review finds one additional ARM-only runtime
 Boolean condition outside the firmware-directory inventory:
-`crates/rsk-rsa/src/lib.rs:606`, the public-modexp wrapper's if ok. Its host
+`crates/rsk-rsa/src/lib.rs:607`, the public-modexp wrapper's if ok. Its host
 fallback always returns true and cannot supply this pair. Other target-specific
 RSA wrappers contain FFI, conversions and for loops without additional Boolean
 control. The crypto target dependency selects an external SHA backend; the

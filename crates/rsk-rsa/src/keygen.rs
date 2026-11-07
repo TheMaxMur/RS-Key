@@ -7,7 +7,6 @@
 
 use alloc::boxed::Box;
 use num_bigint_dig::BigUint;
-use num_bigint_dig::prime::probably_prime_lucas;
 use rsk_secret::{Secret, WipeGuard};
 use zeroize::Zeroize;
 
@@ -34,8 +33,8 @@ pub fn rsa_from_pqe(e: &[u8], p: &[u8], q: &[u8]) -> Option<RsaKey> {
 /// assembled into an [`RsaKey`]. The primality decision is
 /// Baillie-PSW split across backends: the strong Miller-Rabin base-2 half on
 /// the KAT-gated asm modexp (ours, differentially tested against the library),
-/// the strong Lucas half still the vetted library routine. Key assembly is ours
-/// now — [`RsaKey`], checked against OpenSSL vectors rather than a second crate.
+/// the strong Lucas half uses the library's algorithm with cancellation. Key
+/// assembly is ours — [`RsaKey`], checked against OpenSSL vectors.
 ///
 /// `step` decomposes into [`try_candidate`](RsaKeygen::try_candidate) (one
 /// draw + test, stateless) and [`offer`](RsaKeygen::offer) (the two-prime
@@ -115,7 +114,7 @@ impl RsaKeygen {
     /// concurrently with its own RNG stream. The pipeline is Baillie-PSW split
     /// across backends: the cheap rejections (the small-prime sieve, the
     /// `gcd(e, n−1)` check), then the strong Miller-Rabin base-2 gate on the
-    /// KAT-gated asm modexp, then the vetted software strong Lucas test for
+    /// KAT-gated asm modexp, then the cancellable software strong Lucas test for
     /// the final accept. Admitting a composite would take a simultaneous
     /// failure of both halves — the same combined guarantee
     /// `probably_prime(_, 0)` gives, with the modexp-heavy half on the fast
@@ -131,6 +130,18 @@ impl RsaKeygen {
         rng: &mut dyn Rng,
         half_bytes: usize,
     ) -> Option<BigUint> {
+        Self::try_candidate_with_cancel(sieve, rng, half_bytes, &mut || false)
+    }
+
+    fn try_candidate_with_cancel(
+        sieve: &mut IncrementalSieve,
+        rng: &mut dyn Rng,
+        half_bytes: usize,
+        cancelled: &mut dyn FnMut() -> bool,
+    ) -> Option<BigUint> {
+        if cancelled() {
+            return None;
+        }
         match sieve.step() {
             None => {
                 // Window exhausted (or never seeded) — draw a fresh random odd
@@ -153,14 +164,13 @@ impl RsaKeygen {
         if !passes_strong_mr_base2(n) {
             return None;
         }
-        let cand = BigUint::from_bytes_le(n);
-        // The strong Lucas half (vetted library code). Together with the MR
-        // gate above this is exactly `probably_prime(_, 0)` — see the
-        // `keygen_bpsw_split_matches_library` test.
-        if !probably_prime_lucas(&cand) {
+        let mut cand = Secret::new(BigUint::from_bytes_le(n));
+        // The library's strong Lucas algorithm, with cancellation boundaries.
+        // The MR + Lucas verdict is checked by keygen_bpsw_split_matches_library.
+        if !crate::lucas::passes_lucas(cand.expose(), cancelled) {
             return None;
         }
-        Some(cand)
+        Some(core::mem::take(cand.expose_mut()))
     }
 
     /// Feed a found prime into the two-prime pool: the first is held, a second
@@ -200,7 +210,21 @@ impl RsaKeygen {
         half_bytes: usize,
         out: &mut [u8],
     ) -> Option<usize> {
-        let mut p = Secret::new(Self::try_candidate(sieve, rng, half_bytes)?);
+        Self::try_candidate_le_with_cancel(sieve, rng, half_bytes, out, &mut || false)
+    }
+
+    /// Abandon a candidate when the other core has completed the key. Cancellation
+    /// never exports a partial prime or changes the caller's output buffer.
+    pub fn try_candidate_le_with_cancel(
+        sieve: &mut IncrementalSieve,
+        rng: &mut dyn Rng,
+        half_bytes: usize,
+        out: &mut [u8],
+        cancelled: &mut dyn FnMut() -> bool,
+    ) -> Option<usize> {
+        let mut p = Secret::new(Self::try_candidate_with_cancel(
+            sieve, rng, half_bytes, cancelled,
+        )?);
         let mut v = Secret::new(p.expose().to_bytes_le());
         p.wipe();
         let n = v.expose().len();

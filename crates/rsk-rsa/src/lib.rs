@@ -34,6 +34,7 @@ pub mod pubdo;
 
 mod error;
 mod key;
+mod lucas;
 mod rng;
 
 /// Known-answer vectors and the public-key verifier the host tests check this

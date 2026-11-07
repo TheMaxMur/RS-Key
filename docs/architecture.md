@@ -60,8 +60,8 @@ Three details make that work:
 - The Fermat-filter modexp (C + asm) executes from SRAM. Two cores running it
   from XIP throttle each other on the shared flash cache (~40% per core,
   measured).
-- The key returns the moment the pool completes; core1's last candidate
-  finishes in the background.
+- The key returns the moment the pool completes; core1 cancels its last
+  candidate at a Lucas progress boundary and scrubs it in the background.
 - A core1 that ever stops answering latches the engine into single-core mode
   rather than stalling the worker (on a `--features core1-stats` build, `INS 0x12`
   on the vendor applet reads the engine's counters and flags; a shipped image

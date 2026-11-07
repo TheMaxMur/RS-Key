@@ -6,6 +6,58 @@ use crate::RSA_PUB_EXP_BE;
 use crate::fixtures::{N_HEX, P_HEX, Q_HEX, SeqRng, hex};
 
 #[test]
+fn a_cancelled_candidate_never_reaches_the_prime_transport() {
+    let mut prime = hex(P_HEX);
+    prime.reverse();
+    let seed = (BigUint::from_bytes_le(&prime) - BigUint::from(2u8)).to_bytes_le();
+    for cancel_at in [1, 2, 4, 32] {
+        let mut sieve = IncrementalSieve::new();
+        sieve.reseed(prime.len(), &seed);
+        let mut polls = 0;
+        let mut output = [0xa5; 128];
+        let result = RsaKeygen::try_candidate_le_with_cancel(
+            &mut sieve,
+            &mut SeqRng(7),
+            prime.len(),
+            &mut output,
+            &mut || {
+                polls += 1;
+                polls >= cancel_at
+            },
+        );
+        assert!(
+            result.is_none(),
+            "cancelled Lucas search exported a prime at poll {cancel_at}"
+        );
+        assert_eq!(
+            output, [0xa5; 128],
+            "cancelled search changed prime transport"
+        );
+    }
+}
+
+#[test]
+fn uncancelled_candidate_retains_the_exact_prime() {
+    let mut prime = hex(P_HEX);
+    prime.reverse();
+    let seed = (BigUint::from_bytes_le(&prime) - BigUint::from(2u8)).to_bytes_le();
+    let mut sieve = IncrementalSieve::new();
+    sieve.reseed(prime.len(), &seed);
+    let mut output = [0; 128];
+    assert_eq!(
+        RsaKeygen::try_candidate_le_with_cancel(
+            &mut sieve,
+            &mut SeqRng(7),
+            prime.len(),
+            &mut output,
+            &mut || false,
+        ),
+        Some(prime.len())
+    );
+    assert_eq!(output.as_slice(), prime);
+}
+
+#[test]
 fn import_rejects_degenerate_primes() {
     // A zero-valued prime MPI must be rejected, not panic num-bigint's unsigned
     // subtraction inside from_p_q (a device-halt on import). The applet's
@@ -45,8 +97,6 @@ fn a_sieve_survivor_congruent_to_one_modulo_e_is_not_a_keygen_prime() {
 
 #[test]
 fn the_lucas_gate_rejects_a_composite_after_the_sieve_and_strong_mr() {
-    use num_bigint_dig::prime::probably_prime_lucas;
-
     let seed = hex("13abee7a14ae47e17a14ae47e17a146e722585eb51b81e85eb51b81e85eb51d8");
     let mut control = IncrementalSieve::new();
     control.reseed(32, &seed);
@@ -56,7 +106,7 @@ fn the_lucas_gate_rejects_a_composite_after_the_sieve_and_strong_mr() {
     assert_eq!(n, &p * (&p * BigUint::from(2u8) - BigUint::from(1u8)));
     assert_ne!(mod_small(control.candidate(), RSA_E), 1);
     assert!(passes_strong_mr_base2(control.candidate()));
-    assert!(!probably_prime_lucas(&n));
+    assert!(!crate::lucas::passes_lucas(&n, &mut || false));
     let mut sieve = IncrementalSieve::new();
     sieve.reseed(32, &seed);
     let mut rng = SeqRng(7);

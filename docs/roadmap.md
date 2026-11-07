@@ -52,7 +52,9 @@ adds a fresh 4,255/4,399 host default after guarded `matches!` expansion and a
 separate 29/31 worker measurement,
 with two worker residuals and explicit fault/frontend boundaries. The work
 also fixes partial CTAPHID reassembly across USB reset (`0x0BDF`).
-Panel-image execution, an executable unoptimized image, whole-core MC/DC,
+The [Rust-O0 operation follow-up](testing-roadmap.md#unoptimized-rsa-wind-down-follow-up-2026-11-07)
+passes all 119 original image labels under its recorded domain profile.
+Panel-image execution, whole-core MC/DC,
 device C/assembly mutations, the remaining physical measurements and
 CI/release evidence still need their own results.
 

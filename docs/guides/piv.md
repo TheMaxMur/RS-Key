@@ -1,5 +1,9 @@
 # PIV
 
+Build `0x0BE1` lets the background RSA prime search observe cancellation inside
+its Lucas test after a key is complete. Prime acceptance, key formats and
+authorization are unchanged; the abandoned candidate is wiped before core1 idles.
+
 A PIV smart-card (NIST SP 800-73-4) over CCID: X.509 client certificates,
 S/MIME, PIV-aware OS login, SSH and `age` through PKCS#11. Driven with
 `ykman piv` or `yubico-piv-tool`; the applet also speaks the Yubico extensions

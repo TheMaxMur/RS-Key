@@ -269,9 +269,8 @@ pub fn scrub() {
     }
 }
 
-/// Spin budget for [`scrub`]'s wait on core1. A candidate test is microseconds and
-/// the reboot path already sleeps ~200 ms for the USB flush, so this is generous
-/// for the live case and still bounded for a wedged one.
+/// Spin budget for [`scrub`]'s wait on core1. Cooperative cancellation releases
+/// a live search; a faulted core must not stall the reboot path indefinitely.
 const SCRUB_WAIT_ITERS: u32 = 2_000_000;
 
 // --------------------------------------------------------------- core1 side --
@@ -372,9 +371,13 @@ fn search(job: &Job) {
     while !STOP.load(Ordering::Acquire) {
         C1_TRIES.fetch_add(1, Ordering::Relaxed);
         let mut le = Secret::<[u8; MAX_HALF]>::zeroed();
-        let Some(len) =
-            RsaKeygen::try_candidate_le(sieve, &mut rng, job.half_bytes, le.expose_mut())
-        else {
+        let Some(len) = RsaKeygen::try_candidate_le_with_cancel(
+            sieve,
+            &mut rng,
+            job.half_bytes,
+            le.expose_mut(),
+            &mut || STOP.load(Ordering::Acquire),
+        ) else {
             continue;
         };
         C1_FINDS.fetch_add(1, Ordering::Relaxed);
@@ -403,8 +406,8 @@ fn search(job: &Job) {
 
 /// Run the RSA prime search on both cores and assemble the key. Blocks the
 /// worker exactly like the old single-core loop did (the interrupt executor
-/// keeps USB + keepalives flowing); core1 is parked again by the time this
-/// returns. `None` is the old `RsaStep::Failed`: an unusable size / failed
+/// keeps USB + keepalives flowing); core1 cancels its last candidate in the
+/// background. `None` is the old `RsaStep::Failed`: an unusable size / failed
 /// modexp self-test, or key assembly failure.
 pub fn run_rsa_search(nbits: usize, rng: &mut dyn rsk_sdk::Rng) -> Option<Box<RsaKey>> {
     run_rsa_search_progress(nbits, rng, &mut || {})
@@ -449,9 +452,8 @@ pub fn run_rsa_search_progress(
     ];
     // `Some(Some(key))` = assembled, `Some(None)` = the old `Failed`.
     let mut outcome: Option<Option<Box<RsaKey>>> = None;
-    // Core1 may still be on the last search's final candidate, which at RSA-4096
-    // can be a software Lucas of ten seconds and more: search alone meanwhile and
-    // hand it the job once it is free. A core1 that never frees costs no wait.
+    // A previous search may still be unwinding after STOP. Search alone until
+    // core1 has scrubbed that job; a core1 that never frees costs no wait.
     let mut engaged = false;
     while outcome.is_none() {
         // Observation hook (display spinner); time-gated by the caller, off the keygen state.
@@ -504,11 +506,9 @@ pub fn run_rsa_search_progress(
         }
     }
 
-    // Wind down — OFF the critical path: un-post the job if core1 never took
-    // it, drain-scrub what is posted right now, raise STOP, and return the key
-    // immediately. A candidate still in flight on core1 finishes in the
-    // background; core1 scrubs its own late find when it notices STOP, and the
-    // next job's entry gate (the BUSY wait above) keeps the mailbox exclusive.
+    // Un-post and drain before requesting cancellation. Core1 wipes its own
+    // candidate and late find in the background; BUSY excludes the next job
+    // until its cleanup completes.
     MAILBOX.lock(|mb| {
         let mut mb = mb.borrow_mut();
         scrub_job(&mut mb.job);

@@ -163,7 +163,7 @@ and retains twelve release-elided debug-assert conditions without pair credit.
 | 4 | Semantic controls through host, fuzz, Miri and image runners; the 2026-10-11 critical slice below adds independent crypto boundaries and destructor observations; the 2026-10-12/14 whole-core shard closure below dispositions all 10 887 desired occurrences with no pending survivor | Device C/assembly mutation execution and resource/timing equivalence remain separate obligations |
 | 5 | Independent OATH positions, journal histories, 576 OpenPGP and 288 F9 command/state/fault inputs, plus the 11 cross_applet capability-gate and 6 fs_ops stateful seeds of the 2026-10-14 slice below, replayed through the shipped targets under Miri; the 2026-10-21 slice adds 53 `power_cut` seeds for the credential/config/PIV/reset drivers, 10 `authenticated_store` v2 seeds, and the `cross_applet` OATH record-lifecycle oracle with its 97-byte seed (replayed under Miri); `scripts/fuzz-union.py` makes the union reproducible and the 2026-10-15 campaigns remeasure it at 23062/36301 (63.53%, `default`) and 22699/36182 (62.74%, `flavours`); the 2026-11-04 slice adds the `TOK1` token spend/revocation oracle, the OATH SET CODE/VALIDATE HMAC oracle, 18 v2 lifecycle/fault histories and two-hour campaigns per target; the 2026-11-05 worktree completes two-hour campaigns for `power_cut` and `fs_ops` | Further stateful-surface coverage and the open-ended retained campaign remain, while the finite two-hour campaign queue for the five named targets is complete |
 | 6 | Eighteen current host-profile maps with finite source-bound residual reviews, including storage v2; fourteen ordinary release-flavour builds with thirteen image protocol passes; the 2026-10-15 host-tool slice adds argument, transport-failure and machine-readable-output contracts for tools/tui, tools/emu and the Python CLI, reported separately; selected real-device suites passed on the 4 MiB RP2350 A2 board on 2026-11-05 | Display-image ceremonies, other declared device/configuration scopes and host interoperability beyond the recorded board setup |
-| 7 | Optimized partitioned images, real presence/CANCEL, resource controls and independently checked crypto; the 2026-11-05 full image laboratory passed, the 2026-11-06 unoptimized laboratory image now boots and passes basic differential/residue, ML-DSA-87 stack and all interrupted-write points after bounded-construction fixes, and selected physical crypto/residue/TrustZone and secure-boot observations are recorded | The remaining unoptimized operation scenario, display-image ceremonies, device C/assembly mutation/resource evidence and the remaining silicon-only measurements |
+| 7 | Optimized partitioned images, real presence/CANCEL, resource controls and independently checked crypto; the 2026-11-05 full image laboratory passed, the 2026-11-06 unoptimized laboratory passed basic differential/residue, ML-DSA-87 stack and all interrupted-write points, the 2026-11-07 Rust-O0 follow-up passes all 119 original operation labels under its recorded domain profile, and selected physical crypto/residue/TrustZone and secure-boot observations are recorded | Display-image ceremonies, device C/assembly mutation/resource evidence and the remaining silicon-only measurements |
 | 8 | Local runner controls and source-bound reports; fresh full gates passed in the main checkout on 2026-11-06 after integrating the repair, review and final test additions | Actual CI execution and same-revision release evidence |
 
 ## Phase 1 Establish trustworthy coverage measurements
@@ -3155,7 +3155,9 @@ ML-DSA-87 stack and all 46 interrupted-write points again. PIV and OpenPGP
 RSA-2048 generation, signing, core1 wind-down and residue checks also pass.
 The current compiler audit covers 479 target invocations at zero optimization
 without LTO. Earlier image results remain tied to their original hashes. The
-full unoptimized operation claim is refused by the wind-down failures below.
+full unoptimized operation claim for that image is refused by the wind-down
+failures below; the [2026-11-07 follow-up](#unoptimized-rsa-wind-down-follow-up-2026-11-07)
+records the cancellation repair and its separate image results.
 
 The current image also passes all 44 FIDO labels and 24 backup/OTP labels.
 Reset takes 83.75 seconds on the image clock and 1,564 seconds on the host;
@@ -3307,8 +3309,7 @@ pre-existing PIV-history edits.
 The initial transfer did not repeat checks. The subsequent scoped independence
 review, source reconciliation and fresh full gates in the main checkout are
 recorded in the [MC/DC verification](mcdc-independence.md#verification).
-Remaining work includes display-image ceremonies, completing the unoptimized
-operation sweep under its recorded host-time profile, device C/assembly mutation
+Remaining work includes display-image ceremonies, device C/assembly mutation
 and resource/timing evidence, physical
 measurements beyond the recorded setup, and actual CI/release execution on the
 selected revision. The existing phase completion criteria still apply.
@@ -3362,3 +3363,68 @@ and driven for real, `tools/emu --image`'s own scope). Cancellation is measured
 where each tool has it — `tools/emu`'s cross-transport cancel
 (`signals_tests.rs`) and `tools/tui`'s Ctrl-C (`input_tests.rs`) — and is not
 claimed for the CLI.
+
+## Unoptimized RSA wind-down follow-up, 2026-11-07
+
+Build `0x0BE1` adds cancellation boundaries to the extra-strong Lucas test.
+Core1 reads its existing STOP flag during parameter selection and sequence
+evaluation, then drops its temporary bignums through `Secret`. The recurrence
+and acceptance checks follow num-bigint-dig 0.8.6. The local copy lets a
+completed key interrupt the remaining candidate without changing dependencies.
+
+The host regression first kept the original uncancellable routine behind the
+new API. Its exact-prime control passed; cancellation failed specifically with
+`cancelled Lucas search exported a prime at poll 2`. The final 103 RSA tests
+cover the prime transport, cancellation at every progress boundary of selected
+primes, full-width inputs, squares and the distinct pseudoprime halves.
+Both full gates passed; assurance pytest reported 2729 passing tests.
+
+A fresh run of the old `dd6757da24fa` image also reproduced the original
+OpenPGP RSA-3072 refusal: the key returned, BUSY remained set, and the unchanged
+30-second image-clock wind-down assertion failed. Core1 used 14,560 of its
+16,416 linked stack bytes; this failure did not cross the stack bound.
+
+The native mutation run tested 90 changes: 83 caught, one timeout and six
+survivors. The timeout changes `p += 1` to `p *= 1`, preventing parameter-search
+progress. Test-only observations catch omitted modular reductions through the
+canonical-residue bound, including cases whose final answer stays unchanged.
+They are absent from all twelve load segments and nineteen allocated sections
+of the laboratory image, checked byte-for-byte after rebuilding.
+The container command could not reach the stopped Docker daemon; the native
+replacement does not exercise the container's memory envelope.
+
+| Surviving mutations | Count | Disposition |
+|---|---|---|
+| Final parameter-cap comparisons | 2 | The boundary requiring parameter 10000 has no fixture. It remains an explicit coverage gap; the original cutoff is retained. |
+| Earlier square screening; swapping equal operands | 2 | The primality verdict is unchanged. Earlier screening changes computation cost; the original schedule is retained. |
+| Additional final doubling positions | 2 | A zero at an added position contradicts the exact valuation of n+1 under Q=1 and Jacobi(D,n)=-1. The original loop bound is retained. |
+
+The full optimized operation control passed all 110 native and 119 image labels
+with the original host, image-clock, USB-gap, stack and residue assertions.
+Its slowest recorded core1 wind-down was 205,693,367 ns. The Rust-O0 laboratory
+profile retains the earlier 8 MiB map, unchanged S/NS RAM bounds, production
+C/assembly options and prebuilt runtime qualification. Four fresh stores use
+the recorded 3600-second host CTAP profile; the 120-second image deadline,
+500 ms USB gap and 30-second core1 wind-down limit remain unchanged.
+
+All four unoptimized domains passed: FIDO 44, backup/OTP 24, PIV 21 and
+OpenPGP 30 labels. Their disjoint union exactly matches the original 119-label
+image roster. Each report names the same `8404559124ad` image and unchanged
+runner sources. The strict report check also verifies the original image-clock,
+USB-gap, raw stack, core1 search and factor-residue assertions.
+FIDO reset took 83,332,997,580 ns on the image clock and 1569.245 host seconds.
+Both applets passed RSA-2048/3072/4096 generation, signing and cleanup,
+including the two original failure sizes. Recorded post-reply core1 wind-downs range from 15,413 to
+23,133 ns. Whole-sweep stack maxima are 121,344 Secure core0, 14,648 core1 and
+23,808 NS bytes, all within their linked bounds; core1 has 16,416 linked bytes.
+
+The same verifier CLI refuses copied reports with a missing RSA-4096 label,
+wind-down beyond 30 seconds, a relaxed recorded deadline or a late domain
+failure despite complete operation labels. Restoring each control passes.
+This closes the finite unoptimized operation roster under the declared
+four-store/3600-second host profile. The optimized control passed the original
+default whole-run profile separately. The original failed runs remain retained.
+
+Local reports, loaded-image comparisons and mutation dispositions are under
+`secrets/core1-cancel-20261107/`. Earlier MC/DC reports retain their original
+source identities; the new Lucas conditions require their own measurements.

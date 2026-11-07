@@ -346,8 +346,9 @@ of every secret; cached device/session keys have their own lifetimes. Logs and
 reports contain counts and addresses, not secret patterns.
 
 RSA generation also requires core1's ELF counters to show a taken job and
-candidate searches. Stack sampling continues through its background wind-down,
-bounded by 30 seconds of emulated time and a separate host progress timeout.
+candidate searches. Stack sampling continues through its background
+cancellation and cleanup, bounded by 30 seconds of emulated time and a separate
+host progress timeout.
 Inspection `status` reports `emulated_ns` alongside the instruction-cycle count.
 After it goes idle, the runner reads all 520 KiB of SRAM over the opt-in inspection
 socket (`read ADDRESS LENGTH`) and checks every 128-, 192- or 256-byte window,
