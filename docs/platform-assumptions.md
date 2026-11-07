@@ -155,7 +155,7 @@ Which sites go under which row is not the registry's to choose alone. `docs/unsa
 
 A settled row records the commit its result was taken at, and 18 of these do. An input is COVERED when the commit that last touched it is an ancestor of that one; a row behind any of its inputs is **stale**, and the claims resting on it inherit that. The inputs are derived, not listed: a row's `evidence`, plus every in-tree path its own `revalidated_by` names — which is how `formal/gen-configs.sh` reaches `PLAT-CRED-004`, whose whole discharge rests on an emit in that file and whose `evidence` does not mention it.
 
-Committed history only, so an uncommitted edit to an input is invisible until it lands — the same hole `docs/assurance-vector.md` names about itself. Stale is not a red: 14 of 18 are stale right now, and a gate red in its resting state is one nobody reads. What it costs instead is this page — a row going stale is a diff.
+Committed history only, so an uncommitted edit to an input is invisible until it lands — the same hole `docs/assurance-vector.md` names about itself. Stale is not a red: 15 of 18 are stale right now, and a gate red in its resting state is one nobody reads. What it costs instead is this page — a row going stale is a diff.
 
 That price is worth stating for the `unsafe` rows, because the input is a whole FILE and the claim is two lines of it. If `PLAT-UNSAFE-003` is discharged against `firmware/src/main.rs`, ANY later commit to that file will make its evidence stale and require regeneration — including changes that cannot touch what the row is about. The site-level axis such a row wants is already elsewhere: its `covers` keys are the sites' own code, so a site that is rewritten reddens the row outright rather than dating it. Re-anchoring freshness on the site would mean `git log -L` over a line range — keyed on line numbers that shift, for a second answer to a question `covers` already answers by content.
 
@@ -173,10 +173,10 @@ That price is worth stating for the `unsafe` rows, because the input is a whole 
 | `PLAT-TZ-003` | `a11a376` | **stale** | `firmware/src/worker.rs` | — |
 | `PLAT-TZ-004` | `a11a376` | **stale** | `firmware/trustzone/nonsecure/src/main.rs` | — |
 | `PLAT-TZ-005` | `a11a376` | **stale** | `firmware/src/worker.rs`, `firmware/trustzone/nonsecure/src/main.rs` | — |
-| `PLAT-TZ-006` | `af1f0cd` | **fresh** | — | `PLAT-TZ-009` |
+| `PLAT-TZ-006` | `af1f0cd` | **stale** | `firmware/src/core1.rs` | `PLAT-TZ-009` |
 | `PLAT-TZ-007` | `a11a376` | **fresh** | — | — |
 | `PLAT-TZ-008` | `9d78a48` | **stale** | `firmware/src/worker.rs` | — |
-| `PLAT-TZ-009` | `9d78a48` | **stale** | `firmware/trustzone/build.rs` | — |
+| `PLAT-TZ-009` | `9d78a48` | **stale** | `firmware/src/core1.rs`, `firmware/trustzone/build.rs` | — |
 | `PLAT-UNSAFE-009` | `709cb52` | **stale** | `crates/rsk-rsa/Cargo.toml`, `crates/rsk-rsa/build.rs`, `firmware/Cargo.toml`, `firmware/build.rs` | — |
 | `PLAT-UNSAFE-014` | `e54914a` | **stale** | `assurance/board/PLAT-UNSAFE-014-2026-09-27-run.log`, `firmware/src/core1.rs`, `firmware/src/main.rs`, `firmware/src/sweep.rs`, `firmware/src/vendor.rs`, `firmware/src/worker.rs` | — |
 
