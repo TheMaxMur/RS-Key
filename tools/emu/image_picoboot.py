@@ -231,6 +231,8 @@ def exercise(args, report):
             client.detach()
             dev.wait_ready(power_ups=int(state["power_ups"]) + 1)
             assert fields(dev.inspect("status"))["bootloader"] == "true", "detach left the bootloader"
+            # The device fixture verifies the firmware's SRAM code on exit.
+            dev.power_cycle()
             report["reboot_persistence"] = "OATH survived full reload and cold boot; raw and ECC OTP survived reboot"
         finally:
             client.detach()
