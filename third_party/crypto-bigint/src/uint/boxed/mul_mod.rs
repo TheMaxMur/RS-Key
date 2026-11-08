@@ -15,6 +15,8 @@ impl BoxedUint {
     /// Computes `self * rhs mod p` for the special modulus
     /// `p = MAX+1-c` where `c` is small enough to fit in a single [`Limb`].
     ///
+    /// When `c` is zero, `p = MAX+1` and the result is wrapping multiplication.
+    ///
     /// For the modulus reduction, this function implements Algorithm 14.47 from
     /// the "Handbook of Applied Cryptography", by A. Menezes, P. van Oorschot,
     /// and S. Vanstone, CRC Press, 1996.
@@ -23,11 +25,14 @@ impl BoxedUint {
         debug_assert_eq!(self.bits_precision(), rhs.bits_precision());
 
         if self.nlimbs() == 1 {
-            let reduced = mul_rem(
-                self.limbs[0],
-                rhs.limbs[0],
-                NonZero::<Limb>::new_unwrap(Limb::ZERO.wrapping_sub(c)),
-            );
+            let a = self.limbs[0];
+            let b = rhs.limbs[0];
+
+            // For c = 0, use a nonzero placeholder divisor and select the
+            // wrapping product in constant time.
+            let (p, c_is_nonzero) = Limb::ZERO.wrapping_sub(c).to_nz_or_one();
+            let reduced = mul_rem(a, b, p);
+            let reduced = Limb::select(a.wrapping_mul(b), reduced, c_is_nonzero);
             return Self::from(reduced);
         }
 
@@ -38,7 +43,8 @@ impl BoxedUint {
         let (mut lo, carry) = mac_by_limb(lo, hi, c, Limb::ZERO);
 
         let carry = {
-            let rhs = carry.wrapping_add(Limb::ONE).widening_mul(c);
+            // Compute (carry + 1) * c without overflowing when carry is Limb::MAX.
+            let rhs = carry.carrying_mul_add(c, c, Limb::ZERO);
             lo.carrying_add_assign(UintRef::new(&[rhs.0, rhs.1]), Limb::ZERO)
         };
 
@@ -93,8 +99,40 @@ fn mac_by_limb(a: &UintRef, b: &UintRef, c: Limb, carry: Limb) -> (BoxedUint, Li
 
 #[cfg(all(test, feature = "rand_core"))]
 mod tests {
-    use crate::{BoxedUint, ConcatenatingMul, Limb, NonZero, Random, RandomMod};
+    use crate::{BoxedUint, ConcatenatingMul, Limb, NonZero, Random, RandomMod, Resize};
     use rand_core::SeedableRng;
+
+    #[test]
+    fn mul_mod_special_zero_c() {
+        for size in [1, 2, 3, 4] {
+            let bits = size * Limb::BITS;
+            let zero = BoxedUint::zero_with_precision(bits);
+            let one = BoxedUint::one_with_precision(bits);
+            let max = zero.wrapping_sub(&one);
+
+            for a in [&zero, &one, &max] {
+                for b in [&zero, &one, &max] {
+                    assert_eq!(a.mul_mod_special(b, Limb::ZERO), a.wrapping_mul(b));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn mul_mod_special_max_c() {
+        for size in [3, 4] {
+            let bits = size * Limb::BITS;
+            let c = BoxedUint::from(Limb::MAX).resize(bits);
+            let p = NonZero::new(BoxedUint::zero_with_precision(bits).wrapping_sub(&c)).unwrap();
+            let a = p.wrapping_sub(&c);
+
+            // (p - c)^2 mod p = c^2. With at least three limbs, the first
+            // reduction produces a carry of Limb::MAX, so carry + 1 overflows.
+            let expected = c.wrapping_mul(&c);
+            assert_eq!(a.mul_mod_special(&a, Limb::MAX), expected);
+            assert_eq!(a.mul_mod(&a, &p), expected);
+        }
+    }
 
     #[test]
     fn mul_mod_special() {

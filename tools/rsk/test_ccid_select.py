@@ -22,13 +22,29 @@ def _readers(monkeypatch, names):
     monkeypatch.setattr(ccid, "readers", lambda: list(names))
 
 
-def test_single_match_is_returned(monkeypatch):
-    _readers(monkeypatch, ["Some Vendor CCID 00 00", "RS-Key Security Key 01 00"])
-    assert ccid.find_reader(exclusive=True) == "RS-Key Security Key 01 00"
+@pytest.mark.parametrize("reader", [
+    "RS-Key Security Key 01 00",
+    "RSK Security Key 00 00",
+    "Some Vendor CCID (rs-key-0001) 00 00",
+])
+def test_single_match_is_returned(monkeypatch, reader):
+    _readers(monkeypatch, [
+        "Some Vendor CCID 00 00",
+        "Some Vendor CCID (12345678) 00 00",
+        reader,
+    ])
+    assert ccid.find_reader(exclusive=True) == reader
 
 
-def test_multi_match_refuses_when_exclusive(monkeypatch):
-    _readers(monkeypatch, ["RS-Key Security Key 00 00", "RS-Key Security Key 01 00"])
+@pytest.mark.parametrize("names", [
+    ["RS-Key Security Key 00 00", "RS-Key Security Key 01 00"],
+    ["Some Vendor CCID (rs-key-0001) 00 00",
+     "Some Vendor CCID (rs-key-0001) 01 00"],
+    ["RS-Key Security Key 00 00",
+     "Some Vendor CCID (rs-key-0001) 01 00"],
+])
+def test_multi_match_refuses_when_exclusive(monkeypatch, names):
+    _readers(monkeypatch, names)
     with pytest.raises(SystemExit) as e:
         ccid.find_reader(exclusive=True)
     assert "more than one" in str(e.value)
@@ -41,8 +57,14 @@ def test_multi_match_still_guesses_for_the_read_only_callers(monkeypatch):
     assert ccid.find_reader() == "RS-Key A 00 00"
 
 
-def test_no_match_still_refuses(monkeypatch):
-    _readers(monkeypatch, ["Generic Smartcard Reader 00 00"])
+@pytest.mark.parametrize("reader", [
+    "Generic Smartcard Reader 00 00",
+    "Some Vendor CCID (12345678) 00 00",
+    "Some Vendor CCID 00 00",
+    "Some Vendor CCID (rs-key-00010) 00 00",
+])
+def test_no_match_still_refuses(monkeypatch, reader):
+    _readers(monkeypatch, [reader])
     with pytest.raises(SystemExit) as e:
         ccid.find_reader(exclusive=True)
     assert "no RS-Key PC/SC reader" in str(e.value)

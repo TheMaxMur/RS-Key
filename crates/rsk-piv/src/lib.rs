@@ -21,6 +21,7 @@
 extern crate alloc;
 
 mod auth;
+mod ccc;
 mod chuid;
 pub mod files;
 pub mod info;
@@ -130,6 +131,7 @@ const INS_IMPORT_ASYM: u8 = 0xFE;
 const INS_SET_MGMKEY: u8 = 0xFF;
 
 const CHUID_ID: u32 = 0x5FC102;
+const CCC_ID: u32 = 0x5FC107;
 /// PivmanData (ADMIN DATA) TLV: outer `0x80 { 0x81 = flags, 0x82 = derived-key
 /// salt, 0x83 = PIN-change timestamp }`; flag bit `0x02` means the management key
 /// is PIN-protected (a host reads it back from PRINTED). ykman writes the salt
@@ -768,6 +770,13 @@ impl PivApplet<'_> {
                     let synth = chuid::default_chuid(&self.serial_hash);
                     obj[..chuid::CHUID_LEN].copy_from_slice(&synth);
                     chuid::CHUID_LEN
+                }
+                _ if id == CCC_ID => {
+                    let Some(dst) = obj.get_mut(..ccc::CCC.len()) else {
+                        return Sw::EXEC_ERROR;
+                    };
+                    dst.copy_from_slice(&ccc::CCC);
+                    ccc::CCC.len()
                 }
                 _ => return Sw::FILE_NOT_FOUND,
             },

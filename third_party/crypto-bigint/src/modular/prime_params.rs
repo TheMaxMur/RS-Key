@@ -40,9 +40,10 @@ impl<const LIMBS: usize> PrimeParams<LIMBS> {
         let p_minus_one = p.as_ref().set_bit_vartime(0, false);
         let generator = NonZeroU32::new(generator).expect("invalid generator");
         let s = NonZeroU32::new(p_minus_one.trailing_zeros_vartime()).expect("ensured non-zero");
+        // t = (p-1)/2^s
         let t = p
             .as_ref()
-            .shr(s.get())
+            .shr_vartime(s.get())
             .to_odd()
             .expect_copied("ensured odd");
 
@@ -53,13 +54,11 @@ impl<const LIMBS: usize> PrimeParams<LIMBS> {
             let root = FixedMontyForm::new(&p_minus_one, params);
             (exp, root)
         } else {
-            // t = (p-1)/2^s
-            let t = p.as_ref().shr_vartime(s.get());
             // exp = (t-1)/2
-            let exp = t.shr_vartime(1);
+            let exp = t.as_ref().shr_vartime(1);
             // the s'th root of unity is calculated as `generator^t`
-            let root =
-                FixedMontyForm::new(&Uint::from_u32(generator.get()), params).pow_vartime(&t);
+            let root = FixedMontyForm::new(&Uint::from_u32(generator.get()), params)
+                .pow_vartime(t.as_ref());
             // root^(2^(s-1)) must be equal to -1
             let check = root.square_repeat_vartime(s.get() - 1);
             assert!(

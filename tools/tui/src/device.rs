@@ -846,10 +846,11 @@ fn read_piv_meta(c: &mut Ccid) -> Option<PivInfo> {
 // CCID applets (PC/SC)
 // ===========================================================================
 
-// Default build's product carries "RS-Key"; the opt-in Yubico interop
-// flavor carries "RSK". Neither is in a genuine YubiKey's reader name.
+// Linux pcscd can replace the product name with the driver's friendly name.
+// The firmware's USB serial is still present in the reader name in that case.
 const READER_TOKEN_DEFAULT: &str = "RS-Key";
 const READER_TOKEN_INTEROP: &str = "RSK";
+const READER_TOKEN_SERIAL: &str = "(rs-key-0001)";
 
 fn rs_key_reader<'a>(readers: &[&'a std::ffi::CStr]) -> Result<&'a std::ffi::CStr, String> {
     // No first-reader fallback: with the RS-Key's CCID interface absent (unplugged, or
@@ -864,7 +865,9 @@ fn rs_key_reader<'a>(readers: &[&'a std::ffi::CStr]) -> Result<&'a std::ffi::CSt
         .iter()
         .filter(|r| {
             let n = r.to_string_lossy();
-            n.contains(READER_TOKEN_DEFAULT) || n.contains(READER_TOKEN_INTEROP)
+            n.contains(READER_TOKEN_DEFAULT)
+                || n.contains(READER_TOKEN_INTEROP)
+                || n.contains(READER_TOKEN_SERIAL)
         })
         .copied()
         .collect();

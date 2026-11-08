@@ -425,9 +425,10 @@ string). ⚠️ so a phy-repointed default key can present a full Yubico identit
 runtime; the USB/smartcard identity is cosmetic and host-configurable, never a
 security or anti-counterfeiting control (see docs/threat-model.md).
 
-For PC/SC discovery, `rsk` looks for `RS-Key` and `RSK` in reader names.
-Platform naming and custom USB strings can change the name. Probe the applet
-you need on a candidate reader. See `RSK_READER_TOKENS` in `tools/rsk/ccid.py`.
+For PC/SC discovery, `rsk` looks for `RS-Key`, `RSK` or the appended USB
+serial `(rs-key-0001)` in reader names. Linux pcscd may use the driver's
+friendly name in place of the USB product string. Probe the applet you
+need on a candidate reader. See `RSK_READER_TOKENS` in `tools/rsk/ccid.py`.
 
 ### 3.2 Firmware version & `bcdDevice`
 
@@ -643,6 +644,11 @@ RS-Key implements:
   `GET DATA` for the CHUID (`5FC102`) returns a synthesized default (non-federal FASC-N + a
   device-stable GUID = `sha256(serial)[..16]`) when the host has not written one,
   so the Windows minidriver can enumerate the card; a host-written CHUID overrides it.
+  The Card Capability Container (`5FC107`, mandatory per SP 800-73-4 pt1 §3.1.1)
+  is served on the same terms: with no host-written object the card answers a
+  9-byte synthesized default (`F0 00 F1 00 F2 00 F5 01 10` — zero-length mandatory
+  elements plus the PIV data model number `0x10`) instead of `6A82`, a host
+  `PUT DATA` overrides it, and an empty `PUT DATA` falls back to the default again.
 - **OATH**: Yubico OATH (TOTP/HOTP).
 - **OTP**: Yubico OTP / HOTP keyboard + CCID.
 - **OpenPGP card 3.x.** An unreadable variable GET DATA child or password-status

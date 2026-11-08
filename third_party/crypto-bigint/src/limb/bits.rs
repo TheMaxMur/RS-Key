@@ -1,4 +1,4 @@
-use crate::{BitOps, Choice, Word, word};
+use crate::{BitOps, Choice, Word, primitives};
 
 use super::Limb;
 
@@ -57,21 +57,21 @@ impl Limb {
     #[inline(always)]
     #[must_use]
     pub const fn leading_zeros(self) -> u32 {
-        word::leading_zeros(self.0)
+        primitives::leading_zeros(self.0)
     }
 
     /// Calculate the number of trailing zeros in the binary representation of this number.
     #[inline(always)]
     #[must_use]
     pub const fn trailing_zeros(self) -> u32 {
-        word::trailing_zeros(self.0)
+        primitives::trailing_zeros(self.0)
     }
 
     /// Calculate the number of trailing ones the binary representation of this number.
     #[inline(always)]
     #[must_use]
     pub const fn trailing_ones(self) -> u32 {
-        word::trailing_zeros(!self.0)
+        primitives::trailing_zeros(!self.0)
     }
 
     /// Clear bits at or above the given bit position.

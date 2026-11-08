@@ -629,7 +629,9 @@ run "partition table fences the store (16M)" partition_table_fences_the_store
 # column says so in as many words. It does not make the `SEC-DISP-*` rows
 # `covered`: this compiles the shipped image, and their EVIDENCE is still
 # produced at 4 MB.
-run "build firmware (display)" env LED_KIND=none FLASH_SIZE=16M bash scripts/build.sh --features display
+run "build firmware (display V2)" env LED_KIND=none FLASH_SIZE=16M DISPLAY_TP_CHIP=cst3530 bash scripts/build.sh --features display
+run "firmware stack floor (display V2)" display_stack_floor
+run "build firmware (display)" env LED_KIND=none FLASH_SIZE=16M DISPLAY_TP_CHIP=cst328 bash scripts/build.sh --features display
 run "firmware stack floor (display)" display_stack_floor
 # Machine-checked "no size cost for keys without a screen": the display UI crate
 # and its driver stack must be absent from the DEFAULT firmware dependency tree, so

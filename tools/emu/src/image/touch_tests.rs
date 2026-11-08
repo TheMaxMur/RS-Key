@@ -13,7 +13,7 @@ fn register_read_encodes_a_held_finger_then_releases_on_image_time() {
     }
     let mut bus = I2c::new(touch.clone());
     let ctx = &mut MmioCtx::default();
-    bus.write(TARGET, ADDRESS, 4, 0, ctx);
+    bus.write(TARGET, CST328, 4, 0, ctx);
     bus.write(ENABLE, 1, 4, 0, ctx);
     for byte in [0xD1, 0x09 | STOP] {
         bus.write(DATA_CMD, byte, 4, 0, ctx);
@@ -61,7 +61,7 @@ fn controller_reports_are_latched_until_ack_and_reset_is_not_a_finger_lift() {
     let mut bus = I2c::new(touch.clone());
     let ctx = &mut MmioCtx::default();
     bus.write(ENABLE, 1, 4, 0, ctx);
-    bus.write(TARGET, ADDRESS, 4, 0, ctx);
+    bus.write(TARGET, CST328, 4, 0, ctx);
     touch.lock().unwrap().normal = true;
     touch.lock().unwrap().point = Some((170, 272));
     touch.lock().unwrap().until_ns = 800_000_000;
@@ -98,7 +98,7 @@ fn fifo_thresholds_enable_abort_clears_and_level_irq_are_observable() {
     touch.lock().unwrap().normal = true;
     let mut bus = I2c::new(touch.clone());
     let ctx = &mut MmioCtx::default();
-    bus.write(TARGET, ADDRESS, 4, 0, ctx);
+    bus.write(TARGET, CST328, 4, 0, ctx);
     bus.write(DATA_CMD, READ, 4, 0, ctx);
     assert_eq!(bus.read(RXFLR, 4, ctx), 0);
     bus.write(ENABLE, 1, 4, 0, ctx);
@@ -133,7 +133,7 @@ fn fifo_thresholds_enable_abort_clears_and_level_irq_are_observable() {
     assert_ne!(bus.read(RAW_INTR_STAT, 4, ctx) & RX_UNDER, 0);
     bus.read(CLR_RX_UNDER, 4, ctx);
     assert_eq!(bus.read(RAW_INTR_STAT, 4, ctx) & RX_UNDER, 0);
-    bus.write(TARGET, ADDRESS, 4, 1, ctx);
+    bus.write(TARGET, CST328, 4, 1, ctx);
     bus.write(DATA_CMD, READ | STOP, 4, 0, ctx);
     assert_ne!(bus.read(TX_ABRT_SOURCE, 4, ctx), 0);
     bus.read(CLR_INTR, 4, ctx);
@@ -143,7 +143,48 @@ fn fifo_thresholds_enable_abort_clears_and_level_irq_are_observable() {
     assert_eq!(bus.read(RXFLR, 4, ctx), 0);
     touch.lock().unwrap().sample(0);
     bus.write(ENABLE, 1, 4, 0, ctx);
-    bus.write(TARGET, ADDRESS, 4, 0, ctx);
+    bus.write(TARGET, CST328, 4, 0, ctx);
     bus.write(DATA_CMD, READ | STOP, 4, 0, ctx);
     assert_ne!(bus.read(TX_ABRT_SOURCE, 4, ctx), 0);
+}
+
+#[test]
+fn cst3530_reads_and_acks_a_four_byte_register_without_a_mode_write() {
+    let touch = SharedTouch::default();
+    {
+        let mut t = touch.lock().unwrap();
+        t.point = Some((239, 319));
+        t.until_ns = 800_000_000;
+    }
+    let mut bus = I2c::new(touch.clone());
+    let ctx = &mut MmioCtx::default();
+    bus.write(TARGET, CST3530, 4, 0, ctx);
+    bus.write(ENABLE, 1, 4, 0, ctx);
+    for (now, ack, point) in [
+        (0, false, Some(rsk_ui::Point::new(239, 319))),
+        (800_000_000, true, Some(rsk_ui::Point::new(239, 319))),
+        (800_000_000, false, None),
+    ] {
+        touch.lock().unwrap().now_ns = now;
+        for byte in [0xD0, 0x07, 0, 0] {
+            bus.write(DATA_CMD, byte, 4, 0, ctx);
+        }
+        for index in 0..9 {
+            bus.write(
+                DATA_CMD,
+                READ | if index == 8 { STOP } else { 0 },
+                4,
+                0,
+                ctx,
+            );
+        }
+        let report: Vec<_> = (0..9).map(|_| bus.read(DATA_CMD, 4, ctx) as u8).collect();
+        assert_eq!(rsk_ui::touch::parse_cst3530(&report), point);
+        if ack {
+            for byte in [0xD0, 0, 0x02, 0xAB | STOP] {
+                bus.write(DATA_CMD, byte, 4, 0, ctx);
+            }
+        }
+        assert_eq!(bus.read(RAW_INTR_STAT, 4, ctx) & TX_ABORT, 0);
+    }
 }

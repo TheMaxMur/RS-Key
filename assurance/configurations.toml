@@ -649,6 +649,16 @@ it, or whether it should be a knob of `firmware-display` instead."""
 
 
 [[question]]
+column = "firmware-display-v2"
+owner = "contributor"
+settled_by = "evidence"
+text = """
+The V2 package selects the CST3530 driver with `DISPLAY_TP_CHIP=cst3530`. \
+The gate builds it and checks the stack floor. The image harness can exercise \
+its I2C transactions and report handling. Touch alignment, timing and the \
+electrical behavior still need evidence from a physical V2 board."""
+
+[[question]]
 column = "firmware-trustzone"
 owner = "contributor"
 settled_by = "evidence"

@@ -1,6 +1,6 @@
 //! [`Uint`] modular multiplication operations.
 
-use crate::{Limb, MulMod, NonZero, SquareMod, Uint, WideWord, Word, div_limb::mul_rem};
+use crate::{Limb, MulMod, NonZero, SquareMod, Uint, WideWord, div_limb::mul_rem};
 
 impl<const LIMBS: usize> Uint<LIMBS> {
     /// Computes `self * rhs mod p`.
@@ -20,6 +20,8 @@ impl<const LIMBS: usize> Uint<LIMBS> {
     /// Computes `self * rhs mod p` for the special modulus
     /// `p = MAX+1-c` where `c` is small enough to fit in a single [`Limb`].
     ///
+    /// When `c` is zero, `p = MAX+1` and the result is wrapping multiplication.
+    ///
     /// For the modulus reduction, this function implements Algorithm 14.47 from
     /// the "Handbook of Applied Cryptography", by A. Menezes, P. van Oorschot,
     /// and S. Vanstone, CRC Press, 1996.
@@ -28,11 +30,14 @@ impl<const LIMBS: usize> Uint<LIMBS> {
         // We implicitly assume `LIMBS > 0`, because `Uint<0>` doesn't compile.
         // Still the case `LIMBS == 1` needs special handling.
         if LIMBS == 1 {
-            let reduced = mul_rem(
-                self.limbs[0],
-                rhs.limbs[0],
-                NonZero::<Limb>::new_unwrap(Limb(Word::MIN.wrapping_sub(c.0))),
-            );
+            let a = self.limbs[0];
+            let b = rhs.limbs[0];
+
+            // For c = 0, use a nonzero placeholder divisor and select the
+            // wrapping product in constant time.
+            let (p, c_is_nonzero) = Limb::ZERO.wrapping_sub(c).to_nz_or_one();
+            let reduced = mul_rem(a, b, p);
+            let reduced = Limb::select(a.wrapping_mul(b), reduced, c_is_nonzero);
             return Self::from_word(reduced.0);
         }
 
@@ -42,7 +47,8 @@ impl<const LIMBS: usize> Uint<LIMBS> {
         let (lo, carry) = mac_by_limb(&lo, &hi, c, Limb::ZERO);
 
         let (lo, carry) = {
-            let rhs = (carry.0 + 1) as WideWord * c.0 as WideWord;
+            // Widen before adding: carry can equal Limb::MAX.
+            let rhs = (carry.0 as WideWord + 1) * c.0 as WideWord;
             lo.carrying_add(&Self::from_wide_word(rhs), Limb::ZERO)
         };
 
@@ -108,6 +114,41 @@ const fn mac_by_limb<const LIMBS: usize>(
 mod tests {
     use crate::{Limb, NonZero, Random, RandomMod, Uint};
     use rand_core::SeedableRng;
+
+    #[test]
+    fn mul_mod_special_zero_c() {
+        fn test_size<const LIMBS: usize>() {
+            let values = [Uint::<LIMBS>::ZERO, Uint::ONE, Uint::MAX];
+            for a in values {
+                for b in values {
+                    assert_eq!(a.mul_mod_special(&b, Limb::ZERO), a.wrapping_mul(&b));
+                }
+            }
+        }
+
+        test_size::<1>();
+        test_size::<2>();
+        test_size::<3>();
+        test_size::<4>();
+    }
+
+    #[test]
+    fn mul_mod_special_max_c() {
+        fn test_size<const LIMBS: usize>() {
+            let c = Uint::<LIMBS>::from(Limb::MAX);
+            let p = NonZero::new(Uint::ZERO.wrapping_sub(&c)).unwrap();
+            let a = p.wrapping_sub(&c);
+
+            // (p - c)^2 mod p = c^2. With at least three limbs, the first
+            // reduction produces a carry of Limb::MAX, so carry + 1 overflows.
+            let expected = c.wrapping_mul(&c);
+            assert_eq!(a.mul_mod_special(&a, Limb::MAX), expected);
+            assert_eq!(a.mul_mod(&a, &p), expected);
+        }
+
+        test_size::<3>();
+        test_size::<4>();
+    }
 
     #[test]
     fn mul_mod_special() {

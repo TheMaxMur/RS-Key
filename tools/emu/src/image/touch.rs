@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 RS-Key contributors
 
-//! The blocking I2C1 driver subset and the board's CST328 report registers.
+//! The blocking I2C1 driver subset and the board's CST328 and CST3530 reports.
 
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
@@ -11,7 +11,8 @@ use rp2350_emu::{MmioCtx, MmioDevice};
 use super::Regs;
 
 pub const I2C1_BASE: u32 = 0x4009_8000;
-const ADDRESS: u32 = 0x1A;
+const CST328: u32 = 0x1A;
+const CST3530: u32 = 0x58;
 const TARGET: u32 = 0x04;
 const DATA_CMD: u32 = 0x10;
 const INTR_STAT: u32 = 0x2C;
@@ -40,9 +41,13 @@ const TX_ABORT: u32 = 1 << 6;
 const STOP_DET: u32 = 1 << 9;
 const TX_EMPTY: u32 = 1 << 4;
 const RX_FULL: u32 = 1 << 2;
-const REPORT: u16 = 0xD000;
-const ACK: u16 = 0xD005;
-const NORMAL: u16 = 0xD109;
+const CST328_REPORT: [u8; 2] = [0xD0, 0x00];
+const CST328_ACK: [u8; 3] = [0xD0, 0x05, 0x00];
+const CST328_NORMAL: [u8; 2] = [0xD1, 0x09];
+const CST3530_REPORT: [u8; 4] = 0xD007_0000u32.to_be_bytes();
+const CST3530_ACK: [u8; 4] = 0xD000_02ABu32.to_be_bytes();
+const CST328_LEN: usize = 7;
+const CST3530_LEN: usize = 9;
 
 #[derive(Default)]
 pub struct Touch {
@@ -53,7 +58,7 @@ pub struct Touch {
     pub reports: u64,
     pub normal: bool,
     pub reset: bool,
-    latched: Option<[u8; 7]>,
+    latched: Option<Option<(u16, u16)>>,
 }
 
 impl Touch {
@@ -66,9 +71,9 @@ impl Touch {
         self.reset = reset;
     }
 
-    fn report(&mut self) -> [u8; 7] {
-        if !self.normal || self.reset {
-            return [0; 7];
+    fn report(&mut self, target: u32) -> Option<(u16, u16)> {
+        if (target == CST328 && !self.normal) || self.reset {
+            return None;
         }
         if let Some(report) = self.latched {
             return report;
@@ -86,21 +91,8 @@ impl Touch {
         } else {
             None
         };
-        let report = if let Some((x, y)) = point {
-            [
-                6,
-                (x >> 4) as u8,
-                (y >> 4) as u8,
-                ((x & 15) << 4 | (y & 15)) as u8,
-                0,
-                1,
-                0,
-            ]
-        } else {
-            [0; 7]
-        };
-        self.latched = Some(report);
-        report
+        self.latched = Some(point);
+        point
     }
 
     pub fn reboot(&mut self, now: u64) {
@@ -115,6 +107,37 @@ impl Touch {
     }
 }
 
+fn encode_report(target: u32, point: Option<(u16, u16)>) -> [u8; CST3530_LEN] {
+    let Some((x, y)) = point else {
+        return [0; CST3530_LEN];
+    };
+    if target == CST328 {
+        [
+            6,
+            (x >> 4) as u8,
+            (y >> 4) as u8,
+            ((x & 15) << 4 | (y & 15)) as u8,
+            0,
+            1,
+            0,
+            0,
+            0,
+        ]
+    } else {
+        [
+            0,
+            0,
+            0,
+            1,
+            x as u8,
+            y as u8,
+            0,
+            ((x >> 8) | ((y >> 8) << 4)) as u8,
+            0x20,
+        ]
+    }
+}
+
 pub type SharedTouch = Arc<Mutex<Touch>>;
 
 pub struct I2c {
@@ -122,8 +145,7 @@ pub struct I2c {
     regs: Regs,
     rx: VecDeque<u8>,
     address: Vec<u8>,
-    pointer: u16,
-    report: [u8; 7],
+    report: [u8; CST3530_LEN],
     index: usize,
     ended: bool,
     raw: u32,
@@ -136,8 +158,7 @@ impl I2c {
             regs: Regs::default(),
             rx: VecDeque::new(),
             address: Vec::new(),
-            pointer: 0,
-            report: [0; 7],
+            report: [0; CST3530_LEN],
             index: 0,
             ended: true,
             raw: 0,
@@ -148,17 +169,26 @@ impl I2c {
         if self.regs.read(ENABLE) & 1 == 0 {
             return;
         }
-        if self.regs.read(TARGET) != ADDRESS || self.touch.lock().unwrap().reset {
+        let target = self.regs.read(TARGET);
+        let (report, len) = match target {
+            CST328 => (CST328_REPORT.as_slice(), CST328_LEN),
+            CST3530 => (CST3530_REPORT.as_slice(), CST3530_LEN),
+            _ => {
+                self.raw |= TX_ABORT | STOP_DET;
+                return;
+            }
+        };
+        if self.touch.lock().unwrap().reset {
             self.raw |= TX_ABORT | STOP_DET;
             return;
         }
         if word & READ != 0 {
-            if self.pointer != REPORT || self.index >= 7 {
+            if self.address != report || self.index >= len {
                 self.raw |= TX_ABORT | STOP_DET;
                 return;
             }
             if self.index == 0 {
-                self.report = self.touch.lock().unwrap().report();
+                self.report = encode_report(target, self.touch.lock().unwrap().report(target));
             }
             if self.rx.len() < FIFO_DEPTH {
                 self.rx.push_back(self.report[self.index]);
@@ -171,19 +201,18 @@ impl I2c {
                 self.address.clear();
                 self.index = 0;
             }
-            if self.address.len() < 3 {
-                self.address.push(word as u8);
-            } else {
+            if self.address.len() == if target == CST328 { 3 } else { 4 } {
                 self.raw |= TX_ABORT | STOP_DET;
                 return;
             }
-            if let [high, low] = self.address.as_slice() {
-                self.pointer = u16::from_be_bytes([*high, *low]);
-                if self.pointer == NORMAL {
-                    self.touch.lock().unwrap().normal = true;
-                }
+            self.address.push(word as u8);
+            let address = self.address.as_slice();
+            if target == CST328 && address == CST328_NORMAL {
+                self.touch.lock().unwrap().normal = true;
             }
-            if self.address.as_slice() == [0xD0, 0x05, 0] && self.pointer == ACK {
+            if (target == CST328 && address == CST328_ACK)
+                || (target == CST3530 && address == CST3530_ACK)
+            {
                 self.touch.lock().unwrap().latched = None;
             }
         }

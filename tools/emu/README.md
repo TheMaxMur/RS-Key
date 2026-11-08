@@ -239,7 +239,7 @@ python tests/emu.py tests/10_fido_getinfo.py
 - **Display images** use `--image display.elf --display`. The Waveshare board's
   PIO0 serial pins drive an ST7789 GRAM model; the window presents those captured
   RGB565 pixels and the PWM backlight. Mouse contacts reach the firmware through
-  the CST328 registers on I2C1. Space presses the active-low wake button. The
+  the CST328 or CST3530 registers on I2C1. Space presses the active-low wake button. The
   image executes its own rendering, hit tests, PIN verification and USB replies.
   `--headless` suppresses only the window. `--taps` and `--taps-port` retain their
   existing grammar, with durations measured on the image clock. A scripted pad
@@ -368,7 +368,7 @@ Each run retains the exact ELF, emulator and Python sources, raw RGB565 frames,
 PNGs, hashes, transport samples and sampled stack bounds in a new output folder.
 The panel model supports this board's RGB565 command sequence and scan orders;
 unsupported commands and formats fail explicitly. I2C1 models the firmware's
-blocking CST328 transactions, FIFO status and interrupts. These models do not
+blocking CST328 and CST3530 transactions, FIFO status and interrupts. These models do not
 establish electrical timing, panel overclock tolerance or physical calibration.
 
 `--only operations` runs a second matrix against both backends. Every image

@@ -31,9 +31,9 @@ signing and the public-key derivation performed during attestation validation.
 A failed management-key read refuses that SELECT and can be retried; a
 malformed management-key seal keeps certificate access and recovery available.
 
-> **Windows note:** the card serves a default CHUID automatically — the Windows
-> PIV minidriver needs it to enumerate the certificate containers, so no manual
-> `ykman piv objects generate chuid` step is required.
+> **Windows.** The PIV minidriver uses the CHUID to enumerate the card's
+> containers and reads the Card Capability Container (`5FC107`) when opening
+> one. RS-Key supplies defaults for both objects.
 
 Prereqs: on Linux, `pcscd` plus the polkit rule from [linux.md](../linux.md);
 if you also use GnuPG, the `disable-ccid` line so `scdaemon` and `pcscd` stop

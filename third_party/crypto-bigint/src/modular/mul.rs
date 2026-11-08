@@ -94,29 +94,31 @@ pub const fn montgomery_multiply_inner(
     let mut i = 0;
     while i < nlimbs {
         let xi = x[i];
-        // A[0] + x[i]y[0] <= (2^64 - 1)^2 + (2^64 - 1) = 2^128 - 2^64
+        // Write B = 2^Word::BITS. Then axy <= (B - 1)^2 + (B - 1) = B^2 - B.
         let axy = (xi.0 as WideWord) * (y[0].0 as WideWord) + out[0].0 as WideWord;
         let u = (axy as Word).wrapping_mul(mod_neg_inv.0);
 
-        let mut carry;
-        // A[0] + x[i]y[0] + um[0] <= (2^128 - 1) + (2^128 - 2^64) = 2^129 - 2^64 - 1
-        let (a, c) = word::overflowing_add_wide((u as WideWord) * (modulus[0].0 as WideWord), axy);
-        // carry <= (2^129 - 2^64 - 1) / 2^64 <= 2^65 - 2
-        carry = ((word::choice_to_wide_mask(c) & 1) << Word::BITS) | (a >> Word::BITS);
+        // Add the low halves separately: lo <= 2B - 2 fits in WideWord. This keeps
+        // the carry in arithmetic form without a double-width overflow flag.
+        let um = (u as WideWord) * (modulus[0].0 as WideWord);
+        let lo = (axy as Word as WideWord) + (um as Word as WideWord);
+        // floor((axy + um) / B) <= 2B - 2, including any carry from the low halves.
+        let mut carry = (axy >> Word::BITS) + (um >> Word::BITS) + (lo >> Word::BITS);
 
         let mut j = 1;
         while j < nlimbs {
-            // A[j] + x[i]y[j] <= (2^64 - 1)^2 + (2^64 - 1) = 2^128 - 2^64
+            // axy <= B^2 - B.
             let axy = (xi.0 as WideWord) * (y[j].0 as WideWord) + out[j].0 as WideWord;
-            // um[j] + carry <= (2^64 - 1)^2 + (2^65 - 2) = 2^128 - 1
+            // umc <= (B - 1)^2 + (2B - 2) = B^2 - 1.
             let umc = (u as WideWord) * (modulus[j].0 as WideWord) + carry;
-            let (ab, c) = word::overflowing_add_wide(axy, umc);
-            out[j - 1] = Limb(ab as Word);
-            // carry <= (2^129 - 2^64 - 1) / 2^64 <= 2^65 - 2
-            carry = ((word::choice_to_wide_mask(c) & 1) << Word::BITS) | (ab >> Word::BITS);
+            let lo = (axy as Word as WideWord) + (umc as Word as WideWord);
+            out[j - 1] = Limb(lo as Word);
+            // floor((axy + umc) / B) <= floor((2B^2 - B - 1) / B) = 2B - 2.
+            carry = (axy >> Word::BITS) + (umc >> Word::BITS) + (lo >> Word::BITS);
             j += 1;
         }
 
+        // meta_carry <= 1, so this sum is at most 2B - 1 and still fits in WideWord.
         carry += meta_carry;
         (out[nlimbs - 1], meta_carry) = (Limb(carry as Word), carry >> Word::BITS);
 
@@ -209,4 +211,91 @@ pub(crate) const fn square_repeat_montgomery_form<const LIMBS: usize>(
     }
 
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::montgomery_multiply_inner;
+    use crate::{Limb, Uint, Word, modular::FixedMontyParams};
+    use num_bigint::BigUint;
+
+    fn to_biguint(limbs: &[Limb]) -> BigUint {
+        limbs.iter().rev().fold(BigUint::from(0u8), |value, limb| {
+            (value << Word::BITS) + BigUint::from(limb.0)
+        })
+    }
+
+    fn check_product<const N: usize>(x: [Limb; N], y: [Limb; N], modulus: [Limb; N]) {
+        let modulus = Uint::new(modulus).to_odd().unwrap();
+        let params = FixedMontyParams::new_vartime(modulus);
+        let m = to_biguint(modulus.as_ref().as_limbs());
+
+        // An unbounded REDC reference checks the complete result, including the
+        // final carry, without reproducing the limb-wise additions under test.
+        let mut expected = to_biguint(&x) * to_biguint(&y);
+        let mask = BigUint::from(Word::MAX);
+        let inverse = BigUint::from(params.mod_neg_inv().0);
+        for _ in 0..N {
+            let u = (&expected * &inverse) & &mask;
+            expected = (expected + u * &m) >> Word::BITS;
+        }
+
+        let mut out = [Limb::ZERO; N];
+        let carry = montgomery_multiply_inner(
+            &x,
+            &y,
+            &mut out,
+            modulus.as_ref().as_limbs(),
+            params.mod_neg_inv(),
+        );
+        let actual = to_biguint(&out) + (BigUint::from(carry.0) << (N * Limb::BITS as usize));
+        assert_eq!(actual, expected, "x={x:?}, y={y:?}, modulus={modulus:?}");
+    }
+
+    #[test]
+    fn multiply_carry_boundaries() {
+        fn check<const N: usize>() {
+            let values = [
+                [Limb::ZERO; N],
+                Uint::<N>::ONE.to_limbs(),
+                [Limb::MAX; N],
+                [Limb(Word::MAX - 1); N],
+                [Limb(1 << (Word::BITS - 1)); N],
+                core::array::from_fn(|i| if i & 1 == 0 { Limb::MAX } else { Limb::ZERO }),
+            ];
+            for mut modulus in values {
+                modulus[0].0 |= 1;
+                for x in values {
+                    for y in values {
+                        check_product(x, y, modulus);
+                    }
+                }
+            }
+        }
+        check::<1>();
+        check::<2>();
+        check::<3>();
+        check::<4>();
+        check::<16>();
+    }
+
+    #[test]
+    fn multiply_matches_biguint() {
+        use chacha20::ChaCha8Rng;
+        use rand_core::{Rng, SeedableRng};
+
+        let mut rng = ChaCha8Rng::from_seed([42; 32]);
+        let mut limb = || {
+            let mut bytes = [0u8; Limb::BYTES];
+            rng.fill_bytes(&mut bytes);
+            Limb(Word::from_le_bytes(bytes))
+        };
+        for _ in 0..1024 {
+            let x = core::array::from_fn(|_| limb());
+            let y = core::array::from_fn(|_| limb());
+            let mut modulus: [Limb; 4] = core::array::from_fn(|_| limb());
+            modulus[0].0 |= 1;
+            check_product(x, y, modulus);
+        }
+    }
 }

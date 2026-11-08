@@ -64,7 +64,10 @@ class Peer(KeyCard):
             if identifier in (0x5FC103, 0x5FC108, 0x5FC109, 0x5FC121) and not self.has_pin and self.defect != "management-reads-biometric":
                 sw = 0x6982
             else:
-                value = self.objects.get(identifier, b"default-chuid" if identifier == 0x5FC102 else None)
+                defaults = {0x5FC102: b"default-chuid"}
+                if self.defect != "missing-ccc-default":
+                    defaults[0x5FC107] = bytes.fromhex("f000f100f200f50110")
+                value = self.objects.get(identifier, defaults.get(identifier))
                 if value is None:
                     sw = 0x6A82
                 else:
@@ -76,9 +79,10 @@ class Peer(KeyCard):
 
 @pytest.mark.parametrize("defect,needle", [(None, None), ("no-management-ACL", "identical PIV PUT still requires"),
     ("management-reads-biometric", "PIV read ACL cannot be replaced"), ("volatile-object", "PIV object survives connection change"),
-    ("quota-ignored", "pool reaches the independently bounded quota")])
+    ("quota-ignored", "pool reaches the independently bounded quota"),
+    ("missing-ccc-default", "deleted CCC falls back to synthesized default")])
 def test_PIV_object_owners_lifetimes_and_independent_quotas(tmp_path, monkeypatch, defect, needle):
-    monkeypatch.setattr(piv_objects, "OBJECTS", (0x5FC102, 0x5FC103, 0x5FC1F0, 0x5FFF00, 0x5FFF10))
+    monkeypatch.setattr(piv_objects, "OBJECTS", (0x5FC102, 0x5FC103, 0x5FC107, 0x5FC1F0, 0x5FFF00, 0x5FFF10))
     monkeypatch.setattr(reset_witness, "snapshot", lambda session, excluded: None)
     peer = Peer(defect)
     trace = Trace(tmp_path / "PIV-objects", {})

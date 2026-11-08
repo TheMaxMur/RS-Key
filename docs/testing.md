@@ -163,8 +163,8 @@ device for electrical behavior, real power cycles and on-device timing.
 
 ### Display image testing
 
-`tools/emu/image_display.py` runs a touch-enabled display image with the
-modeled panel and touch input. Its ceremony cases check approve, deny,
+`tools/emu/image_display.py` runs a CST328 (V1) or CST3530 (V2) display
+image with the modeled panel and touch input. Its ceremony cases check approve, deny,
 cancel, and a hold too short to approve. Other cases exercise stale touch,
 press and release behavior, deadlines, and on-device PIN entry for FIDO
 and CCID. The driver checks both the visible prompt and the host reply.

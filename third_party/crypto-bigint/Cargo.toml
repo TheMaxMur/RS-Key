@@ -13,7 +13,7 @@
 edition = "2024"
 rust-version = "1.87"
 name = "crypto-bigint"
-version = "0.7.6"
+version = "0.7.10"
 authors = ["RustCrypto Developers"]
 build = false
 exclude = [
@@ -98,6 +98,10 @@ name = "const_monty_form"
 path = "tests/const_monty_form.rs"
 
 [[test]]
+name = "const_prime_monty_params"
+path = "tests/const_prime_monty_params.rs"
+
+[[test]]
 name = "fixed_monty_form"
 path = "tests/fixed_monty_form.rs"
 
@@ -162,7 +166,7 @@ harness = false
 version = "0.1"
 
 [dependencies.ctutils]
-version = "0.4.5"
+version = "0.4.6"
 
 [dependencies.der]
 version = "0.8"

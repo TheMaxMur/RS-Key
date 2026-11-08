@@ -14,33 +14,36 @@ impl<const LIMBS: usize> Uint<LIMBS> {
     /// Computes `self - (rhs + borrow)`, returning the result along with the new borrow.
     #[inline(always)]
     #[must_use]
-    pub const fn borrowing_sub(&self, rhs: &Self, borrow: Limb) -> (Self, Limb) {
+    pub const fn borrowing_sub(&self, rhs: &Self, mut borrow: Limb) -> (Self, Limb) {
+        #[cfg(target_pointer_width = "32")]
         const P521_LIMBS_32: usize = 17;
         let mut limbs = [Limb::ZERO; LIMBS];
-        // Limit this code-generation change to P-521's 32-bit integer width.
-        if Limb::BITS != 32 || LIMBS != P521_LIMBS_32 {
-            let mut borrow = borrow;
+        #[cfg(target_pointer_width = "32")]
+        if LIMBS == P521_LIMBS_32 {
+            use ctutils::primitives::borrowing_sub_u32;
+
+            // Keep the protected borrow between words without intermediate masks.
+            let mut carry = word::choice_from_msb(borrow.0);
             let mut i = 0;
             while i < LIMBS {
-                let (w, b) = self.limbs[i].borrowing_sub(rhs.limbs[i], borrow);
-                limbs[i] = w;
-                borrow = b;
+                let (w, next) = borrowing_sub_u32(self.limbs[i].0, rhs.limbs[i].0, carry);
+                limbs[i] = Limb(w);
+                carry = next;
                 i += 1;
             }
-            return (Self { limbs }, borrow);
+            return (Self { limbs }, Limb(word::choice_to_mask(carry)));
         }
 
-        // Keep the protected borrow between words without intermediate masks.
-        let mut borrow = word::choice_from_msb(borrow.0);
         let mut i = 0;
+
         while i < LIMBS {
-            let (w, b) = word::borrowing_sub(self.limbs[i].0, rhs.limbs[i].0, borrow);
-            limbs[i] = Limb(w);
+            let (w, b) = self.limbs[i].borrowing_sub(rhs.limbs[i], borrow);
+            limbs[i] = w;
             borrow = b;
             i += 1;
         }
 
-        (Self { limbs }, Limb(word::choice_to_mask(borrow)))
+        (Self { limbs }, borrow)
     }
 
     /// Perform saturating subtraction, returning `ZERO` on underflow.
@@ -142,6 +145,43 @@ mod tests {
 
         assert_eq!(res, U128::MAX);
         assert_eq!(borrow, Limb::MAX);
+    }
+
+    #[test]
+    fn borrowing_sub_matches_u128() {
+        use crate::Word;
+
+        // Cross both 32-bit and 64-bit limb boundaries, including propagation through zero limbs.
+        let values = [
+            0,
+            1,
+            2,
+            (1 << 32) - 1,
+            1 << 32,
+            (1 << 64) - 1,
+            1 << 64,
+            (1 << 127) - 1,
+            1 << 127,
+            u128::MAX - 1,
+            u128::MAX,
+        ];
+
+        for lhs in values {
+            for rhs in values {
+                for borrow in [0, 1, 1 << (Word::BITS - 1), Word::MAX] {
+                    let (expected, b1) = lhs.overflowing_sub(rhs);
+                    let (expected, b2) =
+                        expected.overflowing_sub(u128::from(borrow >> (Word::BITS - 1)));
+                    let expected_borrow = Limb(Word::from(b1 | b2).wrapping_neg());
+
+                    assert_eq!(
+                        U128::from(lhs).borrowing_sub(&U128::from(rhs), Limb(borrow)),
+                        (U128::from(expected), expected_borrow),
+                        "lhs={lhs:#x}, rhs={rhs:#x}, borrow={borrow:#x}"
+                    );
+                }
+            }
+        }
     }
 
     #[test]

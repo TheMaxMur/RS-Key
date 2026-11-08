@@ -38,6 +38,12 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ## [Unreleased]
 
+- Serve the PIV Card Capability Container by default for Windows key-container
+  opens, while preserving a provisioned container. Support the CST3530 touch
+  controller on the Waveshare V2 display board (bcdDevice 0x0BE2).
+- Recognize the RS-Key PC/SC reader by its USB serial when Linux pcscd uses the
+  driver's friendly name (CLI and TUI).
+
 - Run display firmware images with `rsk-emu --image --display`: capture ST7789
   pixels from PIO, deliver CST328 touch reports over I2C1, and show the panel in
   SDL. Add headless image-time tap input and a display-image laboratory for

@@ -6,13 +6,6 @@ use ctutils::Choice;
 cpubits::cpubits! {
     16 => { compile_error!("this crate builds on 32-bit and 64-bit platforms only") }
     32 => {
-        pub(crate) use ctutils::primitives::{
-            borrowing_sub_u32 as borrowing_sub,
-            leading_zeros_u32 as leading_zeros,
-            overflowing_add_u64 as overflowing_add_wide,
-            trailing_zeros_u32 as trailing_zeros,
-        };
-
         /// Inner integer type that the [`Limb`] newtype wraps.
         pub type Word = u32;
 
@@ -44,13 +37,6 @@ cpubits::cpubits! {
         }
     }
     64 => {
-        pub(crate) use ctutils::primitives::{
-            borrowing_sub_u64 as borrowing_sub,
-            leading_zeros_u64 as leading_zeros,
-            overflowing_add_u128 as overflowing_add_wide,
-            trailing_zeros_u64 as trailing_zeros,
-        };
-
         /// Unsigned integer type that the [`Limb`][`crate::Limb`] newtype wraps.
         pub type Word = u64;
 

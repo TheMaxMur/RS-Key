@@ -44,14 +44,15 @@ and adds an `rgb_gpio` driver for Romu's common-anode RGB LED.
 ## Trusted display
 
 The `display` build currently supports one board, the **Waveshare
-RP2350-Touch-LCD-2.8**. It uses a 240×320 ST7789 panel and a CST328 touch
-controller. The similarly named RP2350-Touch-LCD-2.8C uses a round ST7701
-panel and needs its own port.
+RP2350-Touch-LCD-2.8**. Both revisions use a 240×320 ST7789 panel. V1
+uses a CST328 touch controller, and V2 uses a CST3530. The similarly named
+RP2350-Touch-LCD-2.8C uses a round ST7701 panel and needs its own port.
 [Waveshare 2.8 specifications](https://www.waveshare.com/wiki/RP2350-Touch-LCD-2.8) ·
 [Waveshare 2.8C specifications](https://www.waveshare.com/RP2350-Touch-LCD-2.8C.htm)
 
 ```sh
-nix develop -c env BOARD=waveshare-touch-lcd bash scripts/build.sh --features display
+nix build .#firmware-display     # V1
+nix build .#firmware-display-v2  # V2
 ```
 
 The preset selects 16 MiB of flash and `LED_KIND=none`. The screen handles

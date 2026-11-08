@@ -30,7 +30,8 @@ rst = 15
 bl_pin = 16
 bl_pwm_slice = 0
 bl_pwm_channel = "A"
-# CST328 touch controller over I2C1.
+# Use DISPLAY_TP_CHIP=cst3530 for the V2 board.
+tp_chip = "cst328"
 tp_rst = 17
 # Wake button: GPIO25 (the board's BAT_PWR / KEY_BAT button).
 wake_pin = 25

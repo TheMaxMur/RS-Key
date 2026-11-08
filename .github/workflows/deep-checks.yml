@@ -232,7 +232,7 @@ jobs:
       # of the dimension — it must arrive labelled.
       - name: upload crash artifacts
         if: failure()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: fuzz-artifacts-${{ github.run_id }}-s${{ matrix.shard }}-${{ matrix.config }}
           path: fuzz/artifacts/
@@ -313,7 +313,7 @@ jobs:
 
       - name: upload the raw coverage and per-target HTML reports
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: fuzz-coverage-${{ github.run_id }}-${{ matrix.config }}
           path: |
@@ -400,7 +400,7 @@ jobs:
 
       - name: retain profile logs, feature closure and raw coverage
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: unit-coverage-${{ github.run_id }}-${{ matrix.profile }}
           path: target/coverage-profiles/${{ github.run_id }}-${{ matrix.profile }}
@@ -427,7 +427,7 @@ jobs:
 
       - name: Retain MC/DC logs and evidence
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: mcdc-${{ github.run_id }}-${{ github.run_attempt }}
           path: target/mcdc.*/
@@ -523,7 +523,7 @@ jobs:
       # hold, already in its format, beside the tool's own outcome lists.
       - name: upload this shard's survivors
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: mutants-${{ github.run_id }}-s${{ matrix.shard }}
           path: |
@@ -666,7 +666,7 @@ jobs:
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: failure()
         with:
           name: formal-logs-${{ github.run_id }}-${{ matrix.shard }}

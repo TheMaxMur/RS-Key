@@ -1,8 +1,8 @@
 //! Wrapper type for non-zero integers.
 
 use crate::{
-    Bounded, Choice, ConstOne, Constants, CtAssign, CtEq, CtOption, CtSelect, Encoding, Int, Limb,
-    Mul, Odd, One, ToUnsigned, Uint, UintRef, Zero,
+    Bounded, Choice, ConstOne, Constants, CtAssign, CtEq, CtOption, CtSelect, Encoding, Int,
+    Integer, Limb, Mul, Odd, One, ToUnsigned, Uint, UintRef, Zero,
 };
 use core::{
     fmt,
@@ -160,7 +160,7 @@ where
 
 impl<T> ConstOne for NonZero<T>
 where
-    T: ConstOne + One,
+    T: ConstOne + Integer,
 {
     const ONE: Self = Self(T::ONE);
 }
@@ -178,7 +178,7 @@ where
 
 impl<T> num_traits::One for NonZero<T>
 where
-    T: One + Mul<T, Output = T>,
+    T: Integer,
 {
     #[inline]
     fn one() -> Self {
@@ -193,7 +193,7 @@ where
 /// Any non-zero integer multiplied by another non-zero integer is definitionally non-zero.
 impl<T> Mul<Self> for NonZero<T>
 where
-    T: Mul<T, Output = T>,
+    T: Integer,
 {
     type Output = Self;
 

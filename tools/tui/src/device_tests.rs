@@ -4,6 +4,15 @@
 use super::*;
 
 #[test]
+fn pcsc_friendly_name_matches_the_firmware_serial() {
+    let other_key = c"Yubico YubiKey (12345678) 00 00";
+    let serial_match = c"Yubico YubiKey (rs-key-0001) 01 00";
+    assert_eq!(rs_key_reader(&[other_key, serial_match]), Ok(serial_match));
+    assert!(rs_key_reader(&[other_key]).is_err());
+    assert!(rs_key_reader(&[serial_match, c"RS-Key Security Key 02 00"]).is_err());
+}
+
+#[test]
 fn ber_find_walks_top_level_tlvs() {
     // 4F (short) · 5F52 (2-byte tag) · C4 (short): ber_find must step over the
     // 2-byte-tag object to reach C4, and match the 2-byte tag itself.

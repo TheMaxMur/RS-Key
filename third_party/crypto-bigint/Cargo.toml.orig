@@ -1,6 +1,6 @@
 [package]
 name = "crypto-bigint"
-version = "0.7.6"
+version = "0.7.10"
 description = """
 Pure Rust implementation of a big integer library which has been designed from the ground-up for use
 in cryptographic applications. Provides constant-time, `no_std`/`no_alloc`-friendly implementations
@@ -19,7 +19,7 @@ exclude = [".clippy.toml", ".codecov.yml", ".github", ".gitignore"]
 
 [dependencies]
 cpubits = "0.1"
-ctutils = "0.4.5"
+ctutils = "0.4.6"
 num-traits = { version = "0.2.19", default-features = false }
 
 # optional dependencies

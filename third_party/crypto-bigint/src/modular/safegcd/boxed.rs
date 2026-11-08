@@ -119,10 +119,7 @@ fn invert_odd_mod_precomp<const VARTIME: bool>(
         steps -= batch;
     }
 
-    let d = d
-        .norm(f.is_negative(), &m)
-        .resize_unchecked(a.bits_precision());
-
+    let d = d.norm(f.is_negative(), &m);
     CtOption::new(d, f.magnitude().is_one() & a_nonzero)
 }
 

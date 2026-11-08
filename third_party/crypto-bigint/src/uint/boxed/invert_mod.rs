@@ -191,6 +191,28 @@ mod tests {
     use num_bigint::BigUint;
     use num_integer::Integer;
 
+    #[test]
+    fn invert_odd_mod_wider_modulus() {
+        let a = BoxedUint::from(2u64);
+        let modulus = Odd::new(BoxedUint::from(u128::MAX >> 1)).unwrap();
+        // 2 * 2^126 = modulus + 1.
+        let expected = BoxedUint::from(1u128 << 126);
+
+        assert!(a.bits_precision() < modulus.bits_precision());
+        assert_eq!(a.invert_odd_mod(&modulus).unwrap(), expected);
+    }
+
+    #[test]
+    fn invert_odd_mod_vartime_wider_modulus() {
+        let a = BoxedUint::from(2u64);
+        let modulus = Odd::new(BoxedUint::from(u128::MAX >> 1)).unwrap();
+        // 2 * 2^126 = modulus + 1.
+        let expected = BoxedUint::from(1u128 << 126);
+
+        assert!(a.bits_precision() < modulus.bits_precision());
+        assert_eq!(a.invert_odd_mod_vartime(&modulus).unwrap(), expected);
+    }
+
     /// `invert_mod` at a precision where the safegcd iteration count overflowed `u32`
     /// (`45907 * bits + 30179 > u32::MAX` from 93558 bits), with an even modulus so that
     /// both the odd-modulus and the `2^k` paths are exercised.

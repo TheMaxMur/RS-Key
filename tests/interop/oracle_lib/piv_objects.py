@@ -13,6 +13,9 @@ MAX_OBJECT = 3063
 CHAIN_LIMIT = 3072
 POOL_BYTES = 32768
 POOL_SLOTS = 256
+CHUID = 0x5FC102
+CCC = 0x5FC107
+DEFAULT_CCC = bytes.fromhex("f000f100f200f50110")
 OBJECTS = (*range(0x5FC100, 0x5FC1F0), 0x5FC1F0, 0x5FC1F1, 0x5FFF00, *range(0x5FFF10, 0x5FFF16), 0x5F0077)
 PIN_OBJECTS = (0x5FC103, 0x5FC108, 0x5FC109, 0x5FC121)
 
@@ -71,8 +74,10 @@ def owners(session):
                         sdk.authenticate(session.options.management_key)
                         session.card_value(write(session, identifier, None))
                         deleted = read(session, identifier)
-                        if identifier == 0x5FC102:
+                        if identifier == CHUID:
                             session.check("deleted CHUID falls back to synthesized default", deleted is not None and deleted != value)
+                        elif identifier == CCC:
+                            session.check("deleted CCC falls back to synthesized default", deleted, DEFAULT_CCC)
                         else:
                             session.check("empty PUT deletes the object", deleted, None)
                         session.card_value(write(session, identifier, None))
@@ -83,8 +88,8 @@ def owners(session):
                             session.card_value(write(session, identifier, original))
                             sdk.verify_pin(session.options.piv_pin)
                             session.check("PIV object semantic value restored", read(session, identifier), original)
-                            if identifier == 0x5FC102:
-                                session.observe("cleanup_limit", "a synthesized CHUID read cannot distinguish absent storage from identical stored default")
+                            if identifier in (CHUID, CCC):
+                                session.observe("cleanup_limit", "a synthesized read cannot distinguish absent storage from the identical stored object")
 
 
 def persistence(session):

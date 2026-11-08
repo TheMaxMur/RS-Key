@@ -138,13 +138,15 @@ selected, the build uses the defaults below.
 
 Boolean GPIO settings also accept `true/false`, `yes/no` and `on/off`.
 For display boards, the `PK_DISPLAY_*` overrides below take precedence
-over the corresponding `[display]` TOML settings.
+over the corresponding `[display]` TOML settings. `DISPLAY_TP_CHIP`
+overrides `[display].tp_chip`.
 
 | Variable | Fallback | Setting |
 |---|---|---|
 | `PK_DISPLAY_SPI_FREQ_HZ` | `80000000` | Panel PIO serial clock. The firmware requires half its fixed 160 MHz system clock. |
 | `PK_DISPLAY_CS`, `PK_DISPLAY_DC`, `PK_DISPLAY_RST` | `13`, `14`, `15` | Panel control GPIOs |
 | `PK_DISPLAY_BL_PIN`, `PK_DISPLAY_BL_PWM_SLICE`, `PK_DISPLAY_BL_PWM_CHANNEL` | `16`, `0`, `0` | Backlight GPIO, PWM slice and channel. Use a supported tuple from the board wiring. |
+| `DISPLAY_TP_CHIP` | `cst328` | Use `cst328` for Waveshare V1 or `cst3530` for V2. |
 | `PK_DISPLAY_TP_RST`, `PK_DISPLAY_I2C_FREQ_HZ` | `17`, `400000` | Touch controller reset GPIO and I²C clock |
 | `PK_DISPLAY_INVERT_COLORS`, `PK_DISPLAY_COLOR_ORDER` | `1`, `0` | Panel color inversion and RGB/BGR selection. `1` selects inversion or BGR, respectively. |
 
@@ -239,7 +241,7 @@ each published flavor and compares its UF2 bytes. See
 |---|---|
 | none, `-trustzone` | Default TrustZone configuration. The filename uses the package name. |
 | `-2mb`, `-16mb` | 2 MiB with `KVMAIN=896K`, or 16 MiB with the default KV size |
-| `-display` | `display`, `FLASH_SIZE=16M`, `LED_KIND=none` |
+| `-display`, `-display-v2` | Trusted display on Waveshare V1 (CST328) or V2 (CST3530). Both use 16 MiB flash and `LED_KIND=none`. |
 | `-pico` | `VIDPID=Pico` |
 | `-pqc` | `advertise-pqc` |
 | `-fips`, `-strong-pin`, `-always-uv`, `-strict-up` | Corresponding feature, also available with an added `-pqc` suffix |
@@ -307,7 +309,7 @@ string, `cargoFlags` as a list of builder arguments, and `env` for the
 firmware knobs listed above. Unknown `env` keys are rejected. Named
 arguments also exist for `board`, `vidpid`, `usbVid`, `usbPid`,
 `fwVersion`, `xoscDelayMult`, `flashSize`, `kvmain`, `ledPin`,
-`ledKind`, `presencePin`, `fakeMkek` and `fakeDevk`.
+`ledKind`, `presencePin`, `fakeMkek`, `fakeDevk` and `tpChip`.
 
 ```sh
 nix build --impure --expr \

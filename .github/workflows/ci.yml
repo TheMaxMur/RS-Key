@@ -242,11 +242,13 @@ jobs:
             args: "--features no-touch,fips-profile,advertise-pqc"
           # The trusted-display flavor: the panel takes the addressable-LED pin
           # (LED_KIND=none, compile-time-guarded) and the UI assets want the
-          # larger flash (docs/guides/display.md). `env` is empty for every other
-          # row, so only this one carries the extra knobs.
+          # larger flash (docs/guides/display.md). Build both touch controllers.
           - name: display
             args: "--features display"
             env: "LED_KIND=none FLASH_SIZE=16M"
+          - name: display-v2
+            args: "--features display"
+            env: "LED_KIND=none FLASH_SIZE=16M DISPLAY_TP_CHIP=cst3530"
           # Flash-geometry siblings of the default image (default features, RS-Key
           # identity). 2mb shrinks KVMAIN so the image still fits ≥1 MiB of code;
           # smoke-building it here catches a link/fit regression in PR CI rather
@@ -318,7 +320,7 @@ jobs:
           cp target/trustzone/combined.uf2 firmware-${{ matrix.name }}.uf2
           sha256sum firmware-${{ matrix.name }}.uf2
 
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: firmware-${{ matrix.name }}-${{ github.sha }}
           path: firmware-${{ matrix.name }}.uf2

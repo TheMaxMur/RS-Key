@@ -3,7 +3,7 @@
 
 //! A scripted finger for the trusted display's touch pad: a queue of contacts a
 //! script or a test pushes, read back through the same [`rsk_display::TouchPad`]
-//! the CST328 implements.
+//! both touch controllers implement.
 //!
 //! Level, not edges, like the real controller — so a [`Tap`] is a *duration* of
 //! contact rather than a click, and the pad reports it held for as long as the

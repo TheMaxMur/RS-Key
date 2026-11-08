@@ -40,7 +40,7 @@ allow = ["AGPL-3.0-only", "Apache-2.0", "MIT"]
 
 # Local UInt borrow propagation is AGPL; upstream remains Apache-2.0 OR MIT.
 [[licenses.exceptions]]
-crate = "crypto-bigint@0.7.6"
+crate = "crypto-bigint@0.7.10"
 allow = ["AGPL-3.0-only", "Apache-2.0", "MIT"]
 
 [bans]

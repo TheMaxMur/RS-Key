@@ -5,7 +5,7 @@
 //!
 //! [`rsk_display`] holds the flow — which screen is shown when, and what a tap on
 //! it does — generic over the panel and the touch controller. The firmware fills
-//! those in with an ST7789 and a CST328; here they are an SDL2 window and a mouse.
+//! those in with an ST7789 and a touch controller; here they are an SDL2 window and a mouse.
 //! Nothing in between is re-implemented: the pixels come from the same
 //! `rsk_ui::render` the board runs, and a click enters the flow through the same
 //! `TouchPad::read` a finger does.

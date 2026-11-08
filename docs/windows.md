@@ -97,11 +97,13 @@ See [ssh.md](guides/ssh.md) for the WebAuthn/OpenSSH details.
   via the minidriver). Recent firmware aligns the OpenPGP card serial with the
   device serial the other applets report; older firmware showed a divergent
   OpenPGP serial.
-- **PIV certificates unusable / signing "pending" under CAPI (CryptoAPI):** the
-  Windows PIV minidriver enumerates the card's containers from its CHUID. Recent
-  firmware serves a default CHUID automatically, so a freshly flashed card is
-  usable; on older firmware, provision one with `ykman piv objects generate chuid`.
-  (The RSA/EC signing itself is unaffected — it matches a real YubiKey byte-for-byte.)
+- **PIV certificates unusable / signing "pending" under CAPI (CryptoAPI), or a
+  certificate login failing with `NTE_BAD_KEYSET` ("the keyset does not exist"):**
+  the Windows inbox PIV minidriver enumerates the card's containers from its CHUID
+  and reads the mandatory Card Capability Container (`5FC107`) while opening one.
+  RS-Key serves both objects automatically. If either is missing on an older
+  image, use `ykman piv objects generate chuid` or `ykman piv objects generate ccc`
+  to provision it.
 - **PicoForge / a PC/SC tool cannot connect until re-plug:** another program is
   holding the single reader. Close it (PicoForge, Kleopatra, a stray `gpg`), or
   unplug and re-plug. `gpgconf --kill scdaemon` releases a `gpg`-held handle.

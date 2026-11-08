@@ -84,7 +84,7 @@ when a screen changes.
 To run the compiled firmware itself, build the ordinary display image below,
 then launch it with `rsk-emu --image target/trustzone/combined.elf --display`.
 The window shows pixels captured from the firmware's PIO serial output. Mouse
-contacts become CST328 I2C reports; Space drives the board's wake GPIO. Add
+contacts become CST328 or CST3530 I2C reports; Space drives the board's wake GPIO. Add
 `--headless` for scripted runs. In image mode, tap-script hold and gap durations
 follow the emulated clock, so a slow host cannot turn a short contact into a
 long approval hold. See [display image testing](../testing.md#display-image-testing)
@@ -96,22 +96,35 @@ behaviour and touch calibration still require the board.
 
 ## Building and flashing
 
-The panel takes over the addressable-LED pin, so the display flavor is built
-`LED_KIND=none` (a compile-time guard enforces this) with the larger flash the UI
-assets want:
+Use the package for your board revision. Both use the same ST7789 display,
+but their touch controllers have different I²C addresses and register maps.
+With the wrong image the screen draws normally and touches do not register.
+
+| Board revision | Touch controller | I²C address | Nix package |
+|---|---|---|---|
+| V1 | CST328 | `0x1A` | `firmware-display` |
+| V2 | CST3530 | `0x58` | `firmware-display-v2` |
+
+Check the board silkscreen or the controller address to identify the revision.
+[Waveshare board specifications](https://www.waveshare.com/wiki/RP2350-Touch-LCD-2.8)
 
 ```sh
-env LED_KIND=none FLASH_SIZE=16M bash scripts/build.sh --features display
-# or the hermetic package:
-nix build .#firmware-display        # → result/firmware-display.uf2
+nix build .#firmware-display     # V1 → result/firmware-display.uf2
+nix build .#firmware-display-v2  # V2 → result/firmware-display-v2.uf2
+
+# Build V2 from source with the TrustZone builder.
+nix develop -c env BOARD=waveshare-touch-lcd DISPLAY_TP_CHIP=cst3530 \
+  bash scripts/build.sh --features display
 ```
 
-`GPIO16` (the WS2812 pin on a standard board) drives the backlight here.
-`WAKE_PIN` (default `25`, the board's BAT_PWR button) both wakes the panel from
-display sleep and, while awake, sleeps it on demand from *any* screen. A press
-blanks the panel and (when a device PIN is set) locks the on-device UI, aborting
-any host prompt it interrupts. See the full knob table in [build.md](../build.md);
-the `display`-only knobs are `WAKE_PIN` / `WAKE_ACTIVE_HIGH`.
+The source build writes `target/trustzone/combined.uf2`. Omit
+`DISPLAY_TP_CHIP=cst3530` for V1. The board preset selects 16 MiB of flash
+and disables the addressable LED, freeing GPIO16 for the backlight.
+
+The board's BAT_PWR button (GPIO25 by default) wakes and sleeps the panel.
+Sleeping blanks the screen, locks the on-device UI when a device PIN is set,
+and aborts any interrupted host prompt. See [Build options](../build.md) for
+`WAKE_PIN` and `WAKE_ACTIVE_HIGH`.
 
 Flash it like any other image (BOOTSEL → `picotool load`, [hardware.md](../hardware.md)).
 Two notes:

@@ -4,7 +4,48 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## 0.7.6 (2026-10-23)
+## 0.7.10 (2026-10-26)
+### Fixed
+- Optimize Montgomery multiplication carry propagation ([#1376])
+- Replace `ctutils` primitives with faster internal primitives ([#1377])
+
+[#1376]: https://github.com/RustCrypto/crypto-bigint/pull/1376
+[#1377]: https://github.com/RustCrypto/crypto-bigint/pull/1377
+
+## 0.7.9 (2026-10-25)
+### Changed
+- Use `shr_vartime` in `PrimeParams::new_vartime` ([#1372])
+
+### Fixed
+- Fix blanket impl of `Mul` for `NonZero<T>` [BREAKING] ([#1373])
+
+[#1372]: https://github.com/RustCrypto/crypto-bigint/pull/1372
+[#1373]: https://github.com/RustCrypto/crypto-bigint/pull/1373
+
+## 0.7.8 (2026-10-25) [YANKED]
+
+NOTE: yanked due to breaking changes in [#1373].
+
+### Fixed
+- Lower overhead of Montgomery multiplication in const eval ([#1370])
+
+[#1370]: https://github.com/RustCrypto/crypto-bigint/pull/1370
+
+## 0.7.7 (2026-10-24) [YANKED]
+
+NOTE: yanked due to breaking changes in [#1373].
+
+### Fixed
+- `invert_odd_mod(_vartime)` truncation ([#1367])
+- `mul_mod_special` boundary cases ([#1368])
+
+[#1367]: https://github.com/RustCrypto/crypto-bigint/pull/1367
+[#1368]: https://github.com/RustCrypto/crypto-bigint/pull/1368
+
+## 0.7.6 (2026-10-23) [YANKED]
+
+NOTE: yanked due to breaking changes in [#1373].
+
 ### Added
 - Implement `Zeroize` for `EncodedUint` ([#1342])
 
@@ -43,7 +84,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#1359]: https://github.com/RustCrypto/crypto-bigint/pull/1359
 [#1360]: https://github.com/RustCrypto/crypto-bigint/pull/1360
 
-## 0.7.5 (2026-06-22)
+## 0.7.5 (2026-06-22) [YANKED]
+
+NOTE: yanked due to breaking changes in [#1373] and security fixes in v0.7.6.
+
 ### Added
 - `BoxedUint::{from_be_slice_truncated, from_le_slice_truncated}` ([#1266])
 - `Encoding::{from_bytes, to_bytes}` ([#1297])

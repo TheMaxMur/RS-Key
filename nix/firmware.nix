@@ -78,6 +78,7 @@ let
     "WAKE_ACTIVE_HIGH"
     "FAKE_MKEK"
     "FAKE_DEVK"
+    "DISPLAY_TP_CHIP"
     "PK_DISPLAY_SPI_FREQ_HZ"
     "PK_DISPLAY_CS"
     "PK_DISPLAY_DC"
@@ -133,6 +134,7 @@ let
       presencePin ? null, # BOOTSEL or GPIO 0..=29
       fakeMkek ? null, # 64 hex — TEST builds only
       fakeDevk ? null, # 64 hex — TEST builds only
+      tpChip ? null, # cst328 (V1) | cst3530 (V2)
     }:
     let
       # Non-null knobs become build-time env vars build.rs reads; each is part
@@ -151,6 +153,7 @@ let
         PRESENCE_PIN = if presencePin == null then null else toString presencePin;
         FAKE_MKEK = fakeMkek;
         FAKE_DEVK = fakeDevk;
+        DISPLAY_TP_CHIP = tpChip;
       };
       knobEnv = lib.mapAttrs (_: toString) (
         (lib.filterAttrs (_: v: v != null) (lib.genAttrs firmwareKnobs (k: envOr k null)))
@@ -365,6 +368,20 @@ in
       name = "firmware-display";
       flashSize = "16M";
       ledKind = "none";
+      cargoFlags = [
+        "--features"
+        "display"
+      ];
+    };
+    # The same trusted-display build for the **V2 revision** of that board, whose
+    # touch controller is a CST3530 rather than the V1's CST328. Only the touch
+    # driver changes: with the wrong one the panel draws and nothing responds, so
+    # the two can not share an image.
+    firmware-display-v2 = mkFirmware {
+      name = "firmware-display-v2";
+      flashSize = "16M";
+      ledKind = "none";
+      tpChip = "cst3530";
       cargoFlags = [
         "--features"
         "display"
