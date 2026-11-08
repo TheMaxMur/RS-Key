@@ -5,7 +5,7 @@
 
 RS-Key tests command handling in Rust, drives the same protocols through
 an emulator and a real USB device, and boots the combined firmware ELF on
-a model of the RP2350. A test of one layer can pass while another fails.
+picoem's RP2350 model. A test of one layer can pass while another fails.
 For example, a host test can verify that a USB reset clears a PIN token.
 To find out whether Secure firmware sees that reset when Non-secure code
 ignores it, run the image suite. For actual USB timing, use a board.
@@ -30,7 +30,8 @@ for the split.
 |---|---|---|
 | Cargo tests | Rust crates and test backends on the host | A PIN retry counter changes after a rejected request |
 | Applet emulator | Shared applet and store crates, with host transport and device hooks | A malformed CCID exchange leaves a selected applet in the wrong state |
-| Image emulator | Secure and Non-secure firmware ELF on modeled RP2350 hardware | A reply from an old USB epoch reaches a new session |
+| picoem library tests | RP2350 CPU and peripheral models on the host | A write clears a programmed OTP bit in the model |
+| Image emulator | Secure and Non-secure firmware ELF running on picoem through `rsk-emu --image` | A reply from an old USB epoch reaches a new session |
 | USB/IP | An emulator backend and a Linux USB host stack | A client rejects a descriptor or fails to open a HID interface |
 | Board | Firmware on RP2350 silicon, driven over USB or through board inputs | A real reset, panel gesture, OTP access or cache behavior differs from the model |
 | Independent client or oracle | A protocol client, test vector, reference implementation or second device | A signature passes an internal round trip but fails independent verification |
@@ -96,10 +97,19 @@ descriptors and capabilities against the checked-in YubiKey baseline.
 For single-test commands and emulator options, see the
 [emulator README](https://github.com/TheMaxMur/RS-Key/blob/main/tools/emu/README.md).
 
+### picoem model tests
+
+The picoem fork supplies the RP2350 model for the image backend.
+`tools/emu/Cargo.toml` pins its revision.
+`check.sh` runs rustfmt, Clippy and the library tests for `rp2350-emu` and
+`picoem-common` at that revision. These tests check the model itself,
+including instruction execution, interrupts and peripheral behavior.
+[picoem fork](https://github.com/TheMaxMur/picoem)
+
 ### The image itself — `--image`
 
-The image backend starts the combined Secure/Non-secure ELF through the
-RP2350 boot ROM on picoem. Firmware talks to models of the USB controller,
+The image backend uses picoem to boot the combined Secure/Non-secure ELF
+through the RP2350 boot ROM. Firmware talks to models of the USB controller,
 OTP, flash, SHA-256, TRNG and other peripherals. Its USB host controller
 enumerates the firmware and sends endpoint traffic. These tests execute
 the linked worker, its applets, the NS transports, interrupt routing and
@@ -596,8 +606,8 @@ a board.
 
 | When | What runs |
 |---|---|
-| Per commit locally | `check.sh`, including builds, host tests, static checks and supporting tool tests |
-| Pull request | The gate and assurance jobs, bounded proofs, and emulator jobs in their workflow environments |
+| Per commit locally | `check.sh`, including builds, host tests, static checks and picoem library tests |
+| Pull request | The gate and assurance jobs, bounded proofs, and emulator jobs that include firmware image tests on picoem |
 | Scheduled | Line and condition coverage, MC/DC, longer proof and TLC tiers, fuzzing and corpus reports, Miri, mutation and reproducibility checks |
 | Release | Clean build and reproducibility checks, artifact manifests, signing and verification. Board runs have separate records. |
 
