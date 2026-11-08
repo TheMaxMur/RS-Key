@@ -19,6 +19,8 @@ pub struct Signals {
     /// streams `STATUS_UPNEEDED` rather than `STATUS_PROCESSING` — that is what
     /// makes a client say "touch your security key".
     up_pending: AtomicBool,
+    #[cfg(test)]
+    up_requested: AtomicBool,
     /// Which transport that wait belongs to ([`SCOPE_FIDO`] &c).
     ///
     /// One presence backend serves every transport, so an unscoped flag tells
@@ -50,7 +52,16 @@ pub struct Signals {
 
 impl Signals {
     pub fn set_up_pending(&self, v: bool) {
+        #[cfg(test)]
+        if v {
+            self.up_requested.store(true, Ordering::Relaxed);
+        }
         self.up_pending.store(v, Ordering::Release);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn up_was_requested(&self) -> bool {
+        self.up_requested.load(Ordering::Relaxed)
     }
 
     /// Whose the next presence wait is. Set by the job dispatcher, which is the

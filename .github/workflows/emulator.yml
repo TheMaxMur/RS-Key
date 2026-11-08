@@ -114,7 +114,9 @@ jobs:
     needs: changes
     if: needs.changes.outputs.emulator == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    # TrustZone isolation alone can take over an hour on the hosted runner.
+    # Leave time for the operation and power-cut suites that follow it.
+    timeout-minutes: 180
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 

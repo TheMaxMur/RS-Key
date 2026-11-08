@@ -155,7 +155,7 @@ Which sites go under which row is not the registry's to choose alone. `docs/unsa
 
 A settled row records the commit its result was taken at, and 18 of these do. An input is COVERED when the commit that last touched it is an ancestor of that one; a row behind any of its inputs is **stale**, and the claims resting on it inherit that. The inputs are derived, not listed: a row's `evidence`, plus every in-tree path its own `revalidated_by` names — which is how `formal/gen-configs.sh` reaches `PLAT-CRED-004`, whose whole discharge rests on an emit in that file and whose `evidence` does not mention it.
 
-Committed history only, so an uncommitted edit to an input is invisible until it lands — the same hole `assurance/reports/assurance-vector.md` names about itself. Stale is not a red: 15 of 18 are stale right now, and a gate red in its resting state is one nobody reads. What it costs instead is this page — a row going stale is a diff.
+Committed history only, so an uncommitted edit to an input is invisible until it lands — the same hole `assurance/reports/assurance-vector.md` names about itself. Stale is not a red: 16 of 18 are stale right now, and a gate red in its resting state is one nobody reads. What it costs instead is this page — a row going stale is a diff.
 
 That price is worth stating for the `unsafe` rows, because the input is a whole FILE and the claim is two lines of it. If `PLAT-UNSAFE-003` is discharged against `firmware/src/main.rs`, ANY later commit to that file will make its evidence stale and require regeneration — including changes that cannot touch what the row is about. The site-level axis such a row wants is already elsewhere: its `covers` keys are the sites' own code, so a site that is rewritten reddens the row outright rather than dating it. Re-anchoring freshness on the site would mean `git log -L` over a line range — keyed on line numbers that shift, for a second answer to a question `covers` already answers by content.
 
@@ -169,9 +169,9 @@ That price is worth stating for the `unsafe` rows, because the input is a whole 
 | `PLAT-TIMER-001` | `4f2b659` | **stale** | `Cargo.lock`, `firmware/Cargo.toml`, `firmware/src/main.rs`, `firmware/src/presence.rs` | `PLAT-TIMER-003` |
 | `PLAT-TRNG-001` | `578a924` | **stale** | `Cargo.lock`, `firmware/src/handler.rs`, `firmware/src/main.rs` | `PLAT-TRNG-002` |
 | `PLAT-TZ-001` | `624bfb1` | **fresh** | — | `PLAT-TZ-009` |
-| `PLAT-TZ-002` | `a78ab95` | **fresh** | — | — |
+| `PLAT-TZ-002` | `a78ab95` | **stale** | `tests/96_trustzone_sessions.py` | — |
 | `PLAT-TZ-003` | `a78ab95` | **stale** | `firmware/src/worker.rs`, `tools/emu/image_assurance.py` | — |
-| `PLAT-TZ-004` | `a78ab95` | **stale** | `firmware/trustzone/nonsecure/src/main.rs` | — |
+| `PLAT-TZ-004` | `a78ab95` | **stale** | `firmware/trustzone/nonsecure/src/main.rs`, `tests/96_trustzone_sessions.py` | — |
 | `PLAT-TZ-005` | `a78ab95` | **stale** | `firmware/src/worker.rs`, `firmware/trustzone/nonsecure/src/main.rs`, `tools/emu/image_assurance.py` | — |
 | `PLAT-TZ-006` | `8ae186a` | **stale** | `firmware/src/core1.rs` | `PLAT-TZ-009` |
 | `PLAT-TZ-007` | `a78ab95` | **fresh** | — | — |

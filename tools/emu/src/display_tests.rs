@@ -884,8 +884,8 @@ const EF_DISPLAY: u16 = 0xE030;
 /// Past `rsk_display`'s 800 ms `HOLD_MS` with room for a late poll, and short of that hold
 /// plus the success pop after it, so the finger is up before the panel reads its pad again.
 const WIPE_HOLD_MS: u64 = 2_000;
-/// What the hold, the wipe, its success pop and the reboot may take together.
-const WIPE_BOUND: Duration = Duration::from_secs(30);
+/// Compaction can still be writing the flash image after the display record disappears.
+const WIPE_BOUND: Duration = Duration::from_secs(120);
 
 /// Whether the flash image at `image` holds `fid`, or `None` while the device is rewriting
 /// it whole. Mounts a copy: a mount that meets a torn image repairs it, and would write that
@@ -955,6 +955,7 @@ fn drive_panel_factory_reset(jobs: Jobs, taps: SyncSender<Tap>, image: &Path) {
         },
     );
     // A host command queued before the wipe would end the hold instead, so wait it out.
+    let deadline = Instant::now() + WIPE_BOUND;
     assert!(
         wait_until(WIPE_BOUND, || stored(image, EF_DISPLAY) == Some(false)),
         "the panel never wiped the store"
@@ -962,12 +963,14 @@ fn drive_panel_factory_reset(jobs: Jobs, taps: SyncSender<Tap>, image: &Path) {
 
     // The panel reads its pad again only once the worker has taken its request; a board
     // answers a command queued before that from the wiped store, so ask only after it.
-    let reading = reads_its_pad(&taps, WIPE_BOUND);
-    let members = info_members(&ask(&jobs, get_info_req()));
+    assert!(
+        reads_its_pad(&taps, deadline.saturating_duration_since(Instant::now())),
+        "the panel did not resume reading its pad after the wipe"
+    );
     assert_eq!(
-        (reading, members),
-        (true, provisioned),
-        "a panel reset must bring the device back: reading its pad, provisioned for the host"
+        info_members(&ask(&jobs, get_info_req())),
+        provisioned,
+        "the reboot must provision the wiped device for the host"
     );
 }
 

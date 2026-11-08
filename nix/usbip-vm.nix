@@ -92,6 +92,7 @@
             out = {
               source = "\"$RSK_OUT\"";
               target = "/out";
+              writable = true;
             };
           };
         };
