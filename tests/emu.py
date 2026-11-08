@@ -103,6 +103,20 @@ UNSUPPORTED = {
     "90_otp_mkek_migration": "migrates the OTP MKEK; the emulator has no fuses",
 }
 
+# These suites own their image, inspection socket or fault injection.
+IMAGE_ONLY = {
+    "103_trustzone_configuration",
+    "104_trustzone_late_reset",
+    "106_trustzone_rsa_events",
+    "107_trustzone_fault_recovery",
+    "94_trustzone_keepalive",
+    "95_trustzone_crypto_keepalive",
+    "96_trustzone_sessions",
+    "97_trustzone_isolation",
+    "98_trustzone_presence",
+    "99_trustzone_core1_fault",
+}
+
 # Suites that take a mandatory argument, and the flag each needs. Run without it
 # they exit 2 in argparse before touching the device, which a sweep reads as a
 # failure of the *device* — the same confusion [`UNSUPPORTED`] exists to prevent,
@@ -519,6 +533,9 @@ def main():
     name = os.path.basename(target).removesuffix(".py")
     if name in UNSUPPORTED:
         print(f"SKIP: {name} — {UNSUPPORTED[name]}. Run it against a board.")
+        sys.exit(EXIT_SKIP)
+    if name in IMAGE_ONLY:
+        print(f"SKIP: {name} — run directly with its TrustZone image fixtures.")
         sys.exit(EXIT_SKIP)
     flag = NEEDS_ARGS.get(name)
     if flag and not any(a == flag or a.startswith(f"{flag}=") for a in sys.argv[2:]):

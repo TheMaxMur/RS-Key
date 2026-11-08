@@ -39,3 +39,18 @@ sys.argv = ["emu.py", "tests/{suite}.py"] + {arguments!r}
         cwd=ROOT, text=True, capture_output=True, timeout=10)
     assert unguarded.returncode == 1 and RAW_USB_ENTERED in unguarded.stderr, (
         "the negative control did not reach the raw USB suite", unguarded.stdout, unguarded.stderr)
+
+
+@pytest.mark.parametrize("suite", [
+    "103_trustzone_configuration",
+    "104_trustzone_late_reset",
+    "106_trustzone_rsa_events",
+    "107_trustzone_fault_recovery",
+])
+def test_image_suites_are_refused_by_the_socket_shim(suite):
+    result = subprocess.run(
+        [sys.executable, "tests/emu.py", f"tests/{suite}.py"],
+        cwd=ROOT, text=True, capture_output=True, timeout=10,
+    )
+    assert result.returncode == 77, result.stdout + result.stderr
+    assert "run directly with its TrustZone image fixtures" in result.stdout

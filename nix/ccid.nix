@@ -22,7 +22,7 @@ pkgs.ccid.overrideAttrs (old: {
   pname = "ccid-rs-key";
 
   postPatch = (old.postPatch or "") + ''
-    substituteInPlace readers/supported_readers.txt --replace-fail '${anchor}' '${entry}'
+    substituteInPlace src/supported_readers.txt --replace-fail '${anchor}' '${entry}'
   '';
 
   # Check the generated parallel arrays, not just whether the source patch landed.

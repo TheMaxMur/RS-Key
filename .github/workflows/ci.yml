@@ -159,10 +159,9 @@ jobs:
     needs: changes
     if: needs.changes.outputs.proofs == 'true'
     runs-on: ubuntu-latest
-    # 30m above `TIMEOUT_state`, so the per-harness cap fires first and names the
-    # proof it fired on. At 60 the job was cut mid-harness twice and reported only
-    # a shutdown signal, which reads as infrastructure and is not.
-    timeout-minutes: 90
+    # Both tiers share this budget. Leave time for the fast tier and cold
+    # builds before the state tier reaches its own per-harness cap.
+    timeout-minutes: 150
     env:
       KANI_VERSION: "0.67.0"
     steps:

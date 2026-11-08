@@ -113,8 +113,15 @@ def rsa_event(args, event, operation="generate"):
         generation = crypto.tlv(0xAC, crypto.tlv(0x80, b"\x07"))
         message = b"TrustZone session RSA " + event.encode()
         if operation == "sign":
-            piv.apdu(0x47, 0, 0x9C, generation)
-            public = piv.public()
+            # Set up the signing key on the host so prime search cannot time out
+            # before the session event reaches the private-operation barrier.
+            key = crypto.rsa.generate_private_key(public_exponent=65537, key_size=2048)
+            numbers = key.private_numbers()
+            size = key.key_size // 16
+            parts = crypto.tlv(1, numbers.p.to_bytes(size, "big"))
+            parts += crypto.tlv(2, numbers.q.to_bytes(size, "big"))
+            piv.apdu(0xFE, 7, 0x9C, parts)
+            assert piv.public().public_numbers() == numbers.public_numbers
             body = piv.sign_body(message)
             apdu = bytes([0, 0x87, 7, 0x9C, 0]) + len(body).to_bytes(2, "big") + body
         else:
