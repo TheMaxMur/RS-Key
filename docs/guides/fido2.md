@@ -290,8 +290,7 @@ on the fly so even ML-DSA-87's 2592-byte key and 4627-byte signature fit the
 RP2350 stack.
 
 The getInfo advertisement is build-gated behind `advertise-pqc`
-([build.md](../build.md)) because shipped Firefoxes (authenticator-rs before
-2026-06-02) hard-fail the whole getInfo parse on an unknown COSE id. The
+([build.md](../build.md)) because older versions of Firefox can reject getInfo if it advertises an unknown COSE ID. The
 *capability* is always on. Only the advertisement is opt-in, and it lists the
 three sets in descending security order: ML-DSA-87 (`-50`), ML-DSA-65 (`-49`),
 ML-DSA-44 (`-48`).

@@ -75,7 +75,7 @@ tree's is `matrix_gate.py`'s; whether a bundle carries the ten-group contract is
   registry id. A column of zeroes reads as "no evidence" and is indistinguishable
   from a reader that stopped reading, which is the pair `token_refinement_gate.py`
   shipped;
-* **the public page is generated.** `docs/assurance-vector.md` is written from
+* **the public page is generated.** `assurance/reports/assurance-vector.md` is written from
   the vector and byte-diffed, so a release sentence cannot outrun the axes — and
   an owner edit that makes a bundle stale rewrites the sentence rather than
   leaving it standing.
@@ -107,7 +107,7 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 REGISTRY = pathlib.Path("assurance/properties.toml")
 LEDGER = pathlib.Path("assurance/configurations.toml")
 BUNDLES = pathlib.Path("assurance/bundle")
-ARTIFACT = pathlib.Path("docs/assurance-vector.md")
+ARTIFACT = pathlib.Path("assurance/reports/assurance-vector.md")
 TRACES = pathlib.Path("formal/traces")
 FLOORS = pathlib.Path("formal/floors.txt")
 #: The gate's two runners; the row that replays a session may sit in either.
@@ -446,7 +446,7 @@ def evidence_inputs(root, name, pid, checked, module):
     bundle dated at its parent read `fresh` over 45 derived inputs with every
     number in the tree re-measured underneath it. Anchored on the whole file and
     not on a tier or a row, because `--record` rewrites it wholesale and a row
-    anchor is the line-number key `docs/platform-assumptions.md` already argues
+    anchor is the line-number key `assurance/reports/platform-assumptions.md` already argues
     against. Conditioned on the property HAVING a configuration: one with none
     transcribes no run, and dating it against the record would be the decoration
     this module refuses everywhere else.
@@ -973,7 +973,7 @@ def packet(root, rows):
         "artifacts": [
             (str(ARTIFACT), "python scripts/evidence_gate.py"),
             ("docs/assurance-matrix.md", "python scripts/matrix_gate.py"),
-            ("docs/platform-assumptions.md", "python scripts/platform_gate.py"),
+            ("assurance/reports/platform-assumptions.md", "python scripts/platform_gate.py"),
             ("formal/README.md", "python scripts/assurance_gate.py"),
         ],
         "runs": runs,
@@ -984,7 +984,7 @@ def packet(root, rows):
 
 
 def render(root, rows=None):
-    """`docs/assurance-vector.md` as the tree makes it."""
+    """`assurance/reports/assurance-vector.md` as the tree makes it."""
     rows = vectors(root, []) if rows is None else rows
     may, must_not = claims(rows)
     # Templated off the axis for the reason [`claims`] is: the untemplated copy
@@ -1000,7 +1000,7 @@ def render(root, rows=None):
         "",
         "# Assurance vector",
         "",
-        claims_gate.DISCLAIMER_PARAGRAPH,
+        claims_gate.REPORT_DISCLAIMER_PARAGRAPH,
         "",
         "One word per property mixes questions that move independently. Roadmap"
         " §4.1 argues it; the first closed slice measured it. That slice took"
@@ -1039,7 +1039,7 @@ def render(root, rows=None):
         f" **{len(measured)} of {len(rows)}**. One is a bundle's DECLARATION,"
         " and the gate's job there is that a declaration cannot arrive without"
         " the board revision it was taken on. The other is"
-        " `docs/platform-assumptions.md`'s registry, which is where a board"
+        " `assurance/reports/platform-assumptions.md`'s registry, which is where a board"
         " result actually lands — an obligation moving to `discharged` with a"
         " real stepping recorded is what moves this column, whatever class it is"
         " filed under.",

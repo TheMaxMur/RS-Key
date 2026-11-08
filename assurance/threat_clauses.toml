@@ -422,13 +422,11 @@ heap closes both for what it holds: it wipes each block as it frees it
 (`ZeroingHeap` in `firmware/src/main.rs`), so a freed buffer's bytes do not
 outlive the free. A `num-bigint-dig` value of eight limbs or fewer is held inline,
 not on the heap, and a local one stays in its stack slot like those temporaries.""", """
-This is a property of the silicon revision and boot
-configuration, so it is re-measured when either moves; the explicit wipes stay as
-depth in case a future one keeps SRAM.""", """
-It discharges `PLAT-MEM-001` in the platform
-registry ([platform-assumptions.md](platform-assumptions.md)) — read the row for
-the transcript, the picotool version, and what the result does *not* establish,
-which is that the firmware's own scrub works."""]
+The result
+applies to the tested silicon and boot policy. It measures the platform's
+clearing behavior.""", """
+See `PLAT-MEM-001` in
+[Platform assumptions](platform-assumptions.md) for the board record."""]
 
 [[clause]]
 id = "TM-SUPPLY-CHAIN"

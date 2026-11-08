@@ -124,7 +124,7 @@ prose pages carry live model→code claims that only a person reads. `docs/` is 
 far the largest and is the next widening rather than an oversight — measured over
 this guard's own reader on the day the registries were taken: 229 citations over
 6 pages, of which 6 are already wrong, and 4 of those 6 are the SAME four the
-registries just surfaced, because `docs/platform-assumptions.md` restates
+registries just surfaced, because `assurance/reports/platform-assumptions.md` restates
 `assurance/platform.toml`. The other 2 are bare names that resolve in none of
 [`SEARCH`]'s five directories, so taking `docs/` needs a repair pass of its own
 before the flag flips — the argument [`EXTS`] makes one axis over.

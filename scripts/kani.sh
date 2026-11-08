@@ -8,7 +8,7 @@
 # harness in `rsk-phy` costs half an hour or more and nothing that expensive
 # belongs on a pull request. But that put every proof a day away from the change that broke
 # it, and the split is cheap once the cost is measured rather than assumed: the
-# fast tier discharged in 229 s of solving on 2026-08-26 (docs/testing.md carries the
+# fast tier discharged in 229 s of solving on 2026-08-26 (assurance/reports/testing-evidence.md carries the
 # table), while four crates hold everything slow.
 #
 # So: `pr` on every pull request that touches the crates, `state` additionally
@@ -17,7 +17,7 @@
 #
 # The tier membership lives here and nowhere else. It used to be a hand-written
 # `-p` list repeated in the workflow, in the workflow's own header comment and in
-# docs/testing.md, kept in step by `scripts/kani_gate.py` comparing the three
+# assurance/reports/testing-evidence.md, kept in step by `scripts/kani_gate.py` comparing the three
 # strings; three copies were the most that guard could hold, and a fourth tier
 # would have been a fourth copy. `--tiers` prints the table, and that is what the
 # guard reads, so the rows the CI runs and the list the guard checks cannot

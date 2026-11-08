@@ -126,12 +126,12 @@ needed a trick one:
 * **the REVERSE direction is open, and the number is why.** "A registry row no
   hand-written page names" is not held, because it would report 34 of the 60 on
   a clean tree — measured, and they are not rot: every occurrence of all 34 is
-  generator-written, on `docs/assurance-vector.md`, `docs/assurance-matrix.md`
-  and `docs/platform-assumptions.md`, or inside one of the six generated REGIONS
+  generator-written, on `assurance/reports/assurance-vector.md`, `docs/assurance-matrix.md`
+  and `assurance/reports/platform-assumptions.md`, or inside one of the six generated REGIONS
   of `formal/README.md`, which drops that page from 60 registered ids to 8 once
   [`mask_regions`] has run. The weaker form — a row no page names AT ALL — is 0
   today and would be decorative: `evidence_gate` refuses a stale
-  `docs/assurance-vector.md` and `assurance_gate` refuses a stale
+  `assurance/reports/assurance-vector.md` and `assurance_gate` refuses a stale
   `formal/README.md` table, so a row missing from a generated page is already
   their finding. What stays unheld is the middle: a row that only ever appears
   in a table, which no prose has ever had to explain.
@@ -351,11 +351,13 @@ DISCLAIMER_PARAGRAPH = (
     " [limitations](limitations.md) and the [threat model](threat-model.md)."
 )
 
+REPORT_DISCLAIMER_PARAGRAPH = DISCLAIMER_PARAGRAPH.replace("](", "](../../docs/")
+
 #: How many distinct registered ids make a page one a reader takes an assurance
 #: claim FROM. Three, and MARKDOWN only: `.tla`, `.toml` and `.sh` name ids as
 #: data and are not where anyone reads a summary. Measured, seven `.md` pages
-#: clear it — `docs/assurance-vector.md` and `formal/README.md` at 59 each,
-#: `docs/assurance-matrix.md` at 40, `docs/platform-assumptions.md` at 34 — and
+#: clear it — `assurance/reports/assurance-vector.md` and `formal/README.md` at 59 each,
+#: `docs/assurance-matrix.md` at 40, `assurance/reports/platform-assumptions.md` at 34 — and
 #: exactly ONE of the eight carried the sentence.
 DISCLAIMER_IDS = 3
 

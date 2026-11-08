@@ -13,10 +13,10 @@ raw residuals, dependencies and physical-device evidence remain explicit.
 
 ## Frontend and qualification
 
-The [source-decision patch](mcdc-supercov-source-decisions.patch) applies to
+The [source-decision patch](../../third_party/mcdc-supercov-source-decisions.patch) applies to
 Supercov 4.22.0 at `bd6c9d76426d446fb57bcbe5df7791820c97fac1`, after the
-[anonymous-const](mcdc-supercov-anonymous-const.patch) and
-[pin-expression](mcdc-supercov-pin-expression.patch) patches. Exact application
+[anonymous-const](../../third_party/mcdc-supercov-anonymous-const.patch) and
+[pin-expression](../../third_party/mcdc-supercov-pin-expression.patch) patches. Exact application
 and reversal were checked by file hashes, not by exit status alone. Its SHA-256
 is `3cae0ffe20f59ce8033b561189296d59ff61f8acf5dfbc8f8e30c0b9fb1c693a`.
 The existing Nix compiler is Rust 1.99.1 (58cf8f9c3 2026-10-13), with

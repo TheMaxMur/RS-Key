@@ -107,15 +107,12 @@ later. Even so, treat the key as un-loseable.
 
 ## 3. Provision — fuse the fingerprint (slot 0)
 
-`picotool seal` writes the fingerprint into the `otp_secureboot.json` it
-produces. `rsk secure-boot load-key` fuses it into **boot-key slot 0** without
-enabling enforcement yet:
+Seal the combined TrustZone ELF and prove the signed UF2 boots as described in
+[production stage 2b](production.md#2b-sign-and-prove-a-signed-image-boots-before-any-fuse).
+`picotool seal` writes the fingerprint into `otp_secureboot.json`. Enter BOOTSEL
+to fuse it into **boot-key slot 0**.
 
 ```sh
-# seal once to produce the otp.json (also see production.md, stage 2b):
-picotool seal --sign --hash firmware-pt.elf -t elf firmware-signed.elf -t elf \
-    ~/.rs-key-secrets/secure_boot_key.pem ~/.rs-key-secrets/otp_secureboot.json \
-    --major 1 --minor 0 --rollback 1
 rsk secure-boot status                          # bootkey present: False
 rsk secure-boot load-key ~/.rs-key-secrets/otp_secureboot.json   # fuses slot 0
 ```
@@ -128,7 +125,10 @@ in [step 4](#4-daily-use--sign-every-flash).) The rest of the staged ritual
 
 ## 4. Daily use — sign every flash
 
-After `enable`, every image must be sealed with this key. `picotool` reads only
+After `enable`, seal the final combined ELF from the
+[production build](production.md#2b-sign-and-prove-a-signed-image-boots-before-any-fuse)
+with this key. Use the board's current rollback floor for routine updates.
+`picotool` reads only
 an **unencrypted** PEM (it has no passphrase prompt), so a passphrase-protected
 key (recommended) is decrypted to a temporary file just for the seal and removed
 straight after:
@@ -137,11 +137,17 @@ straight after:
 # decrypt for the seal only — best on a RAM-backed dir so the plaintext never
 # touches disk; openssl prompts for the passphrase:
 ( umask 077; openssl ec -in ~/.rs-key-secrets/secure_boot_key.pem -out /tmp/sk.pem )
-picotool seal --sign --hash firmware-pt.elf -t elf firmware-signed.elf -t elf \
+picotool seal --sign --hash target/trustzone/combined.elf -t elf firmware-signed.elf -t elf \
     /tmp/sk.pem ~/.rs-key-secrets/otp_secureboot.json --major 1 --minor 0 --rollback 1
 picotool uf2 convert firmware-signed.elf -t elf firmware-signed.uf2
 rm -P /tmp/sk.pem        # overwrite + delete (Linux: shred -u /tmp/sk.pem)
-# BOOTSEL, then:
+picotool info -a firmware-signed.uf2
+```
+
+Check the hash, signature and store partition as in production stage 2b.
+Enter BOOTSEL to load the verified UF2.
+
+```sh
 picotool load -v firmware-signed.uf2 && picotool reboot   # or drag it onto the RP2350 drive
 ```
 

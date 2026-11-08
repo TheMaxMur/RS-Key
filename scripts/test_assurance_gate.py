@@ -589,7 +589,7 @@ def test_model_must_be_a_real_module(tree, capsys):
 def test_a_driven_code_mutant_shows_as_evidence_the_status_ladder_cannot(tree):
     """The column exists because MODELLED-ONLY was reading as "nothing below the
     model" for the rows that carry a code twin driven against the real suite. How
-    many that is belongs to `docs/assurance-vector.md`, which derives it."""
+    many that is belongs to `assurance/reports/assurance-vector.md`, which derives it."""
     root, _ = tree if isinstance(tree, tuple) else (tree, None)
     assurance_gate.co_refuted.cache_clear()
     assert assurance_gate.co_refuted(pathlib.Path(__file__).parents[1])["NoAuthWhenBlocked"] == [

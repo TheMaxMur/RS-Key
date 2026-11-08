@@ -26,10 +26,9 @@ A third, optional stage builds on those: **anti-rollback**, so that *old*
 images you signed (with bugs you have since fixed) stop booting too. It has
 its own page: [anti-rollback.md](anti-rollback.md).
 
-The standard firmware uses TrustZone before any fuse is programmed. Secure
-Boot prevents replacement of that firmware; OTP provisioning protects its
-storage roots. These are independent steps, not implicit effects of enabling
-TrustZone. After a successful master-key burn, Secure boot code automatically
+Every authenticator build uses TrustZone before any fuse is programmed. Secure
+Boot authenticates the complete combined image. OTP provisioning protects the
+storage roots. After a successful master-key burn, Secure startup automatically
 migrates and seals page 58 before launching Non-secure. PIN-dependent migration
 may require presenting the relevant PIN and rebooting. `ROLLBACK_REQUIRED`
 remains a separate explicit operation. See [otp-fuses.md](otp-fuses.md).
@@ -191,12 +190,12 @@ signature on every image against a fingerprint fused into OTP. Unsigned or
 foreign-signed images do not boot. The chip falls back to BOOTSEL, where you
 can always drag a correctly-signed UF2 (recovery path).
 
-![Secure-boot signing chain. On the host, build then picotool seal --sign produce a signed UF2; on the device the RP2350 bootrom verifies the ECDSA signature against the fingerprint fused in OTP, running a verified image and falling back to BOOTSEL for a rejected one](images/secure-boot-chain.svg)
+![Secure-boot signing chain. Build a combined TrustZone ELF with its partition table, seal that ELF, then convert the signed ELF to UF2. The RP2350 bootrom verifies the signature against the fingerprint fused in OTP.](images/secure-boot-chain.svg)
 
 **The permanent consequences:**
 
-- **Every future flash must be signed with your key.** The dev loop becomes
-  build → `picotool seal --sign` → flash.
+- **Every future flash must be signed with your key.** Build the combined ELF,
+  seal it, convert it to UF2, and flash that UF2.
 - **Losing the signing key bricks the board for new firmware** (the current
   signed image keeps booting). Back the key up before enabling enforcement.
 - Both `DEBUG_DISABLE` and `SECURE_DEBUG_DISABLE` are required by `harden`
@@ -208,10 +207,18 @@ can always drag a correctly-signed UF2 (recovery path).
 ### 2a. Generate a signing key (once, off-repo)
 
 ```sh
-mkdir -p ~/.rs-key-secrets && cd ~/.rs-key-secrets
-openssl ecparam -genkey -name secp256k1 -noout -out secure_boot_key.pem
-openssl ec -in secure_boot_key.pem -pubout -out secure_boot_pub.pem
-chmod 600 secure_boot_key.pem
+(
+    set -e
+    umask 077
+    mkdir -p ~/.rs-key-secrets
+    cd ~/.rs-key-secrets
+    if [ -e secure_boot_key.pem ]; then
+        printf '%s\n' 'secure_boot_key.pem already exists. Keep the existing signing key.' >&2
+        exit 1
+    fi
+    openssl ecparam -genkey -name secp256k1 -noout -out secure_boot_key.pem
+    openssl ec -in secure_boot_key.pem -pubout -out secure_boot_pub.pem
+)
 # BACK IT UP somewhere that survives this machine.
 ```
 
@@ -229,29 +236,47 @@ board**, rotation, and recovery.
 
 ### 2b. Sign and prove a signed image boots (before any fuse)
 
-```sh
-# 1. an image to sign. The partition table has to be in it BEFORE sealing, or
-#    the signature does not cover the fence (build.md#the-partition-table).
-bash scripts/build.sh
-cp target/trustzone/combined.elf firmware-pt.elf
-#    (or a single `nix build .#firmware`, whose result/firmware.elf already has it)
+From the repository root inside `nix develop`, build the production image for
+your board. This example uses the 4 MiB Waveshare RP2350-One. Match the board,
+flash size and KV layout of the device you are updating. Rebuild for production
+before signing because `check.sh` leaves a `no-touch` image at the default path.
 
-# 2. sign the ELF — NOT the UF2, and convert afterwards. `seal` retires the
-#    image's own IMAGE_DEF (the linker's, carrying no signature and no rollback
-#    version) only when handed an ELF; given a UF2 it appends its signed block and
-#    leaves that one live and FIRST, which a SECURE_BOOT_ENABLE + ROLLBACK_REQUIRED
-#    device meets first and refuses — while the host still prints
-#    "signature: verified". otp_secureboot.json does NOT exist yet: you pick the
-#    path, and `seal` creates the file there. It is the artifact stage 2c fuses.
-picotool seal --sign --hash firmware-pt.elf -t elf firmware-signed.elf -t elf \
+```sh
+BOARD=waveshare-one bash scripts/build.sh
+```
+
+`target/trustzone/combined.elf` already contains Secure firmware, the CMSE
+gateways, the embedded Non-secure image and the partition table. Sign this
+final ELF. The [TrustZone builder](architecture.md#trustzone-build-and-boot) assembles both
+worlds and adds the [partition table](build.md#the-partition-table) before it
+outputs the ELF. For a Nix build, use `result/firmware.elf` from
+`nix build .#firmware` or the corresponding ELF from your
+[board or feature variant](build.md#nix-build-hermetic-no-dev-shell).
+For the Waveshare display board, build with
+`BOARD=waveshare-touch-lcd bash scripts/build.sh --features display`
+or use `result/firmware-display.elf` from `nix build .#firmware-display`.
+
+Seal the ELF and convert the signed result to UF2. With an ELF input,
+`picotool seal` retires the original unsigned `IMAGE_DEF`. With a UF2 input
+it can leave that block first, so a board enforcing secure boot and rollback
+can reject the image even when the host reports a verified signature.
+
+```sh
+picotool seal --sign --hash target/trustzone/combined.elf -t elf firmware-signed.elf -t elf \
     ~/.rs-key-secrets/secure_boot_key.pem ~/.rs-key-secrets/otp_secureboot.json \
     --major 1 --minor 0 --rollback 1
 picotool uf2 convert firmware-signed.elf -t elf firmware-signed.uf2
-picotool info -a firmware-signed.elf   # "signature: verified", and block 1 "ignored"
-ls -l ~/.rs-key-secrets/otp_secureboot.json    # seal wrote this; 2c needs it
+picotool info -a firmware-signed.uf2
+```
 
-# 3. BOOTSEL, then flash + confirm the device works:
-picotool load -v firmware-signed.uf2 && picotool reboot   # or drag it onto the RP2350 drive
+Check for `hash: verified`, `signature: verified` and `NSBOOT(-)` on the
+`RS-Key Store` partition. `seal` also writes the host-side
+`otp_secureboot.json` for stage 2c. Enter BOOTSEL, then load the signed UF2 and
+confirm that the device enumerates and responds before burning any Secure
+Boot fuses.
+
+```sh
+picotool load -v firmware-signed.uf2 && picotool reboot
 ```
 
 #### What `otp_secureboot.json` is for
@@ -299,26 +324,17 @@ The other arguments:
   version in every sealed image from day one makes that stage cheap. What it
   means and how to choose it: [anti-rollback.md](anti-rollback.md).
 
-`picotool info firmware-signed.uf2` must report `signature: verified`. The
-firmware's image definition is already secure-boot compatible. The sealed UF2
-carries the signature block.
-
-Sealing also covers the image's **partition table**, the fence that keeps the USB
-bootloader out of the KV store ([build.md](build.md#the-partition-table)). That is
-the whole reason the fence is worth anything: on an unsigned board an attacker
-simply flashes an image carrying a permissive table, while a sealed table cannot
-be replaced without this key. It closes the one snapshot/restore gap secure boot
-does not close by itself — writing the data region is not code execution
-([threat-model.md](threat-model.md#flash-snapshot-rollback-the-pin-counter-reset)).
-Prove it, don't assume it: `picotool info -a firmware-signed.uf2` must show the
-store partition as `NSBOOT(-)`, and a byte flipped anywhere in the table must turn
-`hash: verified` into `hash: incorrect`.
+The signature covers both firmware worlds, the CMSE gateways and the
+partition table. With enforcement on, replacing the table with one that
+grants BOOTSEL access to the KV store requires a trusted signing key.
+Changing a covered byte in a disposable copy must turn `hash: verified` into
+`hash: incorrect`. See the [flash snapshot threat model](threat-model.md#flash-snapshot-rollback-the-pin-counter-reset)
+and the [combined-image hash checks](https://github.com/TheMaxMur/RS-Key/blob/main/assurance/reports/trustzone-evidence.md#combined-image-hash-checks).
 
 ### 2c. Burn, staged
 
-`rsk secure-boot` splits provisioning so every irreversible write is proven
-by a real boot before the next. The only true point of no return is one
-bit:
+`rsk secure-boot` splits provisioning so you can prove each irreversible
+write with a real boot. Enter BOOTSEL before each command.
 
 ```sh
 rsk secure-boot status      # read the current fuse state any time
@@ -345,34 +361,30 @@ Re-drag the signed one to recover.
 
 ### The new flash workflow (forever)
 
+Use the same board and storage layout as in step 2b. Sign the final combined
+ELF with the key trusted by this board. Set `--rollback` to the board's
+current floor for a routine update. The example uses `1`, the usual starting
+value. See [anti-rollback.md](anti-rollback.md) before raising it.
+
 ```sh
-bash scripts/build.sh
-cp target/trustzone/combined.elf firmware-pt.elf
-# seal the ELF, convert after — a UF2 in leaves the unsigned IMAGE_DEF first (2b)
-picotool seal --sign --hash firmware-pt.elf -t elf firmware-signed.elf -t elf \
+BOARD=waveshare-one bash scripts/build.sh
+picotool seal --sign --hash target/trustzone/combined.elf -t elf firmware-signed.elf -t elf \
     ~/.rs-key-secrets/secure_boot_key.pem ~/.rs-key-secrets/otp_secureboot.json \
     --major 1 --minor 0 --rollback 1
 picotool uf2 convert firmware-signed.elf -t elf firmware-signed.uf2
-# BOOTSEL (hands-free: rsk reboot bootsel), then:
-picotool load -v firmware-signed.uf2 && picotool reboot   # or drag it onto the RP2350 drive
+picotool info -a firmware-signed.uf2
 ```
 
-**The builder's partition-table step must precede signing.** It embeds the
-partition table that fences the KV store off from the bootloader
-([build.md](build.md#the-partition-table)); `cargo build` alone never produces
-one. Running the builder *before* `seal` puts the table under the signature —
-which is the only thing that stops an attacker flashing a permissive table of
-their own. Seal a table-less image and you have signed away the fence without
-any error telling you so.
+Check the signed UF2 as in step 2b. Enter BOOTSEL with the board button or run
+`rsk reboot bootsel` and confirm on the device. Then load and reboot.
 
-The `--rollback` value is your board's current floor (see
-[anti-rollback.md](anti-rollback.md)). `1` is the usual starting value.
+```sh
+picotool load -v firmware-signed.uf2 && picotool reboot
+```
 
-To seal an image others can independently verify, build it with
-`nix build .#firmware` instead of the dev-shell `cargo build`. That path is
-bit-for-bit reproducible from the source tree
-([build.md](build.md#nix-build-hermetic-no-dev-shell)), so anyone can rebuild
-at your release commit and confirm the payload you signed.
+For a reproducible build, use the combined ELF from `nix build .#firmware`
+or the matching Nix package. Others can rebuild at your release commit and
+verify the payload you signed. See the [Nix build instructions](build.md#nix-build-hermetic-no-dev-shell).
 
 ## Stage 3 — anti-rollback (optional)
 

@@ -283,7 +283,7 @@ Other workloads and the physical flash's endurance need separate measurements.
   worker, crypto, storage and OTP in Secure; USB classes and framing run
   Non-secure. Plain PINs and payloads crossing NS remain visible to compromised
   NS code. TrustZone adds no physical fault-injection defense and does not
-  replace Secure Boot or OTP provisioning. The [boundary contract](trustzone.md)
+  replace Secure Boot or OTP provisioning. The [boundary contract](architecture.md#trustzone)
   lists the image evidence and remaining board validation; the explicit legacy
   diagnostic image provides no S/NS isolation.
 - **Anti-rollback is opt-in and coarse**: `picotool seal --rollback`

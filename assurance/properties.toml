@@ -29,7 +29,7 @@
 # is evidence about the code, and the status ladder cannot see it — BOUNDED keys
 # on a Kani harness name. MODELLED-ONLY means "no Kani harness", never
 # "untested"; how many of those rows carry a twin is generated into
-# docs/assurance-vector.md, because this sentence carried "28 of the 44" while
+# assurance/reports/assurance-vector.md, because this sentence carried "28 of the 44" while
 # the tree had 46 of them.
 #
 # The gate holds this file against the tree in both directions: every invariant
@@ -40,7 +40,7 @@
 # PROVEN and OBSERVED are rejected until the tree grows evidence of those
 # classes — a status rule nothing can trip is a check that cannot fail.
 #
-# `status` is therefore not information: it is `docs/assurance-vector.md`'s
+# `status` is therefore not information: it is `assurance/reports/assurance-vector.md`'s
 # model and kani axes projected onto one word, and `scripts/evidence_gate.py`
 # rebuilds it here on every run rather than reading it. Six axes move under it
 # independently, and the word moves with two of them.

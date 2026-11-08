@@ -74,7 +74,7 @@ embassy-futures = { git = "https://github.com/embassy-rs/embassy", branch = "mai
 embassy-usb = { git = "https://github.com/embassy-rs/embassy", branch = "main" }
 # The external AGPL fork runs `--image` on two Cortex-M33 cores and the bus.
 # Its upstream MIT/Apache notices remain intact; the pinned revision includes
-# the TrustZone isolation checks described in docs/trustzone-history.md.
+# the TrustZone isolation checks described in assurance/reports/trustzone-evidence.md.
 rp2350-emu = { git = "https://github.com/TheMaxMur/picoem", rev = "315bc027318c60bb2dad335c7bce6cd9b15b6afe" }
 # The chip's SHA-256 block runs the bootrom's signature check through the bare
 # compression function; the crate is already in the graph, with this feature.

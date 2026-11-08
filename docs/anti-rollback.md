@@ -152,12 +152,13 @@ A bonus falls out of this: "decline, decline, then raise once when you decide to
 care" spends *fewer* bits than raising the floor on every release, for the same
 protection, because all your older builds sit below the one bump.
 
-Concretely:
+Build the fixed firmware for your board as in
+[production stage 2b](production.md#2b-sign-and-prove-a-signed-image-boots-before-any-fuse).
+Seal its final combined ELF at the higher rollback version.
 
 ```sh
 rsk secure-boot status         # read your floor, say "boot version 2/48"
-# build the fixed firmware, then seal it one step higher:
-picotool seal --sign --hash firmware-pt.elf -t elf firmware-signed.elf -t elf \
+picotool seal --sign --hash target/trustzone/combined.elf -t elf firmware-signed.elf -t elf \
     ~/.rs-key-secrets/secure_boot_key.pem ~/.rs-key-secrets/otp_secureboot.json \
     --major 1 --minor 0 --rollback 3        # 3 = counter (2) + 1
 picotool uf2 convert firmware-signed.elf -t elf firmware-signed.uf2

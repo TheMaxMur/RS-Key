@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # Copyright (C) 2026 RS-Key contributors
-"""docs/testing.md's prose Kani counts, held to `scripts/kani.sh`'s ratchets.
+"""assurance/reports/testing-evidence.md's prose Kani counts, held to `scripts/kani.sh`'s ratchets.
 
 `kani_gate.py` derives that page's tier TABLE from the tree and refuses a cell
 that drifted, in both directions. The prose around the table was held by nothing,
@@ -31,7 +31,7 @@ import pathlib
 import re
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
-PAGE = pathlib.Path("docs/testing.md")
+PAGE = pathlib.Path("assurance/reports/testing-evidence.md")
 RUNNER = pathlib.Path("scripts/kani.sh")
 
 #: `FLOOR_all=94`, `COVERS_light2=12`. Read here rather than imported from

@@ -978,12 +978,13 @@ def toolchain(root: pathlib.Path, elf: pathlib.Path) -> str:
 
 def body(root, sites, callers, seen) -> list[str]:
     """The region, and it prints NO count and NO address on purpose."""
+    producer = re.sub(r" \d{4}-\d{2}-\d{2}(?=\))", "", toolchain(root, ELF))
     out = [
         f"<!-- {REGION}:start -->",
         REGION_HEADER,
         "",
         f"Read out of `{ELF}` with `{OBJDUMP} -d -l --inlines`, built by"
-        f" {toolchain(root, ELF)}. A site's verdict is `constant-time` when no"
+        f" {producer}. A site's verdict is `constant-time` when no"
         " conditional"
         " branch inside any address run the inline chain attributes to it reads"
         " flags set from a buffer load; the callers are the first-party frames"

@@ -372,7 +372,7 @@ def test_the_kani_hand_over_has_a_catcher():
 
     Skipping the verb here is only safe while the guard that OWNS it reads this
     file. For the whole life of `OTHER_GUARDS` it did not — `kani_gate.sources`
-    read the workflows and docs/testing.md — so the row above was skipped here,
+    read the workflows and assurance/reports/testing-evidence.md — so the row above was skipped here,
     unseen there, and both guards printed `ok` over a second roster in the gate.
     Asserted against the real checkout, because that is where the hole was.
 

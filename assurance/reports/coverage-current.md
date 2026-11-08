@@ -6,7 +6,7 @@
 This audit covers the eighteen host feature profiles declared by
 `.github/workflows/deep-checks.yml`, including authenticated storage v2.
 Firmware glue and `rsk-wipe` are outside the host measurement. MC/DC remains
-[decision-only](testing-roadmap.md).
+[decision-only](testing-campaigns.md).
 
 ## Measured results, 2026-10-11
 
@@ -14,7 +14,7 @@ All eighteen declared host profiles completed on source matching
 `eadea4e7e41f80d9101a8adeb015459c14dfb293`.
 Every profile rebuilt its 28 selected library-test binaries and checked their
 actual test rosters before executing or reusing an identical successful binary.
-The [finite profile catalogue](coverage-profile-audit.toml) binds every missing
+The [finite profile catalogue](../../tests/coverage/coverage-profile-audit.toml) binds every missing
 condition side, zero-DA line and unexecuted function group to that profile's
 source hashes, resolved features and reviewed scope. No residual is unreviewed;
 raw percentages retain all measured residuals.
@@ -50,7 +50,7 @@ MC/DC, embedded-glue/C-backend coverage or physical interruption coverage.
 The `39235395677f` default baseline recorded 8114/8723 raw condition outcomes,
 42444/43336 lines and 3593/3602 function groups. Its LCOV source-coordinate
 inventory contained 472 zero-DA rows. The committed
-[baseline source audit](coverage-baseline-audit.toml) accounts for every one,
+[baseline source audit](../../tests/coverage/coverage-baseline-audit.toml) accounts for every one,
 including `match` arms, `?` projections and test-support code. It preserves the
 baseline dispositions and exact current source locations/hashes; runtime closure
 is assessed separately for each profile.
@@ -112,7 +112,7 @@ resolved feature closure. Cryptographic assumptions are recorded explicitly and
 are not mathematical proofs that a collision or exhausted derivation is
 impossible. No raw outcomes, lines or function groups are excluded.
 
-The [storage invariant catalogue](coverage-store-invariants.toml) records the
+The [storage invariant catalogue](../../tests/coverage/coverage-store-invariants.toml) records the
 checked geometry, private lifecycle state and authenticated replay arguments.
 It distinguishes structural constraints from the conditional assumption that
 an identical verified checkpoint and journal scan reconstructs the same

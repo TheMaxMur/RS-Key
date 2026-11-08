@@ -303,7 +303,7 @@ class Tree:
 
     def regenerate(self):
         assurance_gate.co_refuted.cache_clear()
-        self.write("docs/assurance-vector.md", evidence_gate.render(self.root))
+        self.write("assurance/reports/assurance-vector.md", evidence_gate.render(self.root))
 
     def problems(self):
         assurance_gate.co_refuted.cache_clear()
@@ -584,12 +584,12 @@ def test_two_bundles_for_one_property(tree):
 
 
 def test_an_edited_page_is_refused(tree):
-    tree.append("docs/assurance-vector.md", "\nand a sentence nobody derived\n")
+    tree.append("assurance/reports/assurance-vector.md", "\nand a sentence nobody derived\n")
     assert only(tree.problems(), "is not what the generator writes")
 
 
 def test_a_missing_page_is_refused(tree):
-    (tree.root / "docs/assurance-vector.md").unlink()
+    (tree.root / "assurance/reports/assurance-vector.md").unlink()
     assert only(tree.problems(), "is not what the generator writes")
 
 

@@ -97,7 +97,7 @@ class Tree:
         self.write("thing.rs", THING)
         self.write("thing_kani.rs", PROOFS)
         self.write("thing_tests.rs", TESTS)
-        self.page = root / "docs/testing.md"
+        self.page = root / "assurance/reports/testing-evidence.md"
         self.page.parent.mkdir(parents=True)
         self.page.write_text(PAGE)
 

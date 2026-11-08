@@ -2,7 +2,7 @@
 <!-- Copyright (C) 2026 RS-Key contributors -->
 <svg viewBox="0 0 780 336" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="ttl dsc" font-family="'Segoe UI', system-ui, -apple-system, sans-serif">
   <title id="ttl">Secure-boot signing chain</title>
-  <desc id="dsc">On the host, with the signing key: build produces firmware.uf2, picotool seal --sign produces firmware-signed.uf2, which is flashed over BOOTSEL. On the device, the RP2350 bootrom verifies the ECDSA signature against the fingerprint fused in OTP; a verified image runs, a rejected one falls back to BOOTSEL for re-flashing a signed image.</desc>
+  <desc id="dsc">The TrustZone builder emits a combined ELF with the Secure firmware, embedded Non-secure image and partition table. Picotool seals that ELF, then converts the signed ELF to UF2 for BOOTSEL. The RP2350 bootrom checks the ECDSA signature against the fingerprint fused in OTP. A rejected image falls back to BOOTSEL.</desc>
   <defs>
     <style>
       .h1{font-size:23px;font-weight:700;fill:#2B2723}
@@ -43,12 +43,17 @@
     <rect x="542" y="96" width="150" height="36" rx="8"/>
   </g>
   <g class="box" text-anchor="middle">
-    <text x="119" y="118">cargo / nix build</text>
-    <text x="285" y="118">firmware.uf2</text>
+    <text x="119" y="112">TrustZone build</text>
+    <text x="285" y="112">combined.elf</text>
     <text x="451" y="112">picotool seal --sign</text>
-    <text x="617" y="118">firmware-signed.uf2</text>
+    <text x="617" y="112">picotool uf2 convert</text>
   </g>
-  <text class="boxs" x="451" y="125" text-anchor="middle">signing key · host-only</text>
+  <g class="boxs" text-anchor="middle">
+    <text x="119" y="125">Secure + Non-secure</text>
+    <text x="285" y="125">includes partition table</text>
+    <text x="451" y="125">signed ELF</text>
+    <text x="617" y="125">firmware-signed.uf2</text>
+  </g>
   <g stroke="#B9AEA2" stroke-width="2" marker-end="url(#a1)">
     <line x1="194" y1="114" x2="208" y2="114"/>
     <line x1="360" y1="114" x2="374" y2="114"/>

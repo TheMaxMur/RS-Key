@@ -341,7 +341,7 @@ warnings` plus the fuzz targets ([testing.md](testing.md)) keep it that way.
 
 ## TrustZone transport build
 
-These sites implement the mandatory Secure and Non-secure split. They are included in the runtime count above; their platform obligations and measured scope are explicit. See [the TrustZone chapter](trustzone.md).
+These sites implement the mandatory Secure and Non-secure split. They are included in the runtime count above; their platform obligations and measured scope are explicit. See [the TrustZone section](architecture.md#trustzone).
 
 ### 27–41. Secure startup and worker ownership — `PLAT-TZ-001`
 

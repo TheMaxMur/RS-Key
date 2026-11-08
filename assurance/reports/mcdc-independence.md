@@ -4,7 +4,7 @@
 # MC/DC measurements
 
 Supercov now measures Boolean decisions in the six security groups chosen in
-the [testing roadmap](testing-roadmap.md#mcdc-decision-recorded-on-2026-10-08).
+the [testing roadmap](testing-campaigns.md#mcdc-decision-recorded-on-2026-10-08).
 The 2026-11-05 run retains source-condition vectors, skipped operands, outcomes
 and pairs from real command/library tests. The OpenPGP PW1/PW2 and getAssertion
 permission/RP gaps have executable witnesses. Reachable-state and backend-result
@@ -27,7 +27,7 @@ selection uses its package's default host test feature closure.
 
 [Supercov](https://github.com/supercorp-ai/supercov) 4.22.0 at
 `bd6c9d76426d446fb57bcbe5df7791820c97fac1` needs a
-[small local patch](mcdc-supercov-anonymous-const.patch) for anonymous
+[small local patch](../../third_party/mcdc-supercov-anonymous-const.patch) for anonymous
 `const _: ...` items. Its constant lookup otherwise aborts while inspecting a
 named loop bound in a file that also contains an anonymous constant. The fix
 skips unnamed constants during name lookup; witness arithmetic is unchanged.
@@ -337,7 +337,7 @@ disposition of the host residuals or from branch coverage.
 
 ### Qualified pin-expression extension
 
-A later [expression-view patch](mcdc-supercov-pin-expression.patch), applied
+A later [expression-view patch](../../third_party/mcdc-supercov-pin-expression.patch), applied
 after the anonymous-constant patch, exposes the ordinary expression argument
 of `core::pin::pin!` and `std::pin::pin!` to the existing instrumenter. It does
 not expand the macro itself or change witness arithmetic. The exact path
@@ -364,7 +364,7 @@ tool executable and source are restored byte-for-byte after building the prototy
 ### Const runtime-body experiment
 
 The native frontend skips `const fn` bodies. A separate
-[experimental adapter](mcdc-supercov-const-runtime.patch) keeps the public
+[experimental adapter](../../third_party/mcdc-supercov-const-runtime.patch) keeps the public
 const function and creates sibling const/runtime helpers whose bodies are
 byte-identical to the original. An isolated wrapper uses
 [`core::intrinsics::const_eval_select`](https://doc.rust-lang.org/core/intrinsics/fn.const_eval_select.html)
@@ -507,8 +507,8 @@ Supercov:
 
 ```sh
 git clone --branch v4.22.0 --depth 1 https://github.com/supercorp-ai/supercov.git target/supercov-security
-git -C target/supercov-security apply ../../docs/mcdc-supercov-anonymous-const.patch
-git -C target/supercov-security apply ../../docs/mcdc-supercov-pin-expression.patch
+git -C target/supercov-security apply ../../third_party/mcdc-supercov-anonymous-const.patch
+git -C target/supercov-security apply ../../third_party/mcdc-supercov-pin-expression.patch
 nix develop -c cargo build --locked --manifest-path target/supercov-security/Cargo.toml \
   --target aarch64-apple-darwin --target-dir target/supercov-security-build -p supercov
 ```
@@ -547,7 +547,7 @@ reproduces the scope defect above.
 The const adapter is a separate executable example in the external tool tree:
 
 ```sh
-git -C target/supercov-security apply ../../docs/mcdc-supercov-const-runtime.patch
+git -C target/supercov-security apply ../../third_party/mcdc-supercov-const-runtime.patch
 nix develop -c cargo build --locked --manifest-path target/supercov-security/Cargo.toml \
   --target aarch64-apple-darwin --target-dir target/supercov-security-build \
   -p supercov-engine --example const_runtime

@@ -4,7 +4,7 @@
 """Assert every whole-tree row still selects the whole tree.
 
 The host rows used to name their crates: one 24-crate `-p` roster written out
-nine times across `scripts/check.sh` (five rows), `docs/testing.md`,
+nine times across `scripts/check.sh` (five rows), `assurance/reports/testing-evidence.md`,
 `.github/workflows/deep-checks.yml` (the nightly `llvm-cov` row and the header
 quoting it) and `nix/checks.nix` (generated from a list, so invisible to a
 `git grep`). Nothing tied any copy to `Cargo.toml`, and three had rotted in
@@ -71,7 +71,7 @@ import gate_lines
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 CHECK = pathlib.Path("scripts/check.sh")
-DOCS = pathlib.Path("docs/testing.md")
+DOCS = pathlib.Path("assurance/reports/testing-evidence.md")
 WORKFLOW = pathlib.Path(".github/workflows/deep-checks.yml")
 FLAKE = pathlib.Path("nix/checks.nix")
 #: Derived, not spelled out, so renaming either file cannot silently disarm the
@@ -146,7 +146,7 @@ EXCLUDE_GENERATED = gate_lines.EXCLUDE_GENERATED
 #: oracle — that row selects the proof-carrying subset on purpose — so the verb
 #: is handed over rather than judged here. A hand-over is only worth what the
 #: other guard reads, and for the whole life of this line it read the workflows
-#: and docs/testing.md and not this file: a `cargo kani … -p …` row in
+#: and assurance/reports/testing-evidence.md and not this file: a `cargo kani … -p …` row in
 #: `scripts/check.sh` was skipped here, unseen there, and both printed `ok` over
 #: the one thing both of them exist to forbid. Naming `scripts/check.sh` over
 #: there closed that file and left the same hand-off open on the next one: a

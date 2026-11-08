@@ -3,7 +3,7 @@
 
 # Floyd MC/DC pilot, 2026-11-05
 
-Floyd 0.2.9 failed the [MC/DC pilot criteria](testing-roadmap.md#mcdc-decision-recorded-on-2026-10-08).
+Floyd 0.2.9 failed the [MC/DC pilot criteria](testing-campaigns.md#mcdc-decision-recorded-on-2026-10-08).
 It reported complete independence for a function called only with `true, true`,
 using observations from another function. The retained LLVM profiles contradict
 that result. This version is unsuitable as RS-Key's MC/DC evidence producer.

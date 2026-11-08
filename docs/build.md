@@ -388,8 +388,8 @@ flowchart TD
 
 ## TrustZone boundary
 
-The [TrustZone page](trustzone.md#build-and-update) describes the mandatory
-combined-image build, resource ownership and verification scope.
+The [architecture chapter](architecture.md#trustzone) describes the
+Secure and Non-secure split and how the builder assembles the combined image.
 
 ### Reproducible configuration and environment overrides
 

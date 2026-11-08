@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: AGPL-3.0-only
 # Copyright (C) 2026 RS-Key contributors
-"""Hold `docs/testing.md`'s roster of `cfg(kani)` shrinks to the crates, both ways.
+"""Hold `assurance/reports/testing-evidence.md`'s roster of `cfg(kani)` shrinks to the crates, both ways.
 
 A shrink is production source that means something different under Kani than in
 the shipped build — an array cut to 16 so CBMC does not bit-blast 2 KiB, a file
@@ -88,7 +88,7 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 #: The page that owes the roster, and the table in it. Three columns so a row is
 #: decidable on its own: two files can shrink the same name, and one file can
 #: hold two anonymous assertions, so neither the name nor the file is a key.
-ROSTER_PAGE = pathlib.Path("docs/testing.md")
+ROSTER_PAGE = pathlib.Path("assurance/reports/testing-evidence.md")
 ROW = re.compile(r"^\|\s*`(rsk-[a-z0-9-]+)`\s*\|\s*`([^`|]+)`\s*\|\s*`([^`|]+)`\s*\|\s*$", re.M)
 
 #: Where the crates are, and the file each crate's walk starts from.

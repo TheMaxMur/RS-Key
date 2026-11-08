@@ -92,7 +92,7 @@ owners_co_refuted = ["crates/rsk-fido/src/reset.rs"]
 # The tests that kill the code twin, recorded here because they count in NO
 # derived column: the `rust` axis drops filenames containing `tests`, and the
 # `test` axis reads only `tests/**/*.py`.
-# Historical owners for [build] below. The 2026-10-11 recheck in docs/testing.md
+# Historical owners for [build] below. The 2026-10-11 recheck in assurance/reports/testing-evidence.md
 # restores both behavioral kills by minting the issued grant after the PIN.
 # Its ordering finding supersedes the reminting explanation below.
 owner_of_the_kill = [

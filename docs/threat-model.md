@@ -4,7 +4,7 @@ What RS-Key defends against, what it deliberately does not, and the honest
 residuals in between. The defenses compose in tiers: each one assumes the
 ones before it.
 
-The standard build uses the [TrustZone boundary](trustzone.md): USB classes
+The standard build uses the [TrustZone boundary](architecture.md#trustzone): USB classes
 and transports run Non-secure, while the controller, lifecycle observer,
 worker, applets, storage and private keys stay Secure. Secure code observes
 USB resets independently of Non-secure callbacks. This separation does not
@@ -632,24 +632,14 @@ the *device* holds in the clear, since the platform no longer encrypts it — so
 `largeblob-ext` seals each blob at rest under the device seed, with the
 credential id as AAD.
 
-The reboot to BOOTSEL is presence-gated but takes no PIN, so "one touch, then
-dump RAM" is a real attacker move. `worker::reboot` wipes the live key material
-before dropping, and the stack — which carries the deepest secrets, RSA primes
-and EC scalars — is *not* wiped. That is deliberate, and measured rather than
-assumed: on RP2350 A4 the platform clears main SRAM across the drop. All 520 KiB
-read back as zeros while a pattern written through picoboot read straight back,
-so the zeros are the memory and not a refused read
-([`tests/54_sram_residue.py`](https://github.com/TheMaxMur/RS-Key/blob/main/tests/54_sram_residue.py),
-2026-09-03, secure boot off). That run is the one on the record: it carries the
-sha256 of the image it ran on, and it is read against an expectation committed
-before the board was powered. It discharges `PLAT-MEM-001` in the platform
-registry ([platform-assumptions.md](platform-assumptions.md)) — read the row for
-the transcript, the picotool version, and what the result does *not* establish,
-which is that the firmware's own scrub works. An earlier run on 2026-08-05
-reached the same outcome and is superseded here because nobody kept the hash of
-the image it ran on. This is a property of the silicon revision and boot
-configuration, so it is re-measured when either moves; the explicit wipes stay as
-depth in case a future one keeps SRAM.
+Reboot to BOOTSEL requires presence and leaves BOOTSEL in control of any
+remaining SRAM. `worker::reboot` wipes live key material before handing off.
+In the recorded RP2350 A4 test with Secure Boot off, all 520 KiB of main SRAM
+read back as zeros. A known pattern written through PICOBOOT read back
+correctly, which confirms that the zero read was a measurement. The result
+applies to the tested silicon and boot policy. It measures the platform's
+clearing behavior. See `PLAT-MEM-001` in
+[Platform assumptions](platform-assumptions.md) for the board record.
 
 Every reset goes through `worker::reboot`. `clippy.toml` refuses `SCB::sys_reset`,
 `rom_data::reset_to_usb_boot`, `rom_data::reboot` / `reboot_ns` and

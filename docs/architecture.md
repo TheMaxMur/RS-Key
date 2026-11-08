@@ -1,26 +1,14 @@
 # Architecture
 
-How the firmware is put together, for contributors and the curious. For what
-the design does and does not defend against, see the
-[threat model](threat-model.md).
-
-The standard build combines a Secure firmware and Non-secure transport image.
-The worker, applets, storage and USB hardware observer stay Secure; USB classes
-and framing run Non-secure. The [TrustZone boundary](trustzone.md) specifies
-resource ownership and the verification scope, including remaining silicon checks.
-
-OTP provisioning is checked before storage mounts. A boot with complete fused
-keys migrates the old records, scrubs flash, then seals page 58 automatically.
-If the latch closes, `Worker::reboot` clears RAM secrets and restarts before
-command dispatch. In TrustZone this happens in Secure code before launching
-Non-secure transports. Blank OTP remains unprovisioned; incomplete provisioning
-enters recovery. See [production](production.md) for PIN-dependent migration.
+RS-Key is a composite USB authenticator. Its applets handle CTAP, smart-card
+and OTP commands and share a flash-backed store. This chapter follows a
+request from USB to the applet, then describes boot, storage and board input.
+See the [threat model](threat-model.md) for security assumptions.
 
 ## The big picture
 
-A composite USB device with three interfaces, eight smart-card applets and
-one storage layer. Day to day everything runs on one RP2350 core. The
-second wakes only to parallelize RSA keygen (below):
+USB classes pass command bytes to the Secure worker. The worker dispatches
+commands to the applets, which share a flash-backed store.
 
 ```mermaid
 flowchart TD
@@ -29,33 +17,27 @@ flowchart TD
       ccid["CCID<br/>(class 0x0B, APDU)"]
       kbd["Boot keyboard<br/>(OTP typing)"]
     end
-    fido --> worker
-    ccid --> worker
-    kbd --> worker
-    subgraph thread["Secure worker executor"]
+    subgraph thread["Secure firmware"]
+      controller["USB hardware and lifecycle"]
+      gateway["CMSE gateways"]
+      gateway --> worker
       worker["worker task<br/>owns flash + TRNG"]
       worker --> applets["Applets<br/>FIDO2/U2F · OpenPGP · PIV · OATH<br/>OTP · mgmt · vendor + rescue"]
     end
+    host["USB host"] <--> controller
+    controller <--> irq
+    fido --> gateway
+    ccid --> gateway
+    kbd --> gateway
     applets --> fs["flash KV store<br/>(rsk-fs over sequential-storage)"]
 ```
 
-**Separate execution domains.** The Secure worker runs on SWI_IRQ_0 and owns
-flash, TRNG, applets and authorization. Non-secure USB classes and transports
-run their own executor and use bounded CMSE gateways. Secure owns the low-level
-USB driver and observes lifecycle events independently. Requests and replies
-are copied across the boundary; Rust references and secret-bearing state are
-not shared. The interrupt priorities preserve keepalives during Secure crypto.
-All authenticator builds use this split; there is no monolithic build mode.
+### RSA on core1
 
-**Why (mostly) one core.** The async executor provides the *concurrency* that
-the upstream design used a second core and hand-rolled queues for. Core 1 is
-kept out of the transport path and has exactly one job: during on-card RSA
-generation both cores race the prime search. Independent random candidates,
-each core with its own DRBG stream, feed one shared two-prime pool
-(`firmware/src/core1.rs`). Measured, RSA-2048 generation drops from ~8.9 s to
-~4.3 s mean (2.07×).
-
-Three details make that work:
+Core0 serves USB and runs applet commands. During on-device RSA key
+generation both cores search for primes. Each core draws candidates from
+its own DRBG and submits primes to the same pool in
+`firmware/src/core1.rs`.
 
 - The Fermat-filter modexp (C + asm) executes from SRAM. Two cores running it
   from XIP throttle each other on the shared flash cache (~40% per core,
@@ -72,16 +54,107 @@ It changes QMI before core1 starts or after core1 acknowledges that park, and
 skips the change while core1 is busy. The probe restores the old mode on mismatch.
 
 Outside keygen, core1 parks in WFE, and embassy-rp brackets every flash
-erase/program with `pause_core1()`. That buys less than it looks. The flash
-routine is RAM-resident — `write_flash_inner` carries a `.data` link section
-and lands in SRAM on a built image — but the pause is not: `pause_core1` and
-the `SIO_IRQ_FIFO` handler core1 answers it in are both ordinary `.text`, so a
-paused core1 spins in a loop that lives in the flash it is being held off.
-Whether the XIP cache covers that loop for the whole of an erase is a question
-about this silicon rather than about the driver, and it is registered as
-`PLAT-XIP-001 [pending]`, with the board measurement owned by the maintainer.
-Until it is taken, "core1's fetches never collide with flash writes" is what
-the design intends and not something this repository has shown.
+erase/program with `pause_core1()`. `write_flash_inner` runs from SRAM.
+`pause_core1` and its `SIO_IRQ_FIFO` handler are in flash-backed `.text`.
+`PLAT-XIP-001` tracks whether the XIP cache covers the parked core's loop
+throughout a flash erase.
+
+## TrustZone
+
+Every authenticator build splits core0 into Secure (S) and Non-secure (NS)
+execution. NS handles USB classes and framing, which accept traffic from an
+untrusted host. S owns the USB controller, applets, private keys, storage,
+and the inputs that authorize a command. The Secure worker runs in
+`SWI_IRQ_0`. The NS USB executor can send keepalives while the worker runs
+crypto. Core1 helps search for RSA primes and otherwise parks.
+
+Assume an attacker can run arbitrary privileged NS code, including interrupt
+handlers. It can forge channel IDs, replay messages, call gateways directly,
+read plaintext that passes through the transport, or stop serving USB. An
+APDU PIN that crosses NS is visible to that code. A PIN entered on the trusted
+display stays in S. S checks button and touch input directly. The Secure applets verify PINs
+and management-key authentication before using private keys.
+
+The trusted computing base includes S startup and access policy, the CMSE
+gateways, USB hardware front-end, applets and parsers, crypto, storage and
+board I/O. TrustZone separates this code from NS. The [threat model](threat-model.md)
+describes the trust placed in S code, the RP2350 and external flash.
+
+### Resource ownership
+
+| Resource | Secure owner | Non-secure access |
+|---|---|---|
+| Flash, SRAM and core0 | S startup, worker and stacks, linker-defined NSC veneers, flash programming and QMI/XIP controls | NS code, vectors, SRAM and stack. Calls into S use the declared veneers. |
+| Core1 and cross-core controls | RSA engine, its DRBG, stack, mailbox, and SIO launch and pause handshakes | No access to the engine or its reserved SIO resources |
+| USB controller | USBCTRL, DPRAM, endpoint buffers and layout, IRQ masks and acknowledgement, bus epoch | Bounded endpoint operations and copies of packets and events |
+| USB classes | S validates the persisted USB identity and interface mask | CTAPHID, CCID, OTP HID, keyboard framing and class keepalives |
+| Timers | TIMER0 for deadlines, shared ticks, clock and reset controls | TIMER1 for the NS executor |
+| Storage and entropy | KV data and counters, OTP rows and fuse operations, TRNG and DRBGs | Applet operations through the worker |
+| Board input and output | Button, touch and display, LED and their GPIO, SPI/I²C, PWM and PIO controls | Presence status and cancellation through the gateway |
+| Access policy and bus masters | SAU, MPU setup, ACCESSCTRL locks, interrupt routing, DMA, watchdog and security controls | The peripherals explicitly granted to NS |
+
+Startup applies the same ownership to aliases, DMA and the second core. For
+example, making a Secure SRAM address inaccessible to NS loads would be
+insufficient if NS could give that address to a DMA channel. The generated
+linker and SAU layout defines the S image, NSC veneers, NS image, KV partitions
+and separate SRAM regions for each supported flash geometry. See
+[flash layout](#flash-layout) for the persistent regions.
+
+### Gateway and data contract
+
+The two halves share a bounded byte protocol in `rsk_usb::worker_abi`. NS
+submits a request to an NSC gateway. S checks the operation, the entire
+buffer span, lengths and reply capacity. It copies the request from NS data
+RAM, then parses and authorizes the copy. No NS pointer or callback survives
+dispatch. The worker binds a pending approval to that copy and the Secure
+bus epoch.
+
+A job ticket identifies a request within an epoch. A CTAPHID channel ID,
+CCID sequence, or ticket carries no authorization. S returns the reply only
+while the ticket is valid. The USB front-end separately checks endpoint
+allocation, packet buffers and epoch before arming a transfer. It observes
+EP0 setup packets before the NS class handler sees them.
+
+### USB reset and authorization
+
+NS cannot clear the controller's reset latch or mask its interrupt. S checks
+the physical event before admitting work, dispatching a job or releasing a
+result. Under Secure serialization it revokes the epoch and fences old
+transfers before acknowledging the latch. Configuration loss and suspend
+also revoke authorization. Resume leaves authorization revoked.
+
+A queued job is discarded. An in-flight Secure operation can finish and
+commit writes it already began, but its old reply cannot be released. The
+worker scrubs pending buffers, PIN/UV tokens, applet authentication and
+presence state before accepting new work. Persistent keys, configuration
+and retry budgets survive. Cleanup does not wait for NS to poll or
+acknowledge a notification. A card reset and a USB-wide reset have different
+scopes.
+
+### TrustZone build and boot
+
+`scripts/build.sh` links S to export the CMSE import library, links NS against
+that library and the generated memory map, then embeds NS in the final S link.
+Both S links must export the same gateway addresses. The first S link is a
+build intermediate and halts if booted without the NS payload. The builder
+adds the storage partition table to the final image. The separate `rsk-wipe`
+utility runs in Secure SRAM and contains no authenticator transports.
+
+`nix build .#firmware` produces the combined image under `result/`. The local
+builder writes `target/trustzone/combined.elf` and `combined.uf2`. Use the final
+combined ELF for [production signing](production.md). Preserve flash geometry
+and the KV layout when updating a provisioned key. [Build options](build.md)
+lists the board, feature and identity settings.
+
+TrustZone controls access once firmware is running. Enforced Secure Boot
+authenticates the image before execution, and OTP provisioning protects the
+storage roots. After provisioning, S migrates and scrubs old records before
+sealing page 58. If migration needs a PIN, sealing waits. A completed latch
+triggers a scrubbed reboot before NS starts. `rsk otp status` reports the
+provisioning state.
+
+[Testing](testing.md#trustzone-on-hardware) describes which isolation checks
+run in the emulator and which need a board.
 
 ## Boot sequence
 
@@ -98,26 +171,19 @@ constructor returns before command futures run; main has already returned its
 peripheral-initialization frame. Non-secure exchanges borrow one response buffer
 under their existing mutex and clear the complete ABI-sized span on every exit.
 
-Getting to that runtime state has a strict order. The bootrom verifies the
-signed image, then the firmware provisions and recovers **all** persistent state
-(OTP keys, the KV store, the phy record, the TRNG, the seal migrations and the
-one-shot at-rest scrub) *before* it asserts the USB pull-up. That ordering is
-load-bearing: `builder.build()` starts host enumeration, and the task that
-answers control transfers must be spawned with no blocking work in between, or
-the host enumerates a mute device and times out. That is the "blink red / not
-recognised until several replugs" report that motivated attaching to the bus
-only after everything else is ready.
+With Secure Boot enforced, the boot ROM verifies the signed image before
+starting S. The firmware provisions or checks OTP, recovers KV, loads the phy
+record, seeds the TRNG-backed DRBG, and handles pending migrations and scrubs.
+Only then does it attach to USB. The control-transfer task must be ready when
+`builder.build()` enables enumeration, or the host can time out.
 
-The TRNG seed is drawn so that it can fail only closed: a draw holding an all-zero
-192-bit block, the part's answer to a failed health check, is drawn again, and
-after three such draws the board halts there, before the pull-up, rather than seed
-the DRBG from a constant; it wipes the seed and the dead stack first, and nothing
-else holds a secret yet. The 64 KiB reseed draws the same way; failing, it leaves
-the operation in flight to the DRBG as its checked seeds left it and queues a warm
-reboot, which the worker runs through its RAM scrub, and the boot after it draws
-the seed afresh.
+The RP2350 reports a TRNG health-check failure with an all-zero 192-bit
+block. Boot retries the draw and halts after three failures, wiping the
+seed and stack before USB attachment. Reseeding after 64 KiB uses the same
+check. If it fails, the current operation uses the already-seeded DRBG
+and the worker queues a scrubbed reboot.
 
-![Boot sequence — bootrom secure-boot verify, then a provision-and-recover phase (OTP keys, KV mount, phy record, TRNG seed, seal migrations, at-rest scrub) that completes before the USB pull-up, then attach-and-serve (build, spawn usb_task, transports live, worker dispatches applets)](images/boot-flow.svg)
+![Boot sequence. The boot ROM verifies the image when Secure Boot is enforced. Firmware provisions and recovers storage before it attaches to USB and serves commands.](images/boot-flow.svg)
 
 ## Crates
 
@@ -127,9 +193,10 @@ platform libraries. The per-crate detail is in the table. The shape is:
 
 ![Crate dependency layers: 32 crates in 10 tiers, from the 3 device binaries at the top, down through the 8 applets, to the 1 secrets crate at the bottom. All 133 in-workspace dependencies point strictly downward, and applet-to-applet edges number 0.](images/crate-graph.svg)
 
-**No applet names another applet — the count is zero, in code and in the manifests.** This page used to name three cross-edges (`piv→openpgp`, `openpgp→rsa`, `piv→rsa`), only the first of which was one applet reaching sideways; the manifests carried **six** — `fido→mgmt`, `fido→rescue`, `openpgp→mgmt`, `piv→mgmt`, `piv→openpgp`, `otp→mgmt`. The machinery under each moved *down* instead: the phy record into `rsk-phy`, the DeviceInfo record into `rsk-devconf`, RSA into `rsk-rsa`, and the EC key type both card applets seal (`PrivKey` over `Curve`, the `[curve_id] ‖ scalar` blob) into `rsk-ec`. Six `rsk_<applet>::` mentions do survive across the applet tier, every one inside a comment where one applet explains its ordering by pointing at a sibling — a cross-reference, not a dependency.
-
-What holds that now is `deny.toml`: each applet crate is banned except behind the composition roots that wire it, so a sideways edge fails the `cargo deny` row of the gate instead of waiting on a reviewer. The same stanza keeps a hash backend to `rsk-crypto` and puts `rsk-ec`/`rsk-rsa` behind a named allowlist. The drawing above is generated by `scripts/crate_graph.py`, which checks the shape from the other side — every member placed in a tier, every edge strictly downward — and fails the gate when the committed SVG has drifted from the manifests.
+Applet crates depend on shared libraries. The composition roots wire the
+applets together. `deny.toml` restricts those dependencies and keeps hash
+backends behind `rsk-crypto`. The gate runs `scripts/crate_graph.py --check`
+to verify the diagram against the manifests.
 
 | Crate | Contents |
 |---|---|
@@ -225,295 +292,51 @@ compatible across the upgrade.
 
 ## Capacity — why the flash is mostly empty
 
-Storage v2 keeps the partition offsets and the 4078-byte value ceiling. KVMAIN
-still carries the existing payload map. The 128 KiB KVCNT window now contains
-two 44 KiB main-directory journals and two 20 KiB counter banks. The directory
-signs the complete live FID set; each entry authenticates its partition, epoch,
-generation, length and full payload. CRC-discarded expected values and damaged
-bytes resembling legacy layouts fail as storage errors. Counter traffic leaves
-KVMAIN and the main-directory journals unchanged.
+The KV partitions total 1.5 MiB on the standard geometry. Larger boards
+give the code region more space. A 2 MiB board reduces the main partition
+to leave room for the firmware. A wider store would lengthen cold scans,
+and usable capacity also depends on the applet limits and the RAM buffers
+that serve them.
 
-Main writes reserve a candidate before publishing an authenticated intent,
-verify that exact candidate, and then publish to both journals. Recovery
-finishes a complete candidate or cancels its reserved span before allowing GC.
-Counter values and their authority are committed together and mirrored before
-success. From `0x0B66`, counter reads and write admission reuse authenticated
-locations only after freshly checking both complete physical banks. The used
-prefix is hashed and every byte of the erased tail is checked; changed bytes
-trigger full replay and recovery. Fingerprints are bound to the current root
-key, epoch and root arm, and requested values retain their full MAC check.
-Fingerprints are formed from the same bytes as the authenticating scan, not a
-second read of potentially changed data. Mutation discards the mount before
-programming; verified closure seeds the next mount. Invalid occupied suffixes
-retain authenticated progress as a minimum generation; an older replica cannot silently replace that progress.
+The logical limits include `MAX_RESIDENT_CREDENTIALS` (256 passkeys),
+`MAX_DYNAMIC_FILES` (1280 files shared by the applets), and
+`MAX_OATH_CRED` (255 OATH credentials). The maximum stored value is 4078
+bytes. A larger flash chip alone does not raise these limits.
 
-From `0x0B83`, each directory digest prepares one local HMAC template for its
-fixed root key. Every original frame is still authenticated. Payload reads,
-root observations, rollback floors and publication order are unchanged.
-The template lives only in returned frames covered by the Secure stack sweep;
-it never enters the mounted store. Persistent bytes are unchanged. The digest
-loop stays out of line so the template does not enlarge its callers' frames.
-The P-256 ECDH multiplication also executes from existing Secure RX SRAM;
-from `0x0BA8`, its complete point addition and field inversion do too.
-The addition's upstream monomorph has a linker size assertion: a dependency
-or code-generation change requires reviewing the relocation again.
-Its scalar arithmetic and point validation are unchanged. P-256 and P-384
-peer decoding use separate frames to keep their workspaces out of other curves.
-P-384 addition, subtraction and doubling stay out of line on 32-bit targets;
-these are the existing constant-time field operations, with no change to point
-validation or scalar handling. The Fiat and 64-bit backends keep their inlining.
+### Storage authority and recovery
 
-From `0x0BA8`, PIN retry bytes and AES-GCM-sealed HOTP moving factors use private
-counter-journal buckets. The complete public PIV/OpenPGP retry records live in
-separate private counter entries; a durable tombstone prevents legacy fallback
-after deletion. Verifier-bearing PIN presence probes authenticate their main-file owner
-without fetching retry bytes. Each slot names the main record's publication
-generation; changing or deleting that record invalidates the old slot. Root
-re-keying preserves publication generations. PIN verifiers and OATH secrets
-remain in the main payload map; the buckets contain neither. A retry update
-keeps all other bytes of the PIN record intact. HOTP reads combine its sealed
-credential with its separately sealed moving factor, and rename materializes
-that effective value before replacing the credential.
+The main partition holds payloads. The 128 KiB counter partition contains
+two 44 KiB main-directory journals and two 20 KiB counter banks. The
+directory authenticates the complete live FID set. An entry binds its
+partition, epoch, generation, length and payload. An unreadable or damaged
+expected value is a storage error.
 
-Legacy records remain authoritative until a matching bound slot is published.
-Both counter banks must acknowledge an update before comparison or a code can
-escape. A malformed, unreadable or unauthenticated bucket is an error, never
-permission to use the legacy value. Counter authority retains its authenticated
-live state across read failures and admits only its staged writes. Mounted
-PIN/HOTP reads fetch the requested entry and payload in both banks, require
-byte-identical copies and authenticate the value against that live authority. As with
-the main payload map, unrelated historical records are checked at mutation and
-recovery boundaries, rather than on each addressed read. Every update still
-checks both complete banks before and after publication; the original four
-counter APIs retain their complete-bank reads.
+A main-store write reserves space and records an intent. It verifies
+the exact candidate before publishing the new directory to both
+journals. Mount recovery completes a valid candidate or cancels the
+reservation before garbage collection. Counter updates publish and
+verify both copies before returning success. Retry records and HOTP
+moving factors are bound to the publication generation of their owner.
+Deleting or replacing that owner invalidates its old counter entry.
 
-Mounted reads retain only nonsecret authentication tags. Each read fetches the
-root again, authenticates the current authority and reads the physical payload.
-An unchanged entry may reuse its payload tag across unrelated publications,
-but only while it exactly matches the current authenticated directory entry;
-the fresh mount proof binds it to the current authority. A payload tag already
-bound to the current authority authenticates both together. After a successful
-read across an unrelated publication, the payload tag is refreshed to that bound.
-The counter authority MAC covers a SHA-256 digest of the entire canonical
-directory, plus its epoch, root arm and sequence. Persistent directory MACs and
-checkpoint encodings are unchanged.
-Warm mutations compare fresh complete-bank SHA-256 digests with the verified
-mount and check its authority MAC with the current key. Append confirmation
-verifies the saved prefix MAC before comparing the intended and physical digests.
-No root, derived key or keyed hash state survives the call. Private reads do
-not reread unrelated journal bytes; writes and recovery authenticate both full
-banks, including their erased suffixes. A changed private value is refused on
-read even when both banks are replayed, and reading an unchanged value cannot
-lower another counter's retained floor. A complete flash replay across cold
-boot retains the limitation described in the threat model. Earlier v2 builds reject the new private
-FIDs during mount, so downgrade cannot expose the old embedded counts.
+A warm read checks the live root and the requested payload against
+the mounted authority. The authenticated directory can also answer
+that a file is absent. The cache holds metadata and authentication tags,
+with no root keys or plaintext payloads. Before a mutation reuses
+journal offsets, it checks fresh fingerprints of the physical journals
+and their erased tails. An I/O error discards the cache hints. It
+preserves the minimum authenticated generation while the backend stays
+live. A replay of an entire flash snapshot across cold boot remains
+subject to the [rollback limitation](threat-model.md#flash-snapshot-rollback-the-pin-counter-reset).
 
-The bucket layout keeps all 255 OATH slots and all 256 FIDO counters. Directory
-entries use an unaligned byte representation for their generation in RAM to
-make room for the larger counter index; the 32-byte on-flash entry is unchanged.
-The original four-counter legacy import manifest also remains unchanged.
-
-From `0x0BB0`, raw-bank writes end each chunk at a 256-byte page boundary,
-avoiding overlapping physical page programs on byte-writable flash drivers.
-Counter appends gather the header, value and erased padding directly into
-the raw bank's page buffer, without a full-record staging buffer. Their on-flash
-bytes are unchanged, so `0x0BA8` can still reopen the store. The scanner advances
-its authenticated sequence only after verifying
-the complete value MAC; a complete header over a torn value stays dirty and
-retains the previous authenticated floor. Both banks are still published and
-checked before success. Checkpoint construction keeps its existing ordering.
-
-From `0x0BD6`, counter snapshots pack consecutive entries and padded values into
-256-byte body pages. Each value is authenticated before copying, and each page
-is read back before the checkpoint header and its final MAC are programmed.
-This reduces repeated programs during rotation without changing stored bytes,
-capacity, full-bank erasure or either replica's publication checks. Existing
-`0x0BA8` and `0x0BB0` stores remain readable in both directions.
-
-The private on-flash FIDs and value layouts are fixed:
-
-| FID | Value |
-|---|---|
-| `CD00` | Five 16-byte slots: legacy PIV, legacy OpenPGP, FIDO, device and OATH PIN retries |
-| `CD01`–`CD20` | Eight 48-byte HOTP slots per bucket, in credential-FID order from `BA00` |
-| `CD21`, `CD22` | PIV and OpenPGP retry records: `01` followed by the complete record, or the one-byte tombstone `00` |
-
-A bound slot starts with the owner's 8-byte little-endian publication generation,
-then a one-byte value length and that many value bytes; unused bytes are zero.
-An unused slot is entirely zero. PIN slots hold up to three retry bytes; HOTP
-slots hold the 36-byte nonce, ciphertext and GCM tag. The last HOTP bucket's
-eighth slot is unused because `BAFF` belongs to the OATH access code.
-
-From `0x0B70`, main and counter journals retain the SHA state of complete public
-metadata blocks from the authenticating scan. Before extending that state, the
-partial block is reread and checked against the root-bound prefix fingerprint.
-The exact intended append extends this state in RAM. After both publications,
-each complete physical bank is read afresh: its occupied prefix must match the
-expected fingerprint and every tail byte must remain erased. Only then can the
-new append position be reused. This replaces per-record closing replay without
-accepting a changed historical prefix, a different append or a hidden suffix.
-No root key or payload plaintext is retained. Cold mounts, recovery and
-compaction keep the full replay path; missing proof state uses that path too.
-A GET RESPONSE that only drains a prepared answer leaves the public OTP HID
-status mirror alone. Every new APDU and OTP operation still refreshes it; the
-mirror is not used to authorize operations or validate stored values.
-
-From `0x0B05`, TrustZone places shared memory-copy and clearing helpers beside
-the verifier in read-only Secure SRAM. Their instruction bodies are unchanged;
-startup copies them before use under the existing executable-memory policy.
-Build `0x0B66` groups the X25519 ladder, field multiplication, subtraction and
-squaring into one aligned 8 KiB XIP cache way. The arithmetic stays unchanged;
-neither SRAM nor cache-control permissions change. Ed25519 uses dalek's existing
-constant-time base-point tables, with `zeroize` retained and no heap required.
-The tables occupy 30 KiB of flash. The store crate uses speed optimization,
-as the shared SHA-256 core already does.
-From `0x0BD6`, the Ed25519 selection and addition loop uses cache indices after
-the shared field core, leaving the other way for its public table. Linker
-assertions keep both instruction spans disjoint. X25519's group includes its
-constant-time barrier and public ladder multiplier; secp256k1's hot callees
-occupy their own aligned cache way.
-The checked shared flash reader executes from the existing Secure RX SRAM
-region; startup copies it with the other RAM routines before enabling that
-mapping. Its reads, bounds and verification remain unchanged. P-521 ECDH uses
-131 fixed radix-16 rounds: the top digit including its carry is at most two,
-so the encoding's two leading zero digits need no rounds.
-P-384 groups its comb and hot field callees within one XIP
-cache way; the decoded public tables remain on the stack.
-
-Pre-OTP read proofs use precomputed SHA-256 states for the public `NO-OTP`
-key pads. Every backend operation still reads and classifies the OTP root
-afresh. Fused-root HMAC, record MACs, bank authentication and rollback checks
-are unchanged; no secret-derived state survives between operations.
-
-From build `0x0ACF`, Main keeps its complete authenticated version directory
-in protected RAM. A warm read freshly checks the root, verifies its binding to
-the mounted directory, and authenticates the complete requested payload against
-its expected entry. The complete directory also authorizes absence. Neither root
-keys nor payload plaintext are cached. Before reusing a mounted directory for
-mutation, full physical-journal fingerprints are checked. Otherwise authenticated
-journal resolution and recovery precede mutation.
-From `0x0B55`, a verified mount also retains the append offsets and chain heads.
-After the physical-journal check, a healthy payload map can reuse this position
-without replaying the journal again. The completed write's authenticated
-closure seeds the next read mount; errors clear these hints. Payload repair
-still takes the original resolution path, and no root key or payload is retained.
-From `0x0B66`, unpublished-value retirement first performs an unrepaired,
-read-only walk. Known FIDs exclude historical bodies from this walk without
-warming their key pointers; included candidates still pass the full CRC.
-All published values are authenticated before any deletion or subsequent GC.
-Deletion retains the post-cleanup validation; a walk that changed nothing needs
-only the pre-mutation validation. The ordinary item iterator stays separate
-so the filtered walk does not enlarge lookup futures. Payload seals and
-persistent formats are unchanged.
-A separate mounted authority tracks the exact epoch, root arm, sequence and
-directory digest through Prepare, Commit, Abort and rekey. Errors and remounts
-clear acceleration hints but retain this floor; the first verified publication
-closes its predecessor before a later replica write can fail. Ready is cleared
-before any directory change. Unrelated journal or payload-map damage need not
-interrupt a warm read of known correct data; recovery and mutations check that
-media before consuming it. The cold-start rollback limitation still applies.
-
-From `0x0AD0`, a ready read lends the map only the requested record's aligned
-scratch span, under a wipe guard. Cold reads and mutation paths clear the whole
-scratch before reusing a mount; warm reads wipe everything the map could have
-filled, including padding and partially completed failing reads. A fallback drops
-the bounded guard before full-buffer lookup and cleanup. Absence borrows no
-scratch. Fresh root checks and complete value authentication remain required.
-
-From `0x0AD6`, a read-tag miss validates the same checked record geometry, then
-borrows the full scratch under its wipe guard. An uncached map lookup can read
-larger unrelated values before finding the requested FID. This avoids a small
-buffer failure, repeated binding proof and full-buffer retry, and lets the first
-verified value seed its read tag. Tag hits retain the bounded span and the
-existing recovery checks.
-
-TrustZone build `0x0BE0` gives counter resolution and scanning caller-owned
-results, avoiding repeated large return-value copies in unoptimized builds.
-Software SHA-256 groups its literal-index schedule and register rotation in
-eight-word helpers that can inline in optimized builds. This bounds unoptimized
-core1 frames; chaining state, schedule and working state retain `Secret` owners.
-Persistent encodings are unchanged.
-ML-DSA zero vectors use constant elements. Key expansion fills its final fields
-before converting them to the NTT/Montgomery domain; signing fills vectors
-without array-constructor copies and reuses the product and LowBits buffers
-for the response and hints. Polynomial owners still wipe on every exit.
-
-TrustZone build `0x0ADC` also unrolls SHA-256 schedule expansion. A placement
-hint avoids rebuilding the expanded schedule solely for its final wipe. The hint
-has no security role: the complete 64-word schedule and chaining state remain
-in `Secret`, and cleanup does not depend on optimization. Full MAC frames, fresh
-Root reads, rollback floors and persistent record formats are unchanged.
-
-TrustZone build `0x0ADB` fully unrolls the software SHA-256 rounds and places
-the unchanged HKDF-SHA256 and HMAC-DRBG helpers in Secure RX SRAM as well.
-The full 64-word schedule and chaining state remain in `Secret`. The complete
-Secure dead-stack sweep uses 32 stores per pass with the same bounds and tail.
-Additional RX code reduces the core0 stack span; data and Non-secure RAM do not
-grow. Full record verification, fresh Root observations, rollback floors,
-DRBG Generate/reseed boundaries and cleanup before publication are unchanged.
-
-TrustZone build `0x0ADA` executes the unchanged SHA-256 compression/finalization and HMAC template functions
-from the existing Secure RX SRAM region. Trusted Reset copies this code together
-with the existing RAM routines before enabling the read-only executable mapping.
-The region grows by 1824 bytes on the Waveshare 4M test image, reducing the
-core0 stack span by the same amount; data, BSS and Non-secure RAM are unchanged.
-Full SHA-256 input hashing, MAC frames, fresh Root reads and both Secure stack
-sweeps retain their existing contracts. No keyed context or plaintext is cached.
-
-Build `0x0AD3` prepares one operation-local HMAC context for the
-full mounted binding and complete payload checks, using the prefix reuse from
-[RFC 2104 section 4](https://www.rfc-editor.org/rfc/rfc2104.html#section-4). The context stays in returned
-stack frames covered by the Secure sweep; no keyed state is retained for a
-later backend read, which derives its root afresh. Authentication frames and
-persistent records are unchanged.
-
-From `0x0AD5`, Main can retain 32 read tags and one mounted-binding tag, with
-their exact public metadata, in protected RAM. Every admitted backend read still
-reads OTP and applies the original arm and latch rules. A miss derives the persisted
-key and verifies the full binding and record MACs before seeding a tag from that
-same OTP observation. A hit instead verifies a full 32-byte root-key HMAC:
-`RSKV2RM1 || serial_hash || bound[100]` for absence, or
-`RSKV2RD1 || serial_hash || bound[100] || entry[32] || SHA256(value)` for a value.
-The bound contains the canonical snapshot and its full mounted-binding tag.
-Every payload byte is hashed before any requested prefix is returned; a miss
-reuses the digest already verified by the record MAC. Root bytes are wiped
-before map I/O. No root, derived key, plaintext or keyed state survives a read
-in Main or KeySource; returned crypto frames remain covered by the Secure sweep.
-
-CRC or missing-map recovery first verifies the original observation's mounted
-tag, then freshly reads and derives the root again. The existing full binding
-proof checks this second observation before recovery reads payloads. A cached
-payload-tag mismatch refuses immediately. Main clears the read tags with its
-other hints before mutation and on read errors, retaining the authority floor.
-These tags have no persistent representation and do not change journal or record formats.
-
-Boot mounts authority before scanning or provisioning applets. Wholly blank
-media and readable legacy stores are initialized or imported automatically.
-Read faults, damaged v2 authority and malformed legacy page layouts enter CCID
-rescue mode; [attended commands](guides/cli.md#storage-initialization-and-upgrades)
-remain available for recovery.
-Import freezes the main set and four routed counter values in a signed manifest,
-verifies backups in KVMAIN before counter erasure, and resumes after interruption.
-The legacy counter reader treats the exact SDK E10 256-byte `0xEF` suffix as
-erased only when the remainder of that final sector is unused. Its view cannot
-write or erase; authenticated banks read the actual flash bytes.
-Backend-owned FIDs `CEF8..CEFD` stay outside the public map and dynamic-file
-budget. The activation witness survives applet resets. Pre-OTP authority is
-re-keyed before the page-58 latch can report migration complete.
-
-The KV store is 1.5 MB by default whatever the `FLASH_SIZE`, so a larger flash only
-grows the code region, most of which no firmware writes ([build.md](build.md)). That
-is deliberate. (A 2 MB board is the one exception: it shrinks the main partition via
-`KVMAIN` to leave room for code — still far more than a key ever fills.) A security key's maximum *logical* state is small and hard-capped:
-`MAX_RESIDENT_CREDENTIALS` (256 passkeys), `MAX_DYNAMIC_FILES` (1280 files, one
-budget shared by every applet), `MAX_OATH_CRED` (255), plus a handful of
-OpenPGP/PIV slots. The passkeys dominate the bytes — a file-count ceiling is not
-a size ceiling — so a fully provisioned device fills only a few hundred KB, well
-under the 1408 KB main partition. Growing the store to "fill" a 16 MB board would buy nothing usable: it
-lengthens the `sequential-storage` scan behind every cold boot and absent-key
-probe (the present cache exists to dodge exactly that full-partition ~0.2 s cost),
-and forces the logical caps (and the RAM/stack buffers sized to them) up for
-capacity no one reaches. Empty flash here is headroom, not waste.
+Boot can initialize blank media or import a readable legacy store.
+Import verifies backups before erasing the old counter partition and
+can resume after interruption. Read faults, invalid authenticated
+authority and malformed legacy layouts take the CCID rescue path.
+See [storage initialization and upgrades](guides/cli.md#storage-initialization-and-upgrades)
+for the attended commands. The
+[storage implementation notes](https://github.com/TheMaxMur/RS-Key/blob/main/assurance/reports/storage-layout-notes.md)
+retain byte layouts and details of the storage and code-placement changes.
 
 ## Device identity
 

@@ -18,7 +18,7 @@ The bundles already carry the numbers as structured data — 541 `bound_*` keys
 over 107 `[[method]]` rows in 17 files — and `bundle_gate.method_bounds` floors
 them, but on COUNT and TYPE only: the VALUES are unconstrained and nothing
 rendered them anywhere. So this writes them out, the shape `evidence_gate.py`
-already uses on `docs/assurance-vector.md`: one page, `--write`, a byte diff, a
+already uses on `assurance/reports/assurance-vector.md`: one page, `--write`, a byte diff, a
 gate row.
 
 ## What it renders, and why all seventeen

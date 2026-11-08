@@ -293,7 +293,7 @@ def tree_files(root):
     output is not the tree, and a hand-written skip list gets the difference
     wrong. Walking the filesystem past `target/` and `.git` still descended into
     the mdBook output under `book/` and `site/`, where six generated copies of
-    `docs/testing.md` each read as an unregistered roster owner. It also skips
+    `assurance/reports/testing-evidence.md` each read as an unregistered roster owner. It also skips
     the agent worktrees under `.claude/`, whole second copies of the tree in
     which every proof reads as unreachable. No fallback if git is not there: a
     second path for reading the tree is a second answer to what the tree is.

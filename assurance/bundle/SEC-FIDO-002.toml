@@ -161,7 +161,7 @@ equivalent_columns = ["firmware-pico", "waveshare-one"]
 # tier A — no requirement gate exists for this property, because the requirement
 # root covers only one of its four owners (see property.threat_clause_reading) —
 # and no trace row: no TraceSecurity configuration checks this invariant, which
-# is what `trace 0 of 0` in docs/assurance-vector.md:64 is.
+# is what `trace 0 of 0` in assurance/reports/assurance-vector.md:64 is.
 
 [[method]]
 obligation = "tier B: the invariant over the whole reachable space of the shipped constants"

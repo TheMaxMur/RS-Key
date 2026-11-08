@@ -7,7 +7,7 @@
 target, each restricted to what that target's corpus reached. Neither the
 per-target rows nor their average is the repository's fuzz coverage: a line any
 one target reached is covered, and one no target reached is not. This unions
-them the way `docs/testing.md` quotes the number.
+them the way `assurance/reports/testing-evidence.md` quotes the number.
 
 The scope is deliberate. A `(file, line)` coordinate counts once and is covered
 when ANY target's `DA:` record counts it above zero. Only sources under the
@@ -19,7 +19,7 @@ repository-root restriction that also drops a git dependency's checkout.
 Vendored `third_party/` sources ARE counted, so this denominator is larger than
 the host-unit scope's.
 
-It gates nothing; `docs/testing.md` says why a fuzz reporter must not look like
+It gates nothing; `assurance/reports/testing-evidence.md` says why a fuzz reporter must not look like
 a gate. It exits non-zero only when it has nothing it can read: no
 `coverage.lcov` under the coverage directory, one it cannot read, or no
 repository-source record at all.

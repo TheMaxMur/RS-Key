@@ -578,7 +578,7 @@ do not establish architectural nested-mask or interrupt-scheduling equivalence;
 the corrected observer separately repeats nested masking (`0x11`), the six-stage
 recorder/cache/clear calibration, pending-poll/reset, submit/fence, busy-submit
 revocation, both bulk schedules and SHA **26/26**. The correction and actual-opcode
-regression are retained as an [isolated emulator patch](mcdc-picoem-cps.patch).
+regression are retained as an [isolated emulator patch](../../third_party/mcdc-picoem-cps.patch).
 Product dependency pins are unchanged.
 
 Further same-ELF Secure USB scenarios supply **62/71** tool pairs: actual entry

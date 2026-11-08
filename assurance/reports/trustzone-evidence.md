@@ -5,7 +5,7 @@
 
 These dated measurements describe the builds named in each section.
 Their prototype commands and open items are historical evidence, not the
-current build recipe. See [the current boundary and build guide](trustzone.md).
+current build recipe. See [the current boundary and build guide](../../docs/architecture.md#trustzone).
 
 ## Prototype build and measurements
 
@@ -1056,7 +1056,7 @@ The RESET runner also accepts `--vary-churn`, which cycles object lengths from
 one byte through 3046 bytes, with lengths around common packet and page sizes.
 For a disposable no-touch key, run
 `python tests/102_piv_factory_reset.py --runs 40 --churn 8 --rsa --vary-churn`
-with the reader and serial selection described in [testing](testing.md).
+with the reader and serial selection described in [testing](testing-evidence.md).
 Each cycle still checks the exact PIN/PUK countdown and factory retry counts,
 key and object removal, and the replacement F9 certificate. Varying the lengths
 changes payload page packing; it is another reproduction workload, not a fix.
@@ -1146,6 +1146,8 @@ authorizes PIV first, then injects a USB reset through the emulated host. The
 corrected image advances epoch 2 to 3 and refuses the old PIN authority before
 SELECT. Removing only the HAL reset fallback retains epoch 2 and answers `9000`
 to that same PIN query. Both runs reconfigure USB without a power cycle.
+
+<a id="combined-image-hash-checks"></a>
 
 ## Software recheck on 2026-10-16
 

@@ -229,7 +229,7 @@ what the tool saw and the device never vouched for.
   },
   "host_observations": {
     "device": "37bebfdca282523b",
-    "timestamp": "2026-06-13T14:22:09-04:00",
+    "timestamp": "<RFC 3339 timestamp>",
     "steps": {"otp": "ok", "oath": "ok", "piv": "ok", "openpgp": "ok",
               "fido_reset": "ok", "org_attestation": "cleared"},
     "journal_window": [{"seq": 412, "event": "RESET", "...": "..."}]

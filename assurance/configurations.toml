@@ -412,7 +412,7 @@ no date, over a suite that grows most weeks — a measurement written as a \
 property of the column. The commit IS the date and is deliberately the only \
 half written here: git dates a sha exactly, and `scripts/run_count_gate.py` \
 refuses a second copy of a day its generated regions already print — the \
-tier-run table of `docs/assurance-vector.md` prints this one, and typing it \
+tier-run table of `assurance/reports/assurance-vector.md` prints this one, and typing it \
 again here reddens that row (driven, EXIT=1). Write the target the way \
 `scripts/check.sh` does: this said `aarch64-apple-darwin`, which is one \
 maintainer's host triple pinned into a shared register, and CI runs the same \

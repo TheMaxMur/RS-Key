@@ -836,7 +836,7 @@ def co_refuted(root: pathlib.Path) -> dict[str, list[str]]:
     evidence about the code, not only about the model — and the status ladder
     cannot see it, because BOUNDED keys on a Kani harness name. Most of the
     MODELLED-ONLY rows carry one, which reads in the table as "no evidence at
-    all"; how many is generated into `docs/assurance-vector.md`, because the
+    all"; how many is generated into `assurance/reports/assurance-vector.md`, because the
     number written here had gone stale by two. Derived rather than hand-recorded,
     like every other column; `scripts/comutate.py` owns the invariant lookup and
     is reused.

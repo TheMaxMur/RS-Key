@@ -27,9 +27,14 @@ unrelated kinds live here:
   `crypto-bigint/` plus `crypto-bigint.patch` propagate the protected borrow
   across P-521's 17-word integers on 32-bit targets without intermediate masks.
   Other widths keep the upstream word loop. All four workspaces use this fork of 0.7.6; its security fixes and ctutils primitives are retained.
-- **The image emulator** — `picoem/`, the two host libraries and pinned A4
-  ROM used by `tools/emu`. Origin, local isolation changes and checks are
-  recorded in [TrustZone](../docs/trustzone.md#emulator-source-and-isolation-checks).
+- **The image emulator** — `tools/emu` pins the picoem fork in
+  [its Cargo manifest](../tools/emu/Cargo.toml). See the
+  [emulator isolation report](../assurance/reports/trustzone-evidence.md#emulator-source-and-isolation-checks)
+  for the ROM and isolation checks.
+- **MC/DC tooling patches** — `mcdc-supercov-*.patch` and
+  `mcdc-picoem-cps.patch` support coverage experiments. The
+  [MC/DC reports](../assurance/reports/README.md) record the application order
+  and the measurement scope.
 - **Generated font data** — `ibm-plex/`, the four-bit coverage tables the
   trusted display draws its text from, emitted by
   `scripts/generate_ui_fonts.py` from the Nix-pinned IBM Plex Sans/Mono files
