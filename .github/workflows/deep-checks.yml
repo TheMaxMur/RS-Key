@@ -29,12 +29,12 @@
 #   repro — `nix build .#firmware` twice (`--rebuild` diffs every output
 #          byte): proves the hermetic image is bit-reproducible and publishes
 #          the canonical sha256 for this flake.lock (docs/build.md).
-#   coverage — `cargo llvm-cov` line coverage over the host crates, floored:
-#          a regression alarm on the host-testable surface (the embedded
-#          firmware image is not host-measurable). scripts/metrics.sh is the
-#          separate, un-gated refactor-reconnaissance tool.
+#   coverage — host line coverage with an 80% floor, plus condition-outcome
+#          reports. The daily run measures the default profile.
 #
 # WEEKLY (Sunday)
+#   coverage — condition-outcome reports for every declared host profile.
+#   mcdc — Supercov witness pairs for selected host security decisions.
 #   kani — every #[kani::proof] harness, one runner per tier: the three `light*`
 #          shards and `heavy`, which together are the `all` roster of
 #          `scripts/kani.sh` (docs/testing.md). The fast tier of that same script runs
@@ -89,6 +89,7 @@
 #   nix develop -c python scripts/comutate.py run
 #   nix develop -c ./scripts/check-assurance.sh
 #   nix develop -c cargo llvm-cov --summary-only --fail-under-lines 80 --target <host> --workspace --exclude firmware --exclude firmware-ns --exclude rsk-wipe
+#   nix develop -c ./scripts/mcdc.sh
 
 name: deep-checks
 
@@ -110,11 +111,13 @@ on:
         "nix/firmware.nix",
         "scripts/fuzz-coverage.sh",
         "scripts/fuzz-all.sh",
+        "scripts/mcdc.sh",
         "scripts/miri-all.sh",
         "fuzz/Cargo.toml",
         "scripts/mutants-all.sh",
         "scripts/comutate.py",
         "scripts/kani.sh",
+        "third_party/mcdc-supercov-*.patch",
         "formal/**",
       ]
 
@@ -381,13 +384,7 @@ jobs:
           key: coverage-${{ runner.os }}-${{ matrix.profile }}-${{ hashFiles('Cargo.lock', 'flake.lock') }}
           restore-keys: coverage-${{ runner.os }}-${{ matrix.profile }}-
 
-      # Host crates only — the embedded firmware image is not host-measurable, so
-      # its coverage is 0 by construction. firmware and rsk-wipe are the two
-      # workspace members that are not under crates/ and the two that are
-      # thumbv8m-only, so the exclusion is the whole of it; scripts/roster_gate.py
-      # holds this row and the header's copy of it to that pair. The 80% floor is
-      # a regression alarm, not a target: 85.0% line over the host crates
-      # (aarch64-apple-darwin), so a real drop fails and noise does not.
+      # Keep the embedded-only packages outside the host line-coverage floor.
       - name: llvm-cov — host-crate line coverage, floored at 80%
         if: matrix.profile == 'default'
         run: |
@@ -407,6 +404,33 @@ jobs:
         with:
           name: unit-coverage-${{ github.run_id }}-${{ matrix.profile }}
           path: target/coverage-profiles/${{ github.run_id }}-${{ matrix.profile }}
+          if-no-files-found: error
+
+  mcdc:
+    if: github.event.schedule != '17 5 * * *'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: DeterminateSystems/nix-installer-action@3138316df39ed29be04236d7ffc686fa525866aa # v23
+
+      - uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.2
+        with:
+          primary-key: nix-${{ runner.os }}-${{ hashFiles('flake.lock') }}
+          restore-prefixes-first-match: nix-${{ runner.os }}-
+
+      - name: Measure MC/DC on host security decisions
+        run: nix develop -c ./scripts/mcdc.sh
+
+      - name: Retain MC/DC logs and evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: mcdc-${{ github.run_id }}-${{ github.run_attempt }}
+          path: target/mcdc.*/
           if-no-files-found: error
 
   kani:

@@ -348,17 +348,90 @@ then pinned as regression tests when the expected behavior is known.
 
 ## Branch and condition measurements
 
-Line coverage tells whether a source line ran. Branch coverage tells
-whether its decision took each outcome. Modified condition/decision
-coverage (MC/DC) asks whether each Boolean condition can independently
-change the decision. For `pin_valid && presence`, the pair
-`(true, true)` and `(true, false)` tests the effect of presence. Testing
-`(false, false)` alone also reaches the deny branch but tells nothing about
-that effect. Short-circuit evaluation and conditions coupled by an
-invariant matter when choosing pairs.
+Line coverage counts executed source lines. Branch coverage counts the
+control-flow outcomes recorded by the compiler. Condition coverage counts
+the true and false outcomes of individual Boolean conditions.
 
-The scheduled line-coverage row uses `cargo llvm-cov` on the host crates.
-Use the nightly shell for branch and condition instrumentation.
+### Recorded coverage
+
+These are recorded measurements. The source reports identify the revisions,
+toolchains and feature configurations. The host unit-test totals cover the
+host workspace without the embedded firmware and wipe images. Keep the
+denominators separate across runs and instrumentation modes.
+
+| Suite | Metric | Measured | Scope and evidence |
+|---|---|---:|---|
+| Host unit tests | Lines | **42,688 / 43,370 (98.43%)** | Default host profile. [Host-profile audit](https://github.com/TheMaxMur/RS-Key/blob/main/assurance/reports/coverage-current.md) |
+| Host unit tests | Function groups | **3,607 / 3,609 (99.94%)** | Same default profile and run. [Host-profile audit](https://github.com/TheMaxMur/RS-Key/blob/main/assurance/reports/coverage-current.md) |
+| Host unit tests | Branch outcomes | **6,509 / 7,646 (85.13%)** | Default host profile in a separate, earlier LLVM branch run. [Branch measurement](https://github.com/TheMaxMur/RS-Key/blob/main/assurance/reports/testing-evidence.md#host-tests) |
+| Host unit tests | Condition outcomes | **8,207 / 8,723 (94.08%)** | Default host profile with LLVM condition instrumentation. [Host-profile audit](https://github.com/TheMaxMur/RS-Key/blob/main/assurance/reports/coverage-current.md) |
+| Fuzz corpus replay, `default` | Source lines | **23,062 / 36,301 (63.53%)** | Union across 53 targets. Crates alone reached 21,490 / 32,983 (65.15%). [Fuzzing report](https://github.com/TheMaxMur/RS-Key/blob/main/assurance/reports/testing-evidence.md#fuzzing) |
+| Fuzz corpus replay, `flavours` | Source lines | **22,699 / 36,182 (62.74%)** | Separate union across 53 targets. Crates alone reached 21,127 / 32,864 (64.29%). [Fuzzing report](https://github.com/TheMaxMur/RS-Key/blob/main/assurance/reports/testing-evidence.md#fuzzing) |
+| Host MC/DC campaign | Conditions with witness pairs | **4,806 / 5,029 (95.57%)** | Default host profile with the extended Supercov frontend and lab adapters. 223 measured conditions remain unpaired. [Source-decision report](https://github.com/TheMaxMur/RS-Key/blob/main/assurance/reports/mcdc-source-decisions.md#host-measurement) |
+| MC/DC CI recipe | Conditions with witness pairs | **201 / 371 (54.18%)** | Local run of the CI command. 400 tests and seven instrumented source files, targeting six security decision groups. [Decision selection](https://github.com/TheMaxMur/RS-Key/blob/main/assurance/reports/mcdc-independence.md#measured-decisions) |
+
+Across the 18 audited host profiles, unit-test coverage ranged from
+98.34–98.43% of lines, 99.86–99.94% of function groups and 93.90–94.09% of
+condition outcomes. The separate [18-profile MC/DC matrix](https://github.com/TheMaxMur/RS-Key/blob/main/assurance/reports/mcdc-source-decisions.md#fresh-feature-matrix)
+recorded 95.31–95.57% of measured conditions with pairs. Both reports retain
+the counts and missing conditions for each profile.
+
+The fuzz union counts each repository source line once when any target
+reaches it. The denominator includes vendored code. With the reports from
+one profile in `fuzz/coverage/`, run `python scripts/fuzz-union.py` to
+recompute it. Individual target reports also record region coverage.
+
+#### Firmware and native components
+
+These measurements have their own build and input scopes. The firmware
+source inventory contains 675 conditions across configurations. Each
+runtime result below comes from its own measured component or image.
+
+| Component | Measured result | Evidence |
+|---|---|---|
+| Secure worker, button and Non-secure ABI image | **29 / 31** compiled conditions with pairs | [ARM worker measurements](https://github.com/TheMaxMur/RS-Key/blob/main/assurance/reports/mcdc-expansion.md#arm-worker-measurements) |
+| Secure USB and display PIN worker | **62 / 71** Secure USB conditions and **8 / 9** in a separate display worker image | [Secure USB campaign](https://github.com/TheMaxMur/RS-Key/blob/main/assurance/reports/mcdc-expansion.md#firmware-component-follow-up), [display and bench decisions](https://github.com/TheMaxMur/RS-Key/blob/main/assurance/reports/mcdc-source-decisions.md#remaining-display-and-bench-decisions) |
+| Display panel and WS2812 driver | **39 / 40** panel conditions and **32 / 44** LED conditions in separate component images | [Firmware component report](https://github.com/TheMaxMur/RS-Key/blob/main/assurance/reports/mcdc-expansion.md#firmware-component-follow-up) |
+| Runtime PIN codec and diagnostics | **5 / 5** PIN codec conditions, **4 / 4** stack sweep and **3 / 3** vendor benchmark conditions in separate images | [PIN codec](https://github.com/TheMaxMur/RS-Key/blob/main/assurance/reports/mcdc-source-decisions.md#pin-codec-adapter), [display and bench decisions](https://github.com/TheMaxMur/RS-Key/blob/main/assurance/reports/mcdc-source-decisions.md#remaining-display-and-bench-decisions) |
+| Native C | **8 / 8** RSA and **4 / 4** gateway compound conditions with pairs. Both outcomes observed for **31 / 31** C predicates | [C and assembly correspondence](https://github.com/TheMaxMur/RS-Key/blob/main/assurance/reports/mcdc-source-decisions.md#owned-c-and-assembly-correspondence) |
+| Native assembly | Both outcomes observed for **19 / 19** compiled predicates | [C and assembly correspondence](https://github.com/TheMaxMur/RS-Key/blob/main/assurance/reports/mcdc-source-decisions.md#owned-c-and-assembly-correspondence) |
+
+#### Host tools
+
+The [host-tool campaign](https://github.com/TheMaxMur/RS-Key/blob/main/assurance/reports/testing-campaigns.md)
+measured these separately from the firmware crates.
+
+| Tool | Lines or statements | Decision outcomes |
+|---|---:|---:|
+| Rust TUI | 1,637 / 3,424 lines (47.81%) | 192 / 302 condition outcomes (63.58%) |
+| Rust emulator | 3,882 / 6,878 lines (56.44%) | 690 / 1,216 condition outcomes (56.74%) |
+| Python `rsk` CLI | 3,640 / 4,618 statements (78.82%) | 560 / 1,012 branch outcomes (55.34%) |
+| Python test runners under `scripts/` | 13,007 / 28,171 statements (46.17%) | 2,001 / 6,988 branch outcomes (28.63%) |
+
+### Coverage in CI
+
+| Measurement | Scope and schedule | What CI enforces | Where to read it |
+|---|---|---|---|
+| Line coverage | Default host workspace in `deep-checks / coverage`, daily and on full runs | At least **80%** aggregate line coverage. `firmware`, `firmware-ns` and `rsk-wipe` are excluded | `cargo llvm-cov` summary in the job log |
+| Condition outcomes | Default host profile daily, every declared host profile on full runs | Tests and coverage export must succeed and produce evidence. No percentage floor | `unit-coverage-*` artifacts with JSON, LCOV and resolved features |
+| MC/DC | Selected security decisions in the default host profile in `deep-checks / mcdc`, on full runs | Tests must pass and the report must contain valid, current witness evidence. No percentage floor | Job summary and `mcdc-*` artifact with the raw evidence and logs |
+| Fuzz corpus coverage | Per-target corpus replay in `deep-checks / fuzz-coverage`, daily, on dispatch and on matching pushes | Advisory measurement | Job summary and per-target coverage artifacts |
+
+Full runs include the Sunday schedule, manual dispatch and pushes to `main`
+that match the workflow's path filters. The 80% line floor applies to the
+default host workspace as a whole. The individual crates and alternate
+profiles have their own results in the reports.
+
+Run the line floor locally from `nix develop`.
+
+```sh
+host_target="$(rustc -vV | sed -n 's/^host: //p')"
+cargo llvm-cov --summary-only --fail-under-lines 80 \
+  --target "$host_target" --workspace \
+  --exclude firmware --exclude firmware-ns --exclude rsk-wipe
+```
+
+Use the nightly shell for a separate branch report.
 
 ```sh
 nix develop .#fuzz
@@ -368,17 +441,39 @@ CARGO_TARGET_DIR=target/coverage-branch cargo llvm-cov --branch \
   --exclude firmware --exclude firmware-ns --exclude rsk-wipe
 ```
 
-Use a separate build with `RUSTFLAGS='-Z coverage-options=condition'`
-for condition instrumentation. Omit `--branch` from that build command,
-since it selects branch mode. Inspect the source review for decisions
-the compiler does not instrument, including some error propagation.
-The MC/DC reports use Supercov with source-bound witnesses for selected
-command decisions and wider library measurements. They keep frontend
-limitations, coupled decisions and uncovered conditions visible. Host
-numbers apply to the instrumented profiles. Worker measurements and image
-checks have separate scope, especially for const evaluation, expanded
-macros, C and assembly. See the
-[coverage reports](https://github.com/TheMaxMur/RS-Key/tree/main/assurance/reports).
+For condition outcomes, run
+`nix develop .#fuzz -c ./scripts/metrics.sh --coverage`. Set
+`COVERAGE_PROFILE` to a declared feature profile for a separate report.
+The [host-profile audit](https://github.com/TheMaxMur/RS-Key/blob/main/assurance/reports/coverage-current.md)
+records measured counts and accounts for uncovered outcomes, lines and
+functions.
+
+### MC/DC
+
+Modified condition/decision coverage asks whether each Boolean condition can
+independently change the enclosing decision. For `pin_valid && presence`,
+`(true, true)` and `(true, false)` form a witness pair for `presence`. With
+an invalid PIN, short-circuiting skips `presence`. A skipped operand gives
+no observed value for that operand.
+
+```sh
+nix develop -c ./scripts/mcdc.sh
+```
+
+The script builds the pinned, patched Supercov in a fresh source copy and
+runs the tests for six groups of decisions. They cover FIDO assertion
+authorization and token expiry, PIV signing policy, OpenPGP DEK selection,
+presence and cancellation, and flash read and verification failures.
+The scoped run keeps the per-test traces within the CI runner's disk budget.
+The denominator includes all instrumentable conditions compiled from the
+seven selected files, including conditions outside those six groups.
+Logs, the JSON summary and raw evidence go under `target/mcdc.*/`.
+
+The source reviews explain coupled conditions where an invariant constrains
+possible pairs. The wider profile experiments, const and macro adapters,
+worker image measurements, C and assembly have separately recorded scope.
+See the [witness review](https://github.com/TheMaxMur/RS-Key/blob/main/assurance/reports/mcdc-independence.md)
+and [source-decision report](https://github.com/TheMaxMur/RS-Key/blob/main/assurance/reports/mcdc-source-decisions.md).
 
 ### Mutation and negative controls
 
@@ -388,6 +483,11 @@ whether a case is missing, and whether the relevant target even ran.
 `scripts/mutants-container.sh` runs the host mutation suite. For a crate
 change, `--in-diff HEAD` limits the run to the working diff. The deep
 workflow compares the broad run with the accepted survivor list.
+
+A recorded in-diff mutation run caught **20 / 20** mutants in the storage
+oracle and USB changes. Each verdict applies to that diff's mutation set.
+The [mutation report](https://github.com/TheMaxMur/RS-Key/blob/main/assurance/reports/mcdc-independence.md#verification)
+also records the separate manual fault controls.
 
 Image tests also use deliberate faults, for example an NS attempt to write
 USBCTRL or DMA registers. The corresponding normal operation serves as a
@@ -498,7 +598,7 @@ a board.
 |---|---|
 | Per commit locally | `check.sh`, including builds, host tests, static checks and supporting tool tests |
 | Pull request | The gate and assurance jobs, bounded proofs, and emulator jobs in their workflow environments |
-| Scheduled | Longer proof and TLC tiers, fuzzing and corpus reports, Miri, mutation and reproducibility checks as defined by the workflows |
+| Scheduled | Line and condition coverage, MC/DC, longer proof and TLC tiers, fuzzing and corpus reports, Miri, mutation and reproducibility checks |
 | Release | Clean build and reproducibility checks, artifact manifests, signing and verification. Board runs have separate records. |
 
 Static checks include Clippy, dependency and supply-chain checks, an
