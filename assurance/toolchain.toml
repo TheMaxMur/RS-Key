@@ -125,14 +125,14 @@ name = "picotool"
 role = "packager"
 provenance = "flake.lock:nixpkgs"
 pin = "31ecbaca1bdefa45dffc409f0250bd8039ea0010"
-statement = "Writes the partition table into the ELF (scripts/pt.sh:107) and converts it to the published UF2 (nix/firmware.nix:159). Both are shipped bytes, so it is a producer and not a viewer. nix/picotool.nix patches valid ECDSA DER/RAW conversion and tests the linked implementation; signing verifies the raw signature written to the image."
+statement = "The TrustZone builder uses picotool to embed the partition table (scripts/build.sh:106) and convert the combined ELF to UF2 (scripts/build.sh:197). Both artifacts ship. nix/picotool.nix patches valid ECDSA DER/RAW conversion and tests the linked implementation. Signing verifies the raw signature written to the image."
 
 [[tool]]
 name = "arm-none-eabi-nm"
 role = "packager"
 provenance = "flake.lock:nixpkgs"
 pin = "31ecbaca1bdefa45dffc409f0250bd8039ea0010"
-statement = "Reads the symbols the KV fence's start and end addresses are computed from (scripts/pt.sh:27-31). It is FIRST of three candidates there; llvm-nm and a host nm are fallbacks the flake does not pin, which is why this row names the one the dev shell guarantees."
+statement = "The TrustZone builder uses arm-none-eabi-nm to read the linker symbols that bound the KV partition (scripts/build.sh:59-61)."
 
 # ---- The verification TCB -----------------------------------------------------
 # Outside the criterion's six categories and in the TCB of every result this
@@ -219,7 +219,7 @@ statement = "Not a function: a symbol whose ADDRESS is the datum. cortex-m-rt's 
 [[boundary]]
 id = "import:firmware/src/main.rs:__kvmain_start"
 provider = "rust-lld"
-statement = "firmware/memory.x:30, an assignment the linker evaluates. The KV store's flash offset; scripts/pt.sh:43 reads the same symbol back out of the ELF, which is the other half of this boundary being checked."
+statement = "The linker computes the KV store's flash offset (firmware/memory.x:30). The TrustZone builder reads the same symbol from the combined ELF to generate the partition table (scripts/build.sh:60)."
 
 [[boundary]]
 id = "import:firmware/src/main.rs:__kvmain_end"

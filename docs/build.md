@@ -1,417 +1,327 @@
 # Build options
 
-TrustZone is mandatory for local builds, Nix packages and release images.
-The builder links Secure, links Non-secure against its gateways, then embeds
-Non-secure in the final Secure image. It adds the storage partition fence and
-produces one flashable ELF/UF2 pair. Always sign the combined ELF.
+Every authenticator build combines Secure and Non-secure firmware for the
+RP2350. The default output is an unsigned ELF and UF2 with the storage
+partition table. For a Secure Boot device, follow the
+[production signing procedure](production.md#2b-sign-and-prove-a-signed-image-boots-before-any-fuse).
 
 ## Local build
 
-Set environment variables and firmware features on the builder. They are
-compile-time defaults, except for fields explicitly supported by the phy record.
+From the repository root:
 
 ```sh
-# the general shape
-nix develop -c env KNOB=value bash scripts/build.sh [--features ...]
-# target/trustzone/combined.elf and target/trustzone/combined.uf2
+nix develop -c bash scripts/build.sh
 ```
 
-Both this command and `nix build .#firmware` include the
-[partition table](#the-partition-table). Bare Cargo refuses to build the
-authenticator outside the S/NS link stages. Neither `--no-default-features` nor
-environment overrides can select a monolithic image.
-`--features a,b`, `-F a,b`, `-Fa,b` and `FEATURES=a,b` compose, including repeated
-options and lists separated by spaces. Both Secure links receive the same
-features. Cargo's resolved feature graph determines the shared transport policy
-(`strict-config`) passed to Non-secure, including conditional dependency features;
-applet features belong to Secure. `--no-default-features` applies to both worlds.
-
-The embedded target selects RustCrypto 0.11's compact SHA-2 backend in
-`.cargo/config.toml`. Looped rounds fit the Cortex-M33 XIP cache better than
-unrolled SHA-512, reducing P-384 signing latency and image size.
+The builder links Secure first to export its CMSE gateways. It links
+Non-secure against that import library, then embeds the Non-secure payload
+in the final Secure link. It checks that the gateways stayed at the same
+addresses, embeds the partition table and converts the resulting ELF to UF2.
+Bare Cargo builds require the builder's link-stage inputs.
 
 ```mermaid
 flowchart TD
-    knobs["env knobs + firmware features"] --> build["TrustZone builder (or nix build)"]
-    build --> elf["combined Secure + Non-secure ELF"]
-    elf --> pt["scripts/pt.sh<br/>embed partition table"]
-    pt --> conv["picotool uf2 convert"]
-    conv --> uf2["firmware.uf2"]
-    uf2 --> flash["BOOTSEL flash"]
-    pt -. "secure boot only — seal the ELF" .-> seal["picotool seal --sign<br/>signing key (host-only)"]
-    seal -.-> sconv["picotool uf2 convert"]
-    sconv -.-> signed["firmware-signed.uf2"]
-    signed -.-> flash
+    options["Board settings and firmware features"] --> builder["TrustZone builder<br/>Link Secure and Non-secure<br/>Embed partition table by default<br/>Convert ELF to UF2"]
+    builder --> elf["Combined ELF"]
+    builder --> uf2["Combined UF2"]
+    elf --> sign["Secure Boot signing"]
+    sign --> signed["Signed UF2"]
 ```
 
 ### Environment and Cargo arguments
 
-The script inherits **every exported environment variable**, including board
-knobs, `CARGO_*`, `RUSTFLAGS`, `CARGO_ENCODED_RUSTFLAGS`, compiler wrappers and
-variables added by future build scripts. Values retain spaces and shell
-metacharacters. A variable only affects the image if Cargo or a build script
-reads it. The builder owns the `RSK_TZ_*` stage/layout/import/image variables and
-sets a separate Cargo target directory for each world.
+Use `--features a,b`, `--features=a,b`, `-F a,b`, `-Fa,b` or
+`FEATURES=a,b`. These forms compose, including repeated flags and
+whitespace-separated feature lists. Both Secure links use the same features.
+The builder resolves Cargo's dependency graph and forwards the effective
+`strict-config` policy to Non-secure. `--no-default-features` applies to
+both worlds.
 
-Common Cargo options reach all three builds: `--config`, `--jobs`/`-j`,
-`--offline`, `--frozen`, `--locked`, `--verbose`/`-v`/`-vv`, `--quiet`/`-q`,
-`--color`, `--message-format`, `--timings`, `--keep-going` and
-`--future-incompat-report`. `--release`/`-r` is accepted and already the default.
-The builder fixes the RP2350 target, release profile and package sequence;
-package/manifest/target/profile selectors, `--all-features` and unknown arguments
-fail before compilation. `scripts/build.sh --help` lists the interface.
+| Argument | Effect |
+|---|---|
+| `--config KEY=VALUE` or `--config PATH` | Merge Cargo configuration. Options can repeat, and file paths are relative to the calling directory. |
+| `--jobs N`, `-j N`, `--offline`, `--frozen`, `--locked` | Cargo concurrency and dependency resolution. The builder always passes `--locked`. |
+| `--verbose`, `-v`, `-vv`, `--quiet`, `-q`, `--color`, `--message-format`, `--timings`, `--keep-going`, `--future-incompat-report` | Cargo output and build controls |
+| `--release`, `-r` | Accepted for compatibility. The builder always uses the release profile. |
+| `--target-dir DIR` | Set the output directory as described below |
+| `--no-partition-table` | Build both artifacts without the [BOOTSEL storage fence](#the-partition-table) |
+| `--help`, `-h` | Print usage |
+
+Long options with a value also accept `--option=value`. The short
+`-jN` form works for the job count.
+
+The target is `thumbv8m.main-none-eabihf`. The builder rejects package,
+manifest, target and profile selectors, `--all-features` and unknown options.
+
+Exported values reach Cargo without shell expansion. The builder sets a
+separate Cargo target directory for each world and owns its link-stage
+variables. `RSK_TZ_CARGO_CONFIG` can supply one extra `--config` value.
+The remaining `RSK_TZ_*` controls outside the output settings below
+are used by the builder or the [image test harness](testing.md#the-image-itself----image).
+
+Cargo's `CARGO_ENCODED_RUSTFLAGS` and `RUSTFLAGS` override the flags from
+`.cargo/config.toml`, including required linker flags. To add target flags,
+merge the target configuration instead.
 
 ```sh
 nix develop -c env BOARD=waveshare-one USB_PRODUCT="RS-Key local build" \
-  FEATURES=strong-pin scripts/build.sh -F strict-config --offline --jobs 4
+  FEATURES=strong-pin bash scripts/build.sh -F strict-config --offline --jobs 4
 
-# Append Rust flags to the checked-in target configuration.
-nix develop -c scripts/build.sh \
+nix develop -c bash scripts/build.sh \
   --config 'target.thumbv8m.main-none-eabihf.rustflags=["--cfg=local_build"]'
 ```
 
-Cargo gives `RUSTFLAGS` and `CARGO_ENCODED_RUSTFLAGS` their usual precedence:
-they replace the configured flags, including required linker arguments. Use
-`--config` as above to append flags. Repeated `--config` options are preserved;
-a config file path is resolved from the calling directory.
-
 ### Output directories
 
-`--target-dir DIR` writes the final pair to `DIR/trustzone/combined.{elf,uf2}`.
-Without that option, the output directory is selected in this order:
-`RSK_TZ_OUT`, `CARGO_TARGET_DIR/trustzone`, then `<repo>/target/trustzone`.
-Relative paths use the calling directory. Secure and Non-secure Cargo outputs
-always stay in separate `secure/` and `nonsecure/` subdirectories; the builder
-converts their paths to absolute paths before passing them to Rust build scripts.
+The builder writes `combined.elf` and `combined.uf2` to the first
+applicable directory in this list.
 
-```sh
-nix develop -c scripts/build.sh --target-dir /tmp/rs-key-build
-# /tmp/rs-key-build/trustzone/combined.elf and combined.uf2
-```
+1. `DIR/trustzone` if you pass `--target-dir DIR`.
+2. `RSK_TZ_OUT` if set.
+3. `CARGO_TARGET_DIR/trustzone` if set.
+4. `target/trustzone` in the repository.
 
+Paths supplied by the caller are resolved from the calling directory.
+Cargo artifacts go under `secure/` and `nonsecure/` within the output.
+Use a separate output directory for each concurrent build or experiment.
 
 ## Cargo features
 
-| Feature | Default | Effect |
-|---|---|---|
-| `no-touch` | off | Auto-confirm user presence. FIDO operations (makeCredential, getAssertion, U2F, reset, selection) and OpenPGP UIF data objects no longer require a press of the presence button (BOOTSEL by default, or `PRESENCE_PIN` when set). **Requiring a touch is the default and is not a feature**; `--features no-touch` is the explicit escape hatch for the automated suites (`tests/`, python-fido2, OpenPGP card tests), which cannot press a button and would hang on the (default) touch build. **Never ship a no-touch build.** |
-| `advertise-pqc` | off | Prepends ML-DSA-87 (COSE −50), ML-DSA-65 (−49) and ML-DSA-44 (−48) to the getInfo `algorithms` list, in descending security order. Off by default because released Firefox versions abort the *entire* getInfo parse on an unknown COSE id and report the authenticator broken. **PQC capability is on regardless of this flag**. makeCredential negotiates −49 / −48 from the request's `pubKeyCredParams`; the flag only controls advertising. |
-| `fips-profile` | off | Bakes a locked FIPS-style policy into the image: ES256K (secp256k1) leaves the FIDO menu, the minimum PIN rises to 6 and trivially guessable PINs are refused (the `strong-pin` policy below), the vendor seed *export* is refused, and PIV refuses new 3DES management keys and RSA-1024. The default build is unchanged; with secure boot the policy is sealed by your signature. A profile, **not** a FIPS validation. Details and rationale: [guides/fips.md](guides/fips.md). |
-| `strong-pin` | off | Raises the FIDO clientPIN minimum to **6** code points (from CTAP's default 4) and refuses the most guessable PINs: a repeated period (`000000`, `121212`, `123123`), a ±1 run (`123456`, `654321`), two or fewer distinct code points (`112211` — two smudges on the glass is a two-symbol search space at any length), and ten denylisted keypad shapes (`159753`, `123321`, …). Every rule counts code points, not bytes, matching the floor beside it. A narrow PIN-hardening knob: unlike `fips-profile` (which bundles this same PIN policy with dropping secp256k1, refusing the seed export, and constraining PIV), it changes **only** the PIN policy. Off by default; the default build keeps the CTAP-standard 4-code-point floor. Rationale: on the RP2350 a BOOTSEL flash snapshot/restore rolls back the wrong-PIN counter ([#37](https://github.com/TheMaxMur/RS-Key/issues/37)), so a longer, non-trivial PIN is the practical bound on offline brute force. Enforced on the host `setPIN`/`changePIN` path and the trusted-display PIN pad. |
-| `strict-up` | off | Require a touch on **every** `getAssertion`. By default RS-Key honors the platform's silent pre-flight probe (`up:false`): it returns the discovery assertion with no touch and the UP flag clear, so a WebAuthn login with an `allowCredentials` (non-resident) credential is a **single** touch, matching the CTAP2 spec and YubiKey. With `strict-up` the button is polled even for that probe, so such a login asks for **two** touches (one for the probe, one for the real assertion). A deliberately stricter "every assertion needs an explicit gesture" stance for those who want it; it is **not** spec-conformant for `up:false`. Resident-credential / passkey logins are a single touch either way. `fido-conformance` enables this implicitly (the conformance pass was validated with it). |
-| `always-uv` | off | Bake the CTAP 2.1 `alwaysUv` option **on by default**, so the key requires user verification (a PIN — or the `display` build's built-in UV pad) for **every** makeCredential / getAssertion straight out of the box, with no post-flash `ykman fido config toggle-always-uv`. The shipped image leaves alwaysUv off until a platform turns it on; this flag flips the default. It stays runtime-toggleable — `toggleAlwaysUv` writes an override that survives reboots but not an `authenticatorReset`, which restores this compiled default. **Set a PIN after flashing:** with alwaysUv on and no PIN, FIDO operations return `CTAP2_ERR_PUAT_REQUIRED` until one is set — the standard cue for the platform (Windows, Chrome) to prompt for a PIN. While alwaysUv is on the **CTAP1/U2F interface is disabled** (CTAP 2.1 §7.2.4, as on a YubiKey): U2F only proves presence, never verification, so legacy U2F-only logins stop working, and getInfo drops `U2F_V2` from its advertised `versions`; WebAuthn / CTAP2 (passkeys) are unaffected. The one exception §7.2.4 allows is a build "protected by a built-in user verification method": on a `display` build **with a PIN set**, U2F stays available and every register / authenticate collects the PIN on the panel instead of a touch. |
-| `largeblob-ext` | off | Serve the **CTAP 2.3 §12.4 `largeBlob` extension instead of** the CTAP 2.1 large-blob design. Not additive, and not a choice the firmware could dodge: §12.4 says *"Authenticators MUST NOT support both extensions"*, so enabling it **withdraws** the `largeBlobKey` extension, the `authenticatorLargeBlobs` command (`0x0C`, which then answers `CTAP1_ERR_INVALID_COMMAND`), the `largeBlobs` option and `maxSerializedLargeBlobArray`. Blobs then live **per credential** (discoverable credentials only) instead of in one platform-managed array, and a whole blob rides in the `getAssertion` that reads or writes it — up to 4046 bytes, sealed at rest under the device seed with the credential id as AAD, which the 2.1 design does not need because the platform encrypts that array itself. Off by default, and think before turning it on: the 2.1 pair is what every shipping browser drives today, so a `largeblob-ext` key **loses WebAuthn `largeBlob` support with current clients**. |
-| `display` | off | **Experimental** trusted-display build for a screen + touch board (Waveshare RP2350-Touch-LCD-2.8). Adds an on-screen **Approve / Deny** that paints the real relying party for every touch (Deny refuses with `OPERATION_DENIED`), an on-device **PIN pad** (built-in user verification (`options.uv`), plus a CCID **pinpad** so GnuPG / OpenSC collect the OpenPGP / PIV PIN on the panel, never over USB), a read-only **Apps** browser (OpenPGP / PIV / OATH state, no PIN), a **Passkeys** manager (delete / rename on-device), and **Settings** (device & FIDO PINs, an optional scrambled PIN pad, on-screen BIP-39 / SLIP-39 recovery export, audit log, factory reset). Entirely `dep:`-gated. A standard key compiles **none** of it, so its image is unaffected. Build it `LED_KIND=none FLASH_SIZE=16M … --features display` (the panel takes GPIO16 for its backlight; a compile-time guard enforces `LED_KIND=none`). Full walkthrough with screenshots: [guides/display.md](guides/display.md). |
-| `strict-config` | off | **Restores the historical strict admin-write authorization.** The DEFAULT build is now the permissive, full-ykman/YubiKey-compatible admin surface: device-config writes (CCID Management `WRITE CONFIG`, FIDO vendor `CONFIG_WRITE`, the CTAPHID `0x43` and OTP-HID `0x15` transport writes) are **ungated**, and the OTP-HID `DEVICE_CONFIG` / `SCAN_MAP` / `NDEF` slots are served. `--features strict-config` re-imposes the presence/PIN gates and refuses the ungated transport writes — the historical shipped behavior. This deliberately weakens the DEFAULT threat model: any USB host can rewrite the reported identity with no operator confirmation ([threat-model.md](threat-model.md)). **Not** the runtime flash flag `EF_HARDENED`. Ship it as `firmware-strict-config`. |
+Physical presence is enabled by default. The features below are opt-in.
+Several features are available as [Nix presets](#nix-build-hermetic-no-dev-shell).
+
+| Feature | Effect |
+|---|---|
+| `advertise-pqc` | Advertises ML-DSA-87, -65 and -44 in FIDO getInfo. makeCredential can negotiate the algorithms with the flag off. |
+| `strong-pin` | Raises the FIDO PIN minimum from four to six code points and rejects common patterns. Also applies to the FIDO PIN policy on the display. |
+| `fips-profile` | Applies the strong PIN policy, removes FIDO secp256k1, refuses seed export, and restricts PIV management keys and algorithms. See [FIPS-style profile](guides/fips.md) for scope. |
+| `always-uv` | Compiles with CTAP `alwaysUv` enabled by default. A runtime override survives reboot, and authenticator reset restores the compiled default. With no configured PIN, CTAP2 requests that need verification return `PUAT_REQUIRED`. U2F is unavailable while `alwaysUv` is active unless configured built-in UV can protect it. |
+| `strict-up` | Requests presence even for a silent `up:false` getAssertion probe. The reply still leaves the UP flag clear for that probe. An allowList login can require a press for the probe and another for the assertion. |
+| `strict-config` | Requires authorization for configuration writes on the gated paths and disables ungated CTAPHID and OTP HID config writes. With the flag off, those writes are available for YubiKey interoperability. |
+| `largeblob-ext` | Selects the CTAP 2.3 per-credential `largeBlob` extension. It replaces `largeBlobKey` and `authenticatorLargeBlobs` and stores up to 4046 bytes per discoverable credential. Client support depends on the extension the client speaks. |
+| `display` | Enables the trusted display, on-device PIN entry and local screens. Use a compatible display board and `LED_KIND=none`. See [Trusted display](guides/display.md). |
+| `preview-sign` | Enables the experimental `previewSign` extension. |
+| `no-touch` | Auto-confirms button-based presence for automated tests. Use a presence-enabled build for deployment. |
+| `fido-conformance` | Enables the conformance profile, including `strict-up`, and suppresses EdDSA advertisement. |
+| `ea-conformance-rpid` | Adds the conformance RP ID to the vendor-facilitated enterprise attestation list and enables `fido-conformance`. |
+| `bench`, `keygen-bench`, `core1-stats` | Test-only vendor commands for primitive timing, keygen timing, stack diagnostics or core1 counters. |
 
 ## Environment variables
 
-| Variable | Default | Values | Effect |
-|---|---|---|---|
-| `BOARD` | none | a file name under `firmware/boards/` (`abrobot-4m`, `abrobot-16m`, `waveshare-one`, `waveshare-touch-lcd`, `tenstar-usb`, `seeed-xiao`) | Load that board's knob set instead of setting the LED / presence / flash / display variables one by one. Every variable below still wins when you set it explicitly, so a board file is a default set, not a lock. It selects **no cargo features** — a display board still needs `--features display`. Each shipped board file is smoke-built in CI. |
-| `VIDPID` | `RSKey` | `RSKey`, `Yubikey5`, `YubikeyNeo`, `YubiHSM`, `NitroHSM`, `NitroFIDO2`, `NitroStart`, `NitroPro`, `Nitro3`, `Gnuk`, `GnuPG`, `Pico`, `Dev` | USB VID/PID preset. The default `RSKey` (`0x1209:0xF1D2`) is this project's own [pid.codes](https://pid.codes/1209/F1D2/) allocation, not a masquerade. The opt-in `Yubikey5` (`0x1050:0x0407`) instead presents Yubico's VID/PID **and** swaps the descriptor strings to `Yubico` / `YubiKey RSK …`. That is what makes `ykman`, Yubico Authenticator and the stock Yubico udev rules recognize the device; build it only for local interop / the interop suite. `Pico` = the Raspberry Pi generic id (`0x2E8A:0x10FD`); `Dev` = a non-colliding placeholder (`0xFEFF:0xFCFD`). An unknown preset fails the build. **The vendor-mimicking presets are for local interop only. Never distribute hardware carrying them.** |
-| `USB_VID` / `USB_PID` | from preset | `0xHHHH` | Raw override, applied on top of the preset (you can override either half alone). |
-| `USB_MANUFACTURER` / `USB_PRODUCT` | from preset | string | Raw override of the USB descriptor strings. The default is `RS-Key` / `RS-Key Security Key`; the Yubico VID instead bakes `Yubico` / `YubiKey RSK OTP+FIDO+CCID`. The project's own tools (`rsk`, `rsk-tui`) match the reader by the `RS-Key` (or `RSK`) token in the product string. |
-| `FW_VERSION` | `5.8.0` | `X.Y.Z` or `X.Y` | The firmware version reported everywhere a tool looks: management DeviceInfo (`ykman info`), FIDO getInfo, CTAPHID INIT, OATH/OTP/PIV version fields, OpenPGP's vendor `VERSION` (INS 0xF1). Yubico tools gate features on it; 5.8.0 mimics a current YubiKey 5. Does **not** change the OpenPGP card version (3.4) or the USB `bcdDevice` (an internal build counter). |
-| `XOSC_DELAY_MULT` | `128` | `1..=1024` | Crystal-oscillator startup-delay multiplier ("delayed boot"). A longer settle wait is intended to harden the early-boot clock-switch window against glitch/fault injection. 128 is the embassy default. |
-| `FLASH_SIZE` | `4M` | bytes, `0xHEX`, or `<n>K`/`<n>M` | External QSPI flash size. build.rs regenerates `memory.x` from it. The KV store (`KVMAIN` + `KVCNT`) stays pinned at the top and the code region is the rest; `4M` with the default `KVMAIN` reproduces the checked-in layout byte-for-byte. Use this for boards with a different flash chip (e.g. `8M`); must be ≤ 16 MB and leave ≥ 1 MB for code after the KV store (a 2 MB board needs a smaller `KVMAIN`, below). |
-| `KVMAIN` | `1408K` | bytes, `0xHEX`, or `<n>K`/`<n>M` | Size of the KV **main** partition (credentials, keys, OpenPGP DOs). The default 1408K is the checked-in layout; shrink it to free code space on a small flash. A **2 MB** board (Seeed XIAO RP2350, Waveshare RP2350-Zero-CM) can't fit the firmware (about 1 MiB) under a 1408K KVMAIN, so build it `FLASH_SIZE=2M KVMAIN=896K` (896K creds + 128K counters + 1024K code). Sector-aligned, min 128K; the counter partition (`KVCNT`, 128K) is fixed. Baked into both `memory.x` and `flash_storage.rs` from one value, so the two never drift. **Set at build time only** — changing it on a provisioned device shifts the partition offsets and orphans the store. |
-| `LED_PIN` | `16` | `0..=29` | The status-LED GPIO for the `ws2812` and `gpio` backends (RP2350A). Default GPIO16 is the Waveshare RP2350-One. Point it at a free GPIO on boards that use 16 for something else; the indicator simply drives whatever pin you pick. (Unused by `pimoroni`, which has fixed PWM pins, and by `none`.) |
-| `LED_POWER_PIN` | `none` | `none` or `0..=29` | An optional GPIO driven **high at boot** to power a *gated* LED rail — some boards put the addressable LED behind a load switch. The **Seeed XIAO RP2350** is the case in point: its onboard WS2812 data is on GP22 but its power sits behind GP23, so the LED stays dark until GP23 is high (`LED_PIN=22 LED_ORDER=grb LED_POWER_PIN=23`). Held for the device's lifetime; must differ from `LED_PIN` and a GPIO `PRESENCE_PIN` (rejected at compile time). Boot-only, so it is **not** in the runtime `phy` record. Ignored by `LED_KIND=none`. |
-| `USR_LED_PIN` | `none` | `none` or `0..=29` | An optional GPIO wired to a *nuisance* onboard user/status LED that the firmware drives to its **OFF** level at boot and holds. The **Seeed XIAO RP2350**'s USR LED sits on GP25, is active-low, and comes up lit (weak pull-down); `USR_LED_PIN=25` parks it high so it stays dark. Independent of the addressable status LED, so it works on a `LED_KIND=none` build too. Held for the device's lifetime; must differ from `LED_PIN`, `LED_POWER_PIN`, and a GPIO `PRESENCE_PIN` (rejected at compile time), and is unsupported on a display build (the panel replaces the onboard LED). Boot-only, **not** in the runtime `phy` record. |
-| `USR_LED_ACTIVE_HIGH` | `0` | `0` / `1` | Polarity of the `USR_LED_PIN` LED. `0` (default) = active-low (lit when the pin is low, so OFF = drive **high** — the XIAO USR LED). `1` = active-high (lit when high, so OFF = drive **low**). Ignored without a `USR_LED_PIN`. |
-| `PRESENCE_PIN` | `bootsel` | `bootsel` or `0..=29` | User-presence input source. Default `bootsel` keeps the BOOTSEL hardware-button path. Set a GPIO number for a dedicated button (active-low with an internal pull-up by default; flip with `PRESENCE_ACTIVE_HIGH`). Example: `PRESENCE_PIN=0` for a button to ground on GPIO0. |
-| `PRESENCE_ACTIVE_HIGH` | `0` | `0` / `1` | GPIO presence-button polarity, only meaningful with a GPIO `PRESENCE_PIN`. `0` (default) = active-low: button to ground, internal pull-up, a press reads **low**. `1` = active-high: internal pull-down, a press reads **high**, for a capacitive touch sensor or a button to VCC. Ignored for the BOOTSEL default. |
-| `WAKE_PIN` | `25` | `none` or `0..=29` | **`display` builds only.** The button that wakes the panel from display sleep. Default `25` is the Waveshare RP2350-Touch-LCD-2.8's **BAT_PWR** button. `none` makes wake touch-only (no button); any other GPIO selects a different button. A value in the LCD/touch range (`10..=18`) is rejected at compile time. The display-sleep timeout itself is set on-device (Settings → Display sleep). |
-| `WAKE_ACTIVE_HIGH` | `0` | `0` / `1` | Wake-button polarity (`display` builds, with a GPIO `WAKE_PIN`). `0` (default) = active-low (internal pull-up, press reads **low**, e.g. BAT_PWR to ground); `1` = active-high (internal pull-down). |
-| `LED_KIND` | `ws2812` | `ws2812` / `gpio` / `pimoroni` / `none` | The LED driver backend, and the **boot default**. A non-`none` build compiles all three so the driver/pin/order are runtime-switchable via `rsk hw` / PicoForge (see below). `ws2812` = a single addressable RGB on `LED_PIN` (the Waveshare default). `gpio` = a plain on/off LED on `LED_PIN`. Hue/brightness collapse to lit/unlit, but the blink *pattern* still distinguishes statuses. `pimoroni` = a 3-pin PWM RGB (Pimoroni Tiny 2350: R=GPIO18, G=GPIO19, B=GPIO20, common-anode). `none` = no indicator (the status engine still runs; nothing renders it, and the phy LED fields are ignored). |
-| `LED_ORDER` | `rgb` | `rgb` / `grb` | WS2812 wire byte order (`ws2812` backend only). The Waveshare RP2350-One is unusually `rgb` (the default); standard WS2812B parts (e.g. the TenStar RP2350-USB) are `grb`. If a `ws2812` board comes up with red and green swapped (blue fine), flip this to `grb`. |
-| `MAX_LEDS` | `1` | `1`–`64` | PIO state-machine and frame-buffer ceiling for addressable LEDs. The **actual** connected count is set at runtime via `rsk hw --led-num` and must be ≤ `MAX_LEDS`. Default 1 is a single onboard LED; a board with a chain of N builds with `MAX_LEDS=N` (up to 64).|
-| `FAKE_MKEK` / `FAKE_DEVK` | unset | 64 hex chars | **Test builds only.** Bakes a fake OTP master key / device key into the image instead of reading the OTP fuses, so the whole OTP migration path can be exercised with zero fuse writes. The build prints a loud warning and the key is greppable in the binary. Flashing a FAKE build onto a provisioned device migrates its data under the fake key. Going back orphans that data (recovery = per-applet resets). Never flash one on a device you care about. |
+`BOARD` loads defaults from a named TOML file under `firmware/boards/`.
+An explicitly exported knob wins over a board value. A board selects
+hardware settings. Enable the display feature separately. With no board
+selected, the build uses the defaults below.
 
-The `LED_PIN` / `LED_KIND` / `LED_ORDER` / `MAX_LEDS` values are **boot defaults**
-only. A
-non-`none` build compiles all three backends, so the LED pin, driver, and wire
-order are runtime-configurable (no reflash) with `rsk hw` (or PicoForge),
-which write them to the device's `phy` record. The build knobs decide the
-out-of-the-box behaviour and let you drop to a lean `none` build. Everything
-else is a `rsk hw` call away ([guides/led.md](guides/led.md)).
+| Variable | Default | Accepted values and effect |
+|---|---|---|
+| `BOARD` | unset | `abrobot-4m`, `abrobot-16m`, `waveshare-one`, `waveshare-touch-lcd`, `tenstar-usb`, `seeed-xiao`. Use the file stem, without `.toml`. |
+| `VIDPID` | `RSKey` | USB identity preset. `RSKey` is `0x1209:0xF1D2`. Other presets are `Pico`, `Dev`, `Yubikey5`, `YubikeyNeo`, `YubiHSM`, `NitroHSM`, `NitroFIDO2`, `NitroStart`, `NitroPro`, `Nitro3`, `Gnuk` and `GnuPG`. Use vendor presets for local interop. |
+| `USB_VID`, `USB_PID` | from preset | 16-bit IDs in decimal or `0xHHHH` form. Either half can override the preset independently. |
+| `USB_MANUFACTURER`, `USB_PRODUCT` | `RS-Key`, `RS-Key Security Key` for the default identity | Descriptor strings. An effective Yubico VID uses the built-in Yubico reader strings unless `EF_PHY` supplies a string override. |
+| `FW_VERSION` | `5.8.0` | `X`, `X.Y` or `X.Y.Z`, with components from 0 to 255. Sets the reported applet firmware version. |
+| `XOSC_DELAY_MULT` | `128` | `1..=1024`. Crystal oscillator startup delay multiplier. |
+| `FLASH_SIZE` | `4M` | Physical flash size, in bytes, hex, or with a `K` or `M` suffix. Must be 4 KiB aligned and at most 16 MiB. |
+| `KVMAIN` | `1408K` | Main-store capacity. Same size syntax as `FLASH_SIZE`, 4 KiB aligned, at least 128 KiB. Preserve the layout when updating a provisioned device. |
+| `LED_KIND` | `ws2812` | `ws2812`, `gpio`, `pimoroni` or `none`. Sets the boot default. `none` omits the status LED support and is required by the display build. |
+| `LED_PIN` | `16` | GPIO 0–29 for the WS2812 data line or GPIO status LED. Pimoroni PWM uses its fixed pins. |
+| `LED_ORDER` | `rgb` | `rgb` or `grb` wire order for addressable LEDs |
+| `LED_POWER_PIN` | `none` | `none` or GPIO 0–29, held high to power a gated LED rail. Use a pin distinct from the status LED and presence input. |
+| `MAX_LEDS` | `1` | `1..=64`. Compiled addressable LED capacity. The runtime LED count must fit it. |
+| `USR_LED_PIN` | `none` | `none` or GPIO 0–29. Holds a separate onboard LED off. Must avoid the status LED, LED power and presence pins. Display builds require it unset. |
+| `USR_LED_ACTIVE_HIGH` | `0` | `1` for an active-high user LED. `0` holds an active-low LED off. |
+| `PRESENCE_PIN` | `bootsel` | `bootsel` or GPIO 0–29. Display builds use touchscreen presence and reject a GPIO presence pin. |
+| `PRESENCE_ACTIVE_HIGH` | `0` | `1` for an active-high GPIO presence button. `0` selects an active-low button with a pull-up. |
+| `WAKE_PIN` | `25` | Display wake button. Use `none` for touch-only wake or a free GPIO 0–29. |
+| `WAKE_ACTIVE_HIGH` | `0` | `1` for an active-high wake button. `0` selects active-low. |
+| `FAKE_MKEK`, `FAKE_DEVK` | unset | Test-only OTP substitutes, each 64 hex digits. They are embedded in the binary. Use disposable test storage. |
 
-Verify what got baked without flashing:
+Boolean GPIO settings also accept `true/false`, `yes/no` and `on/off`.
+For display boards, the `PK_DISPLAY_*` overrides below take precedence
+over the corresponding `[display]` TOML settings.
 
-```sh
-rg PK_USB_VID  target/trustzone/secure/thumbv8m.main-none-eabihf/release/build/firmware-*/output   # decimal: 4617 = 0x1209
-rg PK_FW_VERSION target/trustzone/secure/thumbv8m.main-none-eabihf/release/build/rsk-sdk-*/output
-rg PK_XOSC_DELAY_MULT target/trustzone/secure/thumbv8m.main-none-eabihf/release/build/firmware-*/output
-```
-
-The `firmware-*` glob matches one build dir per feature combination you have
-built, so a stale entry can show an old value. Read the freshest one (or
-`CARGO_TARGET_DIR=target/trustzone/secure cargo clean -p firmware` first) if the output looks doubled.
+| Variable | Fallback | Setting |
+|---|---|---|
+| `PK_DISPLAY_SPI_FREQ_HZ` | `80000000` | Panel PIO serial clock. The firmware requires half its fixed 160 MHz system clock. |
+| `PK_DISPLAY_CS`, `PK_DISPLAY_DC`, `PK_DISPLAY_RST` | `13`, `14`, `15` | Panel control GPIOs |
+| `PK_DISPLAY_BL_PIN`, `PK_DISPLAY_BL_PWM_SLICE`, `PK_DISPLAY_BL_PWM_CHANNEL` | `16`, `0`, `0` | Backlight GPIO, PWM slice and channel. Use a supported tuple from the board wiring. |
+| `PK_DISPLAY_TP_RST`, `PK_DISPLAY_I2C_FREQ_HZ` | `17`, `400000` | Touch controller reset GPIO and I²C clock |
+| `PK_DISPLAY_INVERT_COLORS`, `PK_DISPLAY_COLOR_ORDER` | `1`, `0` | Panel color inversion and RGB/BGR selection. `1` selects inversion or BGR, respectively. |
 
 ## Flash size and the memory map
 
-`FLASH_SIZE` regenerates `memory.x`: the KV store stays pinned to the top
-of flash and only the code region grows. A 16 MB board just gets more (unused)
-code headroom. The credential capacity is unchanged (why the flash is mostly
-empty by design: [architecture.md](architecture.md)).
+The linker places the firmware region below KVMAIN and the fixed 128 KiB
+KVCNT. The builder requires at least 1 MiB for firmware. The last 64 KiB
+of that region holds Non-secure, with the 4 KiB CMSE gateway window
+immediately below it. See the [Architecture flash map](architecture.md#flash-layout)
+for the addresses on the 4 MiB board.
 
-One exception, and only at 16 MB: the store stops a sector short of the top,
-because the bootrom's RP2350-E10 workaround owns the last 256 bytes of the XIP
-window (`0x10FFFF00`) and `picotool partition create` refuses a table that claims
-them — so a 16 MB image could not carry the fence at all. The reserved 4 KB is
-outside every partition, which is where the bootrom needs it.
+| Geometry | Firmware region | KVMAIN | KVCNT |
+|---|---:|---:|---:|
+| `FLASH_SIZE=2M KVMAIN=896K` | 1024 KiB | 896 KiB | 128 KiB |
+| `FLASH_SIZE=4M KVMAIN=1408K` | 2560 KiB | 1408 KiB | 128 KiB |
+| `FLASH_SIZE=16M KVMAIN=1408K` | 14844 KiB | 1408 KiB | 128 KiB |
 
-The KV store is 1.5 MB by default (`KVMAIN` 1408K + `KVCNT` 128K). On a **2 MB**
-board that leaves too little for the firmware image, so the firmware can't link.
-`KVMAIN` shrinks the main partition to make room: build a 2 MB Seeed XIAO RP2350
-or Waveshare RP2350-Zero-CM with `FLASH_SIZE=2M KVMAIN=896K` (896K creds + 128K
-counters + 1024K code). build.rs bakes the size into both `memory.x` and
-`flash_storage.rs`, so the two partitions never disagree, and it rejects a split
-that leaves under 1 MB for code with a message that names the fix. A fully
-provisioned key needs only a few hundred KB, so 896K is ample.
-That profile constructs the backend at runtime rather than retaining its
-large constant initializer in flash; the partition offsets remain unchanged.
+At 16 MiB, the linker leaves the final 4 KiB sector unpartitioned for
+the RP2350-E10 workaround at `0x10FFFF00`. Smaller devices end below
+that sector. The 2 MiB profile constructs its storage backend at
+runtime to save space in the ELF.
 
-![4 MB vs 16 MB flash layout: the KV store is identical on both; only the code region and the KV origin move with FLASH_SIZE](images/flash-map-sizes.svg)
-
-At the `4M` default the code region is `2560K`. The gate reads the combined
-image for flash size and the Secure ELF's stack symbols. It separately audits
-the NS ELF and its generated memory map and checks that its payload is exactly
-what the combined ELF embeds. The size budget counts the NS payload once.
-The combined-image budget is 1024 KiB. Secure stack floors are 120 KiB for the
-ordinary image and 116 KiB with a display; both also require 20 KiB of NS stack.
-
-RAM has the mirror-image ratchet, `FIRMWARE_STACK_FLOOR_KIB`. Whatever `.data`
-and `.bss` do not take is stack, so a new static costs stack depth — and the
-deepest paths on this chip (ML-DSA-65 keygen, the RSA modexp chain) run close
-enough to the ceiling that it has already wedged a device. The gate reads the
-figure straight out of the ELF and fails under the floor. The images link
-through [`flip-link`](https://github.com/knurling-rs/flip-link), which places
-the stack below the statics, so an overflow faults on unmapped memory instead of
-quietly overwriting them; that needs `rust-lld` on `PATH`, which the dev shell
-arranges, so build inside `nix develop`.
+`check.sh` checks the combined image's flash budget of 1024 KiB, which
+counts the embedded NS payload once. Its Secure stack floors are
+120 KiB for the ordinary image and 116 KiB for display. Both require
+20 KiB of Non-secure stack. The embedded linker uses `flip-link`, with
+`rust-lld` available in the development shell.
 
 ## The partition table
 
-The shipped image carries an RP2350 partition table that fences the KV store off
-from the USB bootloader: `picotool save` and `picotool load` over the store answer
-`permission failure`, while the running firmware keeps full access to it. It is a
-defence-in-depth layer against the BOOTSEL snapshot/restore rollback, and it is a
-real barrier only where secure boot is on — read
-[threat-model.md](threat-model.md#flash-snapshot-rollback-the-pin-counter-reset)
-before quoting it as protection.
+The TrustZone builder embeds the table in the final ELF before UF2
+conversion. It reads `__kvmain_start` and `__kvcnt_end` from the linked
+image. The firmware partition permits BOOTSEL updates. The store
+partition allows Secure reads and writes and denies Non-secure and
+BOOTSEL access. The gate compares the resulting table with the same
+linker symbols.
 
-`scripts/pt.sh` reads the fence out of the built ELF's own `__kvmain_start` /
-`__kvcnt_end` symbols — the same ones `flash_storage.rs` uses to find the store —
-so it follows `FLASH_SIZE` / `KVMAIN` / `BOARD` with no second copy of the layout
-to keep in step. `check.sh` asserts the emitted table back against those symbols,
-because a table that misses the store still links, still boots, and then loses the
-firmware's writes at runtime.
+Secure Boot authenticates the table as part of the signed image. See
+[Flash snapshot rollback](threat-model.md#flash-snapshot-rollback-the-pin-counter-reset)
+for the fence's scope.
 
-The standard TrustZone builder and all Nix firmware packages already include
-this table. Direct Cargo links are intermediate components, never standalone
-updates; the public builder requires and embeds both worlds.
+For a diagnostic build that omits the table from both artifacts:
+
+```sh
+nix develop -c bash scripts/build.sh --no-partition-table --target-dir /tmp/rsk-unpartitioned
+```
+
+The flag preserves the Secure/Non-secure memory layout and omits the
+BOOTSEL storage fence. The named Nix packages and release workflow use
+the default partitioned build.
 
 ## Examples
 
 ```sh
-# default: touch build, RS-Key identity (0x1209:0xF1D2), fw 5.8.0
-bash scripts/build.sh
+# Default 4 MiB image with physical presence
+nix develop -c bash scripts/build.sh
 
-# opt-in Yubico interop flavor (so ykman / Yubico Authenticator see the device)
-env VIDPID=Yubikey5 bash scripts/build.sh
+# 2 MiB Seeed XIAO RP2350
+nix develop -c env BOARD=seeed-xiao bash scripts/build.sh
 
-# no-touch test build (for the automated suites)
-bash scripts/build.sh --features no-touch
+# Waveshare touch display
+nix develop -c env BOARD=waveshare-touch-lcd bash scripts/build.sh --features display
 
-# Nitrokey FIDO2 identity with its own version number
-env VIDPID=NitroFIDO2 FW_VERSION=1.4.0 bash scripts/build.sh
+# YubiKey-compatible identity for local interop
+nix develop -c env VIDPID=Yubikey5 bash scripts/build.sh
 
-# advertise PQC in getInfo (breaks released Firefox — see above)
-bash scripts/build.sh --features advertise-pqc
+# Automated tests
+nix develop -c bash scripts/build.sh --features no-touch
 
-# ship with CTAP 2.1 alwaysUv enabled by default (set a PIN after flashing)
-bash scripts/build.sh --features always-uv
-
-# strict admin-write posture (the historical default; config writes stay gated)
-bash scripts/build.sh --features strict-config
+# Require authorization for gated configuration writes
+nix develop -c bash scripts/build.sh --features strict-config
 ```
+
+Inspect an ELF or UF2 without flashing with `picotool info -a`. The
+default build writes `target/trustzone/combined.elf` and
+`target/trustzone/combined.uf2`.
 
 ## `nix build` (hermetic, no dev shell)
 
-The flake exposes the firmware as a package, so you can build a UF2 without
-entering the dev shell or having a Rust toolchain installed. Nix pins the
-toolchain, the cross target, and every dependency:
-
 ```sh
-nix build .#firmware                 # default touch image
-ls result/                           # firmware.elf  firmware.uf2
+nix build .#firmware
+# result/firmware.elf and result/firmware.uf2
 ```
 
-`result/firmware.uf2` is the same TrustZone configuration the local builder
-produces. Unlike the dev-shell build, it is **bit-for-bit
-reproducible**: the derivation remaps the two absolute build inputs out of
-the binary (the per-build sandbox dir and the toolchain store path; both
-land in panic-location strings in `.rodata`, plus DWARF in the `.elf`) with
-stable `--remap-path-prefix`, so one `flake.lock` yields one `firmware.uf2`
-on every machine of a platform. The daily `repro` job in
-[deep-checks](https://github.com/TheMaxMur/RS-Key/blob/main/.github/workflows/deep-checks.yml)
-proves it (`nix build` twice, the second with `--rebuild` so nix compares
-every output byte) and publishes the canonical sha256 in its run summary.
+Nix pins the toolchain and dependencies and uses the TrustZone builder.
+The derivation remaps build and toolchain paths so they do not enter
+the artifact under their local names. The release workflow rebuilds
+each published flavor and compares its UF2 bytes. See
+[Supply chain](supply-chain.md) for reproducibility and verification.
 
-To verify a published image: `nix build .#firmware` at the release commit
-and compare hashes. A *sealed* image can't be reproduced by a third party
-(the signature is the signer's); verify the unsigned payload instead, then
-check the seal with `picotool`. The flavors mirror the
-[CI matrix](https://github.com/TheMaxMur/RS-Key/blob/main/.github/workflows/ci.yml):
-
-| Attribute | Image |
+| Package suffix after `firmware` | Settings |
 |---|---|
-| `.#firmware` (default) | touch build, RS-Key identity (`0x1209:0xF1D2`), fw 5.8.0 |
-| `.#firmware-no-touch` | `--features no-touch` (the test build) |
-| `.#firmware-fips` | `--features fips-profile` |
-| `.#firmware-pqc` | `--features advertise-pqc` |
-| `.#firmware-strong-pin` | `--features strong-pin` (6-code-point PIN floor + trivial-PIN block; also `.#firmware-strong-pin-pqc`) |
-| `.#firmware-always-uv` | `--features always-uv` (CTAP 2.1 `alwaysUv` on by default; also `.#firmware-always-uv-pqc`) |
-| `.#firmware-strict-up` | `--features strict-up` (touch on every assertion — **not spec-conformant** for `up:false`; also `.#firmware-strict-up-pqc`) |
-| `.#firmware-display` | `--features display`, `FLASH_SIZE=16M`, `LED_KIND=none` (experimental, Waveshare RP2350-Touch-LCD-2.8) |
-| `.#firmware-2mb` | default features + RS-Key identity, `FLASH_SIZE=2M`, `KVMAIN=896K` (2 MB boards: Seeed XIAO RP2350, Waveshare RP2350-Zero-CM) |
-| `.#firmware-16mb` | default features + RS-Key identity, `FLASH_SIZE=16M` (16 MB boards, e.g. TenStar RP2350-USB) |
-| `.#firmware-strict-config` | `--features strict-config` (historical strict admin-write posture; the default `firmware` is now the permissive full-ykman admin surface) |
+| none, `-trustzone` | Default TrustZone configuration. The filename uses the package name. |
+| `-2mb`, `-16mb` | 2 MiB with `KVMAIN=896K`, or 16 MiB with the default KV size |
+| `-display` | `display`, `FLASH_SIZE=16M`, `LED_KIND=none` |
+| `-pico` | `VIDPID=Pico` |
+| `-pqc` | `advertise-pqc` |
+| `-fips`, `-strong-pin`, `-always-uv`, `-strict-up` | Corresponding feature, also available with an added `-pqc` suffix |
+| `-strict-config` | `strict-config` |
+| `-no-touch`, `-no-touch-pqc`, `-no-touch-fips`, `-no-touch-fips-pqc` | Test images with the named feature combinations |
 
-Two caveats:
-
-- **The output is UNSIGNED.** On a secure-boot device you still seal it with
-  your key. The signing key deliberately never enters the build sandbox:
-  ```sh
-  # the ELF, not the UF2: sealing a UF2 leaves the image's own unsigned
-  # IMAGE_DEF first in the chain, and a secure-boot device refuses that
-  picotool seal --sign --hash result/firmware.elf -t elf firmware-signed.elf -t elf \
-      ~/.rs-key-secrets/secure_boot_key.pem ~/.rs-key-secrets/otp_secureboot.json \
-      --major 1 --minor 0 --rollback 1
-  picotool uf2 convert firmware-signed.elf -t elf firmware-signed.uf2
-  ```
-  The `.pem` is your signing key, the `.json` is where `seal` writes the
-  boot-key fingerprint, and `--major`/`--minor` stamp an **image version** into
-  the boot metadata: a plain `major.minor` label, separate from both the
-  firmware version RS-Key reports (`5.8.0` by default) and the rollback version.
-  The full meaning of each flag is in [production.md](production.md#2b-sign-and-prove-a-signed-image-boots-before-any-fuse).
-
-  If you have enabled **anti-rollback**, the seal additionally needs
-  `--rollback <your board's floor>`, a separate, deliberate step with its own
-  rules and a finite OTP budget. Don't add it blindly; the full
-  flashing-with-rollback workflow is in [anti-rollback.md](anti-rollback.md).
-- **The env knobs above are declarative Nix args**, not ambient env. A plain
-  `nix build` bakes the defaults; to customize, pass them to the builder. For a
-  config you reuse, add a one-line preset package (the flake ships
-  `firmware-pico = mkFirmware { name = "firmware-pico"; vidpid = "Pico"; }` as a
-  copy-me example) and build it:
-  ```sh
-  nix build .#firmware-pico
-  ```
-  For a one-off without committing a package, call the exposed builder. (The
-  `--impure` here only lets `getFlake` read the working tree; the knobs
-  themselves are pure. A committed/pushed flakeref needs no flag.)
-  ```sh
-  nix build --impure --expr \
-    '(builtins.getFlake (toString ./.)).lib.${builtins.currentSystem}.mkFirmware
-       { name = "fw"; vidpid = "Nitro3"; fwVersion = "2.0.0"; }'
-  ```
-  Knobs: `vidpid`, `usbVid`, `usbPid`, `fwVersion`, `xoscDelayMult`, `flashSize`,
-  `ledPin`, `presencePin`, `fakeMkek`, `fakeDevk` (mirroring the env vars above). As a convenience each also falls
-  back to the like-named env var, so `VIDPID=Pico nix build --impure .#firmware`
-  works for a quick throwaway, but the declarative arg is the reproducible path
-  and needs no `--impure`.
+The packages emit unsigned ELF and UF2 files. To sign a Secure Boot
+update, seal the partitioned ELF and convert the signed ELF to UF2.
+See [Production setup](production.md#2b-sign-and-prove-a-signed-image-boots-before-any-fuse)
+and [Anti-rollback](anti-rollback.md) for the required image metadata.
 
 ## `nix run` — host tools without the dev shell
 
-The host tooling is also exposed as flake apps, so it runs straight from the
-flake without `nix develop` (Nix pins every dependency):
-
 ```sh
-nix run .#rsk -- status          # the Python device CLI (rsk --help for groups)
-nix run .#rsk-tui                # the live ratatui dashboard (prebuilt binary)
-nix run .#flash -- --help        # build + sign + flash, one command (secure boot)
+nix run .#rsk -- --help
+nix run .#rsk-tui
+nix run .#flash -- --help
 ```
 
-`#rsk` wraps the bundled `tools/rsk` package on the pinned interpreter; `#rsk-tui`
-is a prebuilt host binary (no compile-on-run). Both are also buildable as
-packages (`nix build .#rsk-tui`).
-
-**`nix run .#flash`** wraps the secure-boot flash ritual end to end: it seals
-(signs) an unsigned image, reboots the device into BOOTSEL, loads it, then
-reboots. With no argument it seals the reproducible default firmware
-(`.#firmware`); pass a path to seal a flavor you built yourself
-(`nix run .#flash -- target/trustzone/combined.elf`). It signs the partitioned
-combined ELF and converts the signed result to UF2. It reads the signing key from the
-host (`~/.rs-key-secrets/{secure_boot_key.pem,otp_secureboot.json}` by default,
-override the directory with `RS_KEY_SECRETS`) and stamps `--rollback 1` into the
-seal (set `RSK_ROLLBACK` to change). It prompts before flashing (`-y` skips). The
-device must already run secure boot with the matching boot key provisioned; the
-full ritual, the anti-rollback rules, and recovery are in
-[production.md](production.md) and [anti-rollback.md](anti-rollback.md).
+`nix run .#flash` signs the default Nix ELF or a supplied partitioned
+combined ELF and flashes it. It expects a board provisioned for the
+matching signing key. `RS_KEY_SECRETS` selects the directory containing
+`secure_boot_key.pem` and `otp_secureboot.json` (default
+`~/.rs-key-secrets`). `RSK_ROLLBACK` selects the rollback version
+(default `1`). It prompts before flashing. `-y` skips the prompt.
 
 ## Runtime overrides (phy record)
 
-The rescue applet can store a small config record in flash (`rsk` /
-`rsk-tui` expose the safe fields). At boot, a stored **VID/PID** and **product
-string** override the compile-time defaults, useful to re-identify a device
-without rebuilding. A bad value can make the device enumerate strangely;
-recovery is a BOOTSEL reflash (which never reads the record) or rewriting the
-record over CCID.
-
-The effective identity is resolved in this order:
+`EF_PHY` stores board settings in flash. At boot its valid VID/PID and
+USB strings override the build defaults, and its interface mask selects
+which USB classes to expose. It can also set the presence timeout and
+supported LED settings. Use [the CLI](guides/cli.md) for runtime settings.
 
 ```mermaid
 flowchart TD
-    a["VIDPID preset"] --> b["USB_VID / USB_PID raw override (compile time)"]
-    b --> c["phy record (runtime, at boot)"]
-    c --> d["effective VID/PID + product string"]
+    preset["VIDPID preset"] --> env["Explicit build VID/PID and strings"]
+    env --> phy["EF_PHY overrides at boot"]
+    phy --> usb["Effective USB identity and interfaces"]
 ```
+
+An ordinary firmware update preserves `EF_PHY` with the rest of the
+store. To change a stored override, update the record through a
+reachable interface. If storage cannot mount, the boot path selects
+CCID for recovery.
 
 ## Notes
 
-- The PC/SC **reader name** comes from the USB strings. The default build reads
-  `RS-Key RS-Key Security Key …`, and the project's own tools (`rsk`, `rsk-tui`)
-  match the `RS-Key` token. `ykman` and Yubico Authenticator derive the device's
-  PID *purely from that name*. They need the `Yubico YubiKey` words and the
-  `OTP`/`FIDO`/`CCID` tokens, which only the opt-in `VIDPID=Yubikey5` flavor
-  supplies (`Yubico YubiKey RSK OTP+FIDO+CCID`); on the default build those tools
-  do not see the device. `gpg`, `ssh -sk`, browsers, libfido2 and OpenSC are
-  identity-independent and work on either build.
-- `bcdDevice` (USB device release) is an internal build counter, not the
-  firmware version.
-- Published firmware requires touch. `firmware-no-touch` is a test package;
-  `scripts/image-suites.sh` also builds a combined no-touch image for emulation.
-  Rebuild without test features before deploying a device for normal use.
+- USB `bcdDevice`, the applet firmware version (`FW_VERSION`) and the
+  Secure Boot rollback version are separate values. See [Versions](versioning.md).
+- The effective Yubico VID uses Yubico-style reader strings and ATR by
+  default. The `Yubikey5` preset is intended for clients such as
+  `ykman` that use the Yubico reader name.
+- The TUI has its own development shell, `nix develop .#tui`.
 
 ## TrustZone boundary
 
-The [architecture chapter](architecture.md#trustzone) describes the
-Secure and Non-secure split and how the builder assembles the combined image.
+[Architecture](architecture.md#trustzone) describes the resource split,
+USB lifecycle and gateway checks. Both development and production
+builds use that boundary.
 
 ### Reproducible configuration and environment overrides
 
-`mkFirmware` accepts `features = "fips-profile,advertise-pqc"` and
-`env = { PRESENCE_PIN = "0"; PRESENCE_ACTIVE_HIGH = "1"; }`, including the
-documented LED, display, USB-string and flash-layout knobs. Unknown `env` keys
-are rejected. Explicit named arguments such as `board` and `ledPin` take
-precedence over `env`; both take precedence over ambient environment values.
-
-For a local throwaway build:
+For a custom Nix image, call `mkFirmware`. It accepts `features` as a
+string, `cargoFlags` as a list of builder arguments, and `env` for the
+firmware knobs listed above. Unknown `env` keys are rejected. Named
+arguments also exist for `board`, `vidpid`, `usbVid`, `usbPid`,
+`fwVersion`, `xoscDelayMult`, `flashSize`, `kvmain`, `ledPin`,
+`ledKind`, `presencePin`, `fakeMkek` and `fakeDevk`.
 
 ```sh
-BOARD=waveshare-one FEATURES=strong-pin,advertise-pqc nix build --impure .#firmware
-nix develop -c env BOARD=waveshare-one USB_PRODUCT="RS-Key test" \
-  bash scripts/build.sh --features strong-pin,advertise-pqc
+nix build --impure --expr \
+  '(builtins.getFlake (toString ./.)).lib.${builtins.currentSystem}.mkFirmware {
+     name = "fw";
+     board = "waveshare-one";
+     features = "strong-pin,strict-config";
+     env = { USB_PRODUCT = "RS-Key local build"; };
+   }'
 ```
 
-Pure `nix build` ignores ambient variables. Use explicit Nix arguments for CI
-and releases. Signing keys and the internal `RSK_TZ_*` diagnostic controls are
-not forwarded into Nix packages. Existing direct-script test controls remain
-available for image tests; `no-touch` must never be shipped.
-
-The TUI development environment is separate: `nix develop .#tui -c rsk-tui`.
-The main shell provides firmware/CLI tools; the full gate enters the TUI shell
-for its checks without dropping them.
+Named arguments override `env`, which overrides ambient values read
+during impure evaluation. `FEATURES` is the ambient fallback for
+`features`. A pure build ignores ambient knobs. For a local impure build
+you can use `BOARD=waveshare-one FEATURES=strong-pin nix build --impure .#firmware`.
+Signing keys and the builder's internal TrustZone controls stay outside
+the derivation.

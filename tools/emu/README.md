@@ -328,8 +328,8 @@ nix develop -c python tools/emu/image_assurance.py \
   --work /tmp/rsk-image-assurance
 ```
 
-Build both ELF fixtures with `--features no-touch`, and run `scripts/pt.sh` on
-each. The runner compares native/image OATH and OpenPGP responses, measures
+Use partitioned ELF fixtures built with `--features no-touch`. The TrustZone
+builder embeds the table by default. The runner compares native/image OATH and OpenPGP responses, measures
 ML-DSA-87 command stacks and verifies its signatures with dilithium-py,
 checks known OATH key/HMAC-pad residues with a planted
 leak through the same assertion, upgrades a release's OATH, FIDO signing key

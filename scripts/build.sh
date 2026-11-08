@@ -11,10 +11,11 @@ cargo_args=()
 resolve_args=()
 secure_features="${FEATURES:-}"
 defaults=()
+partition_table=1
 
 usage() {
     cat <<'EOF'
-Usage: scripts/build.sh [--features LIST] [Cargo options]
+Usage: scripts/build.sh [--features LIST] [--no-partition-table] [Cargo options]
 
 Build the partitioned Secure + Non-secure release ELF and UF2 for RP2350.
 All exported environment variables are inherited by Cargo. FEATURES composes
@@ -24,6 +25,7 @@ Cargo options: --config KEY=VALUE|PATH, --jobs/-j N, --offline, --frozen,
 --locked, --verbose/-v/-vv, --quiet/-q, --color WHEN, --message-format FMT,
 --timings, --keep-going, --future-incompat-report, --release/-r.
 Target, release profile and packages are fixed by the TrustZone link sequence.
+--no-partition-table skips the BOOTSEL storage fence in both outputs.
 
 Output: --target-dir DIR puts artifacts in DIR/trustzone. Otherwise use
 RSK_TZ_OUT, then CARGO_TARGET_DIR/trustzone, then <repo>/target/trustzone.
@@ -50,6 +52,65 @@ add_config() {
     resolve_args+=(--config "$value")
 }
 
+# The ELF symbols also drive the firmware's storage layout. The unpartitioned
+# area must accept absolute-family BOOTSEL updates, including the table itself.
+add_partition_table() {
+    local firmware=$1 work=$2 symbols start end size log
+    symbols=$(arm-none-eabi-nm "$firmware")
+    start=$(awk '$3 == "__kvmain_start" { print $1; exit }' <<<"$symbols")
+    end=$(awk '$3 == "__kvcnt_end" { print $1; exit }' <<<"$symbols")
+    if [[ -z "$start" || -z "$end" ]]; then
+        echo "TrustZone build: $firmware is missing KV partition symbols" >&2
+        return 1
+    fi
+    start=$((16#$start))
+    end=$((16#$end))
+    size=$((end - start))
+    if ((start <= 0 || size <= 0 || start % 4096 || size % 4096)); then
+        printf 'TrustZone build: invalid KV partition bounds 0x%08x..0x%08x\n' "$start" "$end" >&2
+        return 1
+    fi
+
+    cat > "$work/partitions.json" <<EOF
+{
+  "version": [1, 0],
+  "unpartitioned": {
+    "families": ["absolute"],
+    "permissions": { "secure": "rw", "nonsecure": "", "bootloader": "rw" }
+  },
+  "partitions": [
+    {
+      "name": "RS-Key Firmware",
+      "id": 0,
+      "start": 0,
+      "size": $start,
+      "families": ["rp2350-arm-s"],
+      "permissions": { "secure": "rw", "nonsecure": "rw", "bootloader": "rw" }
+    },
+    {
+      "name": "RS-Key Store",
+      "id": 1,
+      "start": $start,
+      "size": $size,
+      "families": ["data"],
+      "permissions": { "secure": "rw", "nonsecure": "", "bootloader": "" },
+      "link": ["owner", 0],
+      "ignored_during_arm_boot": true,
+      "ignored_during_riscv_boot": true
+    }
+  ]
+}
+EOF
+
+    # picotool prints some refusals on stdout.
+    if ! log=$(picotool partition create "$work/partitions.json" "$work/combined.elf" "$firmware" -t elf 2>&1); then
+        printf '%s\n' "$log" >&2
+        return 1
+    fi
+    printf 'TrustZone build: store fenced at 0x%08x..0x%08x (%d KiB), NSBOOT denied\n' \
+        "$start" "$end" $((size / 1024)) >&2
+}
+
 if [[ -n "${RSK_TZ_CARGO_CONFIG:-}" ]]; then add_config "$RSK_TZ_CARGO_CONFIG"; fi
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -65,6 +126,7 @@ while [[ $# -gt 0 ]]; do
         --features=*) secure_features+=,"${1#*=}"; shift ;;
         -F?*) secure_features+=,"${1#-F}"; shift ;;
         --no-default-features) defaults=(--no-default-features); shift ;;
+        --no-partition-table) partition_table=0; shift ;;
         --target-dir)
             require_value "$@"; out="$2/trustzone"; shift 2 ;;
         --target-dir=)
@@ -123,8 +185,15 @@ arm-none-eabi-objcopy -O binary \
 RSK_TZ_STAGE=final RSK_TZ_NS_IMAGE="$out/nonsecure.bin" \
     CARGO_TARGET_DIR="$out/secure" cargo build "${cargo_args[@]}" --locked --release --target "$target" --target-dir "$out/secure" -p firmware "${defaults[@]}" --features "$secure_features"
 cmp "$out/ns-import.a" "$RSK_TZ_IMPLIB"
-cp "$out/secure/$target/release/firmware" "$out/combined.elf"
-bash scripts/pt.sh "$out/combined.elf" "$out/combined-pt.elf"
-mv "$out/combined-pt.elf" "$out/combined.elf"
-picotool uf2 convert -t elf "$out/combined.elf" "$out/combined.uf2"
+firmware="$out/secure/$target/release/firmware"
+image_tmp=$(mktemp -d "$out/.image.XXXXXX")
+trap 'rm -rf "$image_tmp"' EXIT
+if ((partition_table)); then
+    add_partition_table "$firmware" "$image_tmp"
+else
+    printf 'TrustZone build: omitting partition table and BOOTSEL storage fence\n' >&2
+    cp "$firmware" "$image_tmp/combined.elf"
+fi
+picotool uf2 convert -t elf "$image_tmp/combined.elf" "$image_tmp/combined.uf2"
+mv "$image_tmp/combined.elf" "$image_tmp/combined.uf2" "$out/"
 printf 'TrustZone image (features=%s): %s\n' "$secure_features" "$out/combined.elf"

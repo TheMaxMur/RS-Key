@@ -154,7 +154,7 @@ PAGES = (PAGE, pathlib.Path("docs/releases.md"))
 #: vendored `outputHashes` — and it is one value a downstream verifier can check
 #: with one `sha256sum`. Each moves when its file moves and at no other time,
 #: which is the whole of [`stable`]'s requirement.
-PROCEDURE = (CALLER, WORKFLOW, NIX, pathlib.Path("scripts/pt.sh"))
+PROCEDURE = (CALLER, WORKFLOW, NIX, pathlib.Path("scripts/build.sh"))
 
 #: The region this script owns inside an otherwise hand-written page. Rule 9 for
 #: why it is a region. The name deliberately does not start `run-count-`: that

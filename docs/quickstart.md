@@ -59,7 +59,7 @@ bash scripts/build.sh
 cp target/trustzone/combined.uf2 firmware.uf2
 ```
 
-The builder runs `pt.sh` to embed the partition table that keeps the USB
+The builder embeds the partition table that keeps the USB
 bootloader out of the key's storage. `nix build .#firmware` includes the same
 step ([build.md](build.md#the-partition-table)).
 

@@ -166,12 +166,13 @@ let
         runHook preBuild
         cargo build --release --offline --frozen \\
           -p firmware --target ${target}
+        bash scripts/build.sh
         runHook postBuild
       '';
       installPhase = ''
         runHook preInstall
-        bash scripts/pt.sh "target/${target}/release/firmware" "$out/${name}.elf"
-        picotool uf2 convert "$out/${name}.elf" -t elf "$out/${name}.uf2"
+        cp target/trustzone/combined.elf "$out/${name}.elf"
+        cp target/trustzone/combined.uf2 "$out/${name}.uf2"
         runHook postInstall
       '';
     };
@@ -239,10 +240,10 @@ cosign verify-blob --bundle SHA256SUMS.sigstore.json SHA256SUMS
 ```
 """
 
-PT_SH = """\
+BUILD_SH = """\
 #!/usr/bin/env bash
 set -euo pipefail
-picotool partition create --pt "$1" "$2"
+picotool partition create partitions.json combined.elf firmware -t elf
 """
 
 
@@ -257,7 +258,7 @@ class Tree:
         self.write("assurance/platform.toml", PLATFORM)
         self.write(PAGE, SUPPLY_CHAIN)
         self.write("docs/releases.md", RELEASES)
-        self.write("scripts/pt.sh", PT_SH)
+        self.write("scripts/build.sh", BUILD_SH)
         self.git("init", "-q")
         # A real commit: the commit-stability rule asks git whether a hex string
         # names one, and a repository with no history answers "no" to everything,

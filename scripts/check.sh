@@ -254,11 +254,11 @@ debug_vendor_commands_absent() {
   echo "no debug vendor command in the default image (${DEBUG_VENDOR_METHODS[*]})"
 }
 
-# `scripts/pt.sh` fences the KV store off from the USB bootloader. A table whose
+# The TrustZone builder fences the KV store off from the USB bootloader. A table whose
 # bounds drift from the store is worse than no table at all: the image still
 # links, still boots, and the gate still passes, but the running firmware loses
 # writes to its own flash. So assert the emitted table against the ELF's own
-# symbols — not against pt.sh's arithmetic, which is the thing under test.
+# symbols to check the builder's arithmetic.
 partition_table_fences_the_store() {
   local elf="target/trustzone/combined.elf"
   local line want got

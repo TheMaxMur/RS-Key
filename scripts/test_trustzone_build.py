@@ -71,19 +71,36 @@ if package == "firmware":
     pathlib.Path(os.environ["RSK_TZ_NS_MEMORY"]).write_text("MEMORY")
 ''')
     tool.chmod(0o755)
-    for name in ("arm-none-eabi-objcopy", "picotool"):
-        tool = bin_dir / name
-        tool.write_text('''#!/usr/bin/env python3
+    tool = bin_dir / "arm-none-eabi-objcopy"
+    tool.write_text('''#!/usr/bin/env python3
 # SPDX-License-Identifier: AGPL-3.0-only
 # Copyright (C) 2026 RS-Key contributors
 import pathlib, sys
 pathlib.Path(sys.argv[-1]).write_bytes(b"IMAGE")
 ''')
-        tool.chmod(0o755)
-    pt = tmp_path / "scripts/pt.sh"
-    pt.parent.mkdir(exist_ok=True)
-    pt.write_text('#!/usr/bin/env bash\n# SPDX-License-Identifier: AGPL-3.0-only\n'
-                  '# Copyright (C) 2026 RS-Key contributors\ncp "$1" "$2"\n')
+    tool.chmod(0o755)
+    nm = bin_dir / "arm-none-eabi-nm"
+    nm.write_text('''#!/usr/bin/env bash
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 RS-Key contributors
+printf '%s\\n' '00280000 A __kvmain_start' '00400000 A __kvcnt_end'
+''')
+    nm.chmod(0o755)
+    picotool = bin_dir / "picotool"
+    picotool.write_text('''#!/usr/bin/env python3
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 RS-Key contributors
+import os, pathlib, sys
+args = sys.argv[1:]
+if args[:2] == ["partition", "create"]:
+    pathlib.Path(args[3]).write_bytes(pathlib.Path(args[2]).read_bytes())
+elif args[:2] == ["uf2", "convert"]:
+    pathlib.Path(args[-1]).write_bytes(b"UF2:" + pathlib.Path(args[-2]).read_bytes())
+    sys.exit(int(os.environ.get("BUILD_CONVERT_EXIT", "0")))
+else:
+    sys.exit("unexpected picotool command")
+''')
+    picotool.chmod(0o755)
     log = tmp_path / "build.jsonl"
 
     def run(*args, **knobs):
@@ -120,6 +137,38 @@ def test_default_is_touch_enabled_with_no_test_probes(build):
     assert result.returncode == 0, result.stderr
     assert features(calls[0]) == features(calls[2]) == set()
     assert "--features" not in calls[1]["args"]
+
+
+def test_partition_table_is_the_default_and_can_be_omitted(build, tmp_path):
+    result, _ = build()
+    assert result.returncode == 0, result.stderr
+    out = tmp_path / "target/trustzone"
+    elf = out / "combined.elf"
+    uf2 = out / "combined.uf2"
+    table = json.loads(elf.read_bytes())
+    firmware, store = table["partitions"]
+    assert firmware["size"] == store["start"] == 0x280000
+    assert store["size"] == 0x180000
+    assert store["permissions"] == {"secure": "rw", "nonsecure": "", "bootloader": ""}
+    assert table["unpartitioned"]["permissions"]["bootloader"] == "rw"
+    assert uf2.read_bytes() == b"UF2:" + elf.read_bytes()
+
+    result, _ = build("--no-partition-table")
+    assert result.returncode == 0, result.stderr
+    assert elf.read_bytes() == b"ELF"
+    assert uf2.read_bytes() == b"UF2:ELF"
+
+
+def test_failed_conversion_preserves_the_previous_output_pair(build, tmp_path):
+    result, _ = build()
+    assert result.returncode == 0, result.stderr
+    out = tmp_path / "target/trustzone"
+    outputs = [out / "combined.elf", out / "combined.uf2"]
+    previous = [path.read_bytes() for path in outputs]
+
+    result, _ = build("--no-partition-table", BUILD_CONVERT_EXIT="1")
+    assert result.returncode != 0
+    assert [path.read_bytes() for path in outputs] == previous
 
 
 @pytest.mark.parametrize("selected", ["strict-config\tadvertise-pqc", "no-touch\nstrict-config"])

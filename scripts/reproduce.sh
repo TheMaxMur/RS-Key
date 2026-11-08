@@ -112,7 +112,7 @@ REFUSED=(
 #: Every shell runner under scripts/ and formal/.
 CLAIM_RUNNERS=(
   "scripts/check.sh|gate|"
-  "scripts/build.sh|gate|builds the combined S/NS image used by the gate's firmware rows"
+  "scripts/build.sh|gate|builds and partitions the combined S/NS image used by the gate's firmware rows"
   "scripts/check-assurance.sh|assurance|"
   "scripts/gate-lib.sh|gate|"
   "scripts/docs.sh|docs|"
@@ -134,7 +134,6 @@ CLAIM_RUNNERS=(
   "scripts/fuzz-coverage.sh|-|measures the weekly job's accumulated corpus cache, which no checkout carries"
   "scripts/usbip-suites.sh|-|needs a Linux host with vhci_hcd and KVM to boot the guest that owns the USB stack"
   "scripts/usbip-guest.sh|-|the in-guest half of the same suite, invoked by it and never directly"
-  "scripts/pt.sh|-|applies a partition table to an ELF; a build step the gate's image rows invoke, not evidence of its own"
   "scripts/metrics.sh|-|advisory refactor reconnaissance, explicitly not a gate and nothing depends on its numbers"
   "scripts/pages/build-site.sh|-|renders the published docs site for GitHub Pages; the docs phase builds and link-checks the same book"
   "scripts/reproduce.sh|-|this file: the runner the phases above are run by, and the one shape that cannot be a phase of itself — its own drift check is --self-test"
