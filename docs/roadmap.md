@@ -5,13 +5,13 @@
 
 - **Conformance.** Close protocol differences case by case. Compare
   applicable FIDO cases against pico-fido under the same tool and profile,
-  and keep accepted differences visible in [Interop](interop.md).
+  and record accepted differences in the [interop report](https://github.com/TheMaxMur/RS-Key/blob/main/assurance/reports/interop.md#the-ledger).
 - **Trusted display.** Extend physical coverage for gestures, device PIN
   entry and browser behavior. See the [display guide](guides/display.md).
 - **Testing and formal models.** Extend decision coverage, test recovery
   under compound failures and connect more modeled security properties
-  to the firmware paths that implement them. The
-  [testing roadmap](testing-roadmap.md) gives completion criteria.
+  to the firmware paths that implement them. See [Testing](testing.md)
+  for the current checks.
 - **Post-quantum protocols.** Follow the standards and client support
   for key exchange. The existing ML-DSA signing paths have their own
   command and vector tests.

@@ -7,8 +7,8 @@
 Unlike `tests/*.py` (which speak APDU/CBOR to the device directly) and the
 `third_party/` suites (upstream protocol conformance), this runner shells out
 to the *real* consumer software — libfido2, gpg, ykman, OpenSC — and records
-whether the device works end-to-end with each. It is the executable half of
-[docs/interop.md](../../docs/interop.md).
+whether the device works end-to-end with each. Results are recorded in
+assurance/reports/interop.md.
 
     nix develop -c python tests/interop/run.py            # read-only CLI cells
     nix develop -c python tests/interop/run.py --touch    # also touch cells

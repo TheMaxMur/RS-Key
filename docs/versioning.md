@@ -6,7 +6,7 @@
 What the firmware advertises itself as, per protocol: the place to look when a
 host tool gates a feature on a version number. The build knobs that change any of
 this are documented in [Build options](build.md); what has actually been checked
-against real host software is in the [Interop matrix](interop.md).
+against real host software is in the [interop report](https://github.com/TheMaxMur/RS-Key/blob/main/assurance/reports/interop.md).
 
 ## Firmware version
 

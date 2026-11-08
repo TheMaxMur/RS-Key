@@ -95,7 +95,7 @@ interface, so standard WebAuthn browsers and OS dialogs drive it without extra
 software. It passes the FIDO Alliance Conformance Tools clean (CTAP2.3
 235/0, U2F 55/0, a self-run pass, not a paid certification; see
 [testing](../testing.md#fido-conformance)). What has been checked against
-real client software is in the [interop matrix](../interop.md).
+real client software is in the [FIDO2 interop results](https://github.com/TheMaxMur/RS-Key/blob/main/assurance/reports/interop.md#fido2--webauthn--u2f).
 
 When a site has several discoverable passkeys, login returns the newest first.
 One discovery walk serves up to 16 distinct passkeys, including when creation

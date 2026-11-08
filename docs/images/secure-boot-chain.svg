@@ -1,87 +1,120 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-only -->
 <!-- Copyright (C) 2026 RS-Key contributors -->
-<svg viewBox="0 0 780 336" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="ttl dsc" font-family="'Segoe UI', system-ui, -apple-system, sans-serif">
-  <title id="ttl">Secure-boot signing chain</title>
-  <desc id="dsc">The TrustZone builder emits a combined ELF with the Secure firmware, embedded Non-secure image and partition table. Picotool seals that ELF, then converts the signed ELF to UF2 for BOOTSEL. The RP2350 bootrom checks the ECDSA signature against the fingerprint fused in OTP. A rejected image falls back to BOOTSEL.</desc>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 1018"
+     role="img" aria-labelledby="title desc">
+  <title id="title">RS-Key production provisioning</title>
+  <desc id="desc">Sign the TrustZone ELF and prepare a signed wipe image.
+    Load and test the signed firmware, then provision the boot-key fingerprint
+    with load-key. Harden debug and check a cold boot. Enable Secure Boot and
+    read the policy after the first enforced boot. A rejected image can be
+    replaced through BOOTSEL. After verification, lock the boot-key policy
+    for a fixed key or leave it open for rotation. Then provision page 58.
+    Later rollback increases require both signed images at the new version.</desc>
   <defs>
-    <style>
-      .h1{font-size:23px;font-weight:700;fill:#2B2723}
-      .sub{font-size:12px;fill:#948A7F}
-      .lg{font-size:11px;fill:#6B645C}
-      .lane{font-size:10.5px;font-weight:700;fill:#948A7F;letter-spacing:.5px}
-      .box{font-size:11.5px;font-weight:700;fill:#fff}
-      .boxs{font-size:9.5px;fill:#F6EBE3}
-      .gate{font-size:11px;font-weight:700;fill:#fff}
-      .rej{font-size:11px;font-weight:700;fill:#6B645C}
-      .note{font-size:10.5px;fill:#5A534B}
-      .notek{font-weight:700;fill:#C0562B}
-      .foot{font-size:10.5px;fill:#ADA398}
-    </style>
-    <marker id="a1" viewBox="0 0 8 8" refX="6.5" refY="4" markerWidth="6.5" markerHeight="6.5" orient="auto">
-      <path d="M0 0 L8 4 L0 8 z" fill="#B9AEA2"/>
+    <marker id="arrow" viewBox="0 0 8 8" refX="7" refY="4"
+            markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0 0L8 4L0 8Z" fill="#536B78"/>
     </marker>
+    <style>
+      text { font-family: system-ui, sans-serif; font-size: 18px; fill: #192C36; }
+      .title { font-size: 27px; font-weight: 700; }
+      .lane { font-size: 17px; font-weight: 700; }
+      .label { font-size: 20px; font-weight: 700; }
+      .code { font-family: ui-monospace, monospace; font-size: 17px; }
+      .muted { fill: #435C67; font-size: 17px; }
+      .host { fill: #FFF7EB; stroke: #D5B58B; }
+      .board { fill: #EFF6FA; stroke: #AAC3D0; }
+      .edge { fill: none; stroke: #536B78; stroke-width: 2; marker-end: url(#arrow); }
+      .gate-text { fill: #FFFFFF; }
+      .accept { fill: #20563D; }
+      .reject { fill: #873720; }
+    </style>
   </defs>
-  <rect x="6" y="6" width="768" height="324" rx="16" fill="#FBFAF8" stroke="#E4DED5" stroke-width="1.5"/>
 
-  <text class="h1" x="34" y="46">Secure-boot signing chain</text>
-  <text class="sub" x="34" y="66">ECDSA secp256k1 + SHA-256 · verified by the RP2350 bootrom · unsigned images fall to BOOTSEL</text>
+  <rect x="1" y="1" width="638" height="1016" rx="16" fill="#FCFDFD" stroke="#B9C8CF"/>
+  <text class="title" x="28" y="41">RS-Key production provisioning</text>
 
-  <!-- legend -->
-  <rect x="470" y="34" width="13" height="13" rx="3" fill="#C0562B"/>
-  <text class="lg" x="490" y="45">host</text>
-  <rect x="546" y="34" width="13" height="13" rx="3" fill="#2F7E75"/>
-  <text class="lg" x="566" y="45">device</text>
-  <rect x="632" y="34" width="13" height="13" rx="3" fill="#3E3A36"/>
-  <text class="lg" x="652" y="45">bootrom gate</text>
+  <rect x="16" y="60" width="608" height="266" rx="12" fill="#FAF3E8"/>
+  <text class="lane" x="36" y="87">HOST</text>
+  <text class="muted" x="604" y="87" text-anchor="end">Prepare signed firmware and rsk-wipe</text>
+  <rect class="host" x="36" y="100" width="268" height="55" rx="9"/>
+  <rect class="host" x="336" y="100" width="268" height="55" rx="9"/>
+  <rect x="190" y="183" width="260" height="48" rx="9" fill="#F4D8AB" stroke="#C7985F"/>
+  <rect class="host" x="36" y="263" width="268" height="48" rx="9"/>
+  <rect class="host" x="336" y="263" width="268" height="48" rx="9"/>
 
-  <!-- HOST lane -->
-  <text class="lane" x="44" y="90">HOST · WITH YOUR SIGNING KEY</text>
-  <g fill="#C0562B">
-    <rect x="44"  y="96" width="150" height="36" rx="8"/>
-    <rect x="210" y="96" width="150" height="36" rx="8"/>
-    <rect x="376" y="96" width="150" height="36" rx="8"/>
-    <rect x="542" y="96" width="150" height="36" rx="8"/>
-  </g>
-  <g class="box" text-anchor="middle">
-    <text x="119" y="112">TrustZone build</text>
-    <text x="285" y="112">combined.elf</text>
-    <text x="451" y="112">picotool seal --sign</text>
-    <text x="617" y="112">picotool uf2 convert</text>
-  </g>
-  <g class="boxs" text-anchor="middle">
-    <text x="119" y="125">Secure + Non-secure</text>
-    <text x="285" y="125">includes partition table</text>
-    <text x="451" y="125">signed ELF</text>
-    <text x="617" y="125">firmware-signed.uf2</text>
-  </g>
-  <g stroke="#B9AEA2" stroke-width="2" marker-end="url(#a1)">
-    <line x1="194" y1="114" x2="208" y2="114"/>
-    <line x1="360" y1="114" x2="374" y2="114"/>
-    <line x1="526" y1="114" x2="540" y2="114"/>
+  <path class="edge" d="M170 156V168H240V179"/>
+  <path class="edge" d="M470 156V168H400V179"/>
+  <path class="edge" d="M320 232V246H170V259"/>
+  <path class="edge" d="M320 232V246H470V259"/>
+
+  <g text-anchor="middle">
+    <text class="label" x="170" y="124">Combined TrustZone ELF</text>
+    <text class="muted" x="170" y="145">Secure + NS + partition table</text>
+    <text class="label" x="470" y="124">Private signing key</text>
+    <text class="muted" x="470" y="145">Stays on the host</text>
+    <text class="code" x="320" y="213">picotool seal --sign</text>
+    <text class="label" x="170" y="283">Signed ELF → signed UF2</text>
+    <text class="code" x="170" y="303">picotool uf2 convert</text>
+    <text class="label" x="470" y="283">Boot-key fingerprint</text>
+    <text class="code" x="470" y="303">otp_secureboot.json</text>
   </g>
 
-  <!-- connector host -> device -->
-  <path d="M617 132 V150 H300 V166" fill="none" stroke="#B9AEA2" stroke-width="2" marker-end="url(#a1)"/>
+  <rect x="16" y="346" width="608" height="656" rx="12" fill="#E7F1F6"/>
+  <text class="lane" x="36" y="371">RP2350</text>
+  <text class="muted" x="320" y="371" text-anchor="middle">rsk secure-boot · BOOTSEL</text>
 
-  <!-- DEVICE lane -->
-  <text class="lane" x="44" y="184">DEVICE · RP2350 BOOTROM</text>
-  <rect x="225" y="190" width="150" height="40" rx="8" fill="#2F7E75"/>
-  <text class="box" x="300" y="214" text-anchor="middle">BOOTSEL flash</text>
-  <rect x="400" y="190" width="250" height="40" rx="8" fill="#3E3A36"/>
-  <text class="gate" x="525" y="207" text-anchor="middle">bootrom — verify ECDSA signature</text>
-  <text class="gate" x="525" y="222" text-anchor="middle" font-weight="400" font-size="10">vs the fingerprint fused in OTP (page 2)</text>
-  <line x1="375" y1="210" x2="398" y2="210" stroke="#B9AEA2" stroke-width="2" marker-end="url(#a1)"/>
+  <rect class="board" x="36" y="384" width="268" height="62" rx="9"/>
+  <rect class="board" x="336" y="384" width="268" height="62" rx="9"/>
+  <rect class="board" x="36" y="474" width="568" height="55" rx="9"/>
+  <rect class="board" x="36" y="551" width="568" height="56" rx="9"/>
+  <rect x="36" y="629" width="568" height="67" rx="10" fill="#243F50"/>
+  <rect x="36" y="720" width="268" height="60" rx="9" fill="#E3F2E9" stroke="#8DBC9F"/>
+  <rect x="336" y="720" width="268" height="60" rx="9" fill="#FCECE5" stroke="#D6A28C"/>
+  <rect class="board" x="36" y="804" width="568" height="60" rx="9"/>
+  <rect class="board" x="36" y="888" width="568" height="56" rx="9"/>
 
-  <!-- outcomes -->
-  <rect x="666" y="196" width="96" height="28" rx="8" fill="#2F7E75"/>
-  <text class="box" x="714" y="214" text-anchor="middle">✓ run app</text>
-  <line x1="650" y1="210" x2="664" y2="210" stroke="#2F7E75" stroke-width="2" marker-end="url(#a1)"/>
+  <path class="edge" d="M170 312V380"/>
+  <path class="edge" d="M470 312V380"/>
+  <path class="edge" d="M305 415H332"/>
+  <path class="edge" d="M470 447V458H320V470"/>
+  <path class="edge" d="M320 530V547"/>
+  <path class="edge" d="M320 608V625"/>
+  <path class="edge" d="M320 697V706H170V716"/>
+  <path class="edge" d="M320 697V706H470V716"/>
+  <path class="edge" d="M170 781V800"/>
+  <path class="edge" d="M320 865V884"/>
 
-  <rect x="400" y="248" width="250" height="28" rx="8" fill="#EDE6DD" stroke="#D9D2C8"/>
-  <text class="rej" x="525" y="266" text-anchor="middle">✗ fall back to BOOTSEL — re-flash signed</text>
-  <line x1="525" y1="230" x2="525" y2="246" stroke="#B9AEA2" stroke-width="2" marker-end="url(#a1)"/>
+  <g text-anchor="middle">
+    <text class="label" x="170" y="409">Load signed UF2</text>
+    <text class="muted" x="170" y="432">BOOTSEL → prove it boots</text>
+    <text class="label" x="470" y="409">A · load-key</text>
+    <text class="muted" x="470" y="432">Write fingerprint to OTP page 2</text>
+    <text class="label gate-text" x="320" y="654">Boot ROM checks key, signature and rollback</text>
+    <text class="gate-text" x="320" y="679">First versioned flash boot can set ROLLBACK_REQUIRED</text>
+    <text class="label accept" x="170" y="744">Verify signed boot</text>
+    <text class="accept" x="170" y="768">Check flags and rollback floor</text>
+    <text class="label reject" x="470" y="744">Image rejected</text>
+    <text class="reject" x="470" y="768">Restore through BOOTSEL</text>
+  </g>
 
-  <!-- notes -->
-  <text class="note" x="34" y="298">Fingerprint = <tspan class="notek">SHA-256(pubkey)</tspan> fused at OTP page 2 (0x80). Lose the signing key → the board takes no new firmware, but the last signed image keeps booting.</text>
-  <text class="foot" x="34" y="318">Source: docs/production.md · picotool seal --sign · the RP2350 bootrom (not RS-Key firmware) does the verify.</text>
+  <text class="label" x="56" y="498">B · harden</text>
+  <text x="192" y="498">Disable debug and enable glitch detection</text>
+  <text class="muted" x="56" y="518">Cold-boot and verify debug denial</text>
+
+  <text class="label" x="56" y="575">C · enable</text>
+  <text class="code" x="192" y="575">Set SECURE_BOOT_ENABLE</text>
+  <text class="muted" x="56" y="597">Reboot into the signed firmware</text>
+
+  <text class="label" x="56" y="830">D · lock (optional)</text>
+  <text x="266" y="830">Fix the trusted key and lock pages 1–2</text>
+  <text class="muted" x="56" y="852">Skip to retain rotation. After a lock, verify another signed boot.</text>
+
+  <text class="label" x="56" y="912">Provision page 58</text>
+  <text class="code" x="266" y="912">rsk otp burn</text>
+  <text class="muted" x="584" y="912" text-anchor="end">BOOTSEL</text>
+  <text class="muted" x="56" y="933">Secure startup migrates storage, scrubs flash and seals the page</text>
+
+  <text class="label" x="36" y="974">Later rollback changes</text>
+  <text class="muted" x="604" y="974" text-anchor="end">Sign both images before raising the floor</text>
 </svg>

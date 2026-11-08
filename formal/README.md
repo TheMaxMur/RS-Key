@@ -3639,8 +3639,8 @@ shipped 128 continuations. Unlike the store's shrink this one was not a choice
 between fast and slow: at the shipped width CBMC **ran out of memory**, so
 bounding the posed pre-state while keeping the 7609-byte buffer was a dead end
 rather than a slower road. The definition stays an EXPRESSION, so
-`scripts/docs_constants.py` indexes no literal and the 7609 in `docs/protocol.md`,
-`docs/interop.md` and the frame diagram is untouched — the coupling the store
+`scripts/docs_constants.py` indexes no literal. `docs/protocol.md` and the frame
+diagram retain the shipped 7609-byte limit. This is the coupling the store
 pilot walked into an hour earlier. `rsk-device`'s only harnesses are the presence
 arbitration and `firmware` does not build under Kani, so the shrink reaches
 nothing else. What it stops covering is carried by a compile-time assertion about

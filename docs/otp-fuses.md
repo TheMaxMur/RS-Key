@@ -3,173 +3,162 @@
 
 # OTP fuses (RP2350)
 
-The "production" hardening in RS-Key comes down to writing the RP2350's **OTP**:
-the OTP master key, secure boot, and anti-rollback. This page explains what OTP
-is, why it is irreversible, how RS-Key writes it, and exactly which rows it
-touches. Read it before [production.md](production.md). It is the substrate
-everything else stands on.
-
-> "OTP" here means **One-Time-Programmable fuses on the chip**, not the Yubico
-> one-time-password feature ([guides/otp.md](guides/otp.md)). Different thing,
-> same three letters.
+RS-Key uses the RP2350's one-time-programmable (OTP) memory for its
+device keys, Secure Boot policy and rollback floor. These are chip
+fuses. One-time passwords are covered in the [OTP slot guide](guides/otp.md).
+For provisioning commands and their order, see [Production](production.md).
 
 ## What OTP is
 
-OTP is a block of on-chip memory made of **antifuses**: writing a bit physically
-and permanently changes the silicon. A bit goes **0 → 1 and never back.** There
-is no erase, no reset, no "factory default". For OTP, *factory* is wherever you
-left it. Every chip has its own OTP. Nothing about it is shared between boards.
+An OTP bit can be programmed from 0 to 1. It stays set through power
+loss, reflashing and factory reset. Each chip has its own fuse state.
 
-This is the whole point. The value of OTP for a security key is exactly that it
-**cannot be undone**: a key fused here can't be un-fused, a secure-boot bit
-can't be cleared, a rollback floor can't be lowered. Hardening that you could
-reverse would be hardening an attacker could reverse too.
-
-> ⚠️ **Every write on this page is permanent.** A mistake can lock you out of
-> reading a value forever, or brick the board for new firmware. The tools refuse
-> to act without typed confirmations and support `--dry-run`. Use it.
+> ⚠️ Fuse writes are permanent. A wrong lock can make the keys unreadable,
+> and a wrong boot policy can leave the board unable to load firmware.
+> The provisioning CLI provides typed confirmations and `--dry-run` for
+> host-initiated writes. A normal boot can also program fuses automatically
+> during page-58 sealing or a rollback-floor advance.
 
 ## Layout: pages, rows, and reliability copies
 
-OTP is addressed in **rows** (24 bits each), grouped into **pages of 64 rows**
-(so page *N* starts at row `N × 0x40`; page 58 begins at row `0xE80`). Page
-granularity matters because **read/write locks are applied per page**, not per
-row.
+The RP2350 has 64 OTP pages of 64 rows. Each raw row is 24 bits wide.
+Page 58 starts at `58 × 0x40 = 0xE80`. Access locks apply to whole pages.
 
-A single antifuse can be marginal, so the values that the bootrom and firmware
-depend on are stored redundantly:
+| Encoding | How to read it | Used here |
+|---|---|---|
+| RBIT-3 | Bitwise majority across three consecutive rows | `BOOT_FLAGS0/1`, rollback floor |
+| RBIT-8 | A bit takes effect once three of its eight copies are set | `CRIT1`. The `harden` command verifies its hardening bits in all eight copies. |
+| ECC | Each raw row has 16 data bits, six ECC bits and two polarity bits | Boot-key fingerprints, DEVK and MKEK |
+| Page-lock word | Bitwise majority across three copies of the policy byte within one raw row | `PAGEn_LOCK1` |
 
-- **RBIT-3**: the value is written into **three consecutive rows**, and the
-  reader takes the **bitwise 2-of-3 majority**. An interrupted burn that set
-  only one copy does not count. Two copies do. BOOT_FLAGS and rollback rows
-  use this encoding. Page-lock rows instead repeat their byte three times.
-- **RBIT-8**: CRIT1 occupies rows `0x40..0x47`. Each flag becomes effective
-  with at least three of eight copies set. `harden` requires the hardening bits
-  in all eight copies before reporting completion; a partial burn can be
-  effective without being complete.
-- **ECC**: boot-key fingerprints and secret key rows store error-correcting
-  parity alongside their data.
+See the [RP2350 datasheet, §§13.4–13.6](https://datasheets.raspberrypi.com/rp2350/rp2350-datasheet.pdf)
+for the register layout and encodings.
 
 ## Who can write OTP, and when
 
-Two paths write OTP, and the difference is central to how RS-Key stays safe:
+- **The host through BOOTSEL.** The ROM's USB bootloader serves the
+  `picotool` OTP commands subject to the page permissions. RS-Key uses this
+  path for the initial device keys and Secure Boot provisioning.
+- **Secure startup and the rescue applet.** Startup seals page 58 once the
+  keys and the migrated storage are ready, including on boards with Secure
+  Boot disabled. The explicit
+  `rsk otp rollback-require` command asks the Secure rescue applet to set
+  `ROLLBACK_REQUIRED`. A write requires Secure Boot to be enabled and
+  confirmation on the device.
+- **The boot ROM during normal Secure Boot.** A successful flash boot at a
+  higher rollback version advances the OTP floor and sets
+  `ROLLBACK_REQUIRED`. See [Anti-rollback](anti-rollback.md).
 
-- **BOOTSEL / `picotool`**: with the board in BOOTSEL you can read and write OTP
-  directly from the host. This is how the bulk of provisioning happens (the
-  master key, the secure-boot key, the enable bits).
-- **Secure firmware (the rescue applet)**: a handful of rows must be written by
-  the running, secure-boot-validated firmware, not from BOOTSEL. Two cases:
-  - rows that are made **bootloader-read-only** by a page lock (so BOOTSEL can no
-    longer write them) but stay **secure-writable**. The page-58 lock and the
-    `ROLLBACK_REQUIRED` flag are applied this way. Boot seals page 58 only after
-    validating the keys, migrating records and scrubbing flash. The separate
-    `rsk otp rollback-require` operation remains guarded by an exact magic payload
-    and presence; ordinary APDUs never trigger boot sealing.
-
-Each OTP page lock is a byte encoding three independent levels: `LOCK_BL`
-(bootloader), `LOCK_NS` (non-secure), `LOCK_S` (secure), each of `read-write` /
-`read-only` / `inaccessible`. That three-way split is what lets a page be
-**unreadable to BOOTSEL but still readable by secure firmware** (see page 58
-below).
+In a `LOCK1` policy byte, `LOCK_S` is bits 1:0, `LOCK_NS` is bits 3:2,
+and `LOCK_BL` is bits 5:4. They represent Secure, Non-secure and bootloader
+access. Each lock can progress from read-write to read-only to
+inaccessible. `LOCK_BL` governs the bootloader path. It is separate from
+the hardware's Secure and Non-secure access checks.
 
 ## What RS-Key burns
 
-These are the rows RS-Key provisions, grouped by the stage that writes them. The
-authoritative source is the code (`tools/rsk/otp.py`, `tools/rsk/secureboot.py`,
-`crates/rsk-rescue/src/rollback.rs`). The table is the map.
-
-| Region | Rows | What it holds | Written by |
+| Region | Rows | Contents | Writer |
 |---|---|---|---|
-| **Page 58** | `0xE80…` | `DEVK` (device attestation key), `MKEK` (master sealing key), anti-imaging chaff | `rsk otp burn` (BOOTSEL) |
-| Page-58 lock | `0xFF5` | makes page 58 **BOOTSEL-unreadable, secure read-only**, and latches the migration shut | automatic Secure boot step, after migration and a successful scrub |
-| **Boot key** | `0x80…` | `SHA-256` fingerprint of your secure-boot public key (slot 0 of 4) | `rsk secure-boot load-key <otp.json>` |
-| `BOOT_FLAGS1` | `0x4B` | `KEY_VALID` / `KEY_INVALID` (which key slots are live / revoked) | `load-key`, `lock` |
-| `CRIT1` | `0x40` | `SECURE_BOOT_ENABLE`, `DEBUG_DISABLE`, `SECURE_DEBUG_DISABLE`, `GLITCH_DETECTOR_ENABLE/SENS` | `harden`, `enable` |
-| `BOOT_FLAGS0` | `0x48` | `ROLLBACK_REQUIRED` (bit 11) | `rsk otp rollback-require` (firmware) |
-| `DEFAULT_BOOT_VERSION` | `0x4E`, `0x51` | the **48-bit rollback thermometer** (two 24-bit rows) | the bootrom, on boot |
-| Page 1/2 locks | `0xF83`, `0xF85` | make the flag + key pages **bootloader-read-only** | `rsk secure-boot lock` |
+| Boot policy, page 1 | `0x040–0x047` | `CRIT1`: Secure Boot enable, both debug disables, glitch detector enable and sensitivity | `rsk secure-boot harden` and `enable` |
+| Boot policy, page 1 | `0x048–0x04A` | `BOOT_FLAGS0`: `ROLLBACK_REQUIRED` at bit 11 | Boot ROM, or `rsk otp rollback-require` through Secure firmware |
+| Boot policy, page 1 | `0x04B–0x04D` | `BOOT_FLAGS1`: `KEY_VALID` and `KEY_INVALID` slot masks | `rsk secure-boot load-key`, `rotate`, `revoke`, `lock` |
+| Rollback floor, page 1 | `0x04E–0x050`, `0x051–0x053` | `DEFAULT_BOOT_VERSION0/1`: 48 logical bits across two triplicated words | Boot ROM |
+| Boot keys, page 2 | `0x080–0x0BF` | Four ECC-encoded SHA-256 fingerprints, 16 rows per slot. Starts: `0x080`, `0x090`, `0x0A0`, `0x0B0`. | `rsk secure-boot load-key` and `rotate` |
+| Device keys, page 58 | `0xE80–0xEBF` | DEVK, MKEK and their paired chaff | `rsk otp burn` |
+| Page-lock words | `0xF83`, `0xF85` | Page 1 and 2 `LOCK1`, `0x141414` | `rsk secure-boot lock` |
+| Page-lock word | `0xFF5` | `PAGE58_LOCK1`, completed value `0x3D3D3D` | Secure startup |
 
-A few notes that matter:
+![OTP row map showing the boot policy on page 1, the four signing-key fingerprint slots on page 2, the two device keys and their chaff on page 58, and the separate lock rows.](images/otp-fuse-map.svg)
 
-- **Page 58 stays readable to secure firmware after the lock.** The lock value
-  (`0x3D3D3D`) sets BL and NS to *inaccessible* and S to *read-only*. So only
-  secure-mode firmware can ever read the MKEK/DEVK again, and a BOOTSEL flash
-  dump cannot.
-- **S read-only is also a latch.** A boot that reads it opens no device-sealed
-  record under the pre-burn key or in the clear, so a record planted there over
-  BOOTSEL stays shut ([threat model](threat-model.md)). A lock burnt by a build
-  before 0x0A67, or by the host ritual, is `0x3C3C3C` (S *read-write*) and
-  carries no latch: firmware 0x0BD7 and later completes it automatically after
-  migration and scrubbing. It first completes and verifies all `0x3C3C3C` bits,
-  then writes the latch. It resumes a torn latch while Secure remains writable.
-  If its majority already closed Secure writes, ROM refuses to complete the third
-  copy; status reports protected access with incomplete redundancy. Check
-  `rsk otp status`; PIN-dependent migration may need a PIN use and restart.
-  An older torn burn with Secure read-only but an incomplete access lock enters
-  recovery instead: ROM cannot repair it and firmware refuses storage migration.
-- **The MKEK/DEVK are generated randomly and forgotten.** `rsk otp burn` does not
-  keep a copy. The fuses *are* the key. There is nothing to back up and nothing
-  to lose.
-- **The rollback thermometer is advanced by the bootrom**, not by a host write,
-  when a higher-version image boots. See [anti-rollback.md](anti-rollback.md).
-- **Pages 1 and 2 stay bootloader-*read-only* after `lock`** (`0x141414`), not
-  inaccessible. The bootrom must read the keys and flags on every boot. They
-  remain secure-writable, which is how the firmware applies `ROLLBACK_REQUIRED`
-  after the pages are otherwise locked down.
+After `rsk secure-boot lock`, the page 1 and 2 policy is read-only for
+BOOTSEL and Non-secure and read-write for Secure. BOOTSEL can still read
+the boot policy and public-key fingerprints. The Secure side can still
+program rollback state. Although `PAGE58_LOCK1` is physically stored in
+page 63, it controls page 58. The A2 ROM checks the containing page's
+permissions when accessing lock words (erratum RP2350-E15). Later ROMs
+check the page the word protects. RS-Key programs the page-58 lock from
+Secure firmware.
 
-![OTP fuse map. The rows RS-Key provisions grouped by page: page 1 boot-policy flags (CRIT1, BOOT_FLAGS0/1, the 48-bit rollback thermometer), page 2 boot-key fingerprint, page 58 DEVK and MKEK with high-half complement chaff, and the lock rows. Each row coloured by whether picotool over BOOTSEL, the secure firmware, or the bootrom writes it](images/otp-fuse-map.svg)
+### Page 58 from provisioning to sealing
+
+1. In BOOTSEL, `rsk otp burn` checks that both keys, their chaff and
+   both page-58 lock rows are blank. It generates a device attestation
+   key (DEVK) and a master key for sealing (MKEK), programs them, and
+   reads back the keys and chaff before restarting. It keeps no backup
+   copy. Provisioning uses temporary key files for `picotool`, preferring
+   RAM-backed storage when available and overwriting the files before
+   unlinking them.
+2. At startup, Secure firmware validates the OTP key material before
+   migrating storage. Before entering Non-secure it sets the page's
+   `SW_LOCK` to deny Non-secure access and configures `ACCESSCTRL` to
+   exclude Non-secure access to the OTP peripheral. This is runtime
+   protection even while the permanent lock is pending. BOOTSEL can
+   still read the key rows until the separate `LOCK_BL` takes effect.
+3. Once the remaining pre-OTP records have migrated and a fresh flash
+   scrub succeeds, Secure startup completes and verifies all copies of
+   the `0x3C3C3C` access lock. That closes BOOTSEL and Non-secure access
+   while Secure access remains read-write.
+4. Startup then sets `0x3D3D3D`, making the page Secure read-only.
+   This is also the migration latch. Once it takes effect, the
+   firmware requests a reboot before serving USB. On subsequent boots,
+   it closes the pre-OTP paths for device-sealed records. Secure
+   firmware continues to read the keys when needed.
+
+An older board with `0x3C3C3C` still needs the latch. Some legacy
+records need a successful PIN use followed by a restart to complete
+migration. Check `rsk otp status` for what is pending. The
+`lock-page58` command is a legacy service path. Current firmware
+normally seals during startup.
+
+An interrupted latch can leave access protected by a majority with a
+third copy missing. `rsk otp status` reports incomplete redundancy
+because the ROM refuses further programming once Secure becomes
+read-only. If Secure writes closed before the required access lock was
+in place, the firmware refuses migration and reports recovery required.
 
 ### Anti-imaging chaff
 
-Page 58 stores the keys in its **low half** and the bitwise **complement** of
-every key row in its **high half**: `DEVK` at `0xE80…0xE8F` with its complement at
-`0xEA0`, `MKEK` at `0xE90…0xE9F` with its complement at `0xEB0` (offset `0x20` =
-half a page). The firmware never reads the high half. It plays no part in key
-reconstruction (`firmware/src/otp_keys.rs` reads only the key rows). It exists for
-one reason.
+| Page-58 contents | Key rows | Paired chaff rows |
+|---|---|---|
+| DEVK | `0xE80–0xE8F` | `0xEA0–0xEAF` |
+| MKEK | `0xE90–0xE9F` | `0xEB0–0xEBF` |
 
-The cheapest invasive OTP read demonstrated against this antifuse family
-(IOActive, RP2350 Challenge 1, see [threat-model.md](threat-model.md)) recovers
-the bitwise **OR of two physically paired bitcell rows**, not the rows
-individually. Raspberry Pi's mitigation is to put the key in one half of a page
-and its complement in the opposite half, so each physical pair reads
-`OR(b, ¬b) = 1`, a uniform all-ones pattern that carries no key bits. The
-low-half / high-half placement here is exactly that scheme, and it neutralises the
-demonstrated readout.
+`rsk otp burn` reads each programmed key row in raw mode and stores
+the complement of all 24 bits at offset `0x20`, including the ECC and
+polarity bits. Secure startup checks the complements while provisioning
+is unfinished. Normal key reads use the ECC data in the low half.
 
-> This defeats the *demonstrated* OR-read. IOActive note that a
-> more advanced attack might separate the paired (even/odd) rows with additional
-> effort, which would read the key half directly, and a plain complement does not
-> stop that. Raspberry Pi have said a forthcoming application note will describe a
-> storage scheme mitigating both the current attack and that hypothetical one. If
-> it prescribes more than complement-in-opposite-half, revisit this.
+IOActive's passive-voltage-contrast experiment can recover the OR of
+each physically paired bit. A bit and its complement always produce
+1 in that readout, regardless of the key. An invasive technique that
+separates the two halves could recover the key bits. See the
+[IOActive report](https://ioactive.com/wp-content/uploads/2025/01/IOActive-RP2350HackingChallenge.pdf)
+and the [Raspberry Pi security white paper](https://pip-assets.raspberrypi.com/categories/1260-security/documents/RP-009377-WP-1-Understanding%20RP2350_s%20security%20features.pdf).
 
 ## Reading OTP
 
-OTP is readable until a lock says otherwise:
-
 ```sh
-rsk secure-boot status        # decodes the secure-boot + rollback rows for you
-picotool otp get -r -n 0x48   # raw row read (BOOTSEL), if you want the bytes
+rsk otp status                # running firmware over CCID: page-58 sealing and migration
+rsk secure-boot status        # BOOTSEL: boot flags, key slots and rollback floor
+picotool otp get -r -n 0x48    # BOOTSEL: first raw copy of BOOT_FLAGS0
 ```
 
-`rsk inventory list` / `rsk status` surface the human-readable state. Once page
-58 is locked, `picotool otp get` on it fails with a permission error forever.
-That failure is the lock working, not a fault.
+After sealing, BOOTSEL should refuse reads of the page-58 key rows.
+That checks the bootloader policy. A direct
+privileged Non-secure load from the OTP data window tests the runtime
+boundary separately. See [TrustZone on hardware](testing.md#trustzone-on-hardware)
+for the scope of those checks.
 
 ## Honest limits
 
-- **OTP is not a secure element.** It hardens against software- and BOOTSEL-level
-  attacks, and the anti-imaging chaff above neutralises the demonstrated
-  passive-voltage-contrast OTP readout. But the antifuses are still on a
-  general-purpose die: a funded lab with a focused ion beam can image them, and
-  that (like laser fault injection and power/EM analysis) is out of scope
-  ([threat-model.md](threat-model.md)). The antifuse readout is not fixed by any
-  silicon stepping. Use A4 for the fault and boot-ROM fixes (our own boards are
-  A2, the stepping broken in the public challenge). The chaff does nothing
-  against a read through debug that a laser turned back on: that reads the rows
-  the way the chip does ([threat-model.md](threat-model.md)).
-- **It is finite.** The rollback thermometer is 48 bits for the board's life.
-  There are 4 key slots. Neither resets. See [anti-rollback.md](anti-rollback.md).
-- **It is per-chip.** None of this carries to another board. A new board is a
-  fresh, blank OTP.
+- **Page 58 remains Secure-readable.** Ledger Donjon restored Secure
+  debug on a decapped A4 and read the challenge secret from page 48.
+  The same access policy makes RS-Key's page-58 keys reachable if
+  Secure debug is restored. Chaff protects the paired OR readout,
+  while a logical Secure read addresses each key row individually.
+  See the [Donjon experiment](https://donjon.ledger.com/blog/rp2350-secure-debug-laser-fault-injection/)
+  and [Threat model](threat-model.md#platform-silicon-the-rp2350-security-challenges).
+- **OTP state is finite and per-chip.** The two default rollback words
+  hold 48 logical bits. With those rows, the highest version accepted
+  by the project's `picotool seal` is 47. There are four one-time
+  boot-key slots. See [Anti-rollback](anti-rollback.md).

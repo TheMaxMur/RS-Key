@@ -14,6 +14,7 @@ one that cannot go red: the clean fixture generates, this checkout's own
 """
 
 import re
+from xml.etree import ElementTree
 
 import pytest
 
@@ -301,7 +302,7 @@ def test_a_long_allowlist_breaks_at_its_commas():
 
 
 def test_a_note_never_overflows_the_card():
-    """The one defect a generated drawing can still ship.
+    """Check the text budget against the generated notes.
 
     Rendered here rather than read off the committed file, so breaking the
     wrapper fails this without anyone regenerating first. `wrap` can only
@@ -315,3 +316,16 @@ def test_a_note_never_overflows_the_card():
     for line in notes:
         plain = re.sub(r"<[^>]+>", "", line).strip()
         assert len(plain) <= crate_graph.NOTE_BUDGET, f"{len(plain)} chars: {plain}"
+
+
+def test_crate_chips_fit_inside_the_card():
+    members, edges, firm = crate_graph.read_workspace()
+    svg, _desc = crate_graph.render(members, edges, firm)
+    card, *chips = ElementTree.fromstring(svg).findall("{*}rect")
+    left = float(card.attrib["x"])
+    right = left + float(card.attrib["width"])
+
+    assert len(chips) == len(members)
+    for chip in chips:
+        x = float(chip.attrib["x"])
+        assert left <= x and x + float(chip.attrib["width"]) <= right, chip.attrib

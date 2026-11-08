@@ -3,11 +3,17 @@
 
 # Hardware
 
-What RS-Key runs on, and the build knobs you need for a board other than the
-reference one. The full knob reference is in [build.md](build.md). This page is
-the short version.
+RS-Key targets the Arm cores of the RP2350 family. That includes RP2354,
+which puts 2 MiB of flash in the same package. The flash size, presence
+input and status indicator depend on the board design.
+[RP2350 datasheet](https://datasheets.raspberrypi.com/rp2350/rp2350-datasheet.pdf)
 
-## Supported boards
+<span id="supported-boards"></span>
+
+## Tested boards
+
+These are examples of boards that have run RS-Key. To use another board,
+match the build to its wiring and flash size.
 
 <table>
 <tr>
@@ -18,7 +24,7 @@ the short version.
 </tr>
 <tr>
 <td align="center"><b>RP2350-One</b><br>reference · USB-A<br>WS2812 on GPIO16</td>
-<td align="center"><b>RP2350-Zero</b><br>mini stick · USB-C</td>
+<td align="center"><b>RP2350-Zero</b><br>4 MiB flash · USB-C</td>
 <td align="center"><b>TenStar RP2350-USB</b><br>USB-A stick<br>WS2812 on GP22</td>
 <td align="center"><b>RP2350-Touch-LCD-2.8</b><br>trusted display · 2.8″ LCD</td>
 </tr>
@@ -26,70 +32,86 @@ the short version.
 
 <sub>Board photos: Waveshare (RP2350-One / Zero / Touch-LCD-2.8).</sub>
 
-Any RP2350 board with a USB connector should work. Development and on-device
-testing happen on the **Waveshare RP2350-One**, where the WS2812 status LED on
-GPIO16 works out of the box. Boards without an addressable LED run fine. The
-indicator is optional and the firmware just runs dark. A board whose LED sits
-behind a power gate — the **Seeed XIAO RP2350** powers its WS2812 through GP23 —
-lights up once that enable pin is set with `LED_POWER_PIN` (below).
+The **Waveshare RP2350-One** is the reference board. The default image matches
+its 4 MiB flash, WS2812 on GPIO16 and BOOTSEL button for presence.
 
-The RP2350's dual Cortex-M33, 520 KB SRAM, hardware TRNG, OTP fuses, and glitch
-detectors do the work. There is **no secure element** and no debugger
-requirement: the firmware flashes over USB BOOTSEL, so a bare board and a USB
-cable are enough.
+Bitmerse tested FIDO2 on **Romu** (RP2354A) with its RS-Key fork. Their build
+uses the 2 MiB layout, reads the active-high capacitive touch sensor on GPIO20,
+and adds an `rgb_gpio` driver for Romu's common-anode RGB LED.
+[Romu on Crowd Supply](https://www.crowdsupply.com/bitmerse/romu) ·
+[Bitmerse's RS-Key build guide](https://github.com/bitmerse/romu/blob/main/sw/fido2-security-key/README.md)
+
+## Trusted display
+
+The `display` build currently supports one board, the **Waveshare
+RP2350-Touch-LCD-2.8**. It uses a 240×320 ST7789 panel and a CST328 touch
+controller. The similarly named RP2350-Touch-LCD-2.8C uses a round ST7701
+panel and needs its own port.
+[Waveshare 2.8 specifications](https://www.waveshare.com/wiki/RP2350-Touch-LCD-2.8) ·
+[Waveshare 2.8C specifications](https://www.waveshare.com/RP2350-Touch-LCD-2.8C.htm)
+
+```sh
+nix develop -c env BOARD=waveshare-touch-lcd bash scripts/build.sh --features display
+```
+
+The preset selects 16 MiB of flash and `LED_KIND=none`. The screen handles
+presence and status. See the [Trusted display guide](guides/display.md).
 
 ## Defaults and the knobs to change them
 
-The default build targets a 4 MB flash chip with the LED on GPIO16, uses BOOTSEL
-for user presence, and assumes a standard 12 MHz crystal. For a different board,
-three compile-time knobs usually cover it:
+Current builds assume a 12 MHz crystal and use the RP2350's native USB port.
+USB BOOTSEL lets you load the firmware without a programmer. Board settings
+cover GPIO 0–29. Using GPIO 30–47 on an RP2350B or RP2354B requires firmware
+changes.
+
+Start with a preset under `firmware/boards/` if one matches your board. Pass
+its filename without `.toml` as `BOARD`. For example, `seeed-xiao` sets up
+the 2 MiB flash, powers the WS2812 through GPIO23 and holds the separate user
+LED off. For a custom board, set the flash size and match the presence input
+and LED to the wiring. See [Build options](build.md) for the full list.
 
 | Knob | Default | When to change it |
 |---|---|---|
-| `FLASH_SIZE` | `4M` | A board with a different QSPI flash chip (e.g. `8M`). `build.rs` regenerates `memory.x` from it. Must be ≤ 16 MB and leave ≥ 1 MB for code after the KV store; a **2 MB** board also needs a smaller `KVMAIN` (below). |
-| `KVMAIN` | `1408K` | A **2 MB** board (Seeed XIAO RP2350, Waveshare RP2350-Zero-CM): the default 1408K KV main partition leaves too little for the ~900K image. Shrink it — `FLASH_SIZE=2M KVMAIN=896K` — to fit. A fully provisioned key uses only a few hundred KB. See [build.md](build.md). |
-| `LED_PIN` | `16` | A board that uses GPIO16 for something else, or wires its addressable LED elsewhere (RP2350A: GPIO `0..=29`). |
-| `LED_POWER_PIN` | `none` | A board whose LED sits behind a power gate that must be driven **high** to light it (e.g. the Seeed XIAO RP2350's WS2812 on GP23). Set the enable GPIO; it must differ from `LED_PIN` and any GPIO `PRESENCE_PIN`. |
-| `USR_LED_PIN` | `none` | A board with a *nuisance* onboard user LED that lights by default (the Seeed XIAO RP2350's active-low USR LED on GP25). Set the GPIO to park it off at boot; flip `USR_LED_ACTIVE_HIGH=1` for an active-high LED. Must differ from `LED_PIN`, `LED_POWER_PIN`, and any GPIO `PRESENCE_PIN`. |
-| `PRESENCE_PIN` | `bootsel` | A board with a dedicated user-presence button on a GPIO. Set a pin number (`0..=29`); active-low with a pull-up by default (e.g. `0` for GPIO0-to-GND). |
-| `PRESENCE_ACTIVE_HIGH` | `0` | A presence button/sensor that reads **high** when pressed (a capacitive touch sensor, or a button to VCC). `1` flips the GPIO to pull-down + active-high. Only with a GPIO `PRESENCE_PIN`. |
-| `LED_KIND` | `ws2812` | `ws2812` (addressable RGB, default), `gpio` (plain on/off), `pimoroni` (3-pin PWM RGB), or `none` (no indicator). See [build.md](build.md). |
-| `LED_ORDER` | `rgb` | A `ws2812` board whose red and green come out swapped (blue fine): set `grb` (the WS2812B standard). The Waveshare RP2350-One is `rgb`; most other parts are `grb`. |
-| `MAX_LEDS` | `8` | A board with **more than 8** daisy-chained addressable LEDs. The buffer ceiling; the actual connected count is set at runtime ([guides/led.md](guides/led.md)). |
+| `FLASH_SIZE` | `4M` | Match the flash capacity, up to 16 MiB. The linker derives the firmware and storage layout from it. |
+| `KVMAIN` | `1408K` | Use `896K` with `FLASH_SIZE=2M` on boards such as the Seeed XIAO RP2350, Waveshare RP2350-Zero-CM or Romu. Leave at least 1 MiB for firmware. Keep both settings when updating a provisioned key. |
+| `LED_KIND` | `ws2812` | `ws2812` for addressable RGB, `gpio` for a plain on/off LED, `pimoroni` for the fixed Pimoroni PWM wiring, or `none` to omit the status LED. |
+| `LED_PIN` | `16` | Data GPIO for `ws2812` or output GPIO for `gpio`. |
+| `LED_ORDER` | `rgb` | Set `grb` if the addressable LED's red and green are swapped. |
+| `LED_POWER_PIN` | `none` | GPIO to hold high for an LED power gate, such as GPIO23 on the Seeed XIAO RP2350. |
+| `USR_LED_PIN` | `none` | GPIO of a separate onboard LED to hold off, such as GPIO25 on the Seeed XIAO RP2350. Set `USR_LED_ACTIVE_HIGH=1` for an active-high LED. |
+| `MAX_LEDS` | `1` | Compiled capacity of the addressable LED chain, up to 64. Set the active count at runtime. |
+| `PRESENCE_PIN` | `bootsel` | Use BOOTSEL or set the GPIO of a dedicated button or touch sensor. A GPIO input defaults to active-low with a pull-up. |
+| `PRESENCE_ACTIVE_HIGH` | `0` | Set `1` for a GPIO button or touch sensor that goes high when pressed. |
 
 ```sh
-# example: an 8 MB board with a plain LED on GPIO25
-env FLASH_SIZE=8M LED_KIND=gpio LED_PIN=25 bash scripts/build.sh
+# Seeed XIAO RP2350 and TenStar RP2350-USB presets
+nix develop -c env BOARD=seeed-xiao bash scripts/build.sh
+nix develop -c env BOARD=tenstar-usb bash scripts/build.sh
 
-# example: a 16 MB TenStar RP2350-USB — WS2812 on GP22, standard GRB order
-env FLASH_SIZE=16M LED_PIN=22 LED_ORDER=grb bash scripts/build.sh
-
-# example: a Seeed XIAO RP2350 — WS2812 on GP22, GRB, power-gated by GP23 (driven high),
-# its active-low USR LED on GP25 parked off, and its 2 MB flash (smaller KVMAIN)
-env FLASH_SIZE=2M KVMAIN=896K LED_PIN=22 LED_ORDER=grb LED_POWER_PIN=23 USR_LED_PIN=25 bash scripts/build.sh
-
-# example: WS2812 on GP22 and a button-to-GND on GP0 (active-low)
-env LED_PIN=22 PRESENCE_PIN=0 bash scripts/build.sh
-
-# example: an active-high capacitive touch sensor on GP0
-env PRESENCE_PIN=0 PRESENCE_ACTIVE_HIGH=1 bash scripts/build.sh
+# Custom board with 8 MiB flash, a plain LED and an active-high touch sensor
+nix develop -c env FLASH_SIZE=8M LED_KIND=gpio LED_PIN=25 \
+  PRESENCE_PIN=0 PRESENCE_ACTIVE_HIGH=1 bash scripts/build.sh
 ```
 
-The four LED knobs (`LED_PIN` / `LED_KIND` / `LED_ORDER` / `MAX_LEDS`) set only the
-*boot defaults*. A non-`none` build compiles all three backends, so the pin,
-driver, wire order, and buffer ceiling are also changeable at **runtime** (no
-reflash) with `rsk hw` or PicoForge, which write them to the device's `phy`
-record
-([guides/led.md](guides/led.md)). The build knobs still matter for picking a
-lean `none` build and for the out-of-the-box default.
+With LED support compiled in, `rsk hw` can change the pin, driver, wire
+order and active LED count. The settings take effect on reboot. The compiled
+`MAX_LEDS` caps the active count. See the [LED guide](guides/led.md).
 
-Most RP2350A boards work with at most a one-line change. Everything else
-(USB descriptors, applets, flash layout) is board-independent.
+## Adding a board
+
+If the peripherals already have drivers, add a board preset with the flash
+size and pin assignments. A peripheral that uses a different protocol or
+wiring may need a driver change. Romu's RGB LED is one example. The status
+LED is optional, so you can use `LED_KIND=none` while bringing up the rest
+of the board.
+
+We welcome pull requests for board presets and drivers. Include a pinout
+or schematic reference and what you tested on the board, such as USB boot,
+FIDO2 registration and login, presence, and the LED or display.
 
 ## Enclosures
 
-A bare board works fine, but a printed case makes it pocketable. Four community
-designs fit the boards above:
+Community designs for 3D-printed enclosures are available for several boards.
 
 - **[Waveshare RP2040-One / RP2350-One case](https://www.printables.com/model/1129764-waveshare-rp2040-one-and-rp2350-one-case)**
   by Patrick van der Leer. Sized for the reference board.
@@ -101,19 +123,14 @@ designs fit the boards above:
   by [@cofob](https://cofob.dev/). Designed for RS-Key and recommended for the
   RP2350-Touch-LCD-2.8. PETG is the recommended print material.
 - **[Waveshare RP2350 2.8-inch case](https://www.thingiverse.com/thing:7404751)**
-  by Mono. Designed for RS-Key, reliable USB and button performance as well as
-  sturdyness. PETG material recommended.
+  by Mono. Designed for RS-Key on the RP2350-Touch-LCD-2.8.
 
-The two Printables designs as well as the Thingiverse design are licensed
-**CC BY-SA 4.0**: print, sell, and remix them freely, as long as you credit the
-authors and keep any derivative under the same license. Check each MakerWorld
-page for the design license before you reuse the design. All are third-party
-designs, linked for convenience, not part of this project.
+See each model page for its license.
 
 ## What the hardware does not give you
 
-The OTP fuses and secure boot ([production.md](production.md)) are real
-hardening, but the RP2350 is a general-purpose microcontroller, not a certified
-secure element. Physical attacks are out of scope: decapping, microprobing,
-fault injection beyond the on-chip glitch detectors, power/EM side channels.
-See the [threat model](threat-model.md) and [limitations](limitations.md).
+RS-Key uses the microcontroller's own OTP and Secure Boot for production
+hardening. The threat model excludes lab attacks such as decapping,
+microprobing, advanced fault injection and power or EM side channels. See
+[Production setup](production.md), the [threat model](threat-model.md) and
+[limitations](limitations.md).

@@ -18,7 +18,7 @@ this doubles as a CI gate over a recorded pair of snapshots.
 
     python tests/interop/diff.py real.json rsk.json               # human report
     python tests/interop/diff.py real.json rsk.json --json        # machine-readable
-    python tests/interop/diff.py real.json rsk.json --markdown     # docs/interop.md block
+    python tests/interop/diff.py real.json rsk.json --markdown     # block for the interop report
 """
 import argparse
 import json
@@ -115,7 +115,7 @@ def render_text(results, real_snap, rsk_snap):
 
 
 def render_markdown(results, real_snap, rsk_snap, date=None, host=None):
-    """A dated block in the docs/interop.md living-matrix style."""
+    """A dated block for the interop report."""
     rm, km = real_snap.get("meta", {}), rsk_snap.get("meta", {})
     date = date or km.get("date") or "????-??-??"
     host = host or km.get("host_os") or "?"
@@ -153,7 +153,7 @@ def main():
     ap.add_argument("real", help="snapshot JSON captured from the real YubiKey")
     ap.add_argument("rsk", help="snapshot JSON captured from RS-Key")
     ap.add_argument("--json", action="store_true", help="machine-readable output")
-    ap.add_argument("--markdown", action="store_true", help="docs/interop.md-style block")
+    ap.add_argument("--markdown", action="store_true", help="Markdown block for the interop report")
     ap.add_argument("--cells", help="compare only these cells, comma-separated; each must "
                     "have been captured on both sides")
     args = ap.parse_args()

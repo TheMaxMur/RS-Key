@@ -419,7 +419,7 @@ The card shows up as a standard PIV token; nothing here is RS-Key-specific.
 
 - **Windows / macOS native** smart-card stacks pick the PIV applet up as-is;
   macOS CryptoTokenKit binds its `pivtoken.appex` to the reader
-  ([interop.md](../interop.md#piv)).
+  ([PIV interop results](https://github.com/TheMaxMur/RS-Key/blob/main/assurance/reports/interop.md#piv)).
 
 ## At rest
 

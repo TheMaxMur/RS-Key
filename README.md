@@ -155,7 +155,7 @@ The docs live in [docs/](docs/) and are published as a site:
 | [Feature guides](docs/guides/) | FIDO2, SSH, OpenPGP, PIV, OATH, OTP, backup, soft-lock, LED, audit, … |
 | [Threat model](docs/threat-model.md) · [Limitations](docs/limitations.md) | what it protects against, and what it does not |
 | [Architecture](docs/architecture.md) · [`unsafe` audit](docs/unsafe.md) | how it's built; every `unsafe` site |
-| [Testing](docs/testing.md) · [Interop](docs/interop.md) | host tests, fuzzing; real-tool results |
+| [Testing](docs/testing.md) | host tests, fuzzing, and client compatibility |
 | [Linux setup](docs/linux.md) · [Motivation](docs/motivation.md) | pcscd/udev/polkit; why this exists |
 
 ## Build it yourself
@@ -269,7 +269,7 @@ inspecting and managing a local FIDO2/CTAP authenticator, built on
 client stack, which is what makes it interesting here: a second opinion on what
 this firmware answers, from a parser that is not libfido2 or python-fido2. It has
 not been run against RS-Key yet; it is `⏳` in the
-[interop matrix](docs/interop.md#fido2--webauthn--u2f).
+[interop report](assurance/reports/interop.md#fido2--webauthn--u2f).
 
 ## Limitations (short list)
 

@@ -22,7 +22,7 @@ Bare Cargo builds require the builder's link-stage inputs.
 ```mermaid
 flowchart TD
     options["Board settings and firmware features"] --> builder["TrustZone builder<br/>Link Secure and Non-secure<br/>Embed partition table by default<br/>Convert ELF to UF2"]
-    builder --> elf["Combined ELF"]
+    builder --> elf["Combined UF2"]
     builder --> uf2["Combined UF2"]
     elf --> sign["Secure Boot signing"]
     sign --> signed["Signed UF2"]

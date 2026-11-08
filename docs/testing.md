@@ -303,12 +303,12 @@ Recorded runs are in the
 
 ### Real-world interop
 
-The [interop matrix](interop.md) lists the clients and operations exercised
-on real hosts. The reproducible emulator sweep checks getInfo, ATR and
-management DeviceInfo against a frozen YubiKey baseline. Two-device
-differential tests and browser, desktop, or touch ceremonies need the
-actual clients and devices. The comparison rules record accepted
-differences explicitly.
+The [interop report](https://github.com/TheMaxMur/RS-Key/blob/main/assurance/reports/interop.md)
+records the clients, operations and results on real hosts. The emulator
+sweep checks getInfo, ATR and management DeviceInfo against a frozen
+YubiKey baseline. Two-device differential tests and browser, desktop, or
+touch ceremonies need the actual clients and devices. The comparison rules
+record accepted differences explicitly.
 
 ## Fuzzing
 
@@ -623,4 +623,3 @@ cold power.
 Long run logs, coverage catalogues, mutation reviews and hardware scope
 records live under
 [`assurance/reports`](https://github.com/TheMaxMur/RS-Key/tree/main/assurance/reports).
-The [testing roadmap](testing-roadmap.md) lists work still open.

@@ -579,4 +579,4 @@ too. An interrupted reset leaves it there rather than half-wiped; run
   `ERROR: Incorrect TLV length` on firmware **before
   `0x0759`**: the GET DATA `6E` reply was missing its constructed-DO wrapper,
   which ykman's strict parser requires (`gpg` tolerated it). Fixed in `0x0759`;
-  flash it and re-run. See [interop.md](../interop.md#known-issues).
+  flash it and re-run. See the [GET DATA reproduction](https://github.com/TheMaxMur/RS-Key/blob/main/assurance/reports/interop.md#known-issues).

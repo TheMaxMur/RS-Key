@@ -257,7 +257,7 @@ wipe the whole key instead, see `rsk offboard`.
   changes no code, because HMAC pads its key with zeros anyway.
 - OATH interop (add → list → calculate → delete, plus TOTP crypto-verified
   against RFC vectors, via both `ykman oath` and Yubico Authenticator) is
-  tracked in [interop.md](../interop.md#oath--otp).
+  tracked in the [OATH interop results](https://github.com/TheMaxMur/RS-Key/blob/main/assurance/reports/interop.md#oath--otp).
 
 ## Troubleshooting
 

@@ -12900,7 +12900,7 @@ several sites of a rule the codebase had already decided once and swept incomple
   mode `Development` — so it matches what the reader is looking at rather than a
   provisioned key or the `VIDPID=Yubikey5` flavor.
 - **[Telesma](https://github.com/go-ctap/app) is tracked in the interop matrix as
-  `⏳ untested`** — the first row to use a mark [interop.md](docs/interop.md) has had
+  `⏳ untested`** — the first row to use a mark the [interop report](assurance/reports/interop.md) has had
   in its legend from the start. It is a desktop CTAP workbench over
   [`go-ctap/ctap`](https://github.com/go-ctap/ctap), an independent CTAP 2.0–2.3
   client stack, and that is the reason it is worth a row: every FIDO cell in that
@@ -14908,7 +14908,7 @@ strict-config`) remains the complete answer.
   that legitimately differ. Host-testable engine (`python -m pytest
   tests/interop/test_diff.py`). A first macOS run against a YubiKey 5C NFC found
   85 identical / 76 expected-divergence / 1 unexpected field (see
-  [docs/interop.md](docs/interop.md) → "Differential against a real YubiKey").
+  [Differential against a real YubiKey](assurance/reports/interop.md#differential-against-a-real-yubikey)).
 
 ### Changed
 
@@ -16585,7 +16585,7 @@ family that keeps the "enterprise" features in the open tree.
 
 - 39 fuzz targets, Kani proofs, a Miri pass, power-cut torture, bit-reproducible
   `nix build` images (per platform, per `flake.lock`), and a hardware-verified
-  interop matrix ([docs/interop.md](docs/interop.md)).
+  interop matrix ([interop report](assurance/reports/interop.md)).
 
 ### Release artifacts
 

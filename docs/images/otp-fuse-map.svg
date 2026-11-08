@@ -1,103 +1,78 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-only -->
 <!-- Copyright (C) 2026 RS-Key contributors -->
-<svg viewBox="0 0 780 520" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="ttl dsc" font-family="'Segoe UI', system-ui, -apple-system, sans-serif">
-  <title id="ttl">OTP fuse map (RP2350)</title>
-  <desc id="dsc">The OTP rows RS-Key provisions, grouped by page. Page 1 holds the boot-policy flags (CRIT1 secure-boot enable, BOOT_FLAGS0 rollback-required, BOOT_FLAGS1 key-valid, and the 48-bit rollback thermometer). Page 2 holds the boot-key fingerprint. Page 58 holds the device keys DEVK and MKEK with a bitwise-complement chaff in its high half. Lock rows finalize the pages. Rows are coloured by who writes them: picotool over BOOTSEL, the secure firmware, or the bootrom.</desc>
-  <defs>
-    <style>
-      .h1{font-size:23px;font-weight:700;fill:#2B2723}
-      .sub{font-size:12px;fill:#948A7F}
-      .lg{font-size:11px;fill:#6B645C}
-      .cap{font-size:11px;font-weight:700;fill:#2B2723}
-      .caps{font-size:10.5px;fill:#948A7F}
-      .addr{font-family:'SF Mono','Roboto Mono',ui-monospace,monospace;font-size:10.5px;fill:#7A736A}
-      .row{font-size:11.5px;font-weight:700;fill:#fff}
-      .rowk{font-family:'SF Mono','Roboto Mono',ui-monospace,monospace;font-size:11px;font-weight:700;fill:#fff}
-      .who{font-size:10px;fill:#948A7F}
-      .note{font-size:10.5px;fill:#5A534B}
-      .notek{font-weight:700;fill:#C0562B}
-      .foot{font-size:10.5px;fill:#ADA398}
-    </style>
-  </defs>
-  <rect x="6" y="6" width="768" height="508" rx="16" fill="#FBFAF8" stroke="#E4DED5" stroke-width="1.5"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 614"
+     role="img" aria-labelledby="title desc">
+  <title id="title">RP2350 OTP rows used by RS-Key</title>
+  <desc id="desc">Page 1 holds boot flags and the rollback floor. Page 2 holds
+    four ECC-encoded boot-key fingerprints. Page 58 holds DEVK and MKEK, with
+    paired chaff 32 rows above each key. The lock words are stored separately.
+    The host programs keys in BOOTSEL. Secure startup seals page 58. The
+    boot ROM advances the rollback floor, and it or Secure firmware can set
+    ROLLBACK_REQUIRED.</desc>
+  <style>
+    text { font-family: system-ui, sans-serif; fill: #21332F; font-size: 17px; }
+    .title { font-size: 25px; font-weight: 700; }
+    .section { font-size: 19px; font-weight: 700; }
+    .addr, .addr text { font-family: ui-monospace, monospace; font-size: 16px; }
+    .writer, .writer text { fill: #315A51; font-size: 16px; }
+    .card { fill: #F0F5F3; stroke: #D5E0DC; }
+    .rule { stroke: #D5E0DC; }
+  </style>
 
-  <text class="h1" x="34" y="46">OTP fuse map <tspan font-size="14" font-weight="400" fill="#948A7F">(RP2350)</tspan></text>
-  <text class="sub" x="34" y="66">antifuses — 0 → 1, never back · 24-bit rows · page = 64 rows · locks apply per page</text>
+  <rect x="1" y="1" width="598" height="612" rx="16" fill="#FCFDFB" stroke="#B7C8C2"/>
+  <text class="title" x="24" y="40">RP2350 OTP fuse map</text>
+  <text x="24" y="65">Addresses are OTP row numbers.</text>
 
-  <!-- legend: write path -->
-  <rect x="452" y="34" width="13" height="13" rx="3" fill="#C0562B"/>
-  <text class="lg" x="472" y="45">BOOTSEL</text>
-  <rect x="548" y="34" width="13" height="13" rx="3" fill="#2F7E75"/>
-  <text class="lg" x="568" y="45">firmware</text>
-  <rect x="646" y="34" width="13" height="13" rx="3" fill="#3E3A36"/>
-  <text class="lg" x="666" y="45">bootrom</text>
-
-  <!-- PAGE 1 -->
-  <text class="cap" x="34" y="92">PAGE 1 · 0x40 <tspan class="caps">— boot policy</tspan></text>
+  <rect class="card" x="24" y="84" width="552" height="160" rx="10"/>
+  <text class="section" x="40" y="111">Page 1 · Boot policy</text>
+  <path class="rule" d="M40 121H560 M40 151H560 M40 179H560 M40 207H560"/>
+  <g class="addr">
+    <text x="40" y="143">0x040</text>
+    <text x="40" y="171">0x048</text>
+    <text x="40" y="199">0x04B</text>
+    <text x="40" y="227">0x04E / 0x051</text>
+  </g>
   <g>
-    <text class="addr" x="150" y="114" text-anchor="end">0x40</text>
-    <rect x="158" y="100" width="392" height="26" rx="6" fill="#C0562B"/>
-    <text class="row" x="170" y="117">CRIT1 — SECURE_BOOT_ENABLE · DEBUG_DISABLE · glitch</text>
-    <text class="who" x="562" y="117">harden / enable</text>
-
-    <text class="addr" x="150" y="146" text-anchor="end">0x48</text>
-    <rect x="158" y="132" width="392" height="26" rx="6" fill="#2F7E75"/>
-    <text class="row" x="170" y="149">BOOT_FLAGS0 — ROLLBACK_REQUIRED (bit 11)</text>
-    <text class="who" x="562" y="149">firmware</text>
-
-    <text class="addr" x="150" y="178" text-anchor="end">0x4B</text>
-    <rect x="158" y="164" width="392" height="26" rx="6" fill="#C0562B"/>
-    <text class="row" x="170" y="181">BOOT_FLAGS1 — KEY_VALID / KEY_INVALID</text>
-    <text class="who" x="562" y="181">load-key / lock</text>
-
-    <text class="addr" x="150" y="210" text-anchor="end">0x4E·0x51</text>
-    <rect x="158" y="196" width="392" height="26" rx="6" fill="#3E3A36"/>
-    <text class="row" x="170" y="213">DEFAULT_BOOT_VERSION — 48-bit rollback thermometer</text>
-    <text class="who" x="562" y="213">bootrom advances</text>
+    <text x="182" y="143">CRIT1</text>
+    <text x="182" y="171">ROLLBACK_REQUIRED</text>
+    <text x="182" y="199">KEY_VALID / KEY_INVALID</text>
+    <text x="182" y="227">Rollback floor · 48 logical bits</text>
+  </g>
+  <g class="writer" text-anchor="end">
+    <text x="560" y="143">BOOTSEL</text>
+    <text x="560" y="171">ROM / Secure firmware</text>
+    <text x="560" y="199">BOOTSEL</text>
+    <text x="560" y="227">ROM</text>
   </g>
 
-  <!-- PAGE 2 -->
-  <text class="cap" x="34" y="248">PAGE 2 · 0x80 <tspan class="caps">— secure-boot key</tspan></text>
-  <text class="addr" x="150" y="270" text-anchor="end">0x80</text>
-  <rect x="158" y="256" width="392" height="26" rx="6" fill="#C0562B"/>
-  <text class="row" x="170" y="273">boot-key fingerprint — SHA-256(pubkey), slot 0 / 4</text>
-  <text class="who" x="562" y="273">load-key</text>
+  <rect class="card" x="24" y="256" width="552" height="80" rx="10"/>
+  <text class="section" x="40" y="283">Page 2 · Boot-key fingerprints</text>
+  <text class="writer" x="560" y="283" text-anchor="end">BOOTSEL</text>
+  <text class="addr" x="40" y="315">0x080 · 0x090 · 0x0A0 · 0x0B0</text>
+  <text x="560" y="315" text-anchor="end">Four ECC slots</text>
 
-  <!-- PAGE 58 -->
-  <text class="cap" x="34" y="304">PAGE 58 · 0xE80 <tspan class="caps">— device keys + anti-imaging chaff</tspan></text>
-  <g>
-    <text class="addr" x="150" y="326" text-anchor="end">0xE80·0xEA0</text>
-    <rect x="158" y="312" width="392" height="26" rx="6" fill="#C0562B"/>
-    <line x1="382" y1="312" x2="382" y2="338" stroke="#FBFAF8" stroke-width="1.5"/>
-    <text class="rowk" x="170" y="329">DEVK</text>
-    <text class="rowk" x="394" y="329">¬DEVK chaff (+0x20)</text>
-    <text class="who" x="562" y="329">otp burn</text>
+  <rect class="card" x="24" y="348" width="552" height="128" rx="10"/>
+  <text class="section" x="40" y="375">Page 58 · Device keys</text>
+  <text class="writer" x="560" y="375" text-anchor="end">BOOTSEL</text>
+  <text x="40" y="403">Low half · ECC</text>
+  <text x="310" y="403">High half · raw complement</text>
+  <path class="rule" d="M40 411H560 M290 386V461"/>
+  <text class="addr" x="40" y="433">0xE80</text>
+  <text class="addr" x="40" y="459">0xE90</text>
+  <text x="120" y="433">DEVK</text>
+  <text x="120" y="459">MKEK</text>
+  <text class="addr" x="310" y="433">0xEA0</text>
+  <text class="addr" x="310" y="459">0xEB0</text>
+  <text x="390" y="433">DEVK chaff</text>
+  <text x="390" y="459">MKEK chaff</text>
 
-    <text class="addr" x="150" y="358" text-anchor="end">0xE90·0xEB0</text>
-    <rect x="158" y="344" width="392" height="26" rx="6" fill="#C0562B"/>
-    <line x1="382" y1="344" x2="382" y2="370" stroke="#FBFAF8" stroke-width="1.5"/>
-    <text class="rowk" x="170" y="361">MKEK</text>
-    <text class="rowk" x="394" y="361">¬MKEK chaff (+0x20)</text>
-    <text class="who" x="562" y="361">random, forgotten</text>
-  </g>
-
-  <!-- LOCKS -->
-  <text class="cap" x="34" y="392">LOCK ROWS <tspan class="caps">— finalize the pages</tspan></text>
-  <g>
-    <text class="addr" x="150" y="414" text-anchor="end">0xF83·0xF85</text>
-    <rect x="158" y="400" width="392" height="26" rx="6" fill="#C0562B"/>
-    <text class="row" x="170" y="417">page 1 &amp; 2 lock — bootloader read-only</text>
-    <text class="who" x="562" y="417">secure-boot lock</text>
-
-    <text class="addr" x="150" y="446" text-anchor="end">0xFF5</text>
-    <rect x="158" y="432" width="392" height="26" rx="6" fill="#2F7E75"/>
-    <text class="row" x="170" y="449">page-58 lock — BOOTSEL-unreadable, secure r/o</text>
-    <text class="who" x="562" y="449">lock-page58</text>
-  </g>
-
-  <!-- notes -->
-  <text class="note" x="34" y="480"><tspan class="notek">RBIT-3</tspan> — the secure-boot flags, boot-key fingerprint and rollback rows live in 3 rows, read by 2-of-3 majority.</text>
-  <text class="note" x="34" y="497"><tspan class="notek">Chaff</tspan> — page-58 high half stores <tspan font-family="'SF Mono',monospace">¬key</tspan>, so a paired-row OR readout sees all-ones and no key bits.</text>
-
-  <text class="foot" x="558" y="497">Source: tools/rsk/otp.py · secureboot.py</text>
+  <rect class="card" x="24" y="488" width="552" height="104" rx="10"/>
+  <text class="section" x="40" y="515">Lock words</text>
+  <path class="rule" d="M40 525H560 M40 555H560"/>
+  <text class="addr" x="40" y="547">0xF83 / 0xF85</text>
+  <text x="182" y="547">Pages 1 and 2</text>
+  <text class="writer" x="560" y="547" text-anchor="end">BOOTSEL</text>
+  <text class="addr" x="40" y="575">0xFF5</text>
+  <text x="182" y="575">Page 58</text>
+  <text class="writer" x="560" y="575" text-anchor="end">Secure startup</text>
 </svg>

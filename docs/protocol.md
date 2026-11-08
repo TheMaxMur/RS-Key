@@ -5,9 +5,9 @@ configuration/management tool talks to the device, what commands exist, the exac
 byte layout of each request and response, and what authenticates each one.
 
 It exists so that third-party tooling (e.g. **PicoForge**) can configure and
-manage RS-Key devices without reverse-engineering the firmware. The canonical,
-runnable reference client is the `rsk` Python CLI. Every command
-below is implemented there; file/line pointers are given throughout.
+manage RS-Key devices. The `rsk` Python CLI is a runnable reference for the
+management operations it exposes. Firmware source paths accompany the wire
+formats.
 
 > **Audience & scope.** This is a wire spec, not a tutorial. It documents the
 > commands a host sends and the bytes it gets back. It does **not** cover the
@@ -19,9 +19,9 @@ below is implemented there; file/line pointers are given throughout.
 > against it under any license. Interop implementations do not inherit AGPL by
 > talking to the device.
 
-> **Stability.** The two transports and the **standard** applets (FIDO2, U2F, PIV,
+> **Stability.** The transports and the **standard** applets (FIDO2, U2F, PIV,
 > OATH, OTP, OpenPGP, Yubico Management) are stable. They follow public specs.
-> The **RS-Key-specific** surface (Rescue applet, Vendor/LED applet, CTAPHID
+> The **RS-Key-specific** surface (Rescue applet, Vendor/LED applet, CTAP
 > `authenticatorVendor 0x41`) is versioned by `bcdDevice` and may grow; new
 > tags/subcommands are added, existing ones are not silently repurposed. Probe the
 > version handshakes (§3, §6.1) and treat unknown tags as skippable.
@@ -30,23 +30,21 @@ below is implemented there; file/line pointers are given throughout.
 
 ## 1. Transports
 
-RS-Key is a USB composite device exposing two host-reachable transports:
+RS-Key is a USB composite device. Its default interface set is:
 
 | Transport | Carries | Host API |
 |---|---|---|
-| **CTAPHID** (FIDO HID, usage page `0xF1D0`) | CTAP1/U2F, CTAP2, and the `authenticatorVendor 0x41` vendor command | `hidapi` |
-| **CCID** (PC/SC smart-card) | All ISO-7816 applets, selected by AID | `pyscard` / PC/SC |
+| **Keyboard HID** | Yubico OTP feature reports and typed OTP output | OS HID stack / Yubico OTP libraries |
+| **CTAPHID** (FIDO HID, usage page `0xF1D0`) | CTAP1/U2F, CTAP2, and native HID DeviceInfo commands | `hidapi` |
+| **CCID** (PC/SC smart-card) | ISO-7816 applets selected by AID, including CTAP over CCID | `pyscard` / PC/SC |
 
-A keyboard (HID) interface also exists for Yubico OTP. On the default build it
-also carries the ykman OTP-HID admin writes (SET_DEVICE_INFO `0x15`,
-DEVICE_CONFIG `0x11`, SCAN_MAP `0x12`, NDEF `0x08`/`0x09`) — ungated, like a stock
-YubiKey; `strict-config` refuses them. SET_DEVICE_INFO shares the same
-`EF_DEV_CONF` DeviceInfo store as the CCID WRITE CONFIG (§6); the rest are inert
-on this USB-only board except SCAN_MAP (it remaps typed OTP output). Each admin
-write **advances the status frame's program-sequence byte** — that increment is
-how ykman/yubikit confirm it (a write that left the sequence unchanged reports
-`CommandRejectedError: No data`, which is what blocked `ykman config usb` over
-this transport before). The frame codec itself is otherwise out of scope here.
+On the default build, keyboard HID also carries the ykman OTP-HID admin writes (SET_DEVICE_INFO `0x15`,
+DEVICE_CONFIG `0x11`, SCAN_MAP `0x12`, NDEF `0x08`/`0x09`).
+SET_DEVICE_INFO shares the DeviceInfo store with CCID WRITE CONFIG (§6).
+SCAN_MAP remaps typed OTP output. DEVICE_CONFIG and NDEF have no effect on USB
+operation. An accepted admin write advances the status frame's program-sequence
+byte. Under `strict-config` these slots leave it unchanged, which ykman/yubikit
+treat as a rejected command.
 
 The interfaces are presented in the stock YubiKey order — **keyboard/OTP, FIDO
 HID, CCID** — because some hosts address the OTP interface by index instead of
@@ -57,14 +55,10 @@ there whatever the descriptors say. An interface switched off in
 host that assumes a fixed index only holds where the same interface set is
 enabled.
 
-The OTP frame protocol answers a HID feature GET/SET_REPORT on the **keyboard
-interface only**. The keyboard interface being first (index 0) is what those
-index-addressing hosts need; serving the frames on the FIDO interface too was
-tried but reverted (audit run-30) — it gained no host that the keyboard interface
-does not already serve, and on macOS it removed a real privilege boundary (IOKit
-gates a keyboard-usage HID nub behind Input Monitoring while the `0xF1D0` FIDO nub
-opens to any console-user process). The FIDO interrupt endpoints carry CTAPHID and
-nothing else, and its report descriptor declares no feature report.
+The OTP frame protocol answers HID feature GET/SET_REPORT on the **keyboard
+interface only**. On macOS, access to the keyboard interface can require Input
+Monitoring. The FIDO interrupt endpoints carry CTAPHID, and their report
+descriptor declares no feature report.
 
 A slot programmed to require a touch answers its challenge only after a button
 press, and reports the wait in the status byte (`0x20`) meanwhile. Two things end
@@ -82,33 +76,29 @@ challenges it had in fact completed.
 
 ### 1.1 CCID APDU framing
 
-The experimental TrustZone image supports two-phase CCID ABORT (CCID 1.1 §4.1):
-an EP0 class request `bmRequestType=21`, `bRequest=01`, `wValue=bSlot | bSeq<<8`
+CCID ABORT has two phases (CCID 1.1 §4.1). Send an EP0 class request with
+`bmRequestType=21`, `bRequest=01`, `wValue=bSlot | bSeq<<8`
 at the CCID interface, followed by `PC_to_RDR_Abort` (`72`) with the matching
 slot/sequence. Slot 0 is the only slot. Until the matching bulk command arrives,
 commands fail with `CMD_ABORTED` (`FF`); the bulk acknowledgement is
 `RDR_to_PC_SlotStatus` (`81`). An unmatched bulk sequence is refused with field
-offset `06`. Cancellation suppresses the response; synchronous computation and
-already committed flash updates are completed at their normal safe point.
+offset `06`. An aborted transfer returns a failed DataBlock with `bError=FF`
+in place of its APDU reply. Cancellation can end a presence wait. Synchronous
+work reaches its normal safe point, and committed writes remain in effect.
 
-In this image, CTAPHID_CANCEL is also accepted while CBOR computation runs and
-answers the original request with `CTAP2_ERR_KEEPALIVE_CANCEL` (`2D`). USB reset,
-deconfiguration or suspend invalidates pending replies and clears transient
-applet authorization in Secure before new work is accepted. Persisted keys and
-the FIDO per-boot PIN mismatch budget survive a bus event. The ordinary image
-retains its existing transport configuration.
+USB reset, deconfiguration or suspend invalidates pending replies and clears
+transient applet authorization in Secure before new work is accepted. Persisted
+keys and the FIDO per-boot PIN mismatch budget survive a bus event. The same
+event discards partial CTAPHID messages and clears the channel lock. Continuation
+frames from the old session cannot resume an interrupted message.
 
-The same event aborts partial CTAPHID reassembly and clears its channel lock.
-Continuations from the old session are ignored until a new init frame starts
-a message.
-
-Standard ISO-7816 short APDUs. SELECT is always `00 A4 04 00 Lc <AID> 00`; a
-`P2` of `04` selects too, where a YubiKey 5.8.0 answers `6D00`, because PicoForge
-sends it ([limitations](limitations.md)). The
+CCID accepts ISO-7816 short and extended APDUs. Use
+`00 A4 04 00 Lc <AID> 00` to select by AID. RS-Key also accepts the
+`P2 = 04` form used by PicoForge. The
 selected applet then receives `CLA INS P1 P2 [Lc <data>] [Le]`. There is no ISO
 master file, so the master-file SELECT (`00 A4 00 0C …`, GnuPG's `3F00` probe)
 answers `6D00` like a YubiKey. The power-on ATR is T=1, its historical bytes labelled
-`YubiKey` on a Yubico-identity build and `RS-Key` on the default build (identical
+`YubiKey` when the effective USB VID is `1050` and `RS-Key` otherwise (identical
 card capabilities). The reference transport is `tools/rsk/ccid.py`:
 
 ```python
@@ -140,10 +130,16 @@ across CCID messages (`bChainParameter` stays `00`).
 Applets that additionally name a class of their own reject
 anything else themselves: OATH, management and OTP take `00` and `80` alike,
 both of which a YubiKey 5.8.0 serves there, U2F wants `00` and rescue `80`. A
-chain is reassembled into a single command of at most **3072 bytes**, as on a
-YubiKey 5.8.0; a segment that would reach or pass that is `6700`, and the partial chain
-is dropped rather than dispatched — so a host that retries the segment is
-starting a **new** chain, not continuing the old one.
+chain can carry at most **3072 bytes of command data**. A non-final segment must
+leave room below that limit. The final segment may fill it exactly. On overflow,
+the device returns `6700` and drops the chain. Segments must match on
+`(CLA & ~0x10, INS, P1, P2)`. A mismatch returns `6883` and clears the chain.
+A SELECT-by-AID discards the old chain before looking up the AID.
+
+A single `XfrBlock` fits a 3062-byte APDU after the 10-byte CCID header.
+An extended APDU can therefore carry up to 3055 bytes of data without `Le`,
+or 3053 with `Le`. Use ISO-7816 command chaining for larger inputs within the
+reassembly limit.
 
 The lengths have to describe the command exactly, short or extended (`00`, then
 a two-byte `Lc` or `Le`): a byte past the `Le`, or an `Lc` its data does not
@@ -187,7 +183,7 @@ an extended one as much as a CCID frame holds. Frames are cut at the byte, so an
 straddle two of them: join the frames before parsing. SEND REMAINING never judges
 its P1-P2, and with no page owed it answers `6D00`, as a YubiKey 5.8.0 does.
 
-Seven OATH rules a host has to expect, all matching a YubiKey 5.7.4. `PUT`
+**OATH PUT.** `PUT`
 (`0x01`) is strict about the credential body — KEY TLV 16..=66 bytes (a secret
 shorter than 14 bytes is refused, not padded: zero-pad it first, as ykman does,
 and the codes do not change), digits 6/7/8, type `0x10`/`0x20`, algorithm 1/2/3,
@@ -195,8 +191,10 @@ name 1..=64 bytes, the initial moving factor on HOTP only and exactly 4 bytes,
 the PROPERTY byte as the bare `78 vv` pair, the four YKOATH tags in that order,
 no duplicate, no unknown tag and no trailing byte. Anything else is `6A80` with
 **nothing stored**, so a rejected `PUT` leaves an existing credential of that
-name working. (RS-Key also stores the password-safe fields `0x83`/`0x84`/`0x85`,
-≤255 bytes each, which may sit anywhere in the body.) `SET CODE` (`0x03`) holds
+name working. RS-Key also stores the password-safe fields `0x83`/`0x84`/`0x85`,
+up to 255 bytes each, anywhere in the body.
+
+**OATH access code.** `SET CODE` (`0x03`) holds
 its key to the same measured rule: the `73` TLV is one algorithm byte plus
 **14..=64 bytes** of key material, or empty to remove the access code — anything
 else is `6A80` and whatever code was installed is left exactly as it was. Its
@@ -204,8 +202,10 @@ proof travels over an **exactly 8-byte** `74` challenge (`os.urandom(8)`, as
 ykman sends it); any other width is `6A80`, and removing a code needs no
 challenge at all. `VALIDATE` (`0xA3`) then refuses a proof that does not match
 with `6A80` as well; `6984` from it means something else entirely — no access
-code is installed to match against. And PROPERTIES bit 0, *only increasing*, is
-enforced: a TOTP credential carrying it computes only for a challenge strictly
+code is installed to match against.
+
+**OATH only-increasing property.** A TOTP credential with PROPERTIES bit 0
+computes only for a challenge strictly
 greater than the highest one it has served, comparing the raw challenge bytes
 zero-extended on the right — plain numeric `>` for the usual 8-byte counter. A
 challenge at or below that mark is `6A80`, and in `CALCULATE ALL` one such
@@ -219,7 +219,7 @@ The bulk preflight refuses a flash read fault with `6581` and no response body,
 before a code can be emitted without its mark. Marks committed before the
 failing slot remain advanced; the operation is not atomic across credentials.
 
-The fourth is the challenge itself. `CALCULATE` (`0xA2`) and `CALCULATE ALL`
+**OATH challenge length.** `CALCULATE` (`0xA2`) and `CALCULATE ALL`
 (`0xA4`) take an opaque byte string of **0..=64 bytes** in the `74` TLV and HMAC
 all of it; 65 or more is `6A80`, judged before the credential is looked up and
 whatever the credential's type, so a `HOTP` account that ignores the challenge
@@ -227,7 +227,7 @@ refuses an over-wide one too. Both read paths therefore answer the same code for
 the same challenge at every accepted width — including across a `SEND REMAINING`
 page — and the usual 8-byte TOTP counter is simply the common case.
 
-The fifth is how the bodies are read. `CALCULATE`, `VALIDATE` and `SET CODE`
+**OATH TLV order.** `CALCULATE`, `VALIDATE` and `SET CODE`
 are parsed **by position**: exactly the documented TLVs, in the documented
 order, with nothing before, between or after them — `71` then `74` for
 `CALCULATE`, **`75` then `74`** for `VALIDATE` (the response comes first, as
@@ -238,7 +238,7 @@ YubiKey. A reordering, a repeated tag, an unknown tag or a trailing byte is
 `6A80`, with nothing stored. `CALCULATE ALL` is the one exception the card
 makes: its `74` must be the **first** TLV, and whatever follows it is ignored.
 
-The sixth is what a truncated response carries. With `P2 = 0x01` the `76` TLV is
+**OATH truncation.** With `P2 = 0x01` the `76` TLV is
 `[digits][code(4)]`, and the four bytes are the RFC 4226 dynamic truncation
 **already reduced to that credential's digit count** — big-endian, so a 6-digit
 account never exceeds `000F 423F`. A host must not reduce a second time expecting
@@ -246,8 +246,8 @@ a different answer, and `VERIFY CODE` (`0xB1`) compares exactly the value
 `CALCULATE` sent. The untruncated form (`P2 = 0x00`, tag `75`) is unaffected: it
 carries the whole HMAC.
 
-The seventh runs across the whole table: the parameter bytes. Every OATH command
-is sent `P1 = 00`, `P2 = 00`. The `01` that selects the truncated form belongs to
+**OATH parameter bytes.** Default to `P1 = 00`, `P2 = 00`. The `01` that
+selects the truncated form belongs to
 `CALCULATE` and `CALCULATE ALL` and to nothing else — on `PUT`, `DELETE`, `SET
 CODE`, `RENAME` and `LIST` it is refused like any other stray byte. `RESET` alone
 takes `DE AD`, and `VALIDATE` is the card's own exception: it refuses only when
@@ -260,7 +260,15 @@ instruction the applet does not implement still answers `6D00` first.
 64-byte HID reports. Init frame: `CID(4) | CMD(1) | BCNT_HI | BCNT_LO | data[:57]`;
 continuation frames: `CID(4) | SEQ(1) | data[:59]`. `CTAPHID_INIT = 0x86`,
 `CTAPHID_CBOR = 0x90`, `CTAPHID_KEEPALIVE = 0xBB`. A CTAP2 message is
-`command_byte | CBOR_payload`. Reference: `tools/rsk/ctaphid.py`.
+`command_byte | CBOR_payload`. A CTAP2 response starts with a one-byte status.
+Native HID DeviceInfo commands use their own HID command byte (§6.1).
+Reference implementation in `tools/rsk/ctaphid.py`.
+
+While a CBOR command runs, the device sends `CTAPHID_KEEPALIVE` every 100 ms
+with status `01` (processing) or `02` (waiting for user presence). A
+zero-length `CTAPHID_CANCEL` (wire command `0x91`) on the active CID gets no
+separate reply. The original CBOR request returns `2D`
+(`CTAP2_ERR_KEEPALIVE_CANCEL`) at a safe point. A committed write stays committed.
 
 Take the channel id from the `CTAPHID_INIT` response and use that one: every INIT on
 the broadcast CID allocates a fresh id, so an id hardcoded or cached across sessions
@@ -287,11 +295,8 @@ CCID** driver (keys solely off `bPINSupport`); PC/SC + libccid and macOS
 CryptoTokenKit also expose pinpad from the descriptor, but their `FEATURE_VERIFY_PIN_DIRECT`
 coverage varies, so treat the GnuPG-internal path as the reliable one.
 
-**Scope (honest):** this keeps the PIN off the wire **only when the host uses
-pinpad mode**. The device still accepts a normal plaintext `XfrBlock` VERIFY
-(`00 20 P1 P2 Lc <PIN>`), so a host that chooses to send one puts the PIN on the
-wire. Standard pinpad *enables* on-device entry, it does not *enforce* it (a
-device-enforced mode is a planned opt-in follow-up).
+The host must use pinpad mode to keep the PIN off the wire. A normal
+`XfrBlock` VERIFY (`00 20 P1 P2 Lc <PIN>`) still carries a plaintext PIN.
 
 Whatever the host driver, the bytes on the wire follow the **CCID** structure
 below, not the PC/SC v2 Part 10 IOCTL structure (the driver drops that structure's
@@ -306,6 +311,8 @@ bNumberMessage(1) | wLangId(2 LE) | bMsgIndex(1) | bTeoPrologue(3) |
 abPINApdu = CLA INS=0x20 P1 P2 …   (the VERIFY template, at offset 15)
 ```
 
+Select an enabled OpenPGP or PIV applet first. The display asks
+“Allow host PIN entry?” before opening the PIN pad.
 The device reads the template's `P2` (OpenPGP `0x81`/`0x82`/`0x83` = PW1-sign /
 PW1-other / PW3-admin; PIV `0x80` = application PIN), collects the PIN on the pad,
 builds the real VERIFY APDU (`00 20 P1 P2 Lc <ASCII PIN>`; PIV pads with `0xFF` to
@@ -319,13 +326,15 @@ builds the real VERIFY APDU (`00 20 P1 P2 Lc <ASCII PIN>`; PIV pads with `0xFF` 
   on an empty VERIFY) / `69 83` (blocked),
   `bStatus = 0`, `bError = 0` (the command succeeded; the card said wrong).
 - **user cancel** → `bStatus = 0x40` (failed), `bError = 0xEF` → `SCARD_W_CANCELLED_BY_USER`.
+- **initial approval declined or timed out** → `bStatus = 0x40`, `bError = 0xEF`.
 - **pad timeout** → `bStatus = 0x40`, `bError = 0xF0` → `SCARD_E_TIMEOUT`.
+- **unsupported pinpad request or no eligible applet selected** → `bStatus = 0x40`, `bError = 0x00`.
 
-The transport streams T=1 time-extensions for the whole on-screen entry, so the host
-transaction does not time out. The device ignores the host's format/offset bits and
-builds the APDU from its own buffers, so a crafted `0x69` can't index out of bounds.
-Trigger from GnuPG: `gpg-connect-agent "scd checkpin OPENPGP.1" /bye` (internal CCID,
-no host config). PIN parse + APDU assembly: `crates/rsk-usb/src/secure_pin.rs`.
+The transport sends CCID time extensions while the device waits on the screen.
+The device ignores the host's PIN format and offset bits when assembling VERIFY.
+With GnuPG's internal CCID driver, run
+`gpg-connect-agent "scd checkpin OPENPGP.1" /bye`.
+The parser and VERIFY assembly are in `crates/rsk-usb/src/secure_pin.rs`.
 
 ---
 
@@ -341,14 +350,17 @@ Source: `crates/rsk-sdk/src/sw.rs`.
 | `63C0` | — | WRITE CONFIG (§6) with a configuration lock code that is not the one set, as a YubiKey 5.8.0 answers it |
 | `6400` | EXEC_ERROR | execution error (internal) |
 | `6285` | TERMINATED | OpenPGP after TERMINATE DF: every command, SELECT included, until ACTIVATE FILE (§5.1) |
-| `6581` | MEMORY_FAILURE | flash access failed — a write, or a read whose answer the command must not guess (`1E/01` READ phy, `1C/01` WRITE phy, WRITE CONFIG's merge); and OpenPGP PSO:DECIPHER's answer to an ECDH peer point that decodes but is unusable (off the field or curve, X25519 small order), or to an RSA cryptogram it cannot decrypt (any width but the modulus's, bad padding, c = 0, n − 1 or n); RSA PSO:CDS and INTERNAL AUTHENTICATE over more than k − 11 bytes; GENERATE's `P1 = 81` read of a slot with no key; and an RSA IMPORT whose primes have the right widths and make no working key (`p = q`, composite primes, a short modulus) — as a YubiKey 5.8.0 answers each, though it also deletes the slot's key on that last one and RS-Key keeps it |
+| `6581` | MEMORY_FAILURE | a storage failure, including Rescue READ phy or a DeviceInfo merge. Storage recovery also uses this status for unavailable Rescue operations (§7). OpenPGP uses it for undecipherable RSA ciphertext, an unusable ECDH peer point, oversized RSA signing input, reading an empty key slot, or importing correctly sized RSA primes that fail key construction |
 | `6700` | WRONG_LENGTH | bad `Lc`/`Le` for this command |
 | `6883` | LAST_CHAIN_EXPECTED | an APDU arrived that neither continues nor closes the open command chain |
 | `6982` | SECURITY_STATUS_NOT_SATISFIED | auth/precondition missing |
+| `6983` | PIN_BLOCKED | PIN verification is blocked |
 | `6984` | DATA_INVALID | malformed payload (e.g. bad guard magic) |
 | `6985` | CONDITIONS_NOT_SATISFIED | state precondition unmet (e.g. RTC unset); a WRITE CONFIG setting a configuration lock where none is set without its touch (§6.2); OpenPGP PSO:CDS, the RSA and ECDH arms of PSO:DECIPHER and INTERNAL AUTHENTICATE with no key in the slot, and ATTEST of an empty slot or an imported key, as a YubiKey 5.8.0 answers them |
 | `6986` | COMMAND_NOT_ALLOWED | WRITE CONFIG (§6) with no lock code while a configuration lock is set, as a YubiKey 5.8.0 answers it; a phy (§7) or LED (§8) write while one is set |
 | `6A80` | WRONG_DATA | bad data field; PIV `MOVE KEY` onto a slot that holds a key or takes none, or onto itself; PIV `PUT DATA` with a P1-P2 other than `3FFF`; OpenPGP GENERATE and IMPORT with a control-reference template they cannot read or whose key reference `84 01 xx` names another slot, and GENERATE `P1 = 80` and IMPORT under Yubico's attestation-key template `B6 { 84 01 81 }`; OpenPGP ATTEST with a P1-P2 or a body it does not take; OpenPGP SELECT DATA with any body but `60 04 5C 02 7F 21` |
+| `6A82` | FILE_NOT_FOUND | the requested AID or file is unavailable |
+| `6A84` | FILE_FULL | the applet's storage limit is exhausted |
 | `6A86` | INCORRECT_P1P2 | unsupported P1/P2 |
 | `6A88` | REFERENCE_NOT_FOUND | the object, key or PIN the request names is absent (PIV `GET METADATA`, `MOVE KEY`, the PIN commands' key reference) |
 | `6B00` | WRONG_P1P2 | P1/P2 outside what this command takes — including a DO that `P1P2` addresses and the command does not serve (OpenPGP `GET DATA`, `PUT DATA`), and an OpenPGP `SELECT DATA` occurrence past the third or `P2` other than `04`, judged before its body |
@@ -364,16 +376,21 @@ surface returns:
 | Byte | Name | Meaning here |
 |---|---|---|
 | `0x00` | OK | success |
-| `0x02` | INVALID_PARAMETER | malformed param / bad key / wrong blob length |
+| `0x02` | INVALID_PARAMETER | invalid field or public key, unknown vendor subcommand, or invalid encrypted key for UNLOCK/ATT_IMPORT |
+| `0x03` | INVALID_LENGTH | a request exceeds a command's input limit (for example, the DeviceInfo config blob) |
 | `0x12` | INVALID_CBOR | the body is not exactly one CBOR item (trailing bytes) |
 | `0x14` | MISSING_PARAMETER | required field absent (e.g. blob/`pinUvAuthParam`) |
-| `0x27` | OPERATION_DENIED | touch declined / timed out; a `CONFIG_WRITE` of `EF_DEV_CONF` whose lock code is wrong (§6.2) |
+| `0x27` | OPERATION_DENIED | presence declined or timed out, wrong config lock code on a DeviceInfo write, or CBOR disabled by `USB_ENABLED` |
+| `0x2D` | KEEPALIVE_CANCEL | the host cancelled the active CTAPHID CBOR request |
+| `0x2F` | USER_ACTION_TIMEOUT | on-device PIN entry timed out, or a CCID FIDO poll/cancel found no pending operation |
 | `0x30` | NOT_ALLOWED | precondition unmet (a `CONFIG_WRITE` of `EF_DEV_CONF` with no lock code, or of the phy or LED record, while a lock is set (§6.2), no MSE channel, one already spent or owned by another CTAPHID channel, an `MSE` while one is live (§9.1), sealed, soft-locked, or an `authenticatorReset` outside the §5.1 power-up window) |
+| `0x31` / `0x32` | PIN_INVALID / PIN_BLOCKED | wrong PIN or exhausted retries |
 | `0x33` | PIN_AUTH_INVALID | `pinUvAuthParam` MAC or `acfg` permission wrong |
-| `0x36` | PUAT_REQUIRED | a PIN is set but no `pinUvAuthToken` was supplied |
+| `0x36` | PUAT_REQUIRED | the request requires a PIN token or on-device PIN entry (§9.2) |
 | `0x39` | REQUEST_TOO_LARGE | `subCommandParams` over the limit |
 | `0x3D` | INTEGRITY_FAILURE | blob failed authenticated decryption |
 | `0x3E` | INVALID_SUBCOMMAND | unknown `vendorCommandId` under `authenticatorConfig`'s `0xFF`. A `0x41` **subcommand** this build does not implement is `0x02`, matching a YubiKey |
+| `0x7F` | OTHER | internal failure, for example an unreadable CONFIG_READ record |
 
 ---
 
@@ -408,21 +425,21 @@ string). ⚠️ so a phy-repointed default key can present a full Yubico identit
 runtime; the USB/smartcard identity is cosmetic and host-configurable, never a
 security or anti-counterfeiting control (see docs/threat-model.md).
 
-**Recognizing an RS-Key by PC/SC reader name:** the reader name contains `RS-Key`
-(default build) or `RSK` (Yubico-interop build). Neither appears in a genuine
-YubiKey's reader name. Reference: `RSK_READER_TOKENS` in
-`tools/rsk/ccid.py`.
+For PC/SC discovery, `rsk` looks for `RS-Key` and `RSK` in reader names.
+Platform naming and custom USB strings can change the name. Probe the applet
+you need on a candidate reader. See `RSK_READER_TOKENS` in `tools/rsk/ccid.py`.
 
 ### 3.2 Firmware version & `bcdDevice`
 
 | Field | Value | Where |
 |---|---|---|
 | firmwareVersion | `5.8.0` → `0x00050800` | CTAP getInfo `0x0E`; Management/OTP DeviceInfo `TAG_VERSION`; Management SELECT (`"Virtual mgr - FW version 5.8.0"` ASCII, a YubiKey 5.8.0's words) |
-| `bcdDevice` | `0x0780` (build counter, increments per firmware change) | USB device descriptor (`firmware/src/main.rs` `device_release`) |
+| `bcdDevice` | Firmware build counter | USB device descriptor (`firmware/src/main.rs` `device_release`) |
 | AAGUID | `2479c7bf-6b30-5683-9ec8-0e8171a918b7` | CTAP getInfo `0x03`; one value across every VID/PID flavor of a build, overridable at build time with `AAGUID=<uuid>` |
 
-The firmware version is overridable at build time (`FW_VERSION=X.Y.Z`); `5.8.0`
-mirrors a current YubiKey 5 so Yubico tooling is satisfied under the Yubico VID.
+The build accepts `FW_VERSION=X`, `X.Y` or `X.Y.Z`. The default is `5.8.0`
+for compatibility with Yubico tooling. Read `bcdDevice` from the USB descriptor
+when checking for an RS-Key protocol change.
 
 ---
 
@@ -440,8 +457,9 @@ rather than treated as "select the default application". Two consequences worth
 planning for: OpenPGP is selected by the 6-byte AID below, **not** by the 16-byte
 value it reports in DO `4F` (that one carries the device serial and is longer, so
 it is not a prefix — a real YubiKey refuses it too); and a prefix short enough to
-match several applets resolves by registration order, which is the order of the
-table below, so probe with the full AID unless you mean to. OATH and OTP are
+match several applets resolves in dispatch order among selectable applets
+(Vendor, OpenPGP, Management, OATH, OTP, PIV, Rescue, FIDO). Use the full AID
+when probing for an applet. OATH and OTP are
 registered by their full 8-byte instance AIDs, as a YubiKey registers them:
 Yubico's Android SDK selects by all 8 bytes, while ykman sends the 7-byte prefix,
 and both select (`0x09D4`+; from `0x088C` to `0x09D3` only the 7-byte form did).
@@ -450,17 +468,14 @@ and both select (`0x09D4`+; from `0x088C` to `0x09D3` only the 7-byte form did).
 rows below are not CCID applets: **the FIDO2 backup id and the standalone U2F AID
 answer `6A82` (FILE_NOT_FOUND)** — registered identifiers rather than anything this
 build dispatches to. **The FIDO2 AID is selectable over CCID** and carries CTAP2
-*and* U2F there (§5.2); over CTAPHID the same applet has no SELECT at all (§1.2),
-which is why its row names both. The other transport is narrower still:
-`CTAPHID_MSG` offers
-exactly one applet, the vendor one, and every other AID answers `6A82` there —
-which is why a U2F command arriving after a vendor SELECT on the same session was
-a real bug (`tests/15_u2f_vendor_msg_isolation.py`). Measured on both transports,
-all ten AIDs, and recorded in the **Transport** column.
+and U2F there (§5.3). Over HID, send CTAP2 directly in `CTAPHID_CBOR` and U2F
+in `CTAPHID_MSG`. Only the Vendor AID can be selected in `CTAPHID_MSG`.
+Use a fresh `CTAPHID_INIT` before switching that channel back to U2F.
+An INIT or a change of CID clears the MSG applet selection.
 
 | Applet | AID | Transport | Spec status | Config-relevant? |
 |---|---|---|---|---|
-| **FIDO2 / U2F** | `A0 00 00 06 47 2F 00 01` | CCID (§5.2) + CTAPHID (no SELECT) | Standard (CTAP2 + CTAP1) | identity only |
+| **FIDO2 / U2F** | `A0 00 00 06 47 2F 00 01` | CCID (§5.3) + CTAPHID (no SELECT) | Standard (CTAP2 + CTAP1) | identity only |
 | FIDO2 (backup id) | `B0 00 00 06 47 2F 00 01` | none — unregistered | RS-Key | — |
 | U2F (standalone id) | `A0 00 00 05 27 10 02` | none — unregistered; U2F rides the FIDO2 AID | Standard (CTAP1/U2F) | — |
 | **Management** | `A0 00 00 05 27 47 11 17` | CCID | Yubico-compatible | **yes — §6** |
@@ -486,8 +501,10 @@ and the one-entry list in `crates/rsk-device/src/ctap.rs` for `CTAPHID_MSG`.
 
 ## 5. Standard interfaces (pointers, not re-specified)
 
-These follow public specifications; a tool that already speaks YubiKey/FIDO2
-needs only the identifiers above.
+For the base command formats, see the
+[CTAP specification](https://fidoalliance.org/specs/fido-v2.3-ps-20260226/fido-client-to-authenticator-protocol-v2.3-ps-20260226.html),
+[Yubico OATH protocol](https://developers.yubico.com/OATH/YKOATH_Protocol.html)
+and [PIV card command specification](https://csrc.nist.gov/pubs/sp/800/73/pt2/5/final).
 
 Resident FIDO discovery returns at most 16 distinct credentials per
 getAssertion/getNextAssertion walk, newest first. Equal creation times use
@@ -496,8 +513,8 @@ retains the newest 16; the first reply is the first entry in that same queue.
 
 RS-Key implements:
 
-- **FIDO2 / CTAP 2.1** (`versions` advertises up to `FIDO_2_3`; never `FIDO_2_2`,
-  which CTAP 2.3 §6.4 says was never defined): getInfo, makeCredential,
+- **FIDO2 / CTAP2** (`versions` advertises `FIDO_2_0`, `FIDO_2_1` and
+  `FIDO_2_3`): getInfo, makeCredential,
   getAssertion, getNextAssertion, clientPIN, reset, selection,
   credentialManagement, authenticatorConfig,
   largeBlobs (writable without a `pinUvAuthParam` until a PIN is set or `alwaysUv` is
@@ -516,10 +533,11 @@ RS-Key implements:
   from the *Begin* if it stalls. The same 30 s applies **between the fragments of a
   `largeBlobs` set**; there an abandoned transfer answers `CTAP2_ERR_INVALID_SEQ`
   and the previously stored array is left intact. `maxMsgSize` = `7609`.
-  `transportsForReset` (`0x1A`) is `["usb", "smart-card"]` — identical to
-  `transports` (`0x09`), because a reset is reachable exactly where the applet is,
-  and §5.2 routes the FIDO AID onto CCID as well as CTAPHID. It is an array of
-  `AuthenticatorTransport` strings, not a bit field. There is no `nfc`: no radio. `pinComplexityPolicy` (`0x1B`) reports the effective PIN complexity policy.
+  Both `transportsForReset` (`0x1A`) and `transports` (`0x09`) are
+  `["usb", "smart-card"]`. These lists describe the supported protocol
+  transports (§5.3). Interface configuration and host driver binding determine
+  whether the smart-card interface is reachable. `pinComplexityPolicy`
+  (`0x1B`) reports the effective PIN complexity policy.
   `strong-pin` and `fips-profile` enable it by default; other builds start with
   `false`. An authenticated `setMinPINLength` request can enable it with
   subCommandParams key `4: true`. A false or absent key leaves it unchanged;
@@ -620,8 +638,8 @@ RS-Key implements:
   write answers `6A84` once either is spent, as a full YubiKey does; an empty `53`
   deletes the object, answering `9000` for one not held. An object is up to 3063
   bytes, `6700` past it, as on a YubiKey 5.8.0: the 3072 bytes a command chain
-  reassembles less the `5C 03 id 53 82 LL LL` header. One extended APDU carries
-  3046, what ykman, sending one, gets onto either card.
+  reassembles less the `5C 03 id 53 82 LL LL` header. With an extended `Le`,
+  a single APDU has room for 3044 object bytes. Without `Le` it has room for 3046.
   `GET DATA` for the CHUID (`5FC102`) returns a synthesized default (non-federal FASC-N + a
   device-stable GUID = `sha256(serial)[..16]`) when the host has not written one,
   so the Windows minidriver can enumerate the card; a host-written CHUID overrides it.
@@ -652,8 +670,8 @@ RS-Key implements:
   PINs and PW3's status stay, the maxima survive a power cycle, and TERMINATE DF +
   ACTIVATE FILE put back 3, 3, 3.
 
-The only RS-Key-specific bytes a config tool needs are §6 (Management config),
-§7 (Rescue), §8 (Vendor/LED) and §9 (CTAPHID `0x41`).
+The management extensions are in §6 (DeviceInfo), §7 (Rescue), §8 (Vendor/LED)
+and §9 (CTAP `0x41`).
 
 ### 5.1 Where a standard command answers differently
 
@@ -711,7 +729,7 @@ every raw message in extended-length encoding, and a U2F request over CTAPHID is
 read as a YubiKey 5.8.0 reads it: the class first (`6E00` past `00`), then either
 the bare four-byte header or `00 Lc Lc` and at least that many data bytes, with
 anything after them, an `Le` included, ignored. A short `Lc` or `Le` is `6700`
-whatever the instruction. Over CCID (§5.2) both encodings stay open, as there.
+whatever the instruction. Over CCID (§5.3) both encodings stay open, as there.
 On either transport a VERSION that carries data is `6700`, since U2F Raw Message
 Formats §6.1 has it take none; its P1 and P2 are not judged, as on a YubiKey.
 
@@ -780,7 +798,7 @@ interface, so this is reachable over plain USB.
 | Select | `00 A4 04 00 08 A0000006472F0001 00` | `9000` with body `U2F_V2`, or `FIDO_2_0` while alwaysUv has U2F off (below) |
 | CTAP2 | `80 10 00 00 Lc <cmd ‖ CBOR> 00` | `9000` (or `61xx`, below) with `<status ‖ CBOR>` |
 | U2F | `00 01/02/03 …` | the CTAP1 answer; `6E00` under class `80`; `6986` while alwaysUv has U2F off |
-| Poll, cancel | `80 11 00 00`, `80 11 11 00` | `9000` with body `2F`, whatever the P1-P2 |
+| Poll, cancel | `80 11 00 00`, `80 11 11 00` | `9000` with body `2F`, whatever the P1-P2. Use CCID ABORT to cancel in-flight work |
 | Control | `80 12 01 00` | `9000`, then `6986` to every command until the next Select; any other P1-P2 `6A86` |
 
 The three CTAP2 instructions (`10`, `11`, `12`) are taken under class `00` as
@@ -799,8 +817,8 @@ CTAP2 and U2F alike answer `6986` until the next Select, by the AID or a prefix 
 it. A chain's segments are still acknowledged, and CTAPHID is not affected. A
 YubiKey 5.8.0 answers each of these the same.
 
-**Chaining runs in both directions and a host needs both.** A CTAP2 command longer
-than 255 bytes arrives in `CLA|0x10` segments; a response longer than the short
+**Chaining runs in both directions.** Send a CTAP2 command longer than 255 bytes
+in an extended APDU or in `CLA|0x10` segments. A response longer than the short
 `Le` ships its first chunk with `61xx` and the rest through GET RESPONSE
 (`00 C0 00 00 <Le>`). A bare getInfo is already ~520 bytes, so a client that does
 not follow `61xx` sees nothing useful. An extended-length APDU with no `Le`, or
@@ -810,9 +828,9 @@ from there.
 **No `91 00` keep-alive is ever returned.** A touch wait blocks inside the
 exchange while the CCID transport streams T=1 time extensions, exactly as an OATH
 touch-flagged CALCULATE and an OpenPGP UIF signature already do, so the
-`NFCCTAP_GETRESPONSE` poll loop never runs. A poll or a cancel is still answered,
-since a host that gave up on a wait sends one regardless: `9000` with
-`CTAP2_ERR_USER_ACTION_TIMEOUT` (`2F`), a YubiKey 5.8.0's answer with nothing pending.
+`NFCCTAP_GETRESPONSE` poll loop never runs. The poll and cancel APDUs both
+return `2F 90 00`. To abort the in-flight CCID exchange, use the two-phase
+CCID ABORT (§1.1).
 
 **The transport is smaller than CTAPHID.** A command chain reassembles 3072 bytes
 and a response is built in as many, so that is the ceiling on a command *and* on a
@@ -821,6 +839,9 @@ Commands stay well inside it; a response that does not fit comes back as a CTAP
 error rather than truncated. An ML-DSA credential's attestation does not fit and
 is CTAPHID-only in practice.
 
+CCID and HID share FIDO state, but CCID uses reserved CID `00000000`.
+Keep CID-bound operations such as MSE and its consumer on the same transport.
+
 **Both applications are gated separately.** One AID serves CTAP2 and U2F, and
 `ykman config usb --disable fido2` / `--disable u2f` name them apart, so the
 *commands* are gated rather than the SELECT: disabling one leaves the AID
@@ -828,10 +849,9 @@ selectable for the other and answers the disabled half `6986` — for CTAP2 its 
 since a poll or a control carries nothing to gate. With neither
 enabled the AID is gone (`6A82`).
 
-**⚠️ On the default `0x1209:0xF1D2` identity most hosts never bind the CCID
-interface at all** — the `ccid` driver whitelists USB ids and that one is not
-listed — so none of this is reachable there. A `VIDPID=Yubikey5` build, or a host
-carrying the `ccid-rs-key` overlay, is what makes the interface appear.
+Some CCID drivers bind only to recognized VID/PID pairs. If such a driver
+omits the default `1209:F1D2`, use the repository's `ccid-rs-key` overlay or a
+`VIDPID=Yubikey5` build.
 
 
 ## 6. Management applet (Yubico-compatible) — applet enable/disable
@@ -860,10 +880,20 @@ Response = one **leading overall-length byte**, then concatenated `TAG LEN VALUE
 | `01` | USB_SUPPORTED | 2 | capability bitmask (BE16) of applications the firmware implements |
 | `02` | SERIAL | 4 | 8-digit serial (chip-id\[0..4], MSB masked `& 0x03`) |
 | `04` | FORM_FACTOR | 1 | `01` = USB-A keychain |
-| `05` | VERSION | 3 | `major, minor, patch` (`05 07 04`) |
+| `05` | VERSION | 3 | `major, minor, patch` (default `05 08 00`) |
 | `03` | USB_ENABLED | 2 | currently-enabled capability bitmask (BE16) |
 | `08` | DEVICE_FLAGS | 1 | `80` = touch-eject, `40` = remote wakeup; `00` unless a host set them |
 | `0A` | CONFIG_LOCK | 1 | `00` = unlocked, `01` = a lock code is set (§6.2) |
+
+Native FIDO HID READ CONFIG uses command `0x42` (wire byte `0xC2`) with
+an empty request. Its reply is the same length-prefixed DeviceInfo blob,
+without a CTAP status byte. Native WRITE CONFIG uses `0x43` (wire byte
+`0xC3`) with the same length-prefixed body as the write APDU. Success is an
+empty reply. A refused or unsupported write returns `CTAPHID_ERROR` with
+`ERR_INVALID_CMD`. The native write is unavailable under `strict-config`.
+Neither native command uses the CTAP CBOR vendor envelope (§9).
+The corresponding OTP feature-report slots are READ CONFIG `0x13` and
+SET_DEVICE_INFO `0x15`.
 
 When no host config has been written, the device returns the **defaults**:
 `USB_ENABLED` = all-supported, `DEVICE_FLAGS = 00`, `CONFIG_LOCK = 00`. Once
@@ -903,9 +933,9 @@ none on a YubiKey.
   with no code yet, and only with a touch of the key, which a YubiKey does not ask
   for: a code its owner does not hold would keep every config change behind a
   factory wipe ([threat-model.md](threat-model.md) §1). Declined or timed out, the
-  write is refused whole (`6985`; `0x27` over `CONFIG_WRITE`; OTP-HID and CTAPHID
-  `0x43` as for a wrong code). Changing or clearing a code takes the current one
-  and no touch.
+  write is refused whole (`6985`, `0x27` over `CONFIG_WRITE`, or the native HID
+  refusal described above). Changing or clearing a code still requires the
+  current code. It needs no extra confirmation beyond the write's usual gate.
 - **At rest**: `EF_DEV_LOCK` (`0x1124`) holds `01 ‖ SHA-256("RS-Key/CONFIG-LOCK" ‖
   serial ‖ code)`, the serial being DeviceInfo's four bytes; absent is unlocked.
   A record in any other form reads locked and opens for no code.
@@ -937,18 +967,18 @@ FIDO2+U2F → inner blob `03 02 02 02`, full APDU
 `00 1C 00 00 05 04 03 02 02 02`.
 
 `USB_ENABLED` is **enforced**, not merely reported: a cleared bit makes that
-application's applet stop answering — PIV/OpenPGP/OATH/OTP return `6A82` on
-CCID SELECT, FIDO2 (CBOR) and U2F (MSG) are refused over CTAPHID, and the OTP
-keyboard goes inert. The change is live (next command; no replug). Its ceiling
-is `USB_SUPPORTED`, so a wider host-written mask is clamped. The re-enable path
-is never gated — the Management applet (§6), the FIDO vendor `CONFIG_WRITE`
-(§9) and the OTP-HID identify/config slots stay reachable — so a disable is
-always reversible. The *mask* is; the flash it lives in is not, and a replay of
-these ungated writes spends erase cycles nothing returns
-([threat-model.md](threat-model.md) §1). Identical records are dropped before
-the write, so only distinct ones cost anything. Building `--features strict-config` gates the *write* on
-operator presence; the enforcement of a persisted mask is the same on both
-builds.
+application's applet stop answering. PIV/OpenPGP/OATH/OTP return `6A82` on
+CCID SELECT. Disabling FIDO2 makes `CTAPHID_CBOR` return `27`, including
+`authenticatorVendor`. Disabling U2F makes `CTAPHID_MSG` return `6985`,
+including attempts to select the Vendor AID. The OTP keyboard stops typing OTPs.
+The change takes effect on the next command. Bits outside `USB_SUPPORTED`
+are ignored.
+
+To re-enable an application, use CCID Management. On a default build, you can
+also use a native DeviceInfo write on an available HID interface. The
+configuration lock still applies. On a `strict-config` build with CCID omitted,
+keep the FIDO2 capability enabled so the CTAP config path stays reachable.
+Restoring an omitted USB interface requires a PHY update and reboot (§7.1).
 
 > WRITE CONFIG validates the inner blob (`6A80` otherwise): it must be well-formed
 > TLV, carry only tags a host may write (`03`, `06`, `07`, `08`, `0A`, `0B`, `0C`,
@@ -988,24 +1018,24 @@ attestation key, and the one-way OTP fuses. Source:
 **SELECT response** (identity): `MCU(1) | PRODUCT(1) | SDK_MAJOR(1) | SDK_MINOR(1) | serial(8)`
 = `01 02 08 06 <8-byte chip serial>`. (`MCU 1` = RP2350, `PRODUCT 2` = FIDO,
 `SDK 8.6` is the applet SDK version, distinct from the `5.8.0` firmware version.)
-Use this as the **capability/version handshake**: a non-`9000` here means the
-firmware predates the rescue applet.
+Use this to identify a Rescue applet. A successful SELECT does not imply that
+every selector is supported. Probe read-only selectors individually.
 
 | INS | P1 | P2 | Request data | Response | Purpose |
 |---|---|---|---|---|---|
 | `10` | `01` | `00` | 32-byte SHA-256 digest | 64-byte secp256k1 signature | KEYDEV: sign a digest with the device attestation key |
 | `10` | `02` | `00` | — | 65-byte uncompressed pubkey (`04 ‖ X ‖ Y`) | KEYDEV: read the device attestation pubkey |
 | `10` | `03` | `00` | X.509 DER cert | — | KEYDEV: store the device end-entity cert |
-| `1C` | `01` | `00` | phy TLV blob (§7.1) | — | WRITE phy record; `6986`, before the touch, while a configuration lock is set (§6.2) |
-| `1C` | `02` | `01` | `YYYY(BE2) Mon Day Wday Hour Min Sec` (8 B) | — | SET RTC (civil; Wday ignored) |
+| `1C` | `01` | `00` | phy TLV blob (§7.1) | — | WRITE phy record. `6986` while a configuration lock is set (§6.2), before asking for presence. `6400` if the merge or write fails |
+| `1C` | `02` | `01` | `YYYY(BE2) Mon Day Wday Hour Min Sec` (8 B) | — | SET RTC (civil). January is month `0`. `Wday` is ignored |
 | `1C` | `02` | `02` | epoch seconds (BE4) | — | SET RTC (Unix) |
 | `1E` | `01` | `00` | — | phy TLV blob (§7.1) | READ phy record; `6581` if the record cannot be read (never the never-written default — the host RMWs on this answer) |
 | `1E` | `02` | `00` | — | `free ‖ used ‖ kv_total ‖ nfiles ‖ flash_size` (5×BE4 = 20 B) | READ flash usage |
 | `1E` | `03` | `00` | — | `enabled(1) ‖ locked(1) ‖ bootkey_slot(1)` (`FF` = none) | READ secure-boot status; `locked` requires one trusted key, all other slots revoked, both debug disables, complete hardening and page-1/2 BL/NS lock copies |
-| `1E` | `04` | `01` | — | `YYYY(BE2) Mon Day Wday Hour Min Sec` (8 B) | READ RTC (civil); `6985` if unset |
+| `1E` | `04` | `01` | — | `YYYY(BE2) Mon Day Wday Hour Min Sec` (8 B) | READ RTC (civil). January is month `0`, Sunday is weekday `0`. `6985` if unset |
 | `1E` | `04` | `02` | — | epoch seconds (BE4) | READ RTC (Unix); `6985` if unset |
 | `1E` | `06` | `00` | — | `required(1) ‖ version(1) ‖ capacity(1)` | READ anti-rollback state |
-| `1E` | `07` | `00` | — | `left(2)` BE16 | READ what this boot's seal passes left under the pre-burn key or could not read: `01` FIDO seed/attestation key/grant, `02` device key, `04` PIV, `08` OATH (a legacy OTP-PIN too), `10` OTP; `FFFF` when the boot had no fused key to check with; `FFFE` when it could not read the fused key and so ran no seal pass (a page closed even to secure code; a replug reopens it) |
+| `1E` | `07` | `00` | — | `left(2)` BE16 | This boot's outstanding seal work. Bits `0001` FIDO seed/attestation key/grant, `0002` device key, `0004` PIV, `0008` OATH (including legacy OTP PIN), `0010` OTP, `0020` storage authority. `FFFF` means no fused key was provisioned. `FFFE` means the fused key was unreadable and the seal pass did not run |
 | `1E` | `09` | `00` | — | `version(1) ‖ status(1) ‖ left(2)` BE16 | Read-only automatic page-58 seal result; version `01`, status values below |
 | `1B` | `58` | `00` | `"LOCK58"` | — | ⚠️ **IRREVERSIBLE** legacy service command — attempt `3D3D3D` into page-58 lock row `0xFF5`, over a blank row or a subset of the latch. ROM refuses completion once the Secure read-only majority is set (`6400`). `9000` with nothing burnt when the full latch is there; `6985` over foreign bits, unfinished migration (`1E/07 != 0000`), or declined presence. From the next boot on no device-sealed record opens under the pre-burn key or in the clear |
 | `1B` | `48` | `00` | `"ROLLBK"` | — | ⚠️ **IRREVERSIBLE** — set ROLLBACK_REQUIRED fuse (user-presence-gated) |
@@ -1014,6 +1044,14 @@ firmware predates the rescue applet.
 | `1E` | `08` | `00` | — | `format(1) ‖ ready(1)` | Storage state: `02 01` means active v2 authority; `02 00` means recovery required |
 | `20` | `00` | `00` | `"INITV2"` | — | Initialize wholly erased storage; physical confirmation required, occupied/active media refused; success queues a warm restart |
 | `20` | `01` | `00` | `"IMPORTV2"` | — | Explicitly trust and import readable legacy records; physical confirmation required; success queues a warm restart |
+
+For `1E/06`, `version` is the fused minimum epoch. `capacity` counts
+the 48 OTP rollback bits. The highest epoch accepted by the signing workflow
+is **47**. The ROM can set `ROLLBACK_REQUIRED` when installing a versioned
+signed image. Rescue `1B/48` only sets that flag and checks that Secure Boot
+is enabled. It does not inspect the running image's rollback metadata.
+An already-set flag returns `9000` without another burn or touch. Follow the
+[production sequence](production.md) for image signing and provisioning.
 
 Storage recovery mode exposes CCID with the Rescue AID only. It permits READ
 selectors `03`, `04`, `06`, `07`, `08`, `09`, reboot and storage setup.
@@ -1027,7 +1065,7 @@ invalid selectors and `6A80` for a wrong magic payload. READ `1E/07` includes
 bit `0020` while storage authority remains under the pre-OTP root. Storage
 setup performs no OTP operation.
 
-Build `0x0BD7` automatically completes page-58 sealing at boot, including devices
+The firmware automatically completes page-58 sealing at boot, including devices
 previously fused without locking. Secure code validates keys/chaff, waits for
 `left=0000` and performs a fresh successful flash scrub. It first completes and
 reads back every `0x3C3C3C` access-lock bit, preserving any existing latch bits,
@@ -1118,11 +1156,12 @@ optional. An unknown tag is skipped; a record whose length runs past the buffer
 ends the parse. The firmware applies the record at **boot** (USB identity + LED
 hardware).
 
-A **write** (CCID `WRITE 0x1C` §6, or FIDO `CONFIG_WRITE 0x0C` target `1` §9) is a
+A **write** (Rescue `1C/01`, or CTAP vendor `CONFIG_WRITE 0x0C` target `1`, §9) is a
 **read-modify-write merge**: only the tags the blob carries are updated; every
 untouched tag keeps its stored value. So a host may send just the fields it
-changed without wiping the rest, and a tag is cleared only by an explicit
-zero/empty TLV. (A host may still do a full read-modify-write for clarity.)
+changed without wiping the rest. The meaning of zero depends on the tag. To
+clear either USB string, send a length of `01` with one NUL byte as the value.
+A zero-length string TLV is ignored.
 
 ![EF_PHY record: a TAG(1) LEN(1) VALUE(LEN) triple, then a worked three-record blob concatenating VIDPID (1209:F1D2), LED_DRIVER (ws2812) and OPTS (LED_STEADY)](images/phy-record.svg)
 
@@ -1133,13 +1172,13 @@ zero/empty TLV. (A host may still do a full read-modify-write for clarity.)
 | `05` | LED_BRIGHTNESS | 1 | global channel max `0..=255` |
 | `06` | OPTS | 2 | flags (BE16): `WCID 0x1`, `DIMM 0x2`, `DISABLE_POWER_RESET 0x4`, `LED_STEADY 0x8` |
 | `08` | PRESENCE_TIMEOUT | 1 | touch-wait timeout in **seconds**, bounding the whole ceremony on a button build — the press wait and the release debounce that follows a confirm share it; a trusted-display ceremony may add up to 3 s absorbing a resting finger (`0`/absent ⇒ firmware default 30 s; a non-zero value below `10` is raised to `10`). Matches PicoForge `PresenceTimeout`. |
-| `09` | USB_PRODUCT | 1..33 | product string + trailing `NUL` (length **includes** the NUL). A 33-byte value with no terminating NUL is malformed and leaves the stored string **unchanged**; an empty value is the explicit clear |
+| `09` | USB_PRODUCT | 1..33 | up to 32 string bytes. A NUL ends the string and counts toward the TLV length. A 33-byte value with no NUL leaves the stored string unchanged. `09 01 00` clears the override |
 | `0A` | ENABLED_CURVES | 4 | FIDO curve bitmask (BE32) |
 | `0B` | ENABLED_USB_ITF | 1 | interface mask: `CCID 0x1`, `WCID 0x2`, `HID 0x4`, `KB 0x8`, `LWIP 0x10` |
 | `0C` | LED_DRIVER | 1 | `1` = gpio, `2` = pimoroni, `3` = ws2812 (follows PicoForge `LedDriverType`) |
-| `0D` | LED_ORDER | 1 | **RS-Key extension** — WS2812 wire order: `0` = rgb, `1` = grb |
+| `0D` | LED_ORDER | 1 | WS2812 wire order: `0` = rgb, `1` = grb |
 | `0E` | LED_NUM | 1 | **RS-Key extension** — addressable LEDs actually connected (`1..=255`; `0`/absent = the build's `MAX_LEDS`). Firmware saturates a value above its compiled `MAX_LEDS` ceiling. |
-| `0F` | USB_MANUFACTURER | 1..33 | **RS-Key extension** — iManufacturer string + trailing `NUL` (length **includes** the NUL). Absent ⇒ the VID-derived default, then the build const. |
+| `0F` | USB_MANUFACTURER | 1..33 | iManufacturer string with the same encoding as USB_PRODUCT. `0F 01 00` clears the override and restores the default described in §3.1 |
 
 Notes for a host implementation:
 - **Read-modify-write.** READ the record, change only your tags, WRITE it back.
@@ -1148,12 +1187,8 @@ Notes for a host implementation:
   not: `merge_save` overlays your blob onto the parsed record and re-serializes only the
   tags this firmware knows, so a tag it does not recognize is dropped at the first write
   whatever the host sends.
-- **RS-Key-specific tags** PicoForge skips as unknown: `0x0B` (ENABLED_USB_ITF),
-  `0x0E` (LED_NUM) and `0x0F` (USB_MANUFACTURER). RS-Key's own tools preserve them
-  across a RMW; LED_NUM sets how many daisy-chained addressable LEDs are lit (the
-  binary carries a compile-time `MAX_LEDS` ceiling and drives the first LED_NUM of
-  it). The rest, including `0x08` (PRESENCE_TIMEOUT) and `0x0D` (LED_ORDER), is
-  shared with PicoForge.
+- PicoForge recognizes `ENABLED_USB_ITF`, `LED_ORDER`, `LED_NUM` and
+  `USB_MANUFACTURER` in its RS-Key config path.
 - **`PRESENCE_TIMEOUT` has a floor.** The record is host-writable and the touch
   wait reads it live, so a one-second window could expire in the middle of a press
   and let the next queued request inherit that same hold. The firmware raises any
@@ -1161,10 +1196,11 @@ Notes for a host implementation:
   the wait. The stored record keeps the value as written, so a read-modify-write
   round-trip is lossless; `CONFIG_READ`'s effective map (§9) reports the floored
   value, because that is the window the device actually waits.
-- **`ENABLED_USB_ITF`**: absent ⇒ ALL. A mask that would disable every interface
-  the firmware actually builds (`CCID | HID | KB`) is rejected and falls back to
-  ALL. Otherwise CCID would vanish and the rescue applet that could fix it would
-  be unreachable. **Never write a mask without CCID** unless you intend that.
+- **`ENABLED_USB_ITF`** defaults to all interfaces. The firmware instantiates
+  CCID, FIDO HID and keyboard HID. WCID and LWIP have reserved mask bits. A mask
+  without either CCID or FIDO HID falls back to the default at boot, including
+  a keyboard-only mask. An unreadable PHY record gives CCID and FIDO HID only,
+  unless storage recovery restricts the device to CCID.
 - A never-written record reads back as the single zero-OPTS TLV `06 02 00 00`.
 
 ---
@@ -1191,32 +1227,18 @@ in the measurement builds that ask for them (`--features core1-stats` /
 `keygen-bench` / `bench`, which carries the last two); a shipped image answers
 `6D00`, and none is part of the stable surface.
 
-**SET LED `0x10` gating:** ungated by default (like the rest of the config surface),
-**user-presence-gated under `strict-config`** — the FIDO twin
-(`CONFIG_WRITE`/`CONFIG_TARGET_LED`) is gated there too, so the vendor AID cannot be
-used to bypass it.
+**SET LED `0x10`** requires presence under `strict-config`. A decline or timeout
+returns `6982`. The configuration lock applies in all builds.
 
 **SET LED `0x10` is idempotent.** A request whose resulting 17-byte block already
-matches the stored `EF_LED_CONF` answers `9000` and writes no flash, exactly as the
-FIDO twin does. The LED is still applied live, so the two are indistinguishable from
-the host; what changes is the flash. Before this, a replayed SET LED appended
-**28.1 bytes of the main (credential) partition** every time — measured over the
-device's own store on the board's 352-page ring — rising to 117.0 / 203.8 B on a
-74.8 % / 85.2 % live ring, where reclaim had to migrate credential records past it.
-A record written by an *older* firmware (a 13/9/3/2-byte layout) is not a match and
-is upgraded on the next write. **This bounds the replay only**: the command stays
-ungated by default, so a host that varies the block on every call still churns
-those pages, as do the other ungated config writes beside it.
+matches the stored `EF_LED_CONF` answers `9000` without a flash write.
+The LED config is still applied live. The next write upgrades a stored
+13-, 9-, 3- or 2-byte block to the current layout.
 
-**INCREMENT `0x01` gating:** user-presence-gated in every build. The applet answers
-on both CCID and CTAPHID, so ungated this was a flash-write primitive for anything
-that can open either interface — measured at ~390 writes/s, 16 bytes of the counter
-partition each. A test hook with no product function should not offer one; the
-config-surface writes next to it (`SET LED`, and the FIDO `CONFIG_WRITE` twin) stay
-ungated by default on purpose, which is a separate decision (§9, `strict-config`).
-`GET 0x02` reads and stays ungated. A no-touch build confirms without a button, which
-is what `tests/01_flash_persistence.py` and `tests/30_ccid_transport.py` run against;
-on a button build the CTAPHID caller sees `KEEPALIVE(UPNEEDED)` until the touch lands.
+**INCREMENT `0x01`** always goes through the presence gate. The diagnostic
+`no-touch` build confirms automatically. A CTAPHID caller sees
+`KEEPALIVE(UPNEEDED)` while the device waits for confirmation. GET `0x02`
+requires no presence.
 
 **Touch-status normalization.** The awaiting-touch indicator is the only consent
 signal on a build without the trusted display, so the `EF_LED_CONF` codec — not any
@@ -1254,11 +1276,10 @@ global steady toggle suppresses blinking altogether, and on a single-colour back
 that leaves nothing at all to tell the states apart. A build with the trusted
 display remains the strong answer for consent signalling.
 
-So **the bytes you write are not always the bytes that render.** `SET LED 0x10`
-normalizes before it persists, and `GET LED 0x11` always returns what is actually
-showing. The FIDO `CONFIG_WRITE` LED target (§9) stores the block you sent
-verbatim and `CONFIG_READ` echoes that, so after a `CONFIG_WRITE` read back with
-`GET LED` to see the rendered values.
+`SET LED 0x10` persists the normalized block. `GET LED 0x11` returns the live
+configuration for all statuses. The FIDO `CONFIG_WRITE` LED target (§9)
+stores the supplied 17-byte block before normalization. Use `CONFIG_READ` to
+retrieve the stored bytes.
 
 **SET LED `0x10` P2 layout:** bits `[2:0]` = color, bit `3` (`0x08`) = steady
 (solid, no blink, a **global** toggle), bits `[5:4]` = status. P1 = per-channel
@@ -1304,33 +1325,44 @@ APDU `00 10 10 24 02 02 0F`.
 
 ---
 
-## 9. CTAPHID `authenticatorVendor` (`0x41`) — seed backup, attestation, audit
+## 9. CTAP `authenticatorVendor` (`0x41`) — seed backup, attestation, audit
 
-A CTAP2 vendor command (command byte `0x41`) carrying a CBOR map. This is the
-**most security-sensitive** surface: it can export the device master seed. Source:
+A CTAP2 vendor command with command byte `0x41` followed by a CBOR map.
+Send it inside `CTAPHID_CBOR` or over CTAP on CCID (§5.3).
+It can export the device master seed. Source:
 `crates/rsk-fido/src/vendor.rs`, constants in
 `crates/rsk-fido/src/consts.rs`.
 
 **Request map:** `{1: subcommand(uint), 2: subCommandParams(map), 3: pinUvAuthProtocol(uint), 4: pinUvAuthParam(bstr)}`.
-Keys 3/4 are present only when a PIN is set (see gating).
+Encode key 1 before key 2 so the parser knows how to read the parameters.
+Omit key 2 for a command without parameters. Keys 3 and 4 carry the host PIN
+token authentication when the gate requires it (§9.2).
 
 | Sub | Name | Params (key 2) | Response | Gate |
 |---|---|---|---|---|
 | `01` | MSE | `{1: COSE_Key, 2: mlkem_ek?}` | `{1: COSE_Key, 2: ct?}` | none (establishes channel) |
-| `02` | BACKUP_EXPORT | — | `{1: blob(60)}` | MSE + touch + PIN-token; refused if sealed |
-| `03` | BACKUP_LOAD | `{1: blob(60)}` | — | MSE + touch + PIN-token; refused if soft-locked. With **no PIN set** it additionally takes a distinct "Replace device seed?" confirmation — the PIN-token half is waived in that state, and a LOAD re-keys every existing credential |
-| `04` | BACKUP_FINALIZE | — | — | touch + PIN-token when a PIN is set (no MSE) |
+| `02` | BACKUP_EXPORT | — | `{1: blob(60)}` | MSE + presence + PIN gate. Refused if sealed or on a `fips-profile` build |
+| `03` | BACKUP_LOAD | `{1: blob(60)}` | — | MSE + presence + PIN gate. Refused while soft-locked. Without a host PIN, also asks “Replace device seed?”. A new seed makes credentials sealed to the old seed unreadable |
+| `04` | BACKUP_FINALIZE | — | — | Presence + PIN gate. No MSE |
 | `05` | BACKUP_STATE | — | `{1: sealed, 2: has_seed, 3: locked, 4: unlocked, 5: rescrub_refused}` | **ungated** |
 | `06` | UNLOCK | `{1: blob(60)}` | — | MSE (the lock key *is* the auth) |
-| `07` | AUDIT_READ | — | journal window | PIN-token; **touch** if no PIN |
-| `08` | AUDIT_CHECKPOINT | `{1: nonce ≤32}` | DEVK signature over chain head ‖ nonce | PIN-token + touch |
-| `09` | ATT_IMPORT | `{1: blob(60), 2: DER chain}` | — | MSE + touch + PIN-token. With **no PIN set** it additionally takes a distinct "Replace this identity?" confirmation — the PIN-token half is waived in that state, and an import replaces the identity every later U2F REGISTER signs with |
-| `0A` | ATT_CLEAR | — | — | MSE + touch + PIN-token |
-| `0B` | ATT_STATE | — | `{1: present, 2: sha256(chain)?}` | **ungated**; `2` is left out under `1: true` when the stored chain is missing, unreadable or longer than the device's buffer, so a host reads it as optional |
-| `0C` | CONFIG_WRITE | `{1: target(uint), 2: blob(bstr)}` — target `0`=DEV_CONF, `1`=PHY, `2`=LED | — | **ungated by default**, but for the configuration lock (§6.2), which covers all three targets; touch + PIN-token under `strict-config`; no MSE. A write that changes nothing is a no-op: no flash write, no journal entry, and for PHY no reboot latch |
-| `0D` | CONFIG_READ | `{1: target(uint)}` — target `1`=PHY, `2`=LED | `{1: blob(bstr)[, 2: {phy_tag: uint}]}` | **ungated**; `CTAP2_ERR_OTHER` if the record cannot be read — an empty blob means *absent*, never *unreadable*, because the host read-modify-writes on this answer |
-| `0E` | AUDIT_CONFIG | `{1: op(uint)}` — `0`=disable, `1`=enable, `2`=status | `{1: enabled(bool)}` | set: PIN-token + touch; status (`2`): **ungated** |
-| `0F` | CONFIG_COMMANDS | — | `{1: [vendorCommandId(uint), …]}` | **ungated**; every `authenticatorConfig` `vendorPrototype` (`0xFF`) id this build serves (§11), the list getInfo's `0x15` leaves empty. RS-Key `0x0A80`+; an older build answers `0x02` |
+| `07` | AUDIT_READ | — | Journal window (§9.3) | PIN gate. Also requires presence if no host PIN is set |
+| `08` | AUDIT_CHECKPOINT | `{1: nonce(bstr, 0–32 bytes)}` | Signed checkpoint (§9.3) | PIN gate + presence. Requires a provisioned DEVK |
+| `09` | ATT_IMPORT | `{1: blob(60), 2: chain(bstr)}` | — | MSE + presence + PIN gate. The DER certificates are concatenated, leaf first. Without a host PIN, also asks “Replace this identity?” |
+| `0A` | ATT_CLEAR | — | — | MSE + presence + PIN gate. Without a host PIN, also asks “Erase this identity?” |
+| `0B` | ATT_STATE | — | `{1: present, 2: sha256(packed_chain)?}` | **Ungated.** Key `2` hashes the device's packed record. It can be absent even when `1` is true if the chain is missing, unreadable or oversized |
+| `0C` | CONFIG_WRITE | `{1: target(uint), 2: blob(bstr)}` — target `0`=DEV_CONF, `1`=PHY, `2`=LED | — | The configuration lock applies to all targets (§6.2). `strict-config` also requires presence and the PIN gate. No MSE |
+| `0D` | CONFIG_READ | `{1: target(uint)}` — target `1`=PHY, `2`=LED | PHY `{1: blob(bstr), 2: {phy_tag: uint}}`, LED `{1: blob(bstr)}` | **Ungated.** An absent record gives an empty blob. A read failure returns `7F` |
+| `0E` | AUDIT_CONFIG | `{1: op(uint)}` — `0`=disable, `1`=enable, `2`=status | `{1: enabled(bool)}` | Setting requires PIN gate + presence. Status (`2`) is ungated |
+| `0F` | CONFIG_COMMANDS | — | `{1: [vendorCommandId(uint), …]}` | **Ungated.** Lists the `authenticatorConfig` `vendorPrototype` (`0xFF`) IDs this build serves (§11). Older builds before `bcdDevice 0x0A80` answer `0x02` |
+
+After MSE, an invalid BACKUP_LOAD blob length returns `14`, and an invalid
+authentication tag returns `3D`. UNLOCK and ATT_IMPORT return `02` for an
+invalid encrypted key blob.
+
+ATT_IMPORT accepts up to four concatenated DER certificates. To compare the
+ATT_STATE digest with a known chain, hash the packed form
+`count(1) ‖ (length(2 LE) ‖ certificate DER)*`.
 
 > ### `rescrub_refused` (`BACKUP_STATE` key 5, bcdDevice ≥ `0x09C5`)
 > **Flash health for this power cycle, and nothing more.** After the one-shot
@@ -1370,17 +1402,13 @@ Keys 3/4 are present only when a PIN is set (see gating).
 > merge** — only the TLV tags in the blob are updated, the rest preserved (the same
 > `merge_save` the CCID path uses), effective on the next boot); `0x02` = the LED config block
 > (`EF_LED_CONF`, §8, `CONF_LEN` bytes), persisted and then applied **live** by the
-> firmware, which reloads the block once that write is answered, over either
-> transport and however it was framed (the LED atomics are
-> firmware-side; `CONFIG_READ 0x02` returns the current block, seeded with the build
-> defaults on first boot, so a host can read-modify-write it — **verbatim**, so it
-> can differ from what renders once §8's touch normalization applies). No MSE
-> channel. The config is not secret. **On the default build this write is ungated**
-> (full ykman parity — any USB host process can rewrite it). Building `--features strict-config`
-> gates it on a physical touch **and**, when a PIN is set, a `pinUvAuthToken` with
-> the `acfg` permission (the MAC below): a **stronger** gate than the CCID path's
-> presence-only, because CTAPHID is reachable by any unprivileged host process.
-> The write lands in the same `EF_DEV_CONF`, so a later CCID READ CONFIG echoes it.
+> firmware. Send at least 17 bytes for the LED target. The device stores the first
+> 17 bytes and ignores any suffix. `CONFIG_READ` target `2` returns the stored block
+> verbatim, so it can differ from the live configuration after §8's normalization.
+> With the configuration unlocked, the default build permits these writes
+> without presence or PIN authentication. `strict-config` adds both the
+> presence gate and the PIN gate (§9.2). The CCID and CTAP management paths use
+> the same DeviceInfo record, so a later CCID READ CONFIG reports the change.
 >
 > **Replays and the audit journal.** A write whose result equals what is already
 > stored returns `0x00` and writes nothing — no flash write, no journal entry, and
@@ -1414,23 +1442,23 @@ Keys 3/4 are present only when a PIN is set (see gating).
 > (`start`, `seq_next` and the epoch are untouched, so the window still folds to the
 > head exactly as before).
 >
-> **`CONFIG_READ 0x0D` PHY key 2 (RS-Key `0x0852`+):** the PHY read also returns an
-> optional `2:` map of the boot-*effective* values a host can't otherwise know —
+> **`CONFIG_READ 0x0D` PHY key 2 (RS-Key `0x0852`+):** the PHY read returns a
+> `2:` map of boot-effective values
 > keyed by phy tag: `4` = LED GPIO pin, `12` = LED driver, `8` = presence timeout
 > (seconds) — resolved to the build default when the record has no override. Tag
 > `8` reports the window the wait actually uses, i.e. with the 10 s floor of §7.1
 > already applied. It is
-> display-only (the `1:` blob stays the raw override record for read-modify-write);
-> absent (empty map) on a headless `led_kind="none"` build, and older hosts ignore it.
+> for display by the host. The key `1` blob remains the raw override record for
+> read-modify-write. When the firmware has no effective LED configuration, key
+> `2` is an empty map.
 
 > ### ⚠️ Seed export hands out a normally non-exportable key
 > `BACKUP_EXPORT (0x02)` returns the device's 32-byte master seed (encrypted over
 > the MSE channel). It is gated by a one-time setup window (re-opened only by an
-> `authenticatorReset`) **and** physical touch **and**, when a PIN is set, a
-> `pinUvAuthToken`. A management tool exposing this **must** treat it as a
-> destructive-trust operation: clear warning, explicit confirm, and ideally a
-> "show the mnemonic once" flow rather than storing the blob. `BACKUP_FINALIZE`
-> seals the window. The `fips-profile` build refuses export entirely.
+> `authenticatorReset`) and requires presence and the PIN gate (§9.2).
+> Ask for explicit confirmation before exporting the seed.
+> `BACKUP_FINALIZE` closes the export window. The `fips-profile` build
+> refuses export entirely.
 
 ### 9.1 The MSE channel (`0x41 / 0x01`)
 
@@ -1455,42 +1483,41 @@ Establishes an encrypted channel for the seed-moving subcommands.
 `nonce(12) ‖ ciphertext(32) ‖ tag(16)`, ChaCha20-Poly1305 under the channel key
 with **AAD = `dev_pub` (65 bytes)**.
 
-> **Channel lifetime — the channel is ONE-SHOT: handshake, then immediately run the
-> one subcommand it protects.** (RS-Key `0x0866`+.) The device holds one channel key
-> per power cycle. Every gated consumer (`BACKUP_EXPORT`, `BACKUP_LOAD`, `UNLOCK`,
-> `ATT_IMPORT`, `ATT_CLEAR`, `authenticatorConfig` `AUT_ENABLE`) **spends** it, whatever
-> the outcome — a declined touch or a failed decrypt spends it too — and a second `MSE`
-> while one is live answers `0x30` NOT_ALLOWED **and drops the channel**, so both
-> parties must re-handshake.
->
-> This is the boundary, not the CID check below it. A CTAPHID channel id is a routing
-> label the sender writes into its own frame header (CTAP 2.1 §11.2.5), so an
-> interloper forges the victim's CID rather than using its own, and comparing the channel's
-> `cid` to the request's compares the attacker's bytes against themselves. Refusing
-> the re-key is what stops a co-resident process re-keying between your `MSE` and your
-> `BACKUP_EXPORT` and receiving the master seed instead of you. The cost is that such a
-> process can *deny* you a handshake; it can never redirect one.
->
-> **For clients:** run `MSE` immediately before each subcommand, on the same CTAPHID
-> channel (a subcommand arriving on a different CID still answers `0x30`), and never
-> cache a channel across two operations. If a handshake answers `0x30`, a previous
-> run died between its `MSE` and its subcommand — the refusal has now cleared it, so
-> **retry once**; a second `0x30` means another process is squatting.
-> Unchanged on the wire; behaviour since bcdDevice `0x0862`.
+The device has one live MSE slot. Run MSE immediately before the protected
+command on the same transport and CID. Once a vendor consumer request parses,
+it takes the slot before checking the remaining gates, including presence and
+decryption. A CID mismatch empties the slot without giving the caller its key.
+For `authenticatorConfig` `AUT_ENABLE`, the slot is taken after the config
+authentication check.
+
+A second valid MSE request while the slot is live clears the slot and returns
+`30`. Start a fresh handshake after that response. A CTAPHID CID is a
+host-supplied routing value. Refusing an in-place rekey prevents a second MSE
+from replacing a live recipient key for BACKUP_EXPORT.
 
 ### 9.2 PIN gating
 
-When a PIN is configured, seed-moving and audit subcommands require
-`pinUvAuthProtocol` (key 3) and `pinUvAuthParam` (key 4). The param is
-`HMAC-SHA256(pinUvAuthToken, 0xFF×32 ‖ 0x41 ‖ subcommand ‖ rawSubCommandParams)`
-and the token must carry the `acfg` permission (`0x20`). `rawSubCommandParams` is
-the verbatim CBOR bytes of the key-2 map. Reference flow:
-`tools/rsk/backup.py`.
+With a host `clientPIN` configured, commands marked **PIN gate** require
+`pinUvAuthProtocol` (key 3) and `pinUvAuthParam` (key 4). The token must
+carry the `acfg` permission (`0x20`).
 
-An **omitted** `pinUvAuthProtocol` is `0x14 MISSING_PARAMETER`; one this build does
-not support is `0x02 INVALID_PARAMETER`, and a value of `0` counts as unsupported
-rather than omitted (it used to answer `0x14`, as did `3` and every other unknown
-value). Since bcdDevice `0x0894`.
+```text
+HMAC-SHA256(pinUvAuthToken, FF × 32 ‖ 41 ‖ subcommand ‖ rawSubCommandParams)
+```
+
+Use the first 16 MAC bytes with protocol 1 and all 32 with protocol 2.
+`rawSubCommandParams` is the verbatim CBOR encoding of the key-2 map, or
+zero bytes if key 2 is absent. The reference client is `tools/rsk/backup.py`.
+
+An unsupported protocol (including `0`) returns `02`. Missing key 4 returns
+`36`. If key 4 is present and key 3 is missing, the device returns `14`.
+A bad MAC or missing `acfg` permission returns `33`.
+
+Without a host PIN, a configured device PIN is collected on the trusted
+display. If the current build cannot collect it, the request returns `36`.
+Decline, timeout and cancellation during PIN entry return `27`, `2F` and
+`2D` respectively. A wrong PIN consumes a retry. With neither PIN configured,
+the PIN gate passes and any separate presence checks still apply.
 
 An unsupported one is judged **before the algorithm, the extensions and the
 remaining options** — `makeCredential` and `getAssertion` included, where it used
@@ -1507,6 +1534,33 @@ because a YubiKey 5.7.4 puts them there:
   `options.rk` is *not* in that class and loses to the protocol, on that card and
   here.
 
+### 9.3 Audit journal format
+
+`AUDIT_READ` returns `{1: start, 2: seq_next, 3: epoch, 4: entries}`.
+The sequence numbers are CBOR unsigned 32-bit values. `epoch` is a 32-byte
+byte string. `entries` is a byte string of 20-byte records in sequence order.
+
+```text
+seq(4 LE) ‖ uptime_ms(4 LE) ‖ event(1) ‖ aux(1) ‖ detail(8) ‖ repeats(2 LE)
+```
+
+Start with the exported epoch and compute `SHA-256(previous_hash ‖ entry)`
+for each record. The final hash is the chain head. Event IDs and detail
+layouts are defined in `crates/rsk-fido/src/journal.rs`.
+
+`AUDIT_CHECKPOINT` returns `{1: head, 2: seq_next, 3: signature, 4: public_key}`.
+The head is 32 bytes. The signature is DER-encoded ECDSA-SHA256 and the public
+key is a 65-byte uncompressed P-256 point (`04 ‖ X ‖ Y`). Verify the
+signature over the following bytes, using the DEVK-derived audit public key.
+
+```text
+ASCII("RSK-AUDIT-CKPT-v1") ‖ head(32) ‖ seq_next(4 LE) ‖ nonce(0–32)
+```
+
+A journal entry can change in place when events coalesce. Compare the computed
+head as well as `seq_next` when checking whether the export and checkpoint
+cover the same snapshot.
+
 ---
 
 ## 10. Worked examples
@@ -1517,7 +1571,7 @@ All bytes hex; `→` shows the response (status word omitted when `9000`).
 ```
 SELECT  00 A4 04 00 08 A0 00 00 05 27 47 11 17 00
 READ    00 1D 00 00 00
-→  <len> 01 02 023B 02 04 <serial> 04 01 01 05 03 050800 03 02 023B 08 01 00 0A 01 00
+→  1C 01 02 023B 02 04 <serial> 04 01 01 05 03 050800 03 02 023B 08 01 00 0A 01 00
 ```
 
 **Read the phy record (Rescue):**
@@ -1528,10 +1582,11 @@ READ    80 1E 01 00 00
 →  <phy TLV blob>                          # e.g. 06 02 00 00 on a virgin device
 ```
 
-**Switch USB identity to `1209:F1D2` (phy RMW):** read the blob, upsert tag `00`
-with `12 09 F1 D2`, write back:
+**Switch USB identity to `1209:F1D2`** by sending a patch for tag `00` to the
+selected Rescue applet. Confirm the write on the device, then reboot after
+`9000`.
 ```
-WRITE   80 1C 01 00 <Lc> <…00 04 12 09 F1 D2…> 00
+WRITE   80 1C 01 00 06 00 04 12 09 F1 D2 00
 REBOOT  80 1F 00 00 00
 ```
 
@@ -1541,57 +1596,47 @@ SELECT  00 A4 04 00 05 F0 00 00 00 01 00
 SET     00 10 40 11        # P1=0x40 brightness, P2 = color 1 | status 1<<4 = 0x11
 ```
 
-**Read backup state (CTAPHID `0x41`):** CTAP2 message `41 A1 01 05`
+**Read backup state over CTAPHID.** Send CTAP2 message `41 A1 01 05`
 (`0x41` + CBOR `{1: 5}`) → on a fresh provisioned device
-`00 A4 01 F4 02 F5 03 F4 04 F4` (status `00`, then CBOR
-`{1:sealed=false, 2:has_seed=true, 3:locked=false, 4:unlocked=false}`;
-`F5`=true, `F4`=false).
+`00 A5 01 F4 02 F5 03 F4 04 F4 05 F4`. After the `00` status byte,
+the map sets `has_seed` to true and `sealed`, `locked`, `unlocked`
+and `rescrub_refused` to false.
 
 ---
 
 ## 11. Integration notes for PicoForge
 
-1. **The phy record (§7.1) is your existing PicoForge config path.** Same TLV
-   layout, same `LedDriverType` numbering. The differences to handle: the Rescue
-   **AID** is `A0 58 3F C1 9B 7E 4F 21` (not the upstream one), the Rescue **CLA is
-   `0x80`**, and tag `0x0D` (LED_ORDER) is an RS-Key extension you can skip on read.
-   You need not re-send unmodelled/untouched tags: the phy write is a **merge**
-   (§7.1), so omitting a tag no longer wipes it — send only the fields you changed.
-2. **Hardware config over FIDO (no PC/SC) is supported**: PicoForge's legacy
-   hardware-config path. Send `authenticatorConfig` (CTAP `0x0D`) with subCommand
-   `vendorPrototype` (`0xFF`) and subCommandParams `{1: vendorCommandId(u64),
-   3: value(uint)}`, gated by an `acfg` pinUvAuthToken (no touch). getInfo's
-   `authenticatorConfigCommands` (`0x1F`) lists `0xFF`, and
-   `vendorPrototypeConfigCommands` (`0x15`) is present, so the arm is detectable
-   without probing — §6.11.3 ties the two, so a build that hides one hides both.
-   From `0x09D5` that array is **empty**: the IDs are 64-bit, and Yubico's Android
-   SDK rejects a getInfo carrying one (issue #111), so they are listed here instead,
-   and from `0x0A80` `authenticatorVendor` `0x0F` (§9) returns them to a host.
-   The arm is more than its hardware half: `0x03e43f56b34285e2` / `0x1831a40f04a25ed9`
-   enable and disable the soft-lock, and `0x0e6841934e719be7` is the
-   enterprise-attestation RP list (§5), which takes an rpId array at key 4 and
-   writes no hardware. The phy IDs, the ones PicoForge writes, set the phy record
-   and take effect on the next boot (`0x30` while a configuration lock is set, §6.2): `PhysicalVidPid 0x6fcb19b0cbe3acfa` (value `(vid<<16)|pid`),
-   `PhysicalLedGpio 0x7b392a394de9f948`, `PhysicalLedBrightness 0x76a85945985d02fd`,
-   `PhysicalOptions 0x269f3b09eceb805f` (bitmask `0x2` dimmable / `0x4`
-   disable-power-reset / `0x8` led-steady — all three are honoured: dimmable gates
-   the global boot-brightness override, led-steady forces a solid LED, and
-   disable-power-reset — clear by default — lets a FIDO phy write auto-reboot so the
-   change applies without a replug). Product name, touch-timeout, LED driver
-   and curves stay Rescue-only. RS-Key reports firmware `5.x` (< 7), so PicoForge
-   enables its legacy hardware-config path. (RS-Key's own `rsk` uses the CTAPHID
-   `0x41` `CONFIG_WRITE/READ` path instead, see §9, which also covers those
-   extras.)
-3. **Applet enable/disable** is the Yubico-compatible Management applet (§6),
-   identical to how you'd configure a YubiKey's USB applications — and enforced:
-   a disabled application's applet stops answering (see §6, `USB_ENABLED`).
-4. **Version-gate** on the Rescue SELECT identity (`01 02 08 06 …`, §7) and the
-   Management version: DeviceInfo tag `05`, or the last word of its SELECT answer
-   (§6). Treat unknown phy tags / `0x41` subcommands as skippable, not errors.
-5. **Keep the dangerous surface behind explicit confirmation**: the OTP fuse
-   burns (§7), BOOTSEL reboot (§7/§8), and seed export (§9). Consider not exposing
-   the fuse burns at all in a general management UI.
-6. **Reference client:** `tools/rsk` is a complete, runnable
-   implementation of everything here: `ccid.py` (transport), `ctaphid.py` (CTAP),
-   `hw.py` (phy), `led.py` (LED), `backup.py` (`0x41`), `status.py`/`inventory.py`
-   (DeviceInfo). When in doubt, match its bytes.
+PicoForge can reuse its PHY TLV codec (§7.1) with the RS-Key Rescue AID
+`A0 58 3F C1 9B 7E 4F 21` and CLA `80`. Send only the tags to update.
+Skip unknown tags while reading. An unsupported CTAP vendor subcommand
+returns `02`. Use the read-only probes in §6.1, §7 and §9 to discover capabilities.
+
+For the legacy hardware-config path, send `authenticatorConfig` (CTAP `0x0D`)
+with subcommand `vendorPrototype` (`0xFF`) and parameters
+`{1: vendorCommandId(u64), 3: value(uint)}`. The four PHY writes require an
+`acfg` token and do not ask for presence. A configuration lock returns `30`.
+
+| PHY command | ID | Value |
+|---|---|---|
+| PhysicalVidPid | `0x6fcb19b0cbe3acfa` | `(vid << 16) \| pid` |
+| PhysicalLedGpio | `0x7b392a394de9f948` | GPIO number |
+| PhysicalLedBrightness | `0x76a85945985d02fd` | Global brightness |
+| PhysicalOptions | `0x269f3b09eceb805f` | PHY OPTS bitmask (§7.1) |
+
+getInfo lists `0xFF` in `authenticatorConfigCommands` (`0x1F`) and returns
+an empty `vendorPrototypeConfigCommands` array (`0x15`). Use
+`authenticatorVendor` CONFIG_COMMANDS (`41 / 0F`) to retrieve the 64-bit IDs.
+The list includes soft-lock enable and disable (`0x03e43f56b34285e2` and
+`0x1831a40f04a25ed9`) and the enterprise-attestation RP list
+(`0x0e6841934e719be7`, RP IDs at key 4). Soft-lock enable also uses MSE.
+
+Use the Rescue PHY commands or `authenticatorVendor` CONFIG_READ/WRITE for
+fields beyond the four legacy PHY IDs, such as product name, touch timeout,
+LED driver and curves. PHY changes take effect at boot. A changed FIDO PHY
+write normally queues a reboot. Setting `DISABLE_POWER_RESET` keeps the
+device attached until the host or operator reboots it.
+
+Use DeviceInfo for applet enable/disable (§6), and require explicit confirmation
+before fuse burns (§7), rebooting to BOOTSEL (§7/§8) or exporting a seed (§9).
+Reference client paths under `tools/rsk` include `ccid.py`, `ctaphid.py`,
+`hw.py`, `led.py`, `backup.py`, `status.py` and `inventory.py`.

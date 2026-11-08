@@ -113,5 +113,5 @@ than only trusting the MDS BLOB) can consume it directly. If RS-Key is ever
 certified, the statement is already authored and ready to submit.
 
 See also: [Enterprise attestation](attestation.md) for the org-provisioned
-cert-chain path, and the [interop matrix](../interop.md) for what has actually
-been observed working on hardware.
+cert-chain path, and the [FIDO2 interop results](https://github.com/TheMaxMur/RS-Key/blob/main/assurance/reports/interop.md#fido2--webauthn--u2f)
+for hardware runs.

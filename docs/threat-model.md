@@ -1,18 +1,19 @@
 # Threat model
 
-What RS-Key defends against, what it deliberately does not, and the honest
-residuals in between. The defenses compose in tiers: each one assumes the
-ones before it.
+Assume the USB host is hostile and the Non-secure firmware can execute
+arbitrary privileged code. Secure code, the boot ROM and the chip's access
+controls enforce the boundary. OTP provisioning and enforced Secure Boot
+address separate threats from physical access to the board.
 
-The standard build uses the [TrustZone boundary](architecture.md#trustzone): USB classes
-and transports run Non-secure, while the controller, lifecycle observer,
-worker, applets, storage and private keys stay Secure. Secure code observes
-USB resets independently of Non-secure callbacks. This separation does not
-protect against compromised Secure code, physical fault injection or a
-replacement firmware image on a device without enforced Secure Boot.
-The boundary's verification record distinguishes image tests from silicon checks.
+The Secure USB driver owns the controller, handles endpoint operations and
+observes hardware resets and configuration loss. It processes USB control
+traffic from the host. Non-secure code handles USB classes and reassembles
+commands. Checked gateways copy those commands into Secure memory, where the
+worker and applets apply their own parsers and authorization rules. Non-secure
+code can forge transport state, drop traffic and observe plaintext carried
+through it. See [Architecture](architecture.md#trustzone) and [Testing](testing.md#trustzone-on-hardware).
 
-![What RS-Key defends and what is out of scope — attacker-controlled USB bytes enter the RP2350 and pass through three composing tiers: memory-safe parsers (safe Rust plus fuzzing), then protocol gates (PIN/UV, touch, management key), then the key material, which is additionally protected by an at-rest seal meaningful after the OTP master-key burn; physical and lab attacks and a compromised, unlocked host are explicitly out of scope and reach the device undefended, since the RP2350 is not a secure element](images/threat-tiers.svg)
+![Secure USB handling, Non-secure command framing and Secure applet authorization. Separate protections cover flash dumps, BOOTSEL storage access and replacement firmware. Invasive lab attacks are outside this model.](images/threat-tiers.svg)
 
 ## Assets
 
@@ -20,18 +21,21 @@ The FIDO master seed (every non-resident credential derives from it),
 resident passkeys, OpenPGP private keys and their DEK chain, PIV private
 keys, OATH secrets, OTP slot secrets, PINs.
 
-## Attackers, strongest defense first
+<span id="attackers-strongest-defense-first"></span>
+
+## Attacker capabilities
 
 ### 1. A hostile host (malware on the computer)
 
-Everything arriving over USB is attacker-controlled: CTAPHID frames, the CCID
-bulk stream, ISO-7816 APDUs, CTAP2 CBOR. Defenses:
+USB setup requests, CTAPHID frames, CCID messages, ISO-7816 APDUs and CTAP2
+CBOR all originate with the host. A compromised Non-secure image can also
+submit commands directly at the gateways.
 
-- **Memory safety.** `no_std` Rust end to end. The parsers and applet
-  dispatch are safe code. The handful of `unsafe` sites are enumerated and
-  justified in [unsafe.md](unsafe.md).
-- **Fuzzing.** Every parser and every applet's full dispatch path has a
-  `cargo-fuzz` target (30+). See [testing.md](testing.md).
+- **Memory safety.** The applet parsers and dispatch use safe Rust. The
+  trusted code also includes low-level `unsafe` Rust and C, including the
+  CMSE veneers and RSA arithmetic. See the [`unsafe` audit](unsafe.md).
+- **Fuzzing.** Targets exercise parsers, applet dispatch and stateful command
+  sequences. Coverage varies by path and profile. See [Testing](testing.md#fuzzing).
 - **Protocol gates.** PINs/UV with retry counters and lockout, physical-touch
   requirements on FIDO operations and OpenPGP UIF, OATH access codes, PIV
   management-key auth.
@@ -55,11 +59,10 @@ bulk stream, ISO-7816 APDUs, CTAP2 CBOR. Defenses:
   operation and stated where the code does it: `Fs::delete` drops the metadata
   before the value, registration writes the `EF_RP` entry before the credential,
   a reset deletes the seed before anything derived from it. Underneath the order
-  sits an assumption about the silicon rather than a defence this firmware
-  implements — that a torn NOR write leaves the old bytes or detectably bad ones,
-  never a plausible wrong value. It is registered as `PLAT-FLASH-001` and is
-  discharged by a board measurement, not by code
-  ([platform-assumptions.md](platform-assumptions.md)). **Scope: the interrupted
+  sits a silicon assumption that a torn NOR write leaves the old bytes or
+  detectably bad ones. `PLAT-FLASH-001` remains pending a real supply-cut test
+  on hardware. See [Platform assumptions](platform-assumptions.md).
+  **Scope: the interrupted
   write.** A flash *read* that comes back an error is a different condition and
   has its own clause below. Not that a cut cannot produce one: a half-programmed
   item header is deterministic *and* reads back as an error, and what keeps a
@@ -115,10 +118,10 @@ bulk stream, ISO-7816 APDUs, CTAP2 CBOR. Defenses:
   goes before the count that names it. **The resets are not, and this page will
   not pretend otherwise.** There the seed leads and the rest is swept in ring
   order, which reaches `EF_RP` before `EF_CRED` — a torn wipe can still strand a
-  credential, and what the ordering buys is that the survivor is undecryptable
-  rather than that it does not exist. The harmless direction is not free either:
-  an `EF_RP` entry that outlives its credential keeps a count nothing reconciles,
-  so it goes on listing an rp with no passkeys behind it until the next reset.
+  credential whose seed has already been removed. A power cut can also leave
+  an `EF_RP` entry after its last credential is gone. On a successful
+  credential scan, boot reconciles existing RP records, correcting counts
+  and removing empty entries. It leaves a missing RP record missing.
 - **A key must not outlive the algorithm attribute it was made under.** An
   OpenPGP slot's algorithm attribute is one `PUT DATA` away for anyone holding
   PW3, and the card reads that record again at the moment of every *private-key*
@@ -235,20 +238,16 @@ bulk stream, ISO-7816 APDUs, CTAP2 CBOR. Defenses:
   wrong prompt, since the BOOTSEL button cannot show what it approves; setting a
   code of your own at provisioning closes that too, as changing one needs the
   current one. **Reversible describes the mask, not the flash it is
-  written to.** The same ungated commands persist their records, and a host that
-  replays one indefinitely spends erase cycles that nothing gives back: measured
-  on the device's own store geometry, a `SET LED` replay at a nearly full ring
-  costs ~204 bytes and one main-partition page erase per twenty writes, which at
-  the rate a host can drive it puts the array's endurance budget in weeks of
-  continuous hammering. Idempotent writes are now dropped before they reach flash
-  on both the vendor and FIDO paths, which removes the cheap version of that;
-  what remains is bounded by how fast a host can produce *distinct* records. If you need config writes gated on the operator,
+  written to.** Repeated changes to persistent configuration consume flash
+  endurance. The vendor and FIDO paths skip unchanged records, while a host
+  can still send distinct values. Wear depends on the workload and flash
+  geometry. If you need config writes gated on the operator,
   build/flash **`firmware-strict-config`**, which restores the presence/PIN gates
   and refuses the ungated transport writes ([build.md](build.md)). It is not the
   runtime flash flag `EF_HARDENED`.
 - **The FIDO applet answers on two transports, and the second one is easier to
   reach.** CTAP2 and U2F are served over CCID as well as CTAPHID
-  ([protocol.md §5.2](protocol.md#52-ctap-over-ccid)), so any process that can talk
+  ([CTAP over CCID](protocol.md#53-ctap-over-ccid)), so any process that can talk
   to `pcscd` can drive the whole CTAP surface — no exclusive HID handle, and none
   of the platform gatekeeping a browser or the Windows WebAuthn stack applies to
   its own FIDO path. **What that does and does not buy an attacker:** nothing a
@@ -264,61 +263,67 @@ bulk stream, ISO-7816 APDUs, CTAP2 CBOR. Defenses:
   **reachability**: a process that could not open the HID device can now open the
   card. Treat FIDO as available to anything with card access, and use
   `ykman config usb --disable fido2` (or `--disable u2f`) if that is not wanted —
-  the mask gates the two applications apart, over both transports. On the default
-  `0x1209:0xF1D2` identity most hosts never bind the CCID interface at all, so the
-  surface is absent there for an unrelated reason, not by design.
-- **The residual gap is *intent*. The trusted-display flavor closes it.** Because
-  a standard key attests presence and possession, malware on the host can have it
-  sign in to a site you never chose when you touch it for one you did: the button
-  cannot show which `rpId` a touch approves.
-  The [trusted-display flavor](guides/display.md) paints the true `rpId` on the
-  device's own screen and gates each signature on a tap there, so a compromised
-  host cannot fake what you approve. [Qubes OS's CTAP proxy](https://doc.qubes-os.org/en/latest/user/security-in-qubes/ctap-proxy.html#the-qubes-approach-to-ctap)
-  tackles the same gap in software, mediating CTAP through a trusted VM.
+  the mask gates the two applications apart, over both transports. Client or
+  driver binding can affect reachability on a particular host. Treat CCID as
+  exposed whenever the interface is enabled.
+- **User intent.** A button confirms presence. Malware can substitute its own
+  request before you press it. In a FIDO presence prompt, the trusted display
+  shows the RP ID that the authenticator received and lets you approve or
+  decline on the device. A deliberate approval applies to that prompt. A
+  stale touch, Deny, cancellation or timeout cannot approve it. Compare the
+  RP ID with the site you intended to use. The browser and relying party still
+  determine whether an assertion is valid for the origin and challenge.
+  Silent `up:false` assertions can still run when policy permits and return
+  with UP clear. See the [trusted display guide](guides/display.md).
+
+With the default presence policy, an eligible `up:false` assertion can
+return `largeBlobKey` without interaction when the credential's
+`credProtect` policy permits it. `alwaysUv` applies to requests with UP
+set, and `strict-up` adds a presence check to silent probes. A host can
+read the ciphertext array with `authenticatorLargeBlobs get`. The optional
+`largeblob-ext` build can return the blob itself on an eligible read and
+seals it at rest under a seed-derived key with the credential ID as
+associated data. See the [CTAP specification](https://fidoalliance.org/specs/fido-v2.3-ps-20260226/fido-client-to-authenticator-protocol-v2.3-ps-20260226.html).
 
 ### 2. A thief with the powered-off device (at-rest)
 
-- All key material is sealed in flash: FIDO seed, PIV keys and OATH records
-  (secrets plus the access-code key) under AES-256-CBC/GCM keyed by a device key
-  (`kbase` = HKDF of the chip serial and the OTP master key once provisioned),
-  OpenPGP keys under the PIN-wrapped DEK chain.
-- **OTP master key** ([production.md](production.md) stage 1): with the MKEK
-  fused and page-58 hard-locked, a flash dump (even with BOOTSEL access and
-  the chip id) does not reproduce the sealing key. Without the burn, the
-  sealing key derives from on-chip state an attacker with full flash + chip
-  access could reconstruct. The burn is what makes at-rest real — for every
-  record a boot pass can re-root. A PIN-derived one cannot be re-rooted without
-  its secret, so it waits for its own reference to be presented; see
-  [limitations](limitations.md) and `PLAT-THREAT-002`.
-- **The seals give authenticity only past the page-58 latch.** Records written
-  before the burn are keyed from the public chip serial alone, and those pre-OTP
-  arms stay readable afterwards so a provisioned device keeps working across the
-  upgrade. So until the latch an attacker who can *write* flash (BOOTSEL) can
-  forge a record that opens under one, and the boot migration then re-seals it
-  under the fused root. Reading the flash still tells them nothing. Audit run-27
-  #8 has the analysis. Firmware automatically burns the latch only once a boot has moved
-  every device-sealed record off the pre-burn key and completed a fresh flash
-  scrub. A record a pass could not
-  read counts as not moved. What it burns is the latch: from the next boot on, no
-  pass or command opens a FIDO seed, attestation key or grant, the device key, a
-  PIV key, or an OATH or OTP record under the pre-burn key or in the clear, and a
-  command that finds the fused key unreadable opens and seals nothing rather
-  than fall back to that key. A device locked by a build before 0x0A67 has the lock without the
-  latch until a current firmware boot completes those checks. PIN verifiers keep their pre-burn arm, since
-  their format does not say which key made them: the FIDO PIN and the display's
-  device PIN, the PIV PIN and PUK, OpenPGP's PW1, PW3 and resetting code with their
-  DEK copies, and the OATH OTP PIN. So a flash writer can still plant one for a PIN
-  they know and use what that PIN unlocks; OpenPGP's keys stay behind a DEK the
-  planted PIN does not open ([limitations](limitations.md)).
-  A boot that cannot read the fused key at all, a page closed even to secure
-  code, runs none of those passes and says so (READ `1E/07` = `FFFE`): taken for
-  a blank page, it would re-seal, provision and migrate under the chip-serial
-  arm.
-- **Soft-lock** ([guides/soft-lock.md](guides/soft-lock.md)): optionally, the
-  seed at rest is additionally wrapped with ChaCha20-Poly1305 under a 32-byte
-  key only you hold (BIP-39/SLIP-39 words). A stolen device (even running
-  genuine firmware) refuses every FIDO operation until that key is presented
-  over an encrypted channel at power-up. Device + words, two factors.
+- **Secret records.** The FIDO seed, attestation scalar and persistent UV
+  token use ChaCha20-Poly1305. PIV keys and OATH and OTP secret records use
+  AES-256-GCM. Their keys derive from the device root `kbase`. OpenPGP private
+  keys use a separate AES-256-GCM data-encryption key (DEK) wrapped under
+  PIN-derived keys. The store also authenticates record authority and contents.
+  Before OTP, that authority uses the public serial root. The completed latch
+  requires OTP-backed authority. A flash image can still contain public metadata.
+- **OTP master key.** Before provisioning, `kbase` derives from the public chip
+  serial. A flash dump and that serial let an attacker recover device-sealed
+  records and try guesses offline against legacy PIN verifiers. After
+  migration under a fused MKEK, recovery from flash alone requires that MKEK.
+  A PIN-derived record can stay on the public root until its PIN or resetting
+  code is presented. See `PLAT-THREAT-002` and [Production setup](production.md#stage-1--otp-master-key).
+- **Page-58 latch.** Before the latch, a raw flash writer can plant a record
+  under a public pre-OTP key that migration would then re-seal under the
+  fused root. Secure startup completes the latch after the migration checks
+  pass and a fresh flash scrub succeeds. The completed lock denies BOOTSEL
+  and Non-secure access and leaves Secure firmware read-only access. A
+  per-boot software lock already denies Non-secure access before the launch
+  of Non-secure firmware. See [OTP fuses](otp-fuses.md).
+
+  After the latch takes effect, device-sealed records covered by migration
+  reject the pre-OTP and legacy cleartext formats. An unreadable fused root
+  fails closed. Older locks that leave Secure writes enabled still need the
+  current startup checks to complete the latch. PIN verifiers keep their
+  pre-burn arm because their format does not identify the root. This includes
+  the FIDO PIN, the display's device PIN, the PIV PIN and PUK, OpenPGP's PW1,
+  PW3 and resetting code with their DEK copies, and the OATH OTP PIN. The
+  fallback is a property of the verifier format. Changing a verifier in the
+  authenticated store also requires a record and authority that the store
+  accepts. A substituted PIN verifier by itself cannot unwrap the OpenPGP DEK.
+  An unreadable fused MKEK blocks boot migration and is reported by
+  READ `1E/07` as `FFFE`.
+- **Soft-lock.** The seed is wrapped with ChaCha20-Poly1305 under a 32-byte
+  key supplied by the user. Operations that need the seed remain locked until
+  that key is presented over an encrypted channel. A successful unlock keeps
+  the seed in Secure RAM for use until it is cleared. See the [Soft-lock guide](guides/soft-lock.md).
 - Caveat: superseded records linger. The flash log is append-only, so
   re-sealing or deleting a secret leaves the old copy on flash until its page
   is reclaimed. Two cases differ in how much that matters:
@@ -326,27 +331,25 @@ bulk stream, ISO-7816 APDUs, CTAP2 CBOR. Defenses:
     under the chip-serial-only root (no fuse secret), and the persistent `pcmr`
     grant, which provisioning mints at the first boot under that same root. Left
     alone, a flash dump plus the chip id would recover them, bypassing the burn.
-    So it is **not** left to lazy healing: the first boot after provisioning runs
-    a one-shot compaction (`Fs::compact`, gated by the `EF_HARDENED` marker,
-    crash-safe) that drives a full GC lap over the credential partition and
-    physically erases every superseded pre-OTP record before the device
-    re-attaches to USB.
+    Boot runs a compaction lap before USB attach. Migration re-arms the
+    `EF_HARDENED` marker when it replaces a record. Sealing page 58 requires
+    successful migration and a fresh scrub, so an interrupted pass can leave
+    the migration pending on a later boot.
   - The **soft-lock** transition leaves the same kind of lingering record, but
     on a provisioned device it is already sealed under the fused root (moot
     against anything short of a fused-key compromise), so soft-lock's at-rest
     guarantee simply hardens over time as natural compaction overwrites it.
-- The FIDO seed is **never PIN-wrapped at rest** (a deliberate design
-  decision). UP-only operations (`ssh ed25519-sk`, U2F, no-PIN assertions)
-  must work from a cold boot with no PIN presented. So a PIN-keyed at-rest
-  copy adds no protection an attacker couldn't bypass via the always-loadable
-  copy, while breaking those flows. At-rest strength is the kbase (tier
-  above), not the PIN.
+- **FIDO seed and PIN.** The current seed format uses the device root so
+  UP-only operations such as U2F can work from a cold boot. The FIDO PIN
+  controls use where policy requires UV. Soft-lock adds a separate wrapping
+  key supplied by the user.
 
 ### 3. An attacker who can flash their own firmware
 
-- **Secure boot** ([production.md](production.md) stage 2): the bootrom
-  refuses unsigned images, so no foreign code ever runs to read the OTP key
-  in secure mode. Glitch detectors are fused on along the way.
+- **Secure Boot.** When enforced, the boot ROM authenticates the complete
+  combined image, including both worlds and the embedded partition table,
+  using the enabled signing keys. The production procedure also provisions
+  debug restrictions and glitch detectors. See [Production setup](production.md).
 - **Anti-rollback** ([anti-rollback.md](anti-rollback.md), optional): with
   `ROLLBACK_REQUIRED` fused, images below your board's rollback floor (or
   carrying no version at all, i.e. anything sealed before the feature) no
@@ -395,55 +398,50 @@ did not already exclude.
 
 ### 5. Network
 
-None. The device speaks USB only. There is no radio and no IP stack.
+The firmware exposes its interfaces over USB. Network-originated input
+reaches the device through host software.
 
 ## Flash snapshot rollback (the PIN-counter reset)
 
 Reported by Token2 ([issue #37](https://github.com/TheMaxMur/RS-Key/issues/37),
 [advisory PDF](https://github.com/user-attachments/files/30152894/T2-SA-RP2350-Dec2025.pdf)).
-An attacker with brief physical access and BOOTSEL runs `picotool save` to snapshot the
-whole flash, guesses PINs until the wrong-PIN counter locks, then `picotool load`s the old
-snapshot to reset the counter and repeats. That is unlimited offline PIN guessing. It
-defeats every applet's retry counter — FIDO clientPIN, PIV PIN/PUK, OpenPGP PW1/PW3, OATH —
-since all are ordinary flash records with no external freshness binding.
+An attacker with physical access and a way to read and rewrite the store can
+save the flash, submit PIN guesses to the device and restore the saved copy
+when the retry budget runs out. This repeats on-device guesses. It can reset
+flash-backed counters for FIDO PIN, PIV PIN/PUK, OpenPGP PINs and the OATH
+OTP PIN. The attack also needs a reboot that clears any separate per-boot
+retry state.
 
-The gap is **freshness**, not confidentiality or authenticity. Secure boot accepts the
-restored image (it is genuine and signed); the at-rest seal decrypts it (same chip). Neither
-notices a rollback. RS-Key's firmware anti-rollback ([anti-rollback.md](anti-rollback.md))
-versions the firmware *image*, not the flash *data*, so it is blind to the swap too. The clean
-fix is a monotonic counter in tamper-resistant NVM that the firmware checks on boot — exactly
-what a secure element has and the RP2350 lacks. Its OTP is write-once antifuse (a few dozen
-one-way bits for the board's whole life), so it cannot back a retry counter that must reset to
-eight on every correct PIN. We cannot close the rollback itself on this silicon; we fence the
-store and raise the cost of getting past the fence:
+An old record and its matching store authority can still authenticate on
+the same chip. The main directory tracks the newest authority it has seen
+within the same backend instance, including remounts. Replaying all its
+authority copies after a cold boot can still restore older state. The counter
+partition has a separate authority. Replaying both of its banks can rewind counters without changing
+KVMAIN, even while the main directory remains mounted. Firmware
+anti-rollback applies its floor to the image. A retry budget needs durable
+freshness of its own, which the current store has no independent way to
+check. See [Limitations](limitations.md) and [Anti-rollback](anti-rollback.md).
 
-- **Partition table** (always on since `0x0871`). The shipped image embeds an RP2350
+- **Partition table.** The default build embeds an RP2350
   partition table that fences the KV store off from the USB bootloader. `picotool save` and
   `picotool load` over that range answer `permission failure` — enforced by the bootrom, not
   by us — while the running firmware keeps `secure: rw` and full access to its own data. The
-  snapshot/restore above no longer works as written.
+  default BOOTSEL path rejects those direct store reads and writes. The
+  diagnostic `--no-partition-table` build omits that fence.
 
-  **What that is worth depends on secure boot.** The table sits inside the signed image, so
-  where secure boot is on it cannot be swapped without your signing key: a byte flipped
-  anywhere in the table fails the image hash *and* the signature. Where it is off, the fence
-  is friction rather than a barrier — the firmware partition has to stay bootloader-writable
-  or updates would not work at all, so an attacker flashes an image carrying a permissive
-  table and is back where they started. Read this as "the attack now needs a reflash first,
-  and secure boot is what denies the reflash", not as "rollback fixed".
-
-  It is worth doing precisely because this is the one gap secure boot does **not** close by
-  itself: secure boot verifies *executable* images, and writing the data region is not
-  execution. Until this change a fully provisioned board was still snapshot/restore-able.
-- **OTP-seeded PIN verifier** (always on after the OTP burn). The stored verifier is
-  `HKDF(serial_hash, HMAC(kbase, pin))`, with `kbase` rooted in the fused OTP master key
-  ([production.md](production.md) stage 1). A flash dump does not contain that key, so it
-  cannot brute-force the PIN *offline* — the guessing must run on the device, one try at a
-  time.
+  With Secure Boot enforced, altering the table in a signed image breaks
+  image authentication. An older image signed by an accepted key can still
+  replace the fence if the rollback policy allows it. Without enforcement,
+  an attacker can install their own image with a permissive table. The fence
+  covers BOOTSEL access to the store. Direct flash access can bypass it.
+- **OTP-seeded PIN verifier.** A FIDO PIN verifier created or migrated under
+  the fused root derives from `HKDF(serial_hash, HMAC(kbase, pin))`. A flash
+  dump alone lacks the MKEK needed to check guesses against that verifier.
+  Legacy verifiers that still use the public root retain their offline risk.
 - **`strong-pin` / `fips-profile` builds** (opt-in). Raise the clientPIN floor to six code
-  points and refuse the most guessable PINs (a repeated digit, a `123456`-style run), so the
-  on-device search space is at least a million. By Token2's estimate an automated attack runs
-  ~34 days at six digits and ~10 years at eight, against ~8 hours at four
-  ([build.md](build.md)).
+  points and reject common patterns such as repeated digits and `123456`.
+  This raises the cost of guessing, which still depends on the chosen PIN
+  and the attacker's access. See [Build options](build.md).
 - **Soft-lock** (opt-in). The FIDO seed is wrapped under a key only you hold
   ([guides/soft-lock.md](guides/soft-lock.md)), so a brute-forced PIN yields nothing until you
   present it. It covers the FIDO seed; the PIV, OpenPGP and OATH counters stay
@@ -478,15 +476,12 @@ dollars, one to two days per target) and applies to *every* device built on the
 Synopsys `dwc_nvm_ts40*` antifuse IP on TSMC's 40 nm node, an antifuse property,
 not an RP2350-specific defect.
 
-**The A4 stepping fixes the fault and boot-ROM attacks in silicon, but not the
-antifuse readout** ([announcement][a4]). A4 closes the boot-ROM errata
-(E20/E21/E24, including the laser signature bypass) in a new boot ROM, the OTP
-power-glitch (E16) through changes to the wrapper circuitry around the OTP macro,
-and the GPIO errata (E9, E3). The antifuse-array PVC readout is explicitly **not**
-fixed in A4. Raspberry Pi's guidance is to mitigate it by how secrets are stored
-in OTP, the chaffing RS-Key applies (see [otp-fuses.md](otp-fuses.md)). A third
-challenge (power side-channel analysis of the secure-boot AES) is open with no
-break reported ([challenge 2][c2]).
+**A4 addresses the original fault and boot-ROM attacks.** It replaces the
+affected boot ROM and changes the OTP power-glitch circuitry. The direct
+antifuse readout remains applicable. RS-Key uses OTP chaff to address the
+demonstrated paired-row readout. Raspberry Pi's second challenge targets
+side channels in the boot ROM's AES implementation. See the [A4 announcement][a4],
+[second challenge][c2] and [OTP fuses](otp-fuses.md).
 
 **A4 does not stop a laser from turning debug back on** ([Ledger Donjon][donjon]).
 On a decapped A4, photon-emission imaging located the `DEBUGEN` register and
@@ -496,22 +491,18 @@ the boot ROM before any firmware runs, and the OTP reads out. About $250k of
 equipment. Raspberry Pi will not respin: the attack is destructive, and with
 per-device keys it has single-device scope ([response][rpi-laser]).
 
-**What this means for RS-Key.** Our development boards are **A2**: the broken
-stepping, kept as the conservative worst case. The firmware is **A4-compatible**,
-and A4 is recommended for the fault / boot-ROM attacks above. Against the antifuse
-readout (which no stepping fixes), RS-Key applies the chaffing mitigation
-directly ([otp-fuses.md](otp-fuses.md)). The laser attack applies to RS-Key as
-it is: page 58's lock is the one the challenge used, and a read through debug
-sees the rows as the chip does, so the chaff does not help. It yields that
-device's MKEK and DEVK and, with them, every record sealed under the key base:
-the FIDO seed, PIV and OATH keys, an org attestation key. The PIN verifiers are
-not stretched, so the PINs then fall to an offline guess. The off-chip key of
-[soft-lock](guides/soft-lock.md) survives it, for the FIDO seed only. Per-device
-keys keep the damage to the device in hand; an org attestation key shared by a
-fleet does not ([attestation](guides/attestation.md)). What remains out of scope is unchanged: a
-funded lab with FIB/PVC, laser fault injection, or power/EM analysis against a
-device in hand. No software or provisioning choice on a general-purpose die closes
-those. That is what a dedicated secure element is for ([limitations.md](limitations.md)).
+**What this means for RS-Key.** The project has board records from A2 and A4.
+The Donjon experiment read its challenge secret from page 48. It also shows
+why an attacker who restores Secure debug could read RS-Key's MKEK and DEVK
+on page 58. Our completed latch still permits Secure reads, and a logical
+debug read can recover the real rows despite chaff. That application to
+RS-Key follows from the access policy. The published experiment used the
+challenge firmware. A recovered MKEK exposes device-sealed records from that
+board and enables offline PIN guessing against verifiers derived from it.
+A soft-locked seed still depends on its separate off-device key while it is
+locked. An organization attestation key shared across a fleet can extend the
+impact beyond one device. See [Ledger Donjon][donjon], [Testing](testing.md#trustzone-on-hardware)
+and [Attestation](guides/attestation.md).
 
 [c1]: https://www.raspberrypi.com/news/security-through-transparency-rp2350-hacking-challenge-results-are-in/
 [a4]: https://www.raspberrypi.com/news/rp2350-a4-rp2354-and-a-new-hacking-challenge/
@@ -525,13 +516,12 @@ those. That is what a dedicated secure element is for ([limitations.md](limitati
 
 ## Seed backup (the deliberate exception)
 
-A FIDO authenticator's pitch is non-exportable keys. The wallet-style backup
-is a conscious trade for recoverability, gated accordingly. Export moves the
-seed over an ephemeral encrypted channel (P-256 ECDH → HKDF →
-ChaCha20-Poly1305), and requires (all at once) physical touch, the FIDO
-PIN/UV token when a PIN is set, and the **one-time setup window**: after an
-explicit `finalize`, export is refused until a full reset regenerates a new
-seed. Malware cannot exfiltrate the seed silently or later.
+Host export sends the FIDO seed over an ephemeral channel using P-256 ECDH,
+HKDF and ChaCha20-Poly1305. The channel can add an ML-KEM-768 shared secret.
+The export request also requires presence and authorization with the
+configured PIN. While the export window is open, export can be repeated.
+`finalize` requires a separate authorization and closes the window until a
+factory reset. The `fips-profile` build refuses export.
 
 The PIN factor has **two** forms and the second is easy to miss: with a clientPIN
 set it is the PIN/UV token; with no clientPIN but a **device PIN** set, the same
@@ -548,7 +538,7 @@ Scope: the deterministic identity only (resident passkeys, OpenPGP, PIV are
 not covered).
 
 On the **trusted-display flavor** the host need not be in that trust path: the
-device can render its BIP-39 recovery phrase **on its own screen** (the seed is
+device can render BIP-39 words or SLIP-39 shares **on its own screen** (the seed is
 turned into words on-device and never crosses USB), so a backup can be taken
 without trusting any host. That trades the host-observation surface for a
 physical/visual one. The words are briefly on the panel (shoulder-surf, camera).
@@ -562,26 +552,33 @@ and auto-clears the panel after a short idle.
 sequenceDiagram
     participant U as You
     participant H as Host
-    participant D as Device
-    U->>D: touch + PIN/UV (when set)
-    H->>D: ephemeral P-256 ECDH
-    D-->>H: seed over HKDF → ChaCha20-Poly1305 channel
-    Note over H: the host necessarily sees the seed in the clear
-    H-->>U: BIP-39 / SLIP-39 words
-    U->>D: finalize → export refused until a full reset
+    participant D as Authenticator
+    H->>D: MSE with P-256 public key<br/>and optional ML-KEM key
+    D-->>H: P-256 public key<br/>and optional ML-KEM ciphertext
+    Note over H,D: Derive the channel key with HKDF
+    H->>D: BACKUP_EXPORT<br/>PIN/UV auth when FIDO PIN is set
+    opt Device PIN only
+        U->>D: Enter PIN on the display
+    end
+    U->>D: Approve seed export
+    D-->>H: Seed encrypted with ChaCha20-Poly1305
+    Note over H: Host decrypts the seed
+    H-->>U: BIP-39 words or SLIP-39 shares
+    H->>D: BACKUP_FINALIZE<br/>Apply configured PIN policy
+    U->>D: Approve closing the export window
+    D-->>H: Export window closed
 ```
 
 ## Zeroization
 
-Key-grade material in RAM is wiped (`zeroize`, volatile writes) when its use
-ends: session state and PIN/UV tokens on drop, transient key copies at end of
-scope including error paths, and the transport/exchange buffers as soon as a
-message completes (requests carry PINs and imported keys). Neither fused key is
-held at all: the applets carry a way to *read* OTP, not the key, so the DEVK and
-the MKEK exist in RAM only inside the operation that asked for one and are wiped
-when it returns. That is what puts them out of reach of a parser bug — parsing
-runs before any store access, so at that moment neither key is anywhere in
-memory. It buys nothing against code execution, which can drive the same reads.
+Session teardown wipes PIN/UV tokens. Transient copies in `Secret` or under a
+`WipeGuard` are wiped when their scopes end, including error returns. The
+firmware also scrubs transport and exchange buffers at their reuse or
+revocation points. Non-secure code can observe a plaintext PIN sent over
+CCID before the buffers are scrubbed. Secure startup and operations that
+need the MKEK or DEVK read the fused keys on demand into temporary buffers.
+Secure code execution can call the same OTP readers.
+
 Accepted residuals: `Copy` temporaries inside RustCrypto curve arithmetic and
 digest internals, in stack slots until the work that made them is done: core0's
 dead stack is zeroed after each request, keyboard OTP frame, typed ticket and
@@ -598,39 +595,11 @@ heap closes both for what it holds: it wipes each block as it frees it
 outlive the free. A `num-bigint-dig` value of eight limbs or fewer is held inline,
 not on the heap, and a local one stays in its stack slot like those temporaries.
 
-What holds the first sentence is a type, not a habit. Key-grade bytes live in
-`rsk_secret::Secret` — or, for a buffer that outlives the scope, under a
-`WipeGuard` — whose `Drop` runs on every exit a scope has, a `?` included, and
-the root `clippy.toml` refuses a bare `Zeroize::zeroize` or a `Zeroizing` in
-every crate. A wipe no `Secret` can make — state that outlives a command, a key
-type's own `Drop` — stays bare under an `#[expect]` that names its wipe point,
-and rustc holds that list both ways. Two exits no type reaches. A panic runs
-nothing — `panic-halt` spins with no unwinding and no `Drop`, so a panic reached
-with a key unsealed leaves it in SRAM until power is cut; what bounds that is
-keeping a panic unreachable from host input, which is what the fuzz targets are
-for. And a move is a `memcpy` whose source nothing wipes: a secret is built in
-place and handed on by reference, and the compiler's own copies stay the
-residual named above.
-
-A WebAuthn **large-blob key is obtainable without user interaction**. CTAP 2.1
-§12.3 puts no UP/UV precondition on the `largeBlobKey` extension output — unlike
-§12.5, which mandates refusing `hmac-secret` on a silent `up:false` probe — and
-§6.2.2 step 5 scopes `alwaysUv` to requests where `up` is present and true. RS-Key
-implements both as written, so a host process can obtain a credential's large-blob
-key, and the ungated `authenticatorLargeBlobs get` alongside it, with no touch and
-no PIN, on a device with `alwaysUv` enabled. Per §6.10 the confidentiality of that
-data is a function of the credential's protection policy, so a relying party that
-needs it gated should set `credProtect` accordingly. Deviating unilaterally would
-fail conformance; the asymmetry belongs upstream. The CTAP 2.3 §12.4 `largeBlob`
-extension (`--features largeblob-ext`) inherits the same property and is
-implemented as written for the same reason — it puts no UP/UV precondition on a
-read either, so a silent `up:false` probe returns the blob. It is not a wider
-exposure than the pair it replaces: there, an ungated assertion yields the
-largeBlobKey and an ungated `authenticatorLargeBlobs get` yields the ciphertext,
-which is the same plaintext by another route. What that build does add is a blob
-the *device* holds in the clear, since the platform no longer encrypts it — so
-`largeblob-ext` seals each blob at rest under the device seed, with the
-credential id as AAD.
+The root `clippy.toml` restricts direct uses of `Zeroize::zeroize` and
+`Zeroizing`. A state object that needs its own wipe uses an `#[expect]` at
+the wipe site. A panic halts without unwinding, so a key unsealed at that
+point can remain in SRAM. Moving a secret can also leave compiler copies.
+Firmware builds secrets in place and passes them by reference where possible.
 
 Reboot to BOOTSEL requires presence and leaves BOOTSEL in control of any
 remaining SRAM. `worker::reboot` wipes live key material before handing off.
@@ -641,7 +610,7 @@ applies to the tested silicon and boot policy. It measures the platform's
 clearing behavior. See `PLAT-MEM-001` in
 [Platform assumptions](platform-assumptions.md) for the board record.
 
-Every reset goes through `worker::reboot`. `clippy.toml` refuses `SCB::sys_reset`,
+Firmware-requested resets go through `worker::reboot`. `clippy.toml` refuses `SCB::sys_reset`,
 `rom_data::reset_to_usb_boot`, `rom_data::reboot` / `reboot_ns` and
 `Watchdog::trigger_reset` anywhere else, so a new path to a reset cannot skip the
 wipe without an `#[expect]` that says why. Not covered, and none of it in the
@@ -652,33 +621,27 @@ through `SCB::PTR`, a ROM function called through its `ptr()`, and the ROM's
 
 ## Supply chain & process
 
-- `cargo audit` + `cargo deny` (advisories, license allow-list, source
-  policy) and `gitleaks` run in `scripts/check.sh` and the pre-commit hook.
-- Dependencies are pinned (`Cargo.lock`). The git dependencies are restricted
-  to the embassy organization.
-- **No vulnerability advisory is ignored.** The one that used to be —
-  RUSTSEC-2023-0071, the Marvin timing side channel in the `rsa` crate, which
-  has no fixed release — went away with the crate itself in 0.4.12; `rsk-rsa`
-  owns the key type and both private paths now. The mitigation that carve-out
-  rested on is still in force and is now the whole defence: per-operation base
-  blinding on **every** private-key path (PKCS#1 v1.5 sign and decipher). The
-  [constant-time audit](ct-audit.md) verified that this blinding leaves no
-  unblinded private-exponent path.
+- `scripts/check.sh` runs `cargo audit`, `cargo deny` and Gitleaks. The
+  pre-commit hook scans the staged diff with Gitleaks and runs formatting,
+  build and lint checks.
+- Dependencies are pinned in the workspace lockfiles. Firmware Git
+  dependencies come from `embassy-rs`. The emulator has its own `picoem` pin.
+- **Advisory exceptions.** `deny.toml` lists exceptions for unmaintained or
+  deprecated dependencies. The firmware uses `rsk-rsa` for RSA private-key
+  operations. The signing and deciphering paths blind the base on each
+  operation. See the [constant-time audit](ct-audit.md) for scope and residuals.
 
 ## Post-quantum notes
 
-ML-DSA-44 (COSE −48), ML-DSA-65 (−49) and ML-DSA-87 (−50) FIDO2 credentials
-(all three the in-tree `rsk-mldsa` crate) with hedged signing (32 fresh DRBG
-bytes per signature; the hedge and expanded keys are zeroized). `rsk-mldsa`
-streams the FIPS 204 matrix A on the fly so even ML-DSA-87's keygen+sign fit
-the RP2350 stack — measured, ML-DSA-87's keygen runs 69 KiB deep and its
-signing frame is 65 KiB, against a 205 KiB ceiling. It is hand-written, so its constant-time posture is a source-level
-claim (branch-free reductions, masked norm checks, no secret division), not
-proven at machine code. It is checked byte-for-byte against NIST ACVP KATs;
-Kani proves its rounding, not its reductions. ML-KEM-768 is compiled in as
-scaffolding but nothing calls it until a CTAP PQC PIN/UV protocol exists.
-None of these has a third-party audit yet, the same standing as the rest of
-the RustCrypto stack, tracked via cargo-audit/deny.
+FIDO2 credentials support ML-DSA-44 (COSE −48), ML-DSA-65 (−49) and
+ML-DSA-87 (−50). `rsk-mldsa` uses hedged signing with 32 fresh DRBG bytes per
+signature and checks the implementation against NIST ACVP vectors. The
+constant-time analysis and stack measurements have their own scope. See the
+[constant-time audit](ct-audit.md) and [image testing](testing.md#the-image-itself----image).
+
+The vendor MSE channel uses ML-KEM-768 alongside P-256 when the client
+supplies an encapsulation key. The standard CTAP PIN/UV protocols use their
+own key agreement. See the [MSE protocol](protocol.md#91-the-mse-channel-0x41--0x01).
 
 ## Reporting
 

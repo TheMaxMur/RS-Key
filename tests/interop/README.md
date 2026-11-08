@@ -7,8 +7,8 @@ coverage is reported separately from this consumer compatibility sweep.
 The layer above protocol conformance: does the device work with the actual
 software a user runs (`gpg`, `ssh`, `ykman`, `fido2-token`, OpenSC), not with
 our own APDU/CBOR scripts. This is the executable companion to
-[../../docs/interop.md](../../docs/interop.md) — read that for the full matrix,
-the status legend, and the touch-vs-no-touch build split.
+the [interop report](../../assurance/reports/interop.md), which records results,
+the status legend, and which probes use a touch build.
 
 ```sh
 nix develop -c python tests/interop/run.py            # read-only CLI cells
@@ -45,7 +45,7 @@ nix develop -c python tests/interop/capture.py --label rsk  --serial <rsk-serial
 
 # classify every field: MATCH / ALLOWED / RULE_VIOLATION / UNEXPECTED
 nix develop -c python tests/interop/diff.py real.json rsk.json            # human report
-nix develop -c python tests/interop/diff.py real.json rsk.json --markdown # docs/interop.md block
+nix develop -c python tests/interop/diff.py real.json rsk.json --markdown # block for the interop report
 
 # crypto-parity: RS-Key's OATH engine vs the RFC 4226 known-answer (755224…)
 nix develop -c python tests/interop/parity.py --serial <serial>

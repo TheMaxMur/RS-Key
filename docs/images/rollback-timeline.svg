@@ -1,126 +1,44 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-only -->
 <!-- Copyright (C) 2026 RS-Key contributors -->
-<svg viewBox="0 0 780 380" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="ttl dsc" font-family="'Segoe UI', system-ui, -apple-system, sans-serif">
-  <title id="ttl">Anti-rollback thermometer</title>
-  <desc id="dsc">The rollback floor is a 48-bit OTP thermometer whose value is the number of burned bits; here three of forty-eight are burned. At boot the bootrom compares the image's rollback version to the floor: an image below the floor is refused and falls to BOOTSEL, one at the floor boots, and one above the floor boots and immediately burns the thermometer up to its version. Each raise burns a bit permanently and there are 48 for the board's life.</desc>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 544 298"
+     role="img" aria-labelledby="title desc">
+  <title id="title">Rollback versions at OTP floor 3</title>
+  <desc id="desc">The OTP thermometer has 48 logical bits. Three are programmed.
+    Version 2 is rejected. Version 3 passes without advancing the floor.
+    A successful normal flash boot of version 5 programs two more bits.</desc>
   <defs>
+    <pattern id="bits" x="32" y="59" width="10" height="20" patternUnits="userSpaceOnUse">
+      <rect width="8" height="20" rx="2" fill="#D7E0DE"/>
+    </pattern>
     <style>
-      .h1{font-size:23px;font-weight:700;fill:#2B2723}
-      .sub{font-size:12px;fill:#948A7F}
-      .lg{font-size:11px;fill:#6B645C}
-      .cap{font-size:11px;font-weight:700;fill:#2B2723}
-      .idx{font-family:'SF Mono','Roboto Mono',ui-monospace,monospace;font-size:10px;fill:#7A736A}
-      .flr{font-size:11px;font-weight:700;fill:#C0562B}
-      .chip{font-size:11px;font-weight:700;fill:#A9764F;font-family:'SF Mono','Roboto Mono',ui-monospace,monospace}
-      .badge{font-size:11px;font-weight:700;fill:#fff}
-      .rej{font-size:11px;font-weight:700;fill:#6B645C}
-      .det{font-size:11px;fill:#5A534B}
-      .note{font-size:10.5px;fill:#5A534B}
-      .notek{font-weight:700;fill:#C0562B}
-      .foot{font-size:10.5px;fill:#ADA398}
+      text { font-family: system-ui, sans-serif; fill: #21332F; }
+      .heading { font-size: 26px; font-weight: 700; }
+      .label { font-size: 18px; font-weight: 650; }
+      .detail { font-size: 18px; }
+      .reject { fill: #963D26; }
     </style>
-    <marker id="a1" viewBox="0 0 8 8" refX="6.5" refY="4" markerWidth="6.5" markerHeight="6.5" orient="auto">
-      <path d="M0 0 L8 4 L0 8 z" fill="#B9AEA2"/>
-    </marker>
   </defs>
-  <rect x="6" y="6" width="768" height="368" rx="16" fill="#FBFAF8" stroke="#E4DED5" stroke-width="1.5"/>
 
-  <text class="h1" x="34" y="46">Anti-rollback thermometer</text>
-  <text class="sub" x="34" y="66">48-bit OTP floor · bootrom-enforced · one bit per raise, never back · 48 raises for the board's life</text>
-
-  <!-- legend -->
-  <rect x="560" y="34" width="13" height="13" rx="3" fill="#C0562B"/>
-  <text class="lg" x="580" y="45">burned</text>
-  <rect x="652" y="34" width="13" height="13" rx="3" fill="#F1E4DB" stroke="#E0C7B6"/>
-  <text class="lg" x="672" y="45">free</text>
-
-  <!-- floor marker -->
-  <path d="M85.5 96 l-6 -9 h12 z" fill="#C0562B"/>
-  <text class="flr" x="92" y="94">floor = 3 / 48</text>
-
-  <!-- thermometer: 48 cells -->
-  <g>
-    <rect x="42.0"  y="104" width="13" height="30" rx="2" fill="#C0562B"/>
-    <rect x="56.5"  y="104" width="13" height="30" rx="2" fill="#C0562B"/>
-    <rect x="71.0"  y="104" width="13" height="30" rx="2" fill="#C0562B"/>
-    <g fill="#F1E4DB" stroke="#E0C7B6">
-      <rect x="85.5"  y="104" width="13" height="30" rx="2"/>
-      <rect x="100.0" y="104" width="13" height="30" rx="2"/>
-      <rect x="114.5" y="104" width="13" height="30" rx="2"/>
-      <rect x="129.0" y="104" width="13" height="30" rx="2"/>
-      <rect x="143.5" y="104" width="13" height="30" rx="2"/>
-      <rect x="158.0" y="104" width="13" height="30" rx="2"/>
-      <rect x="172.5" y="104" width="13" height="30" rx="2"/>
-      <rect x="187.0" y="104" width="13" height="30" rx="2"/>
-      <rect x="201.5" y="104" width="13" height="30" rx="2"/>
-      <rect x="216.0" y="104" width="13" height="30" rx="2"/>
-      <rect x="230.5" y="104" width="13" height="30" rx="2"/>
-      <rect x="245.0" y="104" width="13" height="30" rx="2"/>
-      <rect x="259.5" y="104" width="13" height="30" rx="2"/>
-      <rect x="274.0" y="104" width="13" height="30" rx="2"/>
-      <rect x="288.5" y="104" width="13" height="30" rx="2"/>
-      <rect x="303.0" y="104" width="13" height="30" rx="2"/>
-      <rect x="317.5" y="104" width="13" height="30" rx="2"/>
-      <rect x="332.0" y="104" width="13" height="30" rx="2"/>
-      <rect x="346.5" y="104" width="13" height="30" rx="2"/>
-      <rect x="361.0" y="104" width="13" height="30" rx="2"/>
-      <rect x="375.5" y="104" width="13" height="30" rx="2"/>
-      <rect x="390.0" y="104" width="13" height="30" rx="2"/>
-      <rect x="404.5" y="104" width="13" height="30" rx="2"/>
-      <rect x="419.0" y="104" width="13" height="30" rx="2"/>
-      <rect x="433.5" y="104" width="13" height="30" rx="2"/>
-      <rect x="448.0" y="104" width="13" height="30" rx="2"/>
-      <rect x="462.5" y="104" width="13" height="30" rx="2"/>
-      <rect x="477.0" y="104" width="13" height="30" rx="2"/>
-      <rect x="491.5" y="104" width="13" height="30" rx="2"/>
-      <rect x="506.0" y="104" width="13" height="30" rx="2"/>
-      <rect x="520.5" y="104" width="13" height="30" rx="2"/>
-      <rect x="535.0" y="104" width="13" height="30" rx="2"/>
-      <rect x="549.5" y="104" width="13" height="30" rx="2"/>
-      <rect x="564.0" y="104" width="13" height="30" rx="2"/>
-      <rect x="578.5" y="104" width="13" height="30" rx="2"/>
-      <rect x="593.0" y="104" width="13" height="30" rx="2"/>
-      <rect x="607.5" y="104" width="13" height="30" rx="2"/>
-      <rect x="622.0" y="104" width="13" height="30" rx="2"/>
-      <rect x="636.5" y="104" width="13" height="30" rx="2"/>
-      <rect x="651.0" y="104" width="13" height="30" rx="2"/>
-      <rect x="665.5" y="104" width="13" height="30" rx="2"/>
-      <rect x="680.0" y="104" width="13" height="30" rx="2"/>
-      <rect x="694.5" y="104" width="13" height="30" rx="2"/>
-      <rect x="709.0" y="104" width="13" height="30" rx="2"/>
-      <rect x="723.5" y="104" width="13" height="30" rx="2"/>
-    </g>
+  <rect x="1" y="1" width="542" height="296" rx="16" fill="#F8FAF8" stroke="#BBCBC6"/>
+  <text class="heading" x="32" y="43">OTP floor 3</text>
+  <rect x="32" y="59" width="480" height="20" fill="url(#bits)"/>
+  <g fill="#286A60">
+    <rect x="32" y="59" width="8" height="20" rx="2"/>
+    <rect x="42" y="59" width="8" height="20" rx="2"/>
+    <rect x="52" y="59" width="8" height="20" rx="2"/>
   </g>
-  <text class="idx" x="48"  y="150" text-anchor="middle">0</text>
-  <text class="idx" x="730" y="150" text-anchor="middle">47</text>
+  <text class="detail" x="32" y="105">3 programmed bits</text>
+  <text class="detail" x="512" y="105" text-anchor="end">48 logical bits</text>
 
-  <!-- boot decision scenarios -->
-  <g>
-    <rect x="44" y="176" width="168" height="30" rx="8" fill="#F1E4DB" stroke="#E0C7B6"/>
-    <text class="chip" x="128" y="195" text-anchor="middle">image version ≤ 2</text>
-    <line x1="216" y1="191" x2="240" y2="191" stroke="#B9AEA2" stroke-width="2" marker-end="url(#a1)"/>
-    <rect x="244" y="176" width="150" height="30" rx="8" fill="#EDE6DD" stroke="#D9D2C8"/>
-    <text class="rej" x="319" y="195" text-anchor="middle">✗ REFUSED</text>
-    <text class="det" x="404" y="195">below the floor → falls back to BOOTSEL</text>
-
-    <rect x="44" y="216" width="168" height="30" rx="8" fill="#F1E4DB" stroke="#E0C7B6"/>
-    <text class="chip" x="128" y="235" text-anchor="middle">image version = 3</text>
-    <line x1="216" y1="231" x2="240" y2="231" stroke="#B9AEA2" stroke-width="2" marker-end="url(#a1)"/>
-    <rect x="244" y="216" width="150" height="30" rx="8" fill="#2F7E75"/>
-    <text class="badge" x="319" y="235" text-anchor="middle">✓ BOOTS</text>
-    <text class="det" x="404" y="235">exactly at the floor</text>
-
-    <rect x="44" y="256" width="168" height="30" rx="8" fill="#F1E4DB" stroke="#E0C7B6"/>
-    <text class="chip" x="128" y="275" text-anchor="middle">image version = 5</text>
-    <line x1="216" y1="271" x2="240" y2="271" stroke="#B9AEA2" stroke-width="2" marker-end="url(#a1)"/>
-    <rect x="244" y="256" width="150" height="30" rx="8" fill="#2F7E75"/>
-    <text class="badge" x="319" y="275" text-anchor="middle">✓ BOOTS + BURN</text>
-    <text class="det" x="404" y="275">above → the floor burns 3 → 5 on boot</text>
+  <g stroke="#CAD6D2">
+    <path d="M32 122H512 M32 165H512 M32 208H512 M32 251H512"/>
   </g>
+  <text class="label" x="32" y="149">Version 2</text>
+  <text class="detail reject" x="164" y="149">Rejected below the floor</text>
+  <text class="label" x="32" y="192">Version 3</text>
+  <text class="detail" x="164" y="192">Passes, floor stays at 3</text>
+  <text class="label" x="32" y="235">Version 5</text>
+  <text class="detail" x="164" y="235">On boot, floor rises to 5 (+2 bits)</text>
 
-  <!-- notes -->
-  <text class="note" x="34" y="314">Raise the floor to <tspan class="notek">counter + 1</tspan> to cut off your entire build history below it in a single bit.</text>
-  <text class="note" x="34" y="331">An image with no rollback version boots regardless — unless <tspan class="notek">ROLLBACK_REQUIRED</tspan> is fused, which then refuses it.</text>
-
-  <text class="foot" x="34" y="358">Source: docs/anti-rollback.md · the bootrom compares the image version to OTP DEFAULT_BOOT_VERSION (0x4E·0x51).</text>
+  <text class="detail" x="32" y="278">The image must also pass Secure Boot.</text>
 </svg>

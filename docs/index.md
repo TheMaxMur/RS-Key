@@ -54,7 +54,7 @@ host-side tooling to drive and provision all of it.
 - It aims to behave like a USB security key and to work with the host software
   people already use: `ssh`, `gpg`, browsers, libfido2, and `ykman` (which needs
   the opt-in `VIDPID=Yubikey5` build, see below). What has actually been checked
-  on hardware is recorded in the [interop matrix](interop.md), with dates.
+  on hardware is recorded in the [interop report](https://github.com/TheMaxMur/RS-Key/blob/main/assurance/reports/interop.md).
 - It is **not** a certified hardware security key, and not a drop-in replacement
   for an audited commercial key in production. There is no secure element.
 - The default USB identity is RS-Key's own (VID `0x1209` / PID `0xF1D2`, from
