@@ -18,7 +18,6 @@
 //! board in silence.
 
 use std::convert::Infallible;
-use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::mpsc::{self, SyncSender, TrySendError};
 use std::time::{Duration, Instant};
@@ -178,6 +177,8 @@ fn nowhere() -> rsk_ui::Point {
             && rsk_ui::hit_security(p).is_none()
             && rsk_ui::hit_onboard(p).is_none()
             && !rsk_ui::hit_title_back(p)
+            && !rsk_ui::hit_pk_back(p)
+            && !rsk_ui::hit_del_hold(p)
             && !rsk_ui::ALLOW_RECT.contains(p)
             && !rsk_ui::DENY_RECT.contains(p)
     };
@@ -415,16 +416,7 @@ fn drive(jobs: Jobs, taps: SyncSender<Tap>, _signals: Arc<Signals>) {
 fn panel_bench(
     host: impl FnOnce(Jobs, SyncSender<Tap>, Arc<Signals>) + Send + 'static,
 ) -> PanelLinks {
-    panel_bench_over(None, host)
-}
-
-/// …over the flash image at `image` when there is one, so the host can read back what
-/// the panel wrote to the store.
-fn panel_bench_over(
-    image: Option<PathBuf>,
-    host: impl FnOnce(Jobs, SyncSender<Tap>, Arc<Signals>) + Send + 'static,
-) -> PanelLinks {
-    let store = crate::store::open(image, None, &crate::DEFAULT_SERIAL).expect("the bench's store");
+    let store = crate::store::open(None, None, &crate::DEFAULT_SERIAL).expect("the bench's store");
     let fs: &'static RefCell<rsk_fs::Fs<crate::store::EmuStore>> =
         Box::leak(Box::new(RefCell::new(rsk_fs::Fs::new(store))));
     let rng: &'static RefCell<crate::rng::EmuRng> = Box::leak(Box::new(RefCell::new(
@@ -878,26 +870,9 @@ fn the_panels_presence_flags_are_the_transports() {
     panel_bench(drive_panel_presence);
 }
 
-/// `rsk_display`'s crate-private `EF_DISPLAY`: the record declining onboarding writes, a
-/// factory wipe removes and a reboot does not put back — so its absence is the wipe.
-const EF_DISPLAY: u16 = 0xE030;
 /// Past `rsk_display`'s 800 ms `HOLD_MS` with room for a late poll, and short of that hold
 /// plus the success pop after it, so the finger is up before the panel reads its pad again.
 const WIPE_HOLD_MS: u64 = 2_000;
-/// Compaction can still be writing the flash image after the display record disappears.
-const WIPE_BOUND: Duration = Duration::from_secs(120);
-
-/// Whether the flash image at `image` holds `fid`, or `None` while the device is rewriting
-/// it whole. Mounts a copy: a mount that meets a torn image repairs it, and would write that
-/// repair over the device's own file.
-fn stored(image: &Path, fid: u16) -> Option<bool> {
-    let copy = image.with_extension("probe");
-    std::fs::copy(image, &copy).ok()?;
-    let store = crate::store::open(Some(copy), None, &crate::DEFAULT_SERIAL).ok()?;
-    let mut fs = rsk_fs::Fs::new(store);
-    fs.scan();
-    Some(fs.has_data(fid))
-}
 
 /// How many members a getInfo answer carries. `encIdentifier` and `encCredStoreState` need
 /// the seed and the grant a boot provisions, so a store wiped with no reboot after it
@@ -910,34 +885,19 @@ fn info_members(body: &[u8]) -> u8 {
     }
 }
 
-/// Whether the panel reads its pad within `bound`: two contacts it ignores fit in the
-/// one-slot channel only once the first was taken. Reports where [`push`] would panic.
-fn reads_its_pad(taps: &SyncSender<Tap>, bound: Duration) -> bool {
-    let p = nowhere();
-    let deadline = Instant::now() + bound;
-    let mut sent = 0;
-    while sent < 2 && Instant::now() < deadline {
-        match taps.try_send(Tap::at(p.x, p.y)) {
-            Ok(()) => sent += 1,
-            Err(TrySendError::Full(_)) => std::thread::sleep(Duration::from_millis(5)),
-            Err(TrySendError::Disconnected(_)) => return false,
-        }
-    }
-    sent == 2
-}
-
 /// The panel's factory reset wipes, then queues its reboot for the worker, which a board
 /// services on its idle tick. The emulator never read that request: the panel parked on it
 /// for good, and the host was answered from a store nothing had provisioned again.
-fn drive_panel_factory_reset(jobs: Jobs, taps: SyncSender<Tap>, image: &Path) {
+fn drive_panel_factory_reset(jobs: &Jobs, taps: SyncSender<Tap>) {
     let skip = target(|p| rsk_ui::hit_onboard(p) == Some(rsk_ui::OnboardChoice::Skip));
     push(&taps, Tap::at(skip.x, skip.y));
     settle(&taps);
-    assert!(
-        wait_until(TAP_TIMEOUT, || stored(image, EF_DISPLAY) == Some(true)),
-        "declining onboarding writes the record the wipe is seen by"
-    );
-    let provisioned = info_members(&ask(&jobs, get_info_req()));
+    let provisioned = info_members(&ask(jobs, get_info_req()));
+    let set_pin = || {
+        let (ax, ay) = parse_key_agreement(&ask(jobs, get_key_agreement_req()));
+        ask(jobs, set_pin_req(&Platform::agree(&ax, &ay), PIN))[0]
+    };
+    assert_eq!(set_pin(), CTAP2_OK, "set a FIDO PIN the wipe must erase");
     for step in [
         nav_tab(rsk_ui::NavTab::Settings),
         target(|p| rsk_ui::hit_settings_root(p) == Some(rsk_ui::RootEntry::Security)),
@@ -954,37 +914,24 @@ fn drive_panel_factory_reset(jobs: Jobs, taps: SyncSender<Tap>, image: &Path) {
             ..Tap::at(hold.x, hold.y)
         },
     );
-    // A host command queued before the wipe would end the hold instead, so wait it out.
-    let deadline = Instant::now() + WIPE_BOUND;
-    assert!(
-        wait_until(WIPE_BOUND, || stored(image, EF_DISPLAY) == Some(false)),
-        "the panel never wiped the store"
-    );
-
-    // The panel reads its pad again only once the worker has taken its request; a board
-    // answers a command queued before that from the wiped store, so ask only after it.
-    assert!(
-        reads_its_pad(&taps, deadline.saturating_duration_since(Instant::now())),
-        "the panel did not resume reading its pad after the wipe"
-    );
+    // Wait for pad reads to resume so a host command cannot interrupt the hold
+    // or beat the reboot to the worker.
+    settle(&taps);
     assert_eq!(
-        info_members(&ask(&jobs, get_info_req())),
+        info_members(&ask(jobs, get_info_req())),
         provisioned,
         "the reboot must provision the wiped device for the host"
+    );
+    assert_eq!(
+        set_pin(),
+        CTAP2_OK,
+        "setPIN must work again after the wipe erases the previous FIDO PIN"
     );
 }
 
 #[test]
 fn a_factory_reset_on_the_panel_reboots_the_device() {
-    let image =
-        std::env::temp_dir().join(format!("rsk-emu-panel-reset-{}.img", std::process::id()));
-    let _ = std::fs::remove_file(&image);
-    let driven = image.clone();
-    panel_bench_over(Some(image.clone()), move |jobs, taps, _signals| {
-        drive_panel_factory_reset(jobs, taps, &driven)
-    });
-    let _ = std::fs::remove_file(image.with_extension("probe"));
-    let _ = std::fs::remove_file(image);
+    panel_bench(|jobs, taps, _signals| drive_panel_factory_reset(&jobs, taps));
 }
 
 /// A board builds every applet afresh after the panel's wipe, so PIV lays its default PIN
@@ -993,13 +940,7 @@ fn a_factory_reset_on_the_panel_reboots_the_device() {
 #[test]
 fn piv_takes_its_default_pin_again_after_a_panel_reset() {
     use rsk_piv::files::{DEFAULT_PIN, REF_PIN};
-    let image = std::env::temp_dir().join(format!(
-        "rsk-emu-panel-reset-piv-{}.img",
-        std::process::id()
-    ));
-    let _ = std::fs::remove_file(&image);
-    let driven = image.clone();
-    panel_bench_over(Some(image.clone()), move |jobs, taps, _signals| {
+    panel_bench(|jobs, taps, _signals| {
         let sw = |jobs: &Jobs, data: Vec<u8>| {
             let (reply, answer) = mpsc::channel();
             jobs.send(Job::Apdu(data), reply)
@@ -1014,7 +955,7 @@ fn piv_takes_its_default_pin_again_after_a_panel_reset() {
             [0x90, 0x00],
             "PIV provisions its files"
         );
-        drive_panel_factory_reset(jobs.clone(), taps, &driven);
+        drive_panel_factory_reset(&jobs, taps);
         let mut verify = vec![0x00, 0x20, 0x00, REF_PIN, DEFAULT_PIN.len() as u8];
         verify.extend_from_slice(&DEFAULT_PIN);
         assert_eq!(
@@ -1023,8 +964,6 @@ fn piv_takes_its_default_pin_again_after_a_panel_reset() {
             "a factory-reset PIV must take its default PIN"
         );
     });
-    let _ = std::fs::remove_file(image.with_extension("probe"));
-    let _ = std::fs::remove_file(image);
 }
 
 // --- the class, not the site -----------------------------------------------
