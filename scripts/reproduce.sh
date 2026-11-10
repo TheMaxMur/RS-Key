@@ -140,7 +140,7 @@ CLAIM_RUNNERS=(
   "scripts/reproduce.sh|-|this file: the runner the phases above are run by, and the one shape that cannot be a phase of itself — its own drift check is --self-test"
 )
 
-#: Every job in the three workflows that produce evidence. `pages.yml`,
+#: Every job in the workflows below that produce evidence. `pages.yml`,
 #: `release*.yml` and `rekor-monitor.yml` publish rather than check, and are not
 #: read here at all -- which is stated so the omission is a decision and not an
 #: oversight.
@@ -169,6 +169,7 @@ CLAIM_JOBS=(
   "emulator:sockets|emu|"
   "emulator:image|image|"
   "emulator:usb|-|the USB-stack half, in a QEMU guest; see REFUSED"
+  "fuzz:fuzz|fuzz|"
 )
 
 #: How a gate row's command is recognised, in either runner. Each phase runs its
@@ -505,12 +506,12 @@ self_test() {
   fi
 }
 
-#: `workflow:job` for the three workflows that produce evidence. A job key is a
+#: `workflow:job` for the workflows that produce evidence. A job key is a
 #: two-space-indented mapping key under `jobs:`, which is the whole of the shape
 #: -- read with awk rather than a YAML parser so this stays a shell script.
 workflow_jobs() {
   local w
-  for w in ci deep-checks emulator; do
+  for w in ci deep-checks emulator fuzz; do
     awk -v w="$w" '
       /^jobs:/ { j = 1; next }
       j && /^[a-z]/ { j = 0 }

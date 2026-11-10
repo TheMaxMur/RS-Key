@@ -1,0 +1,97 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 RS-Key contributors
+
+name: fuzz
+
+on:
+  push:
+    branches: [develop]
+  workflow_call:
+    inputs:
+      fuzz_seconds:
+        description: seconds of fuzzing per target
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fuzz-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  fuzz:
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+        config: [default, flavours]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: DeterminateSystems/nix-installer-action@3138316df39ed29be04236d7ffc686fa525866aa # v23
+
+      - uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.2
+        with:
+          primary-key: nix-fuzz-${{ runner.os }}-${{ hashFiles('flake.lock') }}
+          restore-prefixes-first-match: |
+            nix-fuzz-${{ runner.os }}-
+            nix-${{ runner.os }}-
+
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            fuzz/target
+          key: fuzz-${{ runner.os }}-${{ matrix.config }}-${{ hashFiles('fuzz/Cargo.lock', 'flake.lock') }}
+          restore-keys: fuzz-${{ runner.os }}-${{ matrix.config }}-
+
+      # One corpus entry per shard and config: eight jobs cannot write one key,
+      # and a shard only ever fuzzes its own slice of the roster. The slice is
+      # positional, so adding a target shifts the ones after it into a
+      # neighbouring shard and costs them their accumulated inputs once — see the
+      # comment in scripts/fuzz-all.sh for why balance won that trade. The second
+      # restore prefix is the shard's other config: an input is bytes, so a
+      # flavours job starting from the default corpus is a head start rather than
+      # pollution, and it is what keeps the first run of a new config off empty.
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: fuzz/corpus
+          key: fuzz-corpus-s${{ matrix.shard }}-${{ matrix.config }}-${{ github.run_id }}
+          restore-keys: |
+            fuzz-corpus-s${{ matrix.shard }}-${{ matrix.config }}-
+            fuzz-corpus-s${{ matrix.shard }}-
+
+      # A script, not an inline `-c bash -c '…'`: that form loses the dev shell's
+      # PATH here and `cargo` falls through to the image's rustup shim, which
+      # syncs stable and answers "no such command: fuzz". Measured in one run,
+      # same image, same minute — the `fuzz-coverage` row below, which already
+      # calls its script this way, listed 53 targets while this one listed 0 and
+      # tripped its own roster floor. The floor did its job; the shape was wrong.
+      - name: fuzz this shard's targets
+        run: nix develop .#fuzz -c ./scripts/fuzz-all.sh
+        env:
+          FUZZ_SECONDS: ${{ inputs.fuzz_seconds || '30' }}
+          FUZZ_SHARD: ${{ matrix.shard }}/4
+          FUZZ_CONFIG: ${{ matrix.config }}
+
+      # The config is in the name because two jobs uploading one name is an error
+      # on v4+, and a crash that only the flavours build finds is the whole point
+      # of the dimension — it must arrive labelled.
+      - name: upload crash artifacts
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: fuzz-artifacts-${{ github.run_id }}-s${{ matrix.shard }}-${{ matrix.config }}
+          path: fuzz/artifacts/
+          if-no-files-found: ignore
+
+      - uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        if: always()
+        with:
+          path: fuzz/corpus
+          key: fuzz-corpus-s${{ matrix.shard }}-${{ matrix.config }}-${{ github.run_id }}

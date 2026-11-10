@@ -41,7 +41,7 @@ SCRIPT = "scripts/reproduce.sh"
 
 #: The workflows the self-test reads. Named here so a fixture that forgets one
 #: fails as a fixture rather than as a green case over a tree with no jobs in it.
-WORKFLOWS = ("ci", "deep-checks", "emulator")
+WORKFLOWS = ("ci", "deep-checks", "emulator", "fuzz")
 
 
 @pytest.fixture

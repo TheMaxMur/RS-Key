@@ -334,6 +334,11 @@ nix develop .#fuzz -c ./scripts/fuzz-all.sh
 nix develop .#fuzz -c ./scripts/miri-all.sh
 ```
 
+The `fuzz` workflow runs every target for 30 seconds on each push to
+`develop`. Four shards run in parallel for each of the `default` and
+`flavours` builds. Daily `deep-checks` uses the same runner with 120 seconds
+per target. Failing jobs upload crash inputs as artifacts.
+
 Committed seeds, generated dictionaries and external corpora reach inputs
 that random bytes seldom produce. For example, a seed can get through
 CTAPHID reassembly, CBOR decoding and PIN authorization before a
