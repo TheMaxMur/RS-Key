@@ -405,12 +405,14 @@ OpenPGP, with independent signature verification after each generation.
 
 `nix develop -c ./scripts/image-suites.sh <new-output-directory>` builds the
 current no-touch firmware and its partition table, builds the emulator with
-assertions enabled, then runs `basic`, `stack`, `operations` and `cuts`.
+assertions enabled, then runs the TrustZone, `basic`, `stack`, `operations`,
+`cuts` and OTP seal checks.
 Omitting the directory retains a fresh report directory under `target/`.
-The `image` job in `.github/workflows/emulator.yml` runs this command on pull
-requests and nightly. It retains reports and logs; emulated flash and OTP files
-are not uploaded. Historical-release upgrade and scratch-ELF regression probes
-remain explicit local runs with the fixtures above.
+The `image` jobs in `.github/workflows/emulator.yml` pass `platform` or
+`operations` after the directory to run the suites in parallel. The `platform`
+job runs TrustZone, stack, power-cut and OTP checks. The `operations` job runs
+the command matrix on both backends. Each uploads its own reports and logs.
+Historical-release upgrade and scratch-ELF regression probes use the fixtures above.
 
 ### PICOBOOT through USB/IP
 

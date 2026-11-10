@@ -12,9 +12,9 @@
 # in the change that staled it. Gated on `scripts/ci-scope.sh` so an edit that
 # cannot reach the emulator does not boot one.
 #
-# Three jobs, because the backend and transport split them:
+# The jobs follow the backend and transport split:
 #   sockets — everything the emulator can serve over TCP, on the runner directly.
-#   image   — command stacks, known-secret lifetimes and power cuts on the ELF.
+#   image   — command operations and platform checks on the ELF, in parallel.
 #   usb     — `02`, `61`, `65`, `73`, `77`, the pico-fido conformance suite and
 #             OpenSC's p11test, which read USB descriptors or go through
 #             python-fido2's, pyscard's and pcsc-lite's own transports. Those need
@@ -114,9 +114,12 @@ jobs:
     needs: changes
     if: needs.changes.outputs.emulator == 'true'
     runs-on: ubuntu-latest
-    # TrustZone isolation alone can take over an hour on the hosted runner.
-    # Leave time for the operation and power-cut suites that follow it.
+    # RSA key generation and the TrustZone/OTP checks need independent budgets.
     timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        suite: [platform, operations]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -135,19 +138,22 @@ jobs:
             target/thumbv8m.main-none-eabihf
             target/trustzone
             tools/emu/target
-          key: image-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'tools/emu/Cargo.lock', 'flake.lock') }}
-          restore-keys: image-${{ runner.os }}-
+          key: image-${{ matrix.suite }}-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'tools/emu/Cargo.lock', 'flake.lock') }}
+          restore-keys: |
+            image-${{ matrix.suite }}-${{ runner.os }}-
+            image-${{ runner.os }}-
 
-      - name: command stacks, secret lifetimes and interrupted writes in the firmware image
-        run: nix develop -c ./scripts/image-suites.sh target/image-assurance
+      - name: run the firmware image suite
+        run: nix develop -c ./scripts/image-suites.sh target/image-assurance "$IMAGE_SUITE"
         env:
           HOST_TARGET: x86_64-unknown-linux-gnu
+          IMAGE_SUITE: ${{ matrix.suite }}
 
       - name: image reports and logs
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: image-assurance
+          name: image-assurance-${{ matrix.suite }}
           path: |
             target/image-assurance/**/*.log
             target/image-assurance/**/report.json

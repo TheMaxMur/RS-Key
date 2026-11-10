@@ -97,8 +97,16 @@ def test_gateway_image_requires_completed_probes_and_a_live_worker(laboratory, m
     assert writes == [device.cid + b"\xfe\x00\x08gateways"]
 
 
-@pytest.mark.parametrize("failure", ["gateways", "usbctrl-read", "usbctrl-write", "dma-write", "matrix-read", "matrix-write", "rsa-events", "fault-recovery", None])
-def test_image_suite_requires_its_separate_probe_images(tmp_path, failure):
+@pytest.mark.parametrize("suite,failure", [
+    (None, failure) for failure in (
+        "gateways", "usbctrl-read", "usbctrl-write", "dma-write", "matrix-read",
+        "matrix-write", "rsa-events", "fault-recovery", None,
+    )
+] + [
+    ("platform", None), ("platform", "otp-seal"),
+    ("operations", None), ("operations", "operations"),
+])
+def test_image_suite_requires_its_separate_probe_images(tmp_path, suite, failure):
     script = tmp_path / "scripts/image-suites.sh"
     script.parent.mkdir()
     shutil.copyfile(ROOT / "scripts/image-suites.sh", script)
@@ -164,31 +172,52 @@ if args[0] == "tests/97_trustzone_isolation.py":
     if os.environ["PROBE_FAILURE"] == name:
         sys.exit(f"protected {access} succeeded: post-probe marker reached")
     sys.exit(0)
-if args[0] != "tools/emu/image_assurance.py" or args[args.index("--only") + 1] != "basic":
-    sys.exit(0)
-if "--gateway-image" in args:
+assert Path(args[args.index("--image") + 1]).read_bytes() == b"ordinary"
+if args[0] == "tools/emu/image_otp_seal.py":
+    scenario = "otp-seal"
+else:
+    assert args[0] == "tools/emu/image_assurance.py"
+    scenario = args[args.index("--only") + 1]
+with open(os.environ["IMAGE_SCENARIOS"], "a") as log:
+    log.write(scenario + "\\n")
+if scenario == "basic":
     assert Path(args[args.index("--gateway-image") + 1]).read_bytes() == b"probes", "missing probe build"
+    assert Path(args[args.index("--import-image") + 1]).read_bytes() == b"import", "missing import ELF"
     if os.environ["PROBE_FAILURE"] == "gateways":
         sys.exit("gateway startup probes did not complete")
+if os.environ["PROBE_FAILURE"] == scenario:
+    sys.exit(scenario + " regression failed")
 ''')
     runner.chmod(0o755)
     env = {key: value for key, value in os.environ.items()
            if not key.startswith("RSK_TZ_") and key != "CARGO_TARGET_DIR"}
+    hostile = tmp_path / "hostile-ran"
+    scenarios = tmp_path / "scenarios-ran"
     env.update(PATH=f"{commands}:{env['PATH']}", HOST_TARGET="test-host",
                RSK_TZ_GATEWAY_PROBES="1", RSK_TZ_PROBE_ADDRESS="0xdeadbeef",
                RSK_TZ_PROBE_ACCESS="invalid",
-               PROBE_FAILURE=failure or "", HOSTILE_RAN=str(tmp_path / "hostile-ran"))
+               PROBE_FAILURE=failure or "", HOSTILE_RAN=str(hostile), IMAGE_SCENARIOS=str(scenarios))
     work = tmp_path / "report"
-    result = subprocess.run(["/bin/bash", str(script), str(work)], cwd=tmp_path,
+    result = subprocess.run(["/bin/bash", str(script), str(work), *([suite] if suite else [])], cwd=tmp_path,
                             env=env, text=True, capture_output=True, check=False)
     assert (result.returncode == 0) == (failure is None), result.stdout + result.stderr
     assert (work / "firmware-pt.elf").read_bytes() == b"ordinary"
     order = ["usbctrl-read", "usbctrl-write", "dma-write", "matrix-read", "matrix-write"]
-    expected = order if failure in (None, "gateways", "rsa-events", "fault-recovery") else order[:order.index(failure) + 1]
-    assert (tmp_path / "hostile-ran").read_text().splitlines() == expected
+    if suite == "operations":
+        assert not hostile.exists()
+        assert not (work / "gateway.elf").exists()
+    else:
+        expected = order[:order.index(failure) + 1] if failure in order else order
+        assert hostile.read_text().splitlines() == expected
+    if failure is None or failure in ("otp-seal", "operations"):
+        assert scenarios.read_text().splitlines() == {
+            None: ["basic", "stack", "operations", "cuts", "otp-seal"],
+            "platform": ["basic", "stack", "cuts", "otp-seal"],
+            "operations": ["operations"],
+        }[suite]
     if failure == "gateways":
         assert "gateway startup probes did not complete" in result.stdout
-    elif failure in ("rsa-events", "fault-recovery"):
+    elif failure in ("rsa-events", "fault-recovery", "otp-seal", "operations"):
         assert failure + " regression failed" in result.stdout
     elif failure is not None:
         access = "read" if failure.endswith("read") else "write"
