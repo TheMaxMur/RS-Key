@@ -141,6 +141,36 @@ def test_msc_waits_until_the_owned_disk_can_be_opened(laboratory, tmp_path, monk
         assert timeout.value.__cause__ is not_registered
 
 
+def test_otp_migration_cut_precedes_the_usb_recovery_deadline(laboratory, tmp_path, monkeypatch):
+    import image_otp_seal as otp
+
+    process = Mock()
+    process.poll.return_value = None
+    inspect = Mock(side_effect=[
+        "armed=program bytes=0",
+        "power_ups=1 last_cut=none ready=false dead=false",
+        "power_ups=2 last_cut=cycle=106700117 ready=false dead=false",
+    ])
+    ready_calls = []
+
+    def wait_ready(_, power_ups=1):
+        assert inspect.call_args_list == [call("cut-program 0"), call("status"), call("status")], (
+            "USB recovery wait began before the migration cut"
+        )
+        ready_calls.append(power_ups)
+
+    monkeypatch.setattr(otp.subprocess, "Popen", Mock(return_value=process))
+    monkeypatch.setattr(otp.harness, "port", Mock(side_effect=[1, 2, 3]))
+    monkeypatch.setattr(otp.harness.emu, "EmuCard", Mock())
+    monkeypatch.setenv(otp.harness.emu.ENV_CCID_ADDR, "127.0.0.1:2")
+    monkeypatch.setattr(otp.Boot, "inspect", lambda _, command: inspect(command))
+    monkeypatch.setattr(otp.Boot, "wait_ready", wait_ready)
+    monkeypatch.setattr(otp.time, "sleep", Mock())
+    with otp.boot(tmp_path / "emu", tmp_path / "firmware.elf", tmp_path / "store", tmp_path, "cut", cut=0):
+        pass
+    assert ready_calls == [2]
+
+
 @pytest.mark.parametrize("suite,failure", [
     (None, failure) for failure in (
         "gateways", "usbctrl-read", "usbctrl-write", "dma-write", "matrix-read",

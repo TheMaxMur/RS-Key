@@ -20,6 +20,7 @@ RESCUE = bytes.fromhex("a0583fc19b7e4f21")
 LOCK_ROW = 0xFF5
 LATCH = 0x3D3D3D
 RAW_MASK = 0xFFFFFF
+MIGRATION_CUT_TIMEOUT_S = 300
 
 
 class Boot(harness.Device):
@@ -47,13 +48,28 @@ class Boot(harness.Device):
                     except OSError:
                         assert time.monotonic() < deadline, "inspection listener absent"
                         time.sleep(0.005)
-            self.wait_ready()
+                self.wait_for_migration_cut()
+            self.wait_ready(power_ups=2 if cut is not None else 1)
             os.environ[harness.emu.ENV_CCID_ADDR] = f"127.0.0.1:{self.ccid_port}"
             self.card = harness.emu.EmuCard()
             self.card.connect()
         except BaseException:
             self.close()
             raise
+
+    def wait_for_migration_cut(self):
+        # An armed program cut single-steps the emulator throughout migration.
+        deadline = time.monotonic() + MIGRATION_CUT_TIMEOUT_S
+        while time.monotonic() < deadline:
+            if self.process.poll() is not None:
+                raise RuntimeError(f"emulator exited before the migration cut; see {self.log_path}")
+            state = harness.fields(self.inspect("status"))
+            assert state["dead"] == "false", f"emulator faulted before the migration cut: {state}"
+            if state["last_cut"] != "none":
+                return
+            assert state["ready"] == "false", "USB configured before the migration cut"
+            time.sleep(0.05)
+        raise TimeoutError(f"migration cut did not fire; see {self.log_path}")
 
     def seal_status(self):
         self.select(RESCUE)

@@ -127,8 +127,8 @@ jobs:
     needs: changes
     if: needs.changes.outputs.docs_only != 'true'
     runs-on: ubuntu-latest
-    # Cold hosted runs can take an hour to reach the emulator-backed interop tests.
-    timeout-minutes: 150
+    # A cold check can take almost 150 minutes. Leave time to save its caches.
+    timeout-minutes: 180
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -152,6 +152,7 @@ jobs:
           restore-keys: cargo-check-${{ runner.os }}-
 
       - name: check.sh — fmt, clippy, host tests, fips flavor, firmware builds, audit, deny, gitleaks
+        timeout-minutes: 150
         run: nix develop -c ./scripts/check.sh
         env:
           HOST_TARGET: x86_64-unknown-linux-gnu
