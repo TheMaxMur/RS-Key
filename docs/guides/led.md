@@ -73,8 +73,8 @@ A few honest details:
   ([build.md](../build.md)).
 - **Default brightness is gentle.** 16 of 255 per channel, so the indicator
   is visible without being a flashlight. Turn it up if you want.
-- **Boot is brief.** You normally see it only for the moment between power-up
-  and the first idle, so don't tune your eye to it.
+- **Boot ends when USB is configured.** The LED switches to idle as soon as
+  the host configures the device, before any applet command is needed.
 
 This is *not* the BOOTSEL / `picotool` state. Holding the button while
 plugging in puts the RP2350 in its ROM bootloader, where this firmware (and

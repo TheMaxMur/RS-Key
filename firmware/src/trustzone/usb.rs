@@ -154,7 +154,9 @@ fn observe_locked(state: &mut Controller) -> bool {
         && rp_pac::USB.buff_status().read().ep_in(0)
         && state.configuration.acknowledge()
     {
-        state.bus_epoch.configure();
+        if state.bus_epoch.configure() {
+            crate::led::usb_configured();
+        }
         progress = true;
     }
     if let Some(reason) = fresh {

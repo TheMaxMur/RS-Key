@@ -38,6 +38,9 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ## [Unreleased]
 
+- Switch the status LED from boot to idle when USB configuration completes,
+  before the first applet command (bcdDevice 0x0BE3).
+
 - Serve the PIV Card Capability Container by default for Windows key-container
   opens, while preserving a provisioned container. Support the CST3530 touch
   controller on the Waveshare V2 display board (bcdDevice 0x0BE2).

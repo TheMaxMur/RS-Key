@@ -44,6 +44,7 @@ STACK_JITTER = 1024
 CTAP_IMAGE_TIMEOUT_NS = 120_000_000_000
 CTAP_HOST_TIMEOUT_S = 1200
 USB_MAX_GAP_NS = 500_000_000
+LED_STATUS_IDLE = "00"
 
 
 def port():
@@ -95,7 +96,8 @@ class ImageDeadline:
 
 
 class Device:
-    def __init__(self, binary, image, store, directory, label, usbip=None, rom=None, display=False, taps_port=None, headless=True):
+    def __init__(self, binary, image, store, directory, label, usbip=None, rom=None,
+                 display=False, taps_port=None, headless=True, *, check_boot_led=False):
         self.fido_port, self.ccid_port, self.inspect_port = port(), port(), port()
         self.log_path = directory / f"{label}.log"
         self.log = self.log_path.open("w")
@@ -121,6 +123,8 @@ class Device:
         try:
             self.scratch = scratch_code(image) if image else None
             self.wait_ready()
+            if check_boot_led:
+                self.check_boot_led()
             self.check_scratch_code()
             os.environ[emu.ENV_ADDR] = f"127.0.0.1:{self.fido_port}"
             os.environ[emu.ENV_CCID_ADDR] = f"127.0.0.1:{self.ccid_port}"
@@ -146,6 +150,21 @@ class Device:
             start, expected = self.scratch
             actual = bytes.fromhex(self.inspect(f"read {start:x} {len(expected)}"))
             assert actual == expected, "scratch code/padding differs from the exact ELF load bytes"
+
+    def check_boot_led(self):
+        listing = subprocess.check_output(["arm-none-eabi-nm", "-S", str(self.image)], text=True)
+        [(address, size, _, _)] = [line.split() for line in listing.splitlines() if "LED_STATUS" in line]
+        assert int(size, 16) == 1, "unexpected firmware LED status size"
+        # The USB host sees the ACK before the MCU has handled its completion IRQ.
+        deadline = time.monotonic() + 1
+        while True:
+            status = self.inspect(f"read {address} 1")
+            if status == LED_STATUS_IDLE:
+                return
+            assert time.monotonic() < deadline, (
+                f"LED status {status}, expected idle after USB configuration before any applet command"
+            )
+            time.sleep(0.01)
 
     def inspect(self, command):
         with socket.create_connection(("127.0.0.1", self.inspect_port), timeout=30) as sock:
@@ -565,7 +584,8 @@ def main():
                     report["gateway_probes"] = "startup refusals and valid NS RAM controls completed; getInfo passed"
             with device(args.emulator, None, args.work / "native.store", args.work, "native") as native:
                 expected = transcript(native)
-            with device(args.emulator, args.image, args.work / "basic.flash", args.work, "basic") as image:
+            with device(args.emulator, args.image, args.work / "basic.flash", args.work, "basic",
+                        check_boot_led=True) as image:
                 observed = transcript(image)
                 assert observed == expected, f"native/image mismatch: {expected} != {observed}"
                 report["differential"] = observed

@@ -741,17 +741,12 @@ pub fn pimoroni_cfg() -> PwmConfig {
     cfg
 }
 
-/// USB device-event handler: flip the boot status to idle the moment the host
-/// *configures* the device, so the LED shows "enumerated & ready" (green) rather
-/// than staying on the red boot status until the first application command. On a
-/// host with no PC/SC daemon (and nothing else probing the key) that first
-/// command may never arrive even though the key is healthy and enumerated, which
-/// looked like a hang. The worker still drives processing/idle per command.
-#[expect(dead_code, reason = "the USB handler lives in Non-secure")]
-pub struct StatusHandler;
-
-impl embassy_usb::Handler for StatusHandler {
-    fn configured(&mut self, configured: bool) {
-        set_status(if configured { STATUS_IDLE } else { STATUS_BOOT });
-    }
+pub fn usb_configured() {
+    // Reconfiguration can happen during a local prompt.
+    let _ = LED_STATUS.compare_exchange(
+        STATUS_BOOT,
+        STATUS_IDLE,
+        Ordering::Relaxed,
+        Ordering::Relaxed,
+    );
 }

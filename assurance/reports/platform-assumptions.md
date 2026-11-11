@@ -169,13 +169,13 @@ That price is worth stating for the `unsafe` rows, because the input is a whole 
 | `PLAT-TIMER-001` | `4f2b659` | **stale** | `Cargo.lock`, `firmware/Cargo.toml`, `firmware/src/main.rs`, `firmware/src/presence.rs` | `PLAT-TIMER-003` |
 | `PLAT-TRNG-001` | `578a924` | **stale** | `Cargo.lock`, `firmware/src/handler.rs`, `firmware/src/main.rs` | `PLAT-TRNG-002` |
 | `PLAT-TZ-001` | `624bfb1` | **fresh** | — | `PLAT-TZ-009` |
-| `PLAT-TZ-002` | `a78ab95` | **stale** | `tests/96_trustzone_sessions.py` | — |
+| `PLAT-TZ-002` | `a78ab95` | **stale** | `firmware/src/trustzone/usb.rs`, `tests/96_trustzone_sessions.py` | — |
 | `PLAT-TZ-003` | `a78ab95` | **stale** | `firmware/src/worker.rs`, `scripts/test_image_assurance.py`, `tools/emu/image_assurance.py` | — |
 | `PLAT-TZ-004` | `a78ab95` | **stale** | `firmware/trustzone/nonsecure/src/main.rs`, `tests/96_trustzone_sessions.py` | — |
-| `PLAT-TZ-005` | `a78ab95` | **stale** | `firmware/src/worker.rs`, `firmware/trustzone/nonsecure/src/main.rs`, `tools/emu/image_assurance.py` | — |
+| `PLAT-TZ-005` | `a78ab95` | **stale** | `firmware/src/trustzone/usb.rs`, `firmware/src/worker.rs`, `firmware/trustzone/nonsecure/src/main.rs`, `tools/emu/image_assurance.py` | — |
 | `PLAT-TZ-006` | `8ae186a` | **stale** | `firmware/src/core1.rs` | `PLAT-TZ-009` |
 | `PLAT-TZ-007` | `a78ab95` | **stale** | `scripts/image-suites.sh`, `scripts/test_image_assurance.py` | — |
-| `PLAT-TZ-008` | `624bfb1` | **stale** | `crates/rsk-piv/src/lib.rs`, `firmware/src/worker.rs` | — |
+| `PLAT-TZ-008` | `624bfb1` | **stale** | `crates/rsk-piv/src/lib.rs`, `firmware/src/trustzone/usb.rs`, `firmware/src/worker.rs` | — |
 | `PLAT-TZ-009` | `624bfb1` | **stale** | `firmware/src/core1.rs`, `firmware/trustzone/build.rs` | — |
 | `PLAT-UNSAFE-009` | `709cb52` | **stale** | `crates/rsk-rsa/Cargo.toml`, `crates/rsk-rsa/build.rs`, `firmware/Cargo.toml`, `firmware/build.rs` | — |
 | `PLAT-UNSAFE-014` | `e54914a` | **stale** | `assurance/board/PLAT-UNSAFE-014-2026-09-27-run.log`, `firmware/src/core1.rs`, `firmware/src/display.rs`, `firmware/src/main.rs`, `firmware/src/sweep.rs`, `firmware/src/vendor.rs`, `firmware/src/worker.rs` | — |
