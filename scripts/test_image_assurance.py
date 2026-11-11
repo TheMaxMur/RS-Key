@@ -4,13 +4,17 @@
 """Refused image commands cannot leak an accumulated response body."""
 
 import argparse
+import errno
 import importlib.util
 import os
 from pathlib import Path
 from queue import SimpleQueue
 import shutil
+import stat
 import subprocess
 import sys
+from types import SimpleNamespace
+from unittest.mock import MagicMock, Mock, call
 
 import pytest
 
@@ -95,6 +99,46 @@ def test_gateway_image_requires_completed_probes_and_a_live_worker(laboratory, m
         module.gateway_probes(device)
         assert commands == [4]
     assert writes == [device.cid + b"\xfe\x00\x08gateways"]
+
+
+def test_msc_waits_until_the_owned_disk_can_be_opened(laboratory, tmp_path, monkeypatch):
+    import image_msc
+
+    node = tmp_path / "vhci_hcd.0" / "5-1"
+    interface = node / "5-1:1.0"
+    block = interface / "host0" / "block" / "sda"
+    block.mkdir(parents=True)
+    (block / "size").write_text("262144\n")
+    (block / "dev").write_text("8:0\n")
+    (interface / "driver").symlink_to(tmp_path / "usb-storage")
+    disk = tmp_path / "sda"
+    disk.touch()
+    info = SimpleNamespace(st_mode=stat.S_IFBLK, st_rdev=os.makedev(8, 0))
+    original_stat = Path.stat
+
+    def disk_stat(path, **kwargs):
+        return info if path == disk else original_stat(path, **kwargs)
+
+    handle = MagicMock()
+    not_registered = OSError(errno.ENXIO, "No such device or address", disk)
+    open_disk = Mock(side_effect=[not_registered, 42])
+    with monkeypatch.context() as patch:
+        patch.setattr(image_msc, "Path", lambda _: tmp_path)
+        patch.setattr(Path, "stat", disk_stat)
+        patch.setattr(os, "open", open_disk)
+        patch.setattr(os, "fdopen", Mock(return_value=handle))
+        patch.setattr(os, "fstat", Mock(return_value=info))
+        patch.setattr(image_msc.time, "sleep", Mock())
+        with image_msc.open_block_device(node, Mock()) as opened:
+            assert opened == (disk, 262144, handle.__enter__.return_value)
+        assert open_disk.call_args_list == [call(disk, os.O_RDWR | os.O_SYNC)] * 2
+        handle.__exit__.assert_called_once()
+
+        open_disk.side_effect = not_registered
+        patch.setattr(image_msc.time, "monotonic", Mock(side_effect=[0, 1, image_msc.ENUMERATION_TIMEOUT]))
+        with pytest.raises(TimeoutError) as timeout, image_msc.open_block_device(node, Mock()):
+            pytest.fail("unregistered disk opened")
+        assert timeout.value.__cause__ is not_registered
 
 
 @pytest.mark.parametrize("suite,failure", [

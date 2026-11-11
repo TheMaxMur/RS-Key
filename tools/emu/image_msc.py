@@ -5,6 +5,8 @@
 """Read BOOTSEL's FAT disk and reload UF2 through an owned Linux USB/IP disk."""
 
 import argparse
+from contextlib import contextmanager
+import errno
 import fcntl
 import hashlib
 import json
@@ -29,9 +31,11 @@ COEXISTENCE_ROUNDS = 20
 BLKFLSBUF = 0x1261
 
 
-def block_device(node, dev):
+@contextmanager
+def open_block_device(node, dev):
     assert "vhci_hcd." in str(node.resolve()), "MSC device is not virtual"
     deadline = time.monotonic() + ENUMERATION_TIMEOUT
+    open_error = None
     while time.monotonic() < deadline:
         dev.wait_ready()
         blocks = [p for p in node.glob("**/block/*")
@@ -43,13 +47,28 @@ def block_device(node, dev):
             assert block.resolve().is_relative_to(node.resolve()), "block is outside the owned USB device"
             disk = Path("/dev") / block.name
             major, minor = map(int, (block / "dev").read_text().split(":"))
-            info = disk.stat()
-            assert stat.S_ISBLK(info.st_mode) and info.st_rdev == os.makedev(major, minor)
+            device_number = os.makedev(major, minor)
             interface = node / f"{node.name}:1.0"
             assert (interface / "driver").resolve().name == "usb-storage", "MSC driver is not active"
-            return disk, int((block / "size").read_text()), os.makedev(major, minor)
+            sectors = int((block / "size").read_text())
+            try:
+                info = disk.stat()
+                assert stat.S_ISBLK(info.st_mode) and info.st_rdev == device_number
+                fd = os.open(disk, os.O_RDWR | os.O_SYNC)
+            except OSError as error:
+                # devtmpfs can expose the node before the kernel registers the disk.
+                if error.errno not in (errno.ENOENT, errno.ENXIO):
+                    raise
+                open_error = error
+            else:
+                with os.fdopen(fd, "r+b", buffering=0) as handle:
+                    info = os.fstat(handle.fileno())
+                    assert (stat.S_ISBLK(info.st_mode) and info.st_rdev == device_number
+                            and node.exists()), "owned disk changed"
+                    yield disk, sectors, handle
+                return
         time.sleep(0.05)
-    raise TimeoutError("owned MSC block device never appeared")
+    raise TimeoutError("owned MSC block device never opened") from open_error
 
 
 def fat_files(read, sectors):
@@ -113,12 +132,11 @@ def exercise(args, report):
             put_oath(dev)
             bootsel(dev)
             node = client.attach(unbind_storage=False)
-            disk, sectors, device_number = block_device(node, dev)
-            report["disk"] = {"sectors": sectors, "kernel_driver": "usb-storage"}
-            before = store.read_bytes()
-            up = int(fields(dev.inspect("status"))["power_ups"])
-            with os.fdopen(os.open(disk, os.O_RDWR | os.O_SYNC), "r+b", buffering=0) as handle:
-                assert os.fstat(handle.fileno()).st_rdev == device_number and node.exists(), "owned disk changed"
+            with open_block_device(node, dev) as (disk, sectors, handle):
+                report["disk"] = {"sectors": sectors, "kernel_driver": "usb-storage"}
+                before = store.read_bytes()
+                up = int(fields(dev.inspect("status"))["power_ups"])
+
                 def read(offset, length):
                     result = os.pread(handle.fileno(), length, offset)
                     assert len(result) == length, "truncated MSC read"
