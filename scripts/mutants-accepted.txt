@@ -53,11 +53,6 @@ crates/rsk-rsa/src/lib.rs: replace * with + in modexp_priv
 crates/rsk-rsa/src/lib.rs: replace * with + in modexp_priv
 crates/rsk-rsa/src/lib.rs: replace * with + in modexp_priv
 crates/rsk-rsa/src/lib.rs: replace * with + in modexp_priv
-crates/rsk-rsa/src/lib.rs: replace * with + in modexp_pub
-crates/rsk-rsa/src/lib.rs: replace * with + in modexp_pub
-crates/rsk-rsa/src/lib.rs: replace * with + in modexp_pub
-crates/rsk-rsa/src/lib.rs: replace * with + in modexp_pub
-crates/rsk-rsa/src/lib.rs: replace * with + in modexp_pub
 crates/rsk-rsa/src/lib.rs: replace * with + in sign_crt
 crates/rsk-rsa/src/lib.rs: replace * with + in sign_crt
 crates/rsk-rsa/src/lib.rs: replace * with + in sign_crt
@@ -68,11 +63,6 @@ crates/rsk-rsa/src/lib.rs: replace * with / in modexp_priv
 crates/rsk-rsa/src/lib.rs: replace * with / in modexp_priv
 crates/rsk-rsa/src/lib.rs: replace * with / in modexp_priv
 crates/rsk-rsa/src/lib.rs: replace * with / in modexp_priv
-crates/rsk-rsa/src/lib.rs: replace * with / in modexp_pub
-crates/rsk-rsa/src/lib.rs: replace * with / in modexp_pub
-crates/rsk-rsa/src/lib.rs: replace * with / in modexp_pub
-crates/rsk-rsa/src/lib.rs: replace * with / in modexp_pub
-crates/rsk-rsa/src/lib.rs: replace * with / in modexp_pub
 crates/rsk-rsa/src/lib.rs: replace * with / in sign_crt
 crates/rsk-rsa/src/lib.rs: replace * with / in sign_crt
 crates/rsk-rsa/src/lib.rs: replace * with / in sign_crt
@@ -85,11 +75,6 @@ crates/rsk-rsa/src/lib.rs: replace / with % in modexp_priv
 crates/rsk-rsa/src/lib.rs: replace / with % in modexp_priv
 crates/rsk-rsa/src/lib.rs: replace / with % in modexp_priv
 crates/rsk-rsa/src/lib.rs: replace / with % in modexp_priv
-crates/rsk-rsa/src/lib.rs: replace / with % in modexp_pub
-crates/rsk-rsa/src/lib.rs: replace / with % in modexp_pub
-crates/rsk-rsa/src/lib.rs: replace / with % in modexp_pub
-crates/rsk-rsa/src/lib.rs: replace / with % in modexp_pub
-crates/rsk-rsa/src/lib.rs: replace / with % in modexp_pub
 crates/rsk-rsa/src/lib.rs: replace / with % in sign_crt
 crates/rsk-rsa/src/lib.rs: replace / with % in sign_crt
 crates/rsk-rsa/src/lib.rs: replace / with % in sign_crt
@@ -101,11 +86,6 @@ crates/rsk-rsa/src/lib.rs: replace / with * in modexp_priv
 crates/rsk-rsa/src/lib.rs: replace / with * in modexp_priv
 crates/rsk-rsa/src/lib.rs: replace / with * in modexp_priv
 crates/rsk-rsa/src/lib.rs: replace / with * in modexp_priv
-crates/rsk-rsa/src/lib.rs: replace / with * in modexp_pub
-crates/rsk-rsa/src/lib.rs: replace / with * in modexp_pub
-crates/rsk-rsa/src/lib.rs: replace / with * in modexp_pub
-crates/rsk-rsa/src/lib.rs: replace / with * in modexp_pub
-crates/rsk-rsa/src/lib.rs: replace / with * in modexp_pub
 crates/rsk-rsa/src/lib.rs: replace / with * in sign_crt
 crates/rsk-rsa/src/lib.rs: replace / with * in sign_crt
 crates/rsk-rsa/src/lib.rs: replace / with * in sign_crt
@@ -113,11 +93,22 @@ crates/rsk-rsa/src/lib.rs: replace / with * in sign_crt
 crates/rsk-rsa/src/lib.rs: replace / with * in sign_crt
 crates/rsk-rsa/src/lib.rs: replace / with * in sign_crt
 crates/rsk-rsa/src/lib.rs: replace / with * in sign_crt
-crates/rsk-rsa/src/lib.rs: replace == with != in modexp_pub
 crates/rsk-rsa/src/lib.rs: replace modexp_priv with ()
-crates/rsk-rsa/src/lib.rs: replace modexp_pub -> bool with false
-crates/rsk-rsa/src/lib.rs: replace modexp_pub -> bool with true
 crates/rsk-rsa/src/lib.rs: replace sign_crt with ()
+
+[device-only] The host sweep never compiles the Thumb-2 public exponentiation backend. A Cortex-M33 ELF with 257 independent power vectors rejects these mutations in QEMU.
+crates/rsk-rsa/src/pubexp.rs: delete ! in backend::pow
+crates/rsk-rsa/src/pubexp.rs: replace * with + in backend::pow
+crates/rsk-rsa/src/pubexp.rs: replace * with + in backend::pow
+crates/rsk-rsa/src/pubexp.rs: replace * with + in backend::pow
+crates/rsk-rsa/src/pubexp.rs: replace * with / in backend::pow
+crates/rsk-rsa/src/pubexp.rs: replace * with / in backend::pow
+crates/rsk-rsa/src/pubexp.rs: replace * with / in backend::pow
+crates/rsk-rsa/src/pubexp.rs: replace / with % in backend::pow
+crates/rsk-rsa/src/pubexp.rs: replace / with % in backend::pow
+crates/rsk-rsa/src/pubexp.rs: replace / with * in backend::pow
+crates/rsk-rsa/src/pubexp.rs: replace / with * in backend::pow
+crates/rsk-rsa/src/pubexp.rs: replace backend::pow with ()
 
 [empty-or-final-update] The final full hash_multi chunk can move into the loop, and updating SHA-256 with an empty slice has no effect.
 crates/rsk-crypto/src/kdf.rs: replace > with >= in Device<'_>::hash_multi

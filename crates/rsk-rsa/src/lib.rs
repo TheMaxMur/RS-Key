@@ -35,6 +35,7 @@ pub mod pubdo;
 mod error;
 mod key;
 mod lucas;
+mod pubexp;
 mod rng;
 
 /// Known-answer vectors and the public-key verifier the host tests check this
@@ -337,21 +338,6 @@ unsafe extern "C" {
         small_modulus_length_bytes: usize,
         temp: *mut u32,
     );
-
-    /// rsa-armv7 `bignum_modexp_public_exponent`: `result = base^exp mod modulus`
-    /// for a public (non-secret) exponent, odd modulus. `base`/`modulus`/`result`
-    /// little-endian u32 (len a multiple of 32 bytes, `base < modulus`); `exponent`
-    /// big-endian; `temp` ≥ 5× the modulus length in bytes. Returns 0 on success,
-    /// negative if a precondition fails (bad length / base≥mod / exp≥mod / even mod).
-    fn bignum_modexp_public_exponent(
-        result: *mut u32,
-        base: *const u32,
-        exponent: *const u8,
-        modulus: *const u32,
-        exponent_length_bytes: usize,
-        modulus_length_bytes: usize,
-        temp: *mut u32,
-    ) -> i32;
 }
 
 #[cfg(any(test, target_os = "none"))]
@@ -558,80 +544,6 @@ pub(crate) fn sign_crt(
     let n = bytes.len().min(out_le.len());
     out_le[..n].copy_from_slice(&bytes[..n]);
     out_le[n..].fill(0);
-}
-
-// ----------------------------------------------------- public-exp modexp -----
-
-/// `out = base ^ exponent mod modulus` for a PUBLIC (non-secret) exponent and an
-/// odd modulus — the blinding/fault-check side of an RSA signature. All
-/// little-endian except `exp_be`; `base_le`/`modulus_le`/`out_le` are all
-/// `modulus_le.len()` bytes, a multiple of 32 and ≤ `2·MAX_MOD`, with
-/// `base_le < modulus_le`. Returns `false` if the asm rejects a precondition
-/// (the caller maps that to an error). On the device this is the ARM assembly;
-/// on the host it uses num-bigint-dig.
-#[cfg(target_os = "none")]
-#[inline(never)]
-pub(crate) fn modexp_pub(
-    base_le: &[u8],
-    exp_be: &[u8],
-    modulus_le: &[u8],
-    out_le: &mut [u8],
-) -> bool {
-    let mod_len = modulus_le.len();
-    debug_assert!(mod_len.is_multiple_of(32) && mod_len <= 2 * MAX_MOD);
-    debug_assert!(base_le.len() == mod_len && out_le.len() == mod_len);
-    let words = mod_len / 4;
-
-    let mut base = Secret::new([0u32; 2 * MAX_MOD / 4]);
-    let mut modulus = Secret::new([0u32; 2 * MAX_MOD / 4]);
-    let mut result = Secret::new([0u32; 2 * MAX_MOD / 4]);
-    // The C wants `temp` ≥ 5× the modulus length in bytes.
-    let mut temp = Secret::new([0u32; 5 * (2 * MAX_MOD) / 4]);
-    bytes_to_words_le(base_le, &mut base.expose_mut()[..words]);
-    bytes_to_words_le(modulus_le, &mut modulus.expose_mut()[..words]);
-
-    // SAFETY: buffers are sized for the max modulus; `result` does not overlap
-    // `modulus`; lengths meet the C's stated preconditions (asserted above).
-    let rc = unsafe {
-        bignum_modexp_public_exponent(
-            result.expose_mut().as_mut_ptr(),
-            base.expose().as_ptr(),
-            exp_be.as_ptr(),
-            modulus.expose().as_ptr(),
-            exp_be.len(),
-            mod_len,
-            temp.expose_mut().as_mut_ptr(),
-        )
-    };
-    let ok = rc == 0;
-    if ok {
-        words_to_bytes_le(&result.expose()[..words], &mut out_le[..mod_len]);
-    }
-    base.wipe();
-    modulus.wipe();
-    result.wipe();
-    temp.wipe();
-    ok
-}
-
-/// Host fallback for [`modexp_pub`]: the same operation via num-bigint-dig.
-#[cfg(not(target_os = "none"))]
-pub(crate) fn modexp_pub(
-    base_le: &[u8],
-    exp_be: &[u8],
-    modulus_le: &[u8],
-    out_le: &mut [u8],
-) -> bool {
-    use num_bigint_dig::BigUint;
-    let r = BigUint::from_bytes_le(base_le).modpow(
-        &BigUint::from_bytes_be(exp_be),
-        &BigUint::from_bytes_le(modulus_le),
-    );
-    let bytes = r.to_bytes_le();
-    let n = bytes.len().min(out_le.len());
-    out_le[..n].copy_from_slice(&bytes[..n]);
-    out_le[n..].fill(0);
-    true
 }
 
 /// Fermat primality pre-filter to base 2: `2^(n-1) mod n == 1`. `n` is the

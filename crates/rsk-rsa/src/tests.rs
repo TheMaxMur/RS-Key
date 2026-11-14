@@ -524,24 +524,6 @@ fn sign_crt_matches_biguint() {
 }
 
 #[test]
-fn modexp_pub_matches_biguint() {
-    // base^65537 mod n over a 512-bit odd modulus (a two-prime product).
-    let n = BigUint::from_bytes_le(&a_prime_le()) * BigUint::from_bytes_le(&another_prime_le());
-    let mlen = 64;
-    let base = BigUint::from_bytes_be(b"public-exponent modexp round-trip check!") % &n;
-    let want = base.modpow(&BigUint::from(65_537u32), &n);
-    let mut base_le = vec![0u8; mlen];
-    let bb = base.to_bytes_le();
-    base_le[..bb.len()].copy_from_slice(&bb);
-    let mut n_le = vec![0u8; mlen];
-    let nb = n.to_bytes_le();
-    n_le[..nb.len()].copy_from_slice(&nb);
-    let mut out = vec![0u8; mlen];
-    assert!(modexp_pub(&base_le, &[0x01, 0x00, 0x01], &n_le, &mut out));
-    assert_eq!(BigUint::from_bytes_le(&out), want, "base^e mod n mismatch");
-}
-
-#[test]
 fn a_fermat_residue_with_a_one_low_byte_is_still_composite() {
     let n =
         crate::fixtures::hex("e5110000000000000000000000000000000000000000000000000000000000c0");

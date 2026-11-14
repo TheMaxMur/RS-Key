@@ -199,17 +199,42 @@ reason = "eachDefaultSystem plumbing (flake.nix:36). It emits no binary into any
 [[boundary]]
 id = "import:crates/rsk-rsa/src/lib.rs:bignum_modexp_private_exponent"
 provider = "arm-none-eabi-gcc"
-statement = "csrc/bignum_high_level.c:280. The private-exponent modexp, the one RSA signing runs; its arguments are secret key material and its contract (widths, endianness, temp size) is stated in csrc/bignum_high_level.h and nowhere the Rust compiler can see."
+statement = "csrc/bignum_high_level.c:158. The private-exponent modexp used in RSA prime testing; its arguments are secret key material and its contract (widths, endianness, temp size) is stated in csrc/bignum_high_level.h and nowhere the Rust compiler can see."
 
 [[boundary]]
 id = "import:crates/rsk-rsa/src/lib.rs:rsa_private_exp_crt"
 provider = "arm-none-eabi-gcc"
-statement = "csrc/bignum_high_level.c:296. CRT signing. Same header contract, and the one with the most operands: eleven, of which eight are pointers whose lengths Rust cannot check and three are the size_t lengths describing two of them. Counted off the signature itself, which crates/rsk-rsa/src/lib.rs:327-339 and the C definition spell operand for operand alike; it read `nine pointers` until 2026-09-02."
+statement = "csrc/bignum_high_level.c:174. CRT signing. Same header contract, and the one with the most operands: eleven, of which eight are pointers whose lengths Rust cannot check and three are the size_t lengths describing two of them. Counted off the signature itself, which crates/rsk-rsa/src/lib.rs:328-340 and the C definition spell operand for operand alike; it read `nine pointers` until 2026-09-02."
 
 [[boundary]]
-id = "import:crates/rsk-rsa/src/lib.rs:bignum_modexp_public_exponent"
-provider = "arm-none-eabi-gcc"
-statement = "csrc/bignum_high_level.c:69. Public-exponent modexp, the verify path. The only one of the three that returns a status; the negative returns are preconditions the C checks and the Rust signature does not."
+id = "import:crates/rsk-rsa/src/pubexp.rs:bignum_to_mont"
+provider = "arm-none-eabi-as"
+statement = "Converts the high half of a double-width word buffer to Montgomery form using double-width scratch. The definition is in csrc/bignum_asm.S."
+
+[[boundary]]
+id = "import:crates/rsk-rsa/src/pubexp.rs:bignum_modular_inverse"
+provider = "arm-none-eabi-as"
+statement = "Computes the four-word negative inverse of the odd modulus. The definition is in csrc/bignum_asm.S."
+
+[[boundary]]
+id = "import:crates/rsk-rsa/src/pubexp.rs:bignum_sqracc"
+provider = "arm-none-eabi-as"
+statement = "Accumulates a square in a double-width product buffer. The definition is in csrc/bignum_asm.S."
+
+[[boundary]]
+id = "import:crates/rsk-rsa/src/pubexp.rs:bignum_mulacc"
+provider = "arm-none-eabi-as"
+statement = "Accumulates the product of two modulus-width operands in double-width scratch. The definition is in csrc/bignum_asm.S."
+
+[[boundary]]
+id = "import:crates/rsk-rsa/src/pubexp.rs:bignum_mont_redc"
+provider = "arm-none-eabi-as"
+statement = "Reduces the double-width product with the modulus, its complement and its four-word negative inverse. The definition is in csrc/bignum_asm.S."
+
+[[boundary]]
+id = "import:crates/rsk-rsa/src/pubexp.rs:bignum_submod"
+provider = "arm-none-eabi-as"
+statement = "Canonicalizes the public power with a single in-place subtraction. The definition is in csrc/bignum_asm.S."
 
 [[boundary]]
 id = "import:firmware/src/main.rs:_stack_end"

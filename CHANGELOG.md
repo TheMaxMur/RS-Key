@@ -38,6 +38,9 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ## [Unreleased]
 
+- Run RSA's fixed public exponentiation in Rust, backed by the existing
+  Thumb-2 Montgomery arithmetic on the device (bcdDevice 0x0BE4).
+
 - Switch the status LED from boot to idle when USB configuration completes,
   before the first applet command (bcdDevice 0x0BE3).
 

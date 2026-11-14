@@ -404,8 +404,8 @@ covers = [
 [[assumption]]
 id = "PLAT-UNSAFE-007"
 class = "toolchain"
-statement = "The three FFI calls into the vendored ARM assembly pass fully owned, length-checked buffers on both sides, so no routine can write past what the caller sized."
-discharge = "A call-by-call reading of the three calls in crates/rsk-rsa/src/lib.rs against crates/rsk-rsa/csrc/bignum_high_level.h: for each pointer, the buffer it names, the length the caller passes, and the length the C side writes. The containment already in place does not settle it and is worth being plain about — the power-on KAT gates key generation and every signature is Bellcore-checked, so a WRONG answer cannot leave the card, but neither check can see an out-of-bounds write."
+statement = "RSA passes disjoint, aligned buffers of sufficient width to the vendored C and Thumb-2 arithmetic, except for the documented in-place reduction."
+discharge = "Check the two C calls in crates/rsk-rsa/src/lib.rs against the header in csrc, and check the buffers in crates/rsk-rsa/src/pubexp.rs against the six assembly entries in csrc/bignum_asm.S. The Rust public exponentiation checks the byte widths, the odd modulus and the base bound before entering the assembly. Its work buffers are double width, the inverse has four words and only the final subtraction shares its source and destination. The prime KAT and Bellcore check can refuse incorrect results, but neither checks the native memory bounds."
 discharge_owner = "contributor"
 status = "pending"
 failure_direction = "memory-safety: a length disagreement across the ABI writes into whatever the caller's stack frame holds, on the path that is handling a private key"
@@ -413,7 +413,8 @@ refines = ["PLAT-TOOLCHAIN-002"]
 covers = [
   "unsafe:crates/rsk-rsa/src/lib.rs#block:bignum_modexp_private_exponent-result-expose_mut-as_mut_ptr-exponent_be-as_ptr",
   "unsafe:crates/rsk-rsa/src/lib.rs#block:rsa_private_exp_crt-result-expose_mut-as_mut_ptr-c-expose",
-  "unsafe:crates/rsk-rsa/src/lib.rs#block:bignum_modexp_public_exponent-result-expose_mut-as_mut_ptr-base-expose",
+  "unsafe:crates/rsk-rsa/src/pubexp.rs#block:bignum_to_mont-buffers-as_mut_ptr-n-len-buffers",
+  "unsafe:crates/rsk-rsa/src/pubexp.rs#extern:fn-bignum_to_mont-value-mut-u32-n",
 ]
 
 [[assumption]]

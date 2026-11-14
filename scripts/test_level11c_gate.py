@@ -77,11 +77,11 @@ def test_every_rule_ran(audit):
 @pytest.mark.parametrize(
     "before, after, expect",
     [
-        ("73% of the foreign half", "70% of the foreign half",
-         r"the assembly's share reads '70', the tree says 73"),
-        ("15 of the 37 `[[boundary]]`", "15 of the 28 `[[boundary]]`",
-         r"`\[\[boundary\]\]` rows reads '28', the tree says 37"),
-        ("15 of the 37 `[[boundary]]`", "10 of the 37 `[[boundary]]`",
+        ("80% of the foreign half", "70% of the foreign half",
+         r"the assembly's share reads '70', the tree says 80"),
+        ("15 of the 42 `[[boundary]]`", "15 of the 28 `[[boundary]]`",
+         r"`\[\[boundary\]\]` rows reads '28', the tree says 42"),
+        ("15 of the 42 `[[boundary]]`", "10 of the 42 `[[boundary]]`",
          r"linker-symbol boundaries reads '10', the tree says 15"),
         ("177 of those carry", "178 of those carry",
          r"`<S: Storage` sites reads '178', the tree says 177"),
@@ -124,7 +124,7 @@ def test_the_page_standing_still_while_the_tree_moves_is_refused(audit):
     findings = audit(
         lines=lambda rel: real(rel) + 200 if rel.endswith("bignum_asm.S") else real(rel)
     )
-    assert any("the assembly's share reads '73', the tree says" in f for f in findings), findings
+    assert any("the assembly's share reads '80', the tree says" in f for f in findings), findings
 
 
 def test_the_named_row_still_runs_this_guard():

@@ -571,14 +571,15 @@ production dependencies and Rust sources are unchanged.
 
 ### Owned C and assembly correspondence
 
-The complete current inventory is five files: gateway.c and the RSA C,
-assembly, declaration header and configuration header. Current source bytes
-match the retained measured originals; only the documented uninstrumented
-fixtures and naked-entry profiling exclusion differ in the laboratory copy.
-The independent arithmetic/ISA witness verifier passes again against the
-retained image and records.
+The inventory at the time of measurement was five files: gateway.c and the
+RSA C, assembly, declaration header and configuration header. Their source
+bytes matched the retained originals; only the documented uninstrumented
+fixtures and naked-entry profiling exclusion differed in the laboratory copy.
+The independent arithmetic/ISA witness verifier passed against the retained
+image and records. The public exponentiation subsequently moved to Rust, so
+the C counts below describe the measured revision.
 
-The existing results therefore apply to these current sources: **8/8 RSA C
+The retained results cover **8/8 RSA C
 compound conditions, 4/4 gateway compound conditions, both branch counts for
 31/31 C predicates and both outcomes for 19/19 compiled assembly predicates**.
 The two other assembly sites are build-excluded by the unchanged configuration.

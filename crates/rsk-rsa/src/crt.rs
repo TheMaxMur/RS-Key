@@ -3,7 +3,7 @@
 
 //! The sealed CRT parameter layout (`P ‖ Q ‖ dP ‖ dQ ‖ qInv`), its
 //! length-discriminated parse, and the blinded, Bellcore-fault-checked private
-//! operation on the UMAAL asm (the crate-private `sign_crt` / `modexp_pub`).
+//! operation backed by the UMAAL asm (`sign_crt` / `pubexp::modexp_pub`).
 //! The PIV and OpenPGP applets store the same plaintext and sign through the
 //! same [`private_op`], so this security-critical path (blinding, fault check,
 //! zeroization) lives once.
@@ -257,9 +257,7 @@ pub fn private_op(
     let n = p.expose() * q.expose();
     let m = BigUint::from_bytes_be(c);
 
-    // The modulus little-endian, for the asm public-exponent modexp that both
-    // blinding (`rᵉ`) and the fault check (`sigᵉ`) use — the two full-width
-    // modexps that otherwise ran on num-bigint.
+    // Blinding and the fault check share the full-width public exponentiation.
     let mut n_le = [0u8; MAX_RSA_BYTES];
     let nb = n.to_bytes_le();
     n_le[..nb.len()].copy_from_slice(&nb);
@@ -268,9 +266,8 @@ pub fn private_op(
         let bb = Secret::new(base.to_bytes_le());
         b_le.expose_mut()[..bb.expose().len()].copy_from_slice(bb.expose());
         let mut o_le = Secret::<[u8; MAX_RSA_BYTES]>::zeroed();
-        let ok = crate::modexp_pub(
+        let ok = crate::pubexp::modexp_pub(
             &b_le.expose()[..mlen],
-            crate::RSA_PUB_EXP_BE,
             &n_le[..mlen],
             &mut o_le.expose_mut()[..mlen],
         );

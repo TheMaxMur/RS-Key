@@ -149,11 +149,10 @@ today.
   `section(".data.bignum_hl")`, and the `bignum_mulacc` that performs the load
   has `.section .data.bignum_asm` for its whole translation unit. Confirmed in
   the on-device ELF rather than inferred from the sections: both symbols resolve
-  to RAM addresses, while `bignum_modexp_public_exponent` resolves to flash. That
-  is not a property of the one image read: `crates/rsk-rsa/build.rs` compiles the
-  C and the asm unconditionally for `target_os = "none"` with no feature gate,
-  and neither of the crate's two features reaches a firmware image, so every
-  shipped flavour links the same sections. The CRT path is worth reading in the
+  to RAM addresses. The public exponentiation schedule in `pubexp.rs` resolves
+  to flash and calls the same assembly primitives in SRAM. The build script
+  compiles the C and assembly for every firmware flavour, so each links the
+  same sections. The CRT path is worth reading in the
   image and not in the source, because `rsa_private_exp_crt` itself stays in
   flash and only the inner modexp it shares with keygen is moved. "The
   Cortex-M33 is cacheless" was true of the core's own data path and false as a

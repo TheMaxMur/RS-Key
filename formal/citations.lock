@@ -581,7 +581,7 @@ assurance/platform.toml	scripts/kani_gate.py	697-708	elif len(said) > 1:	)
 assurance/platform.toml	tests/29_reset_power_cut.py	527-530	assert assertion_status != 0, (	)
 assurance/platform.toml	tests/54_sram_residue.py	48-48	Run on 2026-08-05, Waveshare RP2350 Zero (silicon A4, secure boot off, picotool	Run on 2026-08-05, Waveshare RP2350 Zero (silicon A4, secure boot off, picotool
 assurance/token_refinement.toml	crates/rsk-device/src/ctap.rs	122-122	*st = rsk_fido::FidoState::new();	*st = rsk_fido::FidoState::new();
-assurance/toolchain.toml	crates/rsk-rsa/src/lib.rs	327-339	fn rsa_private_exp_crt(	);
+assurance/toolchain.toml	crates/rsk-rsa/src/lib.rs	328-340	fn rsa_private_exp_crt(	);
 assurance/toolchain.toml	scripts/build.sh	59-61	symbols=$(arm-none-eabi-nm "$firmware")	end=$(awk '$3 == "__kvcnt_end" { print $1; exit }' <<<"$symbols")
 assurance/toolchain.toml	scripts/build.sh	60-60	start=$(awk '$3 == "__kvmain_start" { print $1; exit }' <<<"$symbols")	start=$(awk '$3 == "__kvmain_start" { print $1; exit }' <<<"$symbols")
 assurance/toolchain.toml	scripts/build.sh	106-106	if ! log=$(picotool partition create "$work/partitions.json" "$work/combined.elf" "$firmware" -t elf 2>&1); then	if ! log=$(picotool partition create "$work/partitions.json" "$work/combined.elf" "$firmware" -t elf 2>&1); then

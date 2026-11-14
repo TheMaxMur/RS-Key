@@ -254,24 +254,26 @@ called at three points in the worker, from the display's hooks, in core1's job
 loop and before a failed boot's halt, each after the work's frames have returned;
 the probe only reads.
 
-## RSA assembly FFI (`crates/rsk-rsa/src/lib.rs`)
+## RSA assembly FFI (`crates/rsk-rsa/src/lib.rs`, `crates/rsk-rsa/src/pubexp.rs`)
 
-### 22–24. The modexp / CRT-sign calls — `PLAT-UNSAFE-007`
+### 22–24. Private modexp, CRT and public Montgomery arithmetic — `PLAT-UNSAFE-007`
 
 On-card RSA key generation needs hundreds of modular exponentiations over
 1024–2048-bit candidates. The pure-Rust path was ~7× too slow on the
-Cortex-M33 (minutes per key, CCID timeouts). The crate wraps the vendored
-C+ARM-assembly routines behind three `unsafe` FFI calls — `modexp_priv`
-(keygen), `sign_crt` (the CRT private-key operation) and `modexp_pub` (the
-public-exponent side of blinding and the fault check) — each with fully owned,
-length-checked buffers on both sides.
-*Safe alternative:* tried (num-bigint). Functionally correct, unusably slow.
+Cortex-M33 (minutes per key, CCID timeouts). `modexp_priv` and `sign_crt` each
+call the vendored C/assembly. The public exponentiation in `pubexp.rs` calls
+six assembly primitives in one `unsafe` block. Its byte widths are checked
+before constructing disjoint, aligned buffers for Montgomery conversion,
+the four-word inverse, the double-width product and the modulus-width operands.
+Only the final subtraction uses its documented in-place output.
+*Safe alternative:* `num-bigint` works on the host. The firmware retains the
+assembly arithmetic for the latency of key generation and private operations.
 *Containment:* both ends fail closed. Key generation is KAT-gated — a power-on
 known-answer self-test must pass or it refuses to run — and every signature is
 Bellcore-fault-checked (`out^e == base`) by the caller, so a miscompiled or
 corrupt routine cannot emit one. Inputs/outputs are fixed-size stack buffers
-zeroized after use. On the host the crate substitutes a pure-Rust fallback, so
-all host tests exercise the same API safely.
+zeroized after use when they hold secret values. The host tests exercise the
+same public exponentiation schedule with Rust arithmetic.
 
 ## Flash wiper (`rsk-wipe/src/main.rs`)
 
