@@ -77,11 +77,11 @@ def test_every_rule_ran(audit):
 @pytest.mark.parametrize(
     "before, after, expect",
     [
-        ("80% of the foreign half", "70% of the foreign half",
-         r"the assembly's share reads '70', the tree says 80"),
-        ("15 of the 42 `[[boundary]]`", "15 of the 28 `[[boundary]]`",
-         r"`\[\[boundary\]\]` rows reads '28', the tree says 42"),
-        ("15 of the 42 `[[boundary]]`", "10 of the 42 `[[boundary]]`",
+        ("1082 lines of Thumb-2 assembly", "1081 lines of Thumb-2 assembly",
+         r"RSA Thumb-2 assembly reads '1081', the tree says 1082"),
+        ("15 of the 39 `[[boundary]]`", "15 of the 28 `[[boundary]]`",
+         r"`\[\[boundary\]\]` rows reads '28', the tree says 39"),
+        ("15 of the 39 `[[boundary]]`", "10 of the 39 `[[boundary]]`",
          r"linker-symbol boundaries reads '10', the tree says 15"),
         ("177 of those carry", "178 of those carry",
          r"`<S: Storage` sites reads '178', the tree says 177"),
@@ -101,8 +101,8 @@ def test_a_value_the_tree_does_not_say_is_refused(audit, page, before, after, ex
     [
         ("**Structurally blind, all nine:**", "**Structurally blind:**",
          "the sentence stating blind rows is gone"),
-        ("% of the foreign half by line", "% of it by line",
-         "the sentence stating the assembly's share is gone"),
+        ("lines of Thumb-2 assembly", "lines of native source",
+         "the sentence stating RSA Thumb-2 assembly is gone"),
         ("the registry reaches 4 and says", "the registry reaches most of them and says",
          "the sentence stating TCB categories reached is gone"),
     ],
@@ -124,7 +124,7 @@ def test_the_page_standing_still_while_the_tree_moves_is_refused(audit):
     findings = audit(
         lines=lambda rel: real(rel) + 200 if rel.endswith("bignum_asm.S") else real(rel)
     )
-    assert any("the assembly's share reads '80', the tree says" in f for f in findings), findings
+    assert any("RSA Thumb-2 assembly reads '1082', the tree says" in f for f in findings), findings
 
 
 def test_the_named_row_still_runs_this_guard():

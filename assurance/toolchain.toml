@@ -104,7 +104,7 @@ name = "arm-none-eabi-gcc"
 role = "compiler"
 provenance = "flake.lock:nixpkgs"
 pin = "31ecbaca1bdefa45dffc409f0250bd8039ea0010"
-statement = "Compiles rsk-rsa's C modexp core; ships in pkgs.gcc-arm-embedded (nix/firmware.nix:125). A second compiler in the image, which is why elf_gate.py holds a SET of DWARF producers rather than one."
+statement = "Compiles the Secure TrustZone C gateway; ships in pkgs.gcc-arm-embedded (nix/firmware.nix:125). A second compiler in the image, which is why elf_gate.py holds a SET of DWARF producers rather than one."
 
 [[tool]]
 name = "arm-none-eabi-as"
@@ -197,42 +197,32 @@ reason = "eachDefaultSystem plumbing (flake.nix:36). It emits no binary into any
 # criterion asks this file not to be.
 
 [[boundary]]
-id = "import:crates/rsk-rsa/src/lib.rs:bignum_modexp_private_exponent"
-provider = "arm-none-eabi-gcc"
-statement = "csrc/bignum_high_level.c:158. The private-exponent modexp used in RSA prime testing; its arguments are secret key material and its contract (widths, endianness, temp size) is stated in csrc/bignum_high_level.h and nowhere the Rust compiler can see."
-
-[[boundary]]
-id = "import:crates/rsk-rsa/src/lib.rs:rsa_private_exp_crt"
-provider = "arm-none-eabi-gcc"
-statement = "csrc/bignum_high_level.c:174. CRT signing. Same header contract, and the one with the most operands: eleven, of which eight are pointers whose lengths Rust cannot check and three are the size_t lengths describing two of them. Counted off the signature itself, which crates/rsk-rsa/src/lib.rs:328-340 and the C definition spell operand for operand alike; it read `nine pointers` until 2026-09-02."
-
-[[boundary]]
-id = "import:crates/rsk-rsa/src/pubexp.rs:bignum_to_mont"
+id = "import:crates/rsk-rsa/src/montgomery.rs:bignum_to_mont"
 provider = "arm-none-eabi-as"
 statement = "Converts the high half of a double-width word buffer to Montgomery form using double-width scratch. The definition is in csrc/bignum_asm.S."
 
 [[boundary]]
-id = "import:crates/rsk-rsa/src/pubexp.rs:bignum_modular_inverse"
+id = "import:crates/rsk-rsa/src/montgomery.rs:bignum_modular_inverse"
 provider = "arm-none-eabi-as"
 statement = "Computes the four-word negative inverse of the odd modulus. The definition is in csrc/bignum_asm.S."
 
 [[boundary]]
-id = "import:crates/rsk-rsa/src/pubexp.rs:bignum_sqracc"
+id = "import:crates/rsk-rsa/src/montgomery.rs:bignum_sqracc"
 provider = "arm-none-eabi-as"
 statement = "Accumulates a square in a double-width product buffer. The definition is in csrc/bignum_asm.S."
 
 [[boundary]]
-id = "import:crates/rsk-rsa/src/pubexp.rs:bignum_mulacc"
+id = "import:crates/rsk-rsa/src/montgomery.rs:bignum_mulacc"
 provider = "arm-none-eabi-as"
 statement = "Accumulates the product of two modulus-width operands in double-width scratch. The definition is in csrc/bignum_asm.S."
 
 [[boundary]]
-id = "import:crates/rsk-rsa/src/pubexp.rs:bignum_mont_redc"
+id = "import:crates/rsk-rsa/src/montgomery.rs:bignum_mont_redc"
 provider = "arm-none-eabi-as"
 statement = "Reduces the double-width product with the modulus, its complement and its four-word negative inverse. The definition is in csrc/bignum_asm.S."
 
 [[boundary]]
-id = "import:crates/rsk-rsa/src/pubexp.rs:bignum_submod"
+id = "import:crates/rsk-rsa/src/montgomery.rs:bignum_submod"
 provider = "arm-none-eabi-as"
 statement = "Canonicalizes the public power with a single in-place subtraction. The definition is in csrc/bignum_asm.S."
 
@@ -260,11 +250,6 @@ statement = "firmware/memory.x:32. The counter partition's flash offset, fenced 
 id = "import:firmware/src/main.rs:__kvcnt_end"
 provider = "rust-lld"
 statement = "firmware/memory.x:33. The end of the counter partition; scripts/check.sh:265 holds the partition table against __kvmain_start..__kvcnt_end."
-
-[[boundary]]
-id = "unit:crates/rsk-rsa/csrc/bignum_high_level.c"
-provider = "arm-none-eabi-gcc"
-statement = "The C half of rsa-armv7, compiled straight into the image by crates/rsk-rsa/build.rs and only when CARGO_CFG_TARGET_OS is `none`. It defines all three imported symbols above and calls the assembly below; csrc/bignum_high_level.h and csrc/bignum_config.h are its headers, inputs to this unit rather than units of their own."
 
 [[boundary]]
 id = "unit:crates/rsk-rsa/csrc/bignum_asm.S"

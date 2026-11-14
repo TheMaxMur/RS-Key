@@ -288,7 +288,7 @@ pub fn private_op(
     base_le.expose_mut()[..bl.expose().len()].copy_from_slice(bl.expose());
     bl.wipe();
     let mut sig_le = Secret::<[u8; MAX_RSA_BYTES]>::zeroed();
-    crate::sign_crt(
+    if !crate::privexp::sign_crt(
         &base_le.expose()[..mlen],
         crt.dp(),
         crt.dq(),
@@ -296,7 +296,9 @@ pub fn private_op(
         crt.q(),
         crt.qinv(),
         &mut sig_le.expose_mut()[..mlen],
-    );
+    ) {
+        return Err(RsaError::Failed);
+    }
     let s_blind = Secret::new(BigUint::from_bytes_le(&sig_le.expose()[..mlen]));
     let prod = Secret::new(s_blind.expose() * r_inv.expose());
     let s = Secret::new(prod.expose() % &n);

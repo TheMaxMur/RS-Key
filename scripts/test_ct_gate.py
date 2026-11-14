@@ -878,7 +878,7 @@ SCOPE_BYPASSES = {
     "line break": lambda page: refuted_page("key\ngen"),
     "moved into a bullet": lambda page: page.replace(
         SHIPPED_SCOPE + " — the modexp on\nboth of its callers, the prime search"
-        " and the `rsa_private_exp_crt` that PIV\nGENERAL AUTHENTICATE and"
+        " and the `sign_crt` that PIV\nGENERAL AUTHENTICATE and"
         " OpenPGP PSO:CDS / INTERNAL AUTHENTICATE / DECIPHER\nreach over USB"
         " against a long-lived key.",
         "the primitives listed below.\n\n- the hand-written `rsk-rsa` keygen"
@@ -887,7 +887,7 @@ SCOPE_BYPASSES = {
     ),
     "decoy anchor": lambda page: refuted_page().replace(
         "# Constant-time / timing side-channel audit",
-        "<!-- The hand-written `rsk-rsa` modexp and `rsa_private_exp_crt` are"
+        "<!-- The hand-written `rsk-rsa` modexp and `sign_crt` are"
         " described below. -->\n\n# Constant-time / timing side-channel audit",
         1,
     ),
@@ -899,7 +899,7 @@ SCOPE_BYPASSES = {
     ),
     "CRT caller dropped": lambda page: page.replace(
         " — the modexp on\nboth of its callers, the prime search and the"
-        " `rsa_private_exp_crt` that PIV\nGENERAL AUTHENTICATE and OpenPGP"
+        " `sign_crt` that PIV\nGENERAL AUTHENTICATE and OpenPGP"
         " PSO:CDS / INTERNAL AUTHENTICATE / DECIPHER\nreach over USB against a"
         " long-lived key.",
         " — the modexp as the prime search reaches it.",
@@ -907,7 +907,7 @@ SCOPE_BYPASSES = {
     ),
     "scoped by omission": lambda page: page.replace(
         SHIPPED_SCOPE + " — the modexp on\nboth of its callers, the prime search"
-        " and the `rsa_private_exp_crt` that PIV\nGENERAL AUTHENTICATE and"
+        " and the `sign_crt` that PIV\nGENERAL AUTHENTICATE and"
         " OpenPGP PSO:CDS / INTERNAL AUTHENTICATE / DECIPHER\nreach over USB"
         " against a long-lived key.",
         "hand-written `rsk-rsa` primitives that run while a key is being made.",
@@ -941,7 +941,7 @@ def test_the_scope_rule_is_not_walked_past(name):
     it is about, and refused `\\bkeygen\\b`. Anchoring on the CLAUSE is what
     answers the two structural ones: a re-wrap or a move into a bullet carries
     the anchor along with the words, so the rule follows instead of falling off.
-    Requiring the paragraph to NAME `modexp` and `rsa_private_exp_crt` is what
+    Requiring the paragraph to NAME `modexp` and `sign_crt` is what
     answers "scoped by omission", where the word never appears at all.
 
     Driven per clause — each falls on its own row of this table, in the

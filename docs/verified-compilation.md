@@ -29,15 +29,15 @@ records it.
 ## The candidate kernels
 
 Stage 11B names five. Measured over the tree, one of them is portable to a C
-subset, one is already C, and three are not code a C compiler could accept.
+subset. RSA uses Rust and hand-written assembly, and three other candidates also fall outside the verified C subset.
 
 | Candidate | Where | Size | Portable to a verified C subset? |
 |---|---|---|---|
 | gate / transition functions | the ten concrete gates `docs/authorization-slice.md` lists, over `crates/rsk-fido/src/state.rs` | 856 lines in `state.rs` alone | **No.** Half are generic over two traits (`<S: Storage, R: Rng>`); the other half take a Rust struct by reference, whose layout Rust owns |
 | zeroization routines | 16 `scrub` / `wipe_*` sites across `crates/` and `firmware/`, and `rsk_secret`'s drops | 16 sites, 49 files using `zeroize` | **No.** Each is a method on a Rust type, and the drop glue that makes it sound is the compiler's |
-| the RSA C/asm wrapper and fault check | `crates/rsk-rsa/src/lib.rs` and `pubexp.rs` over `crates/rsk-rsa/csrc/` | 720 Rust, 275 C, 1082 asm in the original wrapper and its native sources, with the fixed public exponentiation in `pubexp.rs` | The assembly is 80% of the foreign half by line. Private exponentiation and CRT still use C around the assembly |
+| RSA exponentiation and CRT | Rust over the vendored rsa-armv7 primitives | 1082 lines of Thumb-2 assembly | The Rust code and hand-written assembly require separate verification |
 | ML-DSA reductions | `crates/rsk-mldsa/src/reduce.rs`, `ntt.rs`, `round.rs` | 256 lines | **Yes, in principle.** Branch-free integer arithmetic, no generic function in any of the three |
-| linker-generated boundaries | 15 of the 42 `[[boundary]]` rows in `assurance/toolchain.toml` | 15 symbol imports | **Not code.** The datum is a symbol's address; a compiler has nothing to say about it |
+| linker-generated boundaries | 15 of the 39 `[[boundary]]` rows in `assurance/toolchain.toml` | 15 symbol imports | **Not code.** The datum is a symbol's address; a compiler has nothing to say about it |
 
 The genericity is the load-bearing number. Across the production modules of
 `crates/rsk-fido/src/`, 243 of 470 functions are generic and 177 of those carry
@@ -57,28 +57,17 @@ This tree already pays for one foreign-language boundary, so "a second one
 costs at least as much again" is a measurement rather than a guess. What the
 first one costs today:
 
-- **three runtime `unsafe` blocks** in `docs/unsafe.md` under `PLAT-UNSAFE-007`.
-  The private exponentiation and CRT each call a C function. Public exponentiation
-  calls six assembly primitives directly from Rust. The build script adds a
-  separate build-time site;
-- **ten registry rows** in `assurance/toolchain.toml`: eight `import:` and two
-  `unit:`, each owing a `provider` that is a pinned tool;
-- **two pinned producers**, `arm-none-eabi-gcc` and `arm-none-eabi-as`, which
-  are two of the six categories the toolchain criterion counts;
-- **a contract in a header the Rust compiler never reads** —
-  `crates/rsk-rsa/csrc/bignum_high_level.h`, 204 lines of widths, endianness
-  and temp-buffer sizes. `MAX_MOD` (`256`) is the Rust side of it, and nothing
-  but a person holds the two together;
+- **six runtime `unsafe` blocks** in `docs/unsafe.md` under `PLAT-UNSAFE-007`;
+- **6 Montgomery assembly imports** and one assembly translation unit in
+  `assurance/toolchain.toml`. The assembler is pinned through the GCC package;
+- **an AAPCS contract** in `crates/rsk-rsa/src/montgomery.rs` and the assembly.
+  The callers own the widths, endianness, overlap rules and buffer sizes;
 - **a containment argument**, which is the reason the sites are allowed at all:
   a power-on known-answer self-test and a Bellcore fault check on every
   signature. A new boundary owes an argument of that shape or it owes
   `docs/unsafe.md` an entry it cannot fill;
 - **native source citations require manual review.** `scripts/citation_gate.py`
   does not resolve the C or assembly sources cited by `assurance/toolchain.toml`.
-
-"At least that much again" is therefore, in units: three more `unsafe` sites
-owing `docs/unsafe.md`, at least two more registry rows, one more pinned
-producer, one more unreadable contract, and one more containment argument.
 
 ## The TCB delta
 
@@ -188,8 +177,7 @@ A decision with no falsifier is a preference. Any one of these overturns it:
   never for the whole firmware.
 - **The assembly stops dominating the foreign half.** If the RSA core were
   ever replaced by a pure-C implementation fast enough for on-card key
-  generation, verifying that C would cover the whole kernel instead of a
-  quarter of it.
+  generation, verifying that C could cover the native arithmetic.
 - **The gate stops being Rust-shaped.** If the tree acquires a second language
   for an unrelated reason and pays the linting cost listed above anyway, the
   marginal cost of this decision falls to the toolchain delta alone.
@@ -204,7 +192,7 @@ nix develop -c python scripts/release_gate.py       # 15 steps over 6 subjects
 nix develop -c python scripts/docs_constants.py     # MAX_MOD, held against the code
 
 # the candidate kernels
-wc -l crates/rsk-rsa/csrc/bignum_high_level.c crates/rsk-rsa/csrc/bignum_asm.S
+wc -l crates/rsk-rsa/csrc/bignum_asm.S
 wc -l crates/rsk-mldsa/src/reduce.rs crates/rsk-mldsa/src/ntt.rs crates/rsk-mldsa/src/round.rs
 
 # the FIDO gate surface: functions, generic functions, and the storage bound.

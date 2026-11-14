@@ -227,7 +227,7 @@ workspace manifests.
 | `rsk-led` | `EF_LED_CONF` codec for status LED behavior |
 | `rsk-crypto` | Hashes, MACs, KDFs, symmetric crypto, DRBG and post-quantum primitives |
 | `rsk-ec` | EC and Edwards key formats, public-key derivation, signing and key agreement |
-| `rsk-rsa` | RSA key generation and sealed CRT key layout, blinded and fault-checked private operations, with embedded C/assembly arithmetic and a Rust host path |
+| `rsk-rsa` | RSA key generation and sealed CRT key layout, blinded and fault-checked private operations, with embedded Thumb-2 arithmetic and a Rust host path |
 | `rsk-mldsa` | Stack-bounded ML-DSA for the three parameter sets |
 | `rsk-sha256` | SHA-256 compression and digest implementation |
 | `rsk-sha512` | Compact SHA-512 and SHA-384 implementations for XIP |

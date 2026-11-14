@@ -158,7 +158,6 @@ def derived() -> list[tuple[str, int, re.Pattern]]:
     second place to rot, which is the rule `run_count_gate.py` calls "not said
     twice" and the reason this list holds a COUNT of matches rather than a hit.
     """
-    c = lines("crates/rsk-rsa/csrc/bignum_high_level.c")
     asm = lines("crates/rsk-rsa/csrc/bignum_asm.S")
     generic, total, bound = fido_functions()
     every, linker = boundaries()
@@ -171,14 +170,12 @@ def derived() -> list[tuple[str, int, re.Pattern]]:
     return [
         ("rsk-fido/src/state.rs", lines("crates/rsk-fido/src/state.rs"),
          re.compile(r"(\d+) lines in `state\.rs` alone")),
-        # The Rust and asm halves stand INSIDE the pattern rather than in a hole
-        # of their own: one sentence states all three, so a drift in either of
-        # them stops the pattern matching and is reported as the sentence going
-        # away — which is the same finding, arrived at from the other side.
-        ("the RSA wrapper's C half", c,
-         re.compile(rf"{lines('crates/rsk-rsa/src/lib.rs')} Rust, (\d+) C, {asm} asm")),
-        ("the assembly's share", round(100 * asm / (asm + c)),
-         re.compile(r"(\d+)% of the foreign half by line")),
+        ("RSA Thumb-2 assembly", asm,
+         re.compile(r"(\d+) lines of Thumb-2 assembly")),
+        ("RSA assembly imports", sum(
+            row["id"].startswith("import:crates/rsk-rsa/src/montgomery.rs:")
+            for row in tomllib.loads((ROOT / "assurance/toolchain.toml").read_text())["boundary"]
+         ), re.compile(r"(\d+) Montgomery assembly imports")),
         ("the ML-DSA reduction kernel", reduction,
          re.compile(r"(\d+) lines, no generic function")),
         ("generic functions in rsk-fido", generic,
@@ -187,8 +184,6 @@ def derived() -> list[tuple[str, int, re.Pattern]]:
          re.compile(r"\d+ of (\d+) functions are generic")),
         ("`<S: Storage` sites", bound,
          re.compile(r"(\d+) of those carry\s+`<S: Storage`")),
-        ("the header's contract", lines("crates/rsk-rsa/csrc/bignum_high_level.h"),
-         re.compile(r"(\d+) lines of widths")),
         ("registered tools", tools, re.compile(r"(\d+) registered tools")),
         ("distinct roles", roles, re.compile(r"carrying (\d+) distinct roles")),
         ("tools with a pin file", held, re.compile(r"which (\d+) name a file that pins them")),

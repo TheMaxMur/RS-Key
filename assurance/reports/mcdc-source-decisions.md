@@ -576,7 +576,7 @@ RSA C, assembly, declaration header and configuration header. Their source
 bytes matched the retained originals; only the documented uninstrumented
 fixtures and naked-entry profiling exclusion differed in the laboratory copy.
 The independent arithmetic/ISA witness verifier passed against the retained
-image and records. The public exponentiation subsequently moved to Rust, so
+image and records. Exponentiation and CRT subsequently moved to Rust, so
 the C counts below describe the measured revision.
 
 The retained results cover **8/8 RSA C

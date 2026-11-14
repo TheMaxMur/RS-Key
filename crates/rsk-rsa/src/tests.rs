@@ -367,12 +367,42 @@ fn modexp_matches_biguint() {
     let base = [7u8]; // little-endian 7
     let exp_be = [0x01u8, 0x00, 0x01]; // 65537, big-endian
     let mut out = [0u8; 32];
-    modexp_priv(&base, &exp_be, &modulus, &mut out);
+    assert!(modexp_priv(&base, &exp_be, &modulus, &mut out));
     let expect =
         BigUint::from(7u32).modpow(&BigUint::from(65537u32), &BigUint::from_bytes_le(&modulus));
     let mut want = expect.to_bytes_le();
     want.resize(32, 0);
     assert_eq!(&out[..], &want[..]);
+
+    let mut small = [0; 32];
+    small[0] = 3;
+    assert!(modexp_priv(&[2], &[0, 0], &small, &mut out));
+    assert_eq!(BigUint::from_bytes_le(&out), BigUint::from(1u8));
+    assert!(modexp_priv(&[2], &[0, 0xa5], &small, &mut out));
+    assert_eq!(BigUint::from_bytes_le(&out), BigUint::from(2u8));
+    out.fill(0xa5);
+    assert!(!modexp_priv(&[3], &[0xa5], &small, &mut out));
+    assert!(!modexp_priv(&[4], &[0xa5], &small, &mut out));
+    assert_eq!(out, [0xa5; 32]);
+    assert!(!modexp_priv(&[], &[], &[], &mut []));
+    assert!(!modexp_priv(&[1], &[1], &small[..31], &mut out[..31]));
+    assert!(!modexp_priv(&[1], &[1], &small, &mut out[..31]));
+    assert!(!modexp_priv(&[0; 33], &[1], &small, &mut out));
+    assert_eq!(out, [0xa5; 32]);
+    let oversized = [3; MAX_MOD + 32];
+    let mut oversized_out = [0xa5; MAX_MOD + 32];
+    assert!(!modexp_priv(&[1], &[1], &oversized, &mut oversized_out));
+    assert_eq!(oversized_out, [0xa5; MAX_MOD + 32]);
+    let mut invalid = [0; 32];
+    for low in [0, 1, 2] {
+        invalid[0] = low;
+        assert!(!modexp_priv(&[0], &[1], &invalid, &mut out));
+        assert_eq!(out, [0xa5; 32]);
+    }
+    invalid[1..3].fill(0x02);
+    invalid[0] = 1;
+    assert!(modexp_priv(&[2], &[1], &invalid, &mut out));
+    assert_eq!(BigUint::from_bytes_le(&out), BigUint::from(2u8));
 }
 
 #[test]
@@ -507,7 +537,7 @@ fn sign_crt_matches_biguint() {
     let mb = m.to_bytes_le();
     base_le[..mb.len()].copy_from_slice(&mb);
     let mut out = vec![0u8; 2 * half];
-    sign_crt(
+    assert!(crate::privexp::sign_crt(
         &base_le,
         &dp.to_bytes_be(),
         &dq.to_bytes_be(),
@@ -515,12 +545,55 @@ fn sign_crt_matches_biguint() {
         &to_be_fixed(&q, half),
         &to_be_fixed(&qinv, half),
         &mut out,
-    );
+    ));
     assert_eq!(
         BigUint::from_bytes_le(&out),
         s_ref,
         "CRT sign must equal m^d mod n"
     );
+    for m in [&n - 1u8, p.clone(), q.clone(), BigUint::from(1u8)] {
+        let mut base = m.to_bytes_le();
+        base.resize(2 * half, 0);
+        assert!(crate::privexp::sign_crt(
+            &base,
+            &dp.to_bytes_be(),
+            &dq.to_bytes_be(),
+            &to_be_fixed(&p, half),
+            &to_be_fixed(&q, half),
+            &to_be_fixed(&qinv, half),
+            &mut out,
+        ));
+        assert_eq!(BigUint::from_bytes_le(&out), m.modpow(&d, &n));
+    }
+    let p = to_be_fixed(&p, half);
+    let q = to_be_fixed(&q, half);
+    let qinv = to_be_fixed(&qinv, half);
+    let zero = [0; 32];
+    let mut one = zero;
+    one[31] = 1;
+    out.fill(0xa5);
+    for (base, p, q, qinv, out_width) in [
+        (&base_le[..], &p[..31], &q[..31], &qinv[..31], 64),
+        (&base_le[..], &p[..], &q[..31], &qinv[..], 64),
+        (&base_le[..], &p[..], &q[..], &qinv[..31], 64),
+        (&base_le[..63], &p[..], &q[..], &qinv[..], 64),
+        (&base_le[..], &p[..], &q[..], &qinv[..], 63),
+        (&base_le[..], &zero[..], &q[..], &qinv[..], 64),
+        (&base_le[..], &p[..], &zero[..], &qinv[..], 64),
+        (&base_le[..], &one[..], &q[..], &qinv[..], 64),
+        (&base_le[..], &p[..], &one[..], &qinv[..], 64),
+    ] {
+        assert!(!crate::privexp::sign_crt(
+            base,
+            &[1],
+            &[1],
+            p,
+            q,
+            qinv,
+            &mut out[..out_width],
+        ));
+        assert_eq!(out, [0xa5; 64]);
+    }
 }
 
 #[test]

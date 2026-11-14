@@ -67,30 +67,9 @@ mod backend {
 
 #[cfg(target_os = "none")]
 mod backend {
+    use crate::montgomery::*;
     use crate::{MAX_RSA_BYTES, bytes_to_words_le, words_to_bytes_le};
     use rsk_secret::Secret;
-
-    unsafe extern "C" {
-        fn bignum_to_mont(value: *mut u32, n: *const u32, len: usize, scratch: *mut u32);
-        fn bignum_modular_inverse(inverse: *mut u32, n: *const u32);
-        fn bignum_sqracc(product: *mut u32, value: *const u32, len: usize);
-        fn bignum_mulacc(product: *mut u32, a: *const u32, b: *const u32, len: usize);
-        fn bignum_mont_redc(
-            product: *mut u32,
-            len: usize,
-            n: *const u32,
-            inverse: *const u32,
-            not_n: *const u32,
-            out: *mut u32,
-        );
-        fn bignum_submod(
-            out: *mut u32,
-            not_n: *const u32,
-            n: *const u32,
-            a: *const u32,
-            len: usize,
-        ) -> i32;
-    }
 
     #[inline(never)]
     pub(super) fn pow(base: &[u8], modulus: &[u8], out: &mut [u8]) {

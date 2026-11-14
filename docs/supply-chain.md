@@ -77,14 +77,12 @@ Root inputs of `flake.lock` deliberately outside this TCB:
 | `RSK_NS_PROBE_PROGRESS` | export | `firmware/trustzone/nonsecure/src/probe.rs, #[unsafe(no_mangle symbol, unconditional` | `rustc` |
 | `RSK_NS_PROBE_TARGET` | export | `firmware/trustzone/nonsecure/src/probe.rs, #[unsafe(no_mangle symbol, unconditional` | `rustc` |
 | `TIMER1_IRQ_0` | export | `firmware/trustzone/nonsecure/src/time.rs, #[unsafe(no_mangle symbol, unconditional` | `rustc` |
-| `bignum_modexp_private_exponent` | import | `crates/rsk-rsa/src/lib.rs, extern "C", #[cfg(target_os = "none")]` | `arm-none-eabi-gcc` |
-| `rsa_private_exp_crt` | import | `crates/rsk-rsa/src/lib.rs, extern "C", #[cfg(target_os = "none")]` | `arm-none-eabi-gcc` |
-| `bignum_modular_inverse` | import | `crates/rsk-rsa/src/pubexp.rs, extern "C", unconditional` | `arm-none-eabi-as` |
-| `bignum_mont_redc` | import | `crates/rsk-rsa/src/pubexp.rs, extern "C", unconditional` | `arm-none-eabi-as` |
-| `bignum_mulacc` | import | `crates/rsk-rsa/src/pubexp.rs, extern "C", unconditional` | `arm-none-eabi-as` |
-| `bignum_sqracc` | import | `crates/rsk-rsa/src/pubexp.rs, extern "C", unconditional` | `arm-none-eabi-as` |
-| `bignum_submod` | import | `crates/rsk-rsa/src/pubexp.rs, extern "C", unconditional` | `arm-none-eabi-as` |
-| `bignum_to_mont` | import | `crates/rsk-rsa/src/pubexp.rs, extern "C", unconditional` | `arm-none-eabi-as` |
+| `bignum_modular_inverse` | import | `crates/rsk-rsa/src/montgomery.rs, extern "C", unconditional` | `arm-none-eabi-as` |
+| `bignum_mont_redc` | import | `crates/rsk-rsa/src/montgomery.rs, extern "C", unconditional` | `arm-none-eabi-as` |
+| `bignum_mulacc` | import | `crates/rsk-rsa/src/montgomery.rs, extern "C", unconditional` | `arm-none-eabi-as` |
+| `bignum_sqracc` | import | `crates/rsk-rsa/src/montgomery.rs, extern "C", unconditional` | `arm-none-eabi-as` |
+| `bignum_submod` | import | `crates/rsk-rsa/src/montgomery.rs, extern "C", unconditional` | `arm-none-eabi-as` |
+| `bignum_to_mont` | import | `crates/rsk-rsa/src/montgomery.rs, extern "C", unconditional` | `arm-none-eabi-as` |
 | `__kvcnt_end` | import | `firmware/src/main.rs, extern "C", unconditional` | `rust-lld` |
 | `__kvcnt_start` | import | `firmware/src/main.rs, extern "C", unconditional` | `rust-lld` |
 | `__kvmain_end` | import | `firmware/src/main.rs, extern "C", unconditional` | `rust-lld` |
@@ -106,13 +104,12 @@ Root inputs of `flake.lock` deliberately outside this TCB:
 | `__rsk_scratch_exec_load` | import | `tests/tz_hardware/secure.rs, extern "C", unconditional` | `rust-lld` |
 | `__rsk_scratch_exec_start` | import | `tests/tz_hardware/secure.rs, extern "C", unconditional` | `rust-lld` |
 | `crates/rsk-rsa/csrc/bignum_asm.S` | unit | `crates/rsk-rsa/build.rs, cc::Build` | `arm-none-eabi-as` |
-| `crates/rsk-rsa/csrc/bignum_high_level.c` | unit | `crates/rsk-rsa/build.rs, cc::Build` | `arm-none-eabi-gcc` |
 
 **Coverage against the six TCB categories.** Enumerated here, each with a pin held against its source file:
 
 - **assembler** — `arm-none-eabi-as`, `cortex-m`
 - **compiler** — `arm-none-eabi-gcc`, `rustc`
-- **ffi** — the 42 boundary(s) in the table above, each joined to the pinned tool that produces its foreign half
+- **ffi** — the 39 boundary(s) in the table above, each joined to the pinned tool that produces its foreign half
 - **linker** — `flip-link`, `rust-lld`
 
 Not enumerated by this generator at all, and not by any other:
@@ -203,7 +200,7 @@ The commands those steps run, as this gate reads them: `\` continuations joined,
 # 2. uses: DeterminateSystems/nix-installer-action@3138316df39ed29be04236d7ffc686fa525866aa # v23
 # 3. uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.2
 # 4. uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-# 5. uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+# 5. uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
 # 6. resolve tag
 case "$TAG" in
 v[0-9]*.[0-9]*.[0-9]*) ;;
@@ -369,8 +366,8 @@ The files that decide what a release is. A digest here covers the parts the tabl
 | File | sha256 |
 |---|---|
 | `.github/workflows/release.yml` | `9f4218cfb9869bc458be8076f2185af6bdb734598db9b49167557dca30324a05` |
-| `.github/workflows/release-build.yml` | `f4b514f89c593def72b9800914d54295f3a29d51ec45bde50fe06ef29c80fb27` |
-| `nix/firmware.nix` | `01e872739b6ac0ad9439247a18c4f6992ef160032508a4fe8594b7f059d780a5` |
+| `.github/workflows/release-build.yml` | `dfe836938a828195cbf05b84d963d2cea735b9acbcdb616dfd30f91ef3a9da2a` |
+| `nix/firmware.nix` | `4cf923375a2831510e82ae013bd1486f8d09efd4a6a4dffd696ff95b25f1cc48` |
 | `scripts/build.sh` | `48059de27f8d63748ab2aeb23cca71e84e93d281330be219e7b7a7130f923db4` |
 
 The CI code that runs them, pinned by commit:
@@ -381,7 +378,7 @@ The CI code that runs them, pinned by commit:
 | `DeterminateSystems/nix-installer-action` | `3138316df39ed29be04236d7ffc686fa525866aa` | v23 |
 | `nix-community/cache-nix-action` | `7df957e333c1e5da7721f60227dbba6d06080569` | v7.0.2 |
 | `actions/cache` | `55cc8345863c7cc4c66a329aec7e433d2d1c52a9` | v6.1.0 |
-| `sigstore/cosign-installer` | `6f9f17788090df1f26f669e9d70d6ae9567deba6` | v4.1.2 |
+| `sigstore/cosign-installer` | `756fe2d284c7292c4e9b62c8a28f1e5629c59532` | v4.1.3 |
 | `actions/attest-build-provenance` | `4d101475d8b20a2381f78447822ac1eab6504dd8` | v4.2.2 |
 
 The toolchain closure — `flake.lock`, `Cargo.lock` and the tools they pin — is the table above this section, and is deliberately not restated here: one copy, one place it can rot.

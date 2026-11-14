@@ -38,6 +38,9 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ## [Unreleased]
 
+- Move RSA private exponentiation and CRT recombination to Rust while
+  retaining the Thumb-2 arithmetic (bcdDevice 0x0BE5).
+
 - Run RSA's fixed public exponentiation in Rust, backed by the existing
   Thumb-2 Montgomery arithmetic on the device (bcdDevice 0x0BE4).
 

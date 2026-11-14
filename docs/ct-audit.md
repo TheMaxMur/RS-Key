@@ -10,7 +10,7 @@ operation that an attacker holding the device can probe over USB (CCID /
 ISO-7816 APDUs and CTAPHID / CTAP2): PIN/PUK/password verifiers, the FIDO
 `pinUvAuthToken` MAC, OATH and OTP access codes, RSA private operations, and the
 hand-written `rsk-rsa` modexp, sieve and primality primitives — the modexp on
-both of its callers, the prime search and the `rsa_private_exp_crt` that PIV
+both of its callers, the prime search and the `sign_crt` that PIV
 GENERAL AUTHENTICATE and OpenPGP PSO:CDS / INTERNAL AUTHENTICATE / DECIPHER
 reach over USB against a long-lived key.
 
@@ -99,7 +99,7 @@ and `docs.sh check` were all exit 0, and the citation gate, red that day over
 line drift in other files, said nothing about this page. The single exception is
 the scope paragraph at the top of this page. `ct_gate` anchors on its `rsk-rsa`
 clause and asks three things of the paragraph that carries it: it must name the
-modexp and the `rsa_private_exp_crt` that reaches it over USB, it may not
+modexp and the `sign_crt` that reaches it over USB, it may not
 re-scope them to key generation, and it may not be one of two paragraphs
 carrying the anchor, because an earlier one would shield it. Anchored instead on
 a sentence five lines above the clause and refusing one spelling of one word,
@@ -122,41 +122,31 @@ today.
 - **The RSA private operation is now entirely in-tree.** The `rsa` crate left in
   0.4.12 and RUSTSEC-2023-0071 ("Marvin") with it, so that residual is closed as
   a dependency question — but the mitigation it named is what remains load-bearing:
-  every private-key path, asm CRT and software alike, is base-blinded per
+  every private-key path, including CRT, is base-blinded per
   operation, and none of them is exempt. See [threat-model.md](threat-model.md).
 - **`rsk-rsa` modexp secret-indexed window lookup**: the window index is a secret
   nibble — of the candidate in the keygen prime search, and of `dP`/`dQ` in
-  `rsa_private_exp_crt`, which both reach the same
-  `bignum_modexp_private_exponent_internal`. It folds into the table's base
-  pointer instead of steering a branch, so the instruction sequence per nibble is
-  the same whatever the nibble is and only the *address* changes
-  (`crates/rsk-rsa/csrc/bignum_high_level.c`, the `#else` arm that
-  `CONSTANT_MEMORY_ACCESS_PATTERN 0` in `crates/rsk-rsa/csrc/bignum_config.h`
-  selects).
+  `sign_crt`. Both reach `privexp::backend::pow` on the device. The index folds
+  into the table's base pointer. The instruction sequence is independent of the
+  nibble's value; only the *address* changes
+  (`crates/rsk-rsa/src/privexp.rs`, the `t.add(index * w)` input to
+  `bignum_mulacc`).
 
   *There is no XIP-cache channel — and not because the core is cacheless.* The
   RP2350 does put a cache in front of its QSPI flash, and it is load-bearing
   enough that hot loops were moved out of XIP to escape it
   ([architecture.md](architecture.md), [limitations.md](limitations.md),
   [testing.md](testing.md)). That cache sits on the *flash* path, and neither end
-  of this access is on it. The table is the `temp` array the Rust caller declares
-  as a stack local (`crates/rsk-rsa/src/lib.rs`, `modexp_priv` and `sign_crt`),
+  of this access is on it. The table is in `scratch`, a stack buffer in
+  `crates/rsk-rsa/src/privexp.rs`,
   and every stack it can sit on is SRAM: core0's, which the linker bounds with
   `_stack_end` and `_stack_start`, and — for the keygen half, which core1 runs
   too — core1's `CORE1_STACK` (`firmware/src/core1.rs`), a `.bss` static outside
   that pair and SRAM by the same script. The code that reads it is SRAM-resident
-  by link section: the C carries `BIGNUM_RAMFUNC`, which is
-  `section(".data.bignum_hl")`, and the `bignum_mulacc` that performs the load
-  has `.section .data.bignum_asm` for its whole translation unit. Confirmed in
-  the on-device ELF rather than inferred from the sections: both symbols resolve
-  to RAM addresses. The public exponentiation schedule in `pubexp.rs` resolves
-  to flash and calls the same assembly primitives in SRAM. The build script
-  compiles the C and assembly for every firmware flavour, so each links the
-  same sections. The CRT path is worth reading in the
-  image and not in the source, because `rsa_private_exp_crt` itself stays in
-  flash and only the inner modexp it shares with keygen is moved. "The
-  Cortex-M33 is cacheless" was true of the core's own data path and false as a
-  statement about the SoC, which is why it disagreed with every other page here.
+  by link section. Rust places the private window loop in
+  `.data.bignum_hl` and the assembly is in `.data.bignum_asm`. The public
+  exponentiation schedule lives in flash and calls the same SRAM arithmetic.
+  The CRT wrapper prepares and combines residues outside the SRAM window loop.
 
   *What that does not settle.* An SRAM access is not a cache access, but it is
   not nothing. Two mechanisms could still turn the address into a time, and this
@@ -177,12 +167,8 @@ today.
   the window. Concurrency belongs to the keygen half alone: the prime filter
   races this modexp on both cores, and core1 takes nothing but keygen jobs
   (`firmware/src/core1.rs`), so the USB-reachable sign/decrypt path runs it
-  single-core. Hardening: build the asm with `CONSTANT_MEMORY_ACCESS_PATTERN 1`,
-  which selects the branchless `bignum_table_select` over the whole table —
-  proposed, not tested. Nothing in this tree ever compiles that arm: the vendored
-  header defines it `0` and recommends that value for Cortex-M, no build
-  overrides it, `bignum_table_select` is absent from the image, and the same
-  switch pulls in an in-place table transpose that has never been built either.
+  single-core. A fixed-address selection would require a separate change to
+  the Rust table selection and new verification of the emitted code.
 
   *Severity: LOW, recorded rather than left pending.* It is registered as
   `PLAT-CRYPTO-002` in [platform-assumptions.md](platform-assumptions.md) with
@@ -206,32 +192,16 @@ today.
   divides 32 bytes can tell apart and which a high-bit-selected bank holds whole
   at ≤ 4 KiB.
 
-  *The hardening is DEFERRED, not declined.* `CONSTANT_MEMORY_ACCESS_PATTERN 1`
-  is registered as `PLAT-BUILD-005` with its price, and the price is why it is
-  not simply flipped. It has never been built here and cannot be validated here:
-  `crates/rsk-rsa/build.rs` compiles the C and the asm only for
-  `target_os = "none"`, so no host test and no `tools/emu` run reaches that arm,
-  and the transpose it pulls in is exercised by an on-card RSA sign at each of
-  the three widths and by nothing else. The Bellcore check makes a wrong
-  transpose a refused signature rather than a bad one, so a passing on-card sign
-  IS the proof — and a failing one is a key that stops working. Cost, counted
-  from the instruction mix and not measured: `bignum_table_select` reads
-  16 × `half` bytes per window where the shipped arm reads `half`, against a
-  window that already spends four squarings and one multiply, so the overhead is
-  of the order of a tenth of the private operation and larger at RSA-2048 than at
-  RSA-4096 — the multiply grows quadratically in the width and the scan only
-  linearly. It costs SRAM and not only flash: the C half is `BIGNUM_RAMFUNC`
-  (`section(".data.bignum_hl")`) and the asm's whole translation unit is
-  `.section .data.bignum_asm`. What would settle it: one firmware build with the
-  flag defined, then a board run of the three widths and a before/after timing of
-  one PIV GENERAL AUTHENTICATE.
+  The fixed-address lookup remains deferred in `PLAT-BUILD-005`. The unused
+  assembly lookup is excluded by `CONSTANT_MEMORY_ACCESS_PATTERN=0`. The Rust
+  port continues to select a table entry directly.
 
 ## Coverage & limits
 
 **Covered:** all hand-rolled comparator definitions and call sites; every
 PIN/PUK/password/MAC/verifier comparison across FIDO, PIV, OpenPGP, OATH; OTP
 slot access-code compares; HOTP/TOTP; RSA private sign/decrypt/raw paths; the
-`rsk-rsa` C/asm modexp, sieve, and primality primitives; secret-indexed
+`rsk-rsa` Rust/Thumb-2 modexp, sieve, and primality primitives; secret-indexed
 lookups; and status-word/error-path oracles.
 
 **What a source/disassembly audit cannot prove:**
