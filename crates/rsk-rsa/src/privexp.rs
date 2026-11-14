@@ -163,56 +163,54 @@ mod backend {
         let w = n.len();
         let len = core::mem::size_of_val(n);
         let (table, product) = scratch[..(TABLE + 2) * w].split_at_mut(TABLE * w);
+        let (one, rest) = table.split_at_mut(w);
+        let (base_mont, tmp) = rest.split_at_mut(w);
         // The second CRT half reuses the first half's populated table.
-        table[w..2 * w].fill(0);
-        table[w] = 1;
+        tmp[..w].fill(0);
+        tmp[0] = 1;
+        to_mont(one, &tmp[..w], n, product);
+        to_mont(base_mont, base, n, product);
         let t = table.as_mut_ptr();
         let product = product.as_mut_ptr();
         let result = out.as_mut_ptr();
         let modulus = n.as_ptr();
-        let complement = complement.as_ptr();
+        let not_n = complement.as_ptr();
         let inverse = inverse.as_ptr();
-        // SAFETY: callers provide w words in every operand, with nonzero w
-        // aligned to eight words. Table entries and the double-width product
-        // are disjoint. Each conversion uses two adjacent table entries.
+        // SAFETY: callers provide w words per operand, aligned to eight words.
+        // The table, output and double-width product are disjoint.
         unsafe {
-            bignum_to_mont(t, modulus, len, product);
-            core::ptr::copy_nonoverlapping(base.as_ptr(), t.add(2 * w), w);
-            bignum_to_mont(t.add(w), modulus, len, product);
             for i in 0..w {
                 product.add(i).write(0);
             }
             for i in 2..TABLE {
                 bignum_mulacc(product, t.add(w), t.add((i - 1) * w), len);
-                bignum_mont_redc(product, len, modulus, inverse, complement, t.add(i * w));
+                bignum_mont_redc(product, len, modulus, inverse, not_n, t.add(i * w));
             }
             core::ptr::copy_nonoverlapping(t, result, w);
             super::windows(exponent, |index, square| {
                 if square {
                     for _ in 0..4 {
                         bignum_sqracc(product, result, len);
-                        bignum_mont_redc(product, len, modulus, inverse, complement, result);
+                        bignum_mont_redc(product, len, modulus, inverse, not_n, result);
                     }
                 }
                 bignum_mulacc(product, t.add(index * w), result, len);
-                bignum_mont_redc(product, len, modulus, inverse, complement, result);
+                bignum_mont_redc(product, len, modulus, inverse, not_n, result);
             });
             for i in 0..w {
                 product.add(i).write(result.add(i).read());
                 product.add(w + i).write(0);
             }
-            bignum_mont_redc(product, len, modulus, inverse, complement, result);
-            bignum_submod(result, complement, modulus, result, len);
+            bignum_mont_redc(product, len, modulus, inverse, not_n, result);
         }
+        sub_mod(out, n, n);
     }
 
     fn parameters(n: &[u32], complement: &mut [u32], inverse: &mut [u32; 4]) {
         for (dst, &value) in complement.iter_mut().zip(n) {
             *dst = !value;
         }
-        // SAFETY: both validated moduli have at least eight words and are odd;
-        // the disjoint output holds the four words written by the routine.
-        unsafe { bignum_modular_inverse(inverse.as_mut_ptr(), n.as_ptr()) };
+        *inverse = negative_inverse(n);
     }
 
     pub(super) fn modexp(base: &[u8], exponent: &[u8], n: &[u8], out: &mut [u8]) {
@@ -256,16 +254,20 @@ mod backend {
         let w = n.len();
         let len = core::mem::size_of_val(n);
         let v = value.as_mut_ptr();
-        let n = n.as_ptr();
-        let complement = complement.as_ptr();
-        // SAFETY: value and scratch each hold 2*w words and are disjoint.
-        // REDC may write to the upper half of its input; submod may alias a.
+        // SAFETY: value holds 2*w words. REDC may alias the upper half.
         unsafe {
-            let high = v.add(w);
-            bignum_mont_redc(v, len, n, inverse.as_ptr(), complement, high);
-            bignum_submod(high, complement, n, high, len);
-            bignum_to_mont(v, n, len, scratch.as_mut_ptr());
+            bignum_mont_redc(
+                v,
+                len,
+                n.as_ptr(),
+                inverse.as_ptr(),
+                complement.as_ptr(),
+                v.add(w),
+            );
         }
+        let (low, high) = value.split_at_mut(w);
+        sub_mod(high, n, n);
+        to_mont(low, high, n, scratch);
     }
 
     pub(super) fn crt(
@@ -313,16 +315,16 @@ mod backend {
         value[..w].copy_from_slice(&m2.expose()[..w]);
         value[w..].fill(0);
         reduce_wide(value, p, complement, inverse, scratch);
-        for v in &mut value[..w] {
-            *v = !*v;
-        }
-        // SAFETY: value and result are double width; p, q and qInv each hold
-        // w words. Submod aliases only a, and mulacc outputs are disjoint.
+        sub_mod(&mut result[..w], &value[..w], p);
+        value[..w].fill(0);
+        // SAFETY: value is double width and disjoint from both w-word operands.
         unsafe {
-            let r = result.as_mut_ptr();
-            bignum_submod(r, value.as_ptr(), p.as_ptr(), r, len);
-            value[..w].fill(0);
-            bignum_mulacc(value.as_mut_ptr(), r, qinv_words.expose().as_ptr(), len);
+            bignum_mulacc(
+                value.as_mut_ptr(),
+                result.as_ptr(),
+                qinv_words.expose().as_ptr(),
+                len,
+            );
         }
         reduce_wide(value, p, complement, inverse, scratch);
         result[..w].copy_from_slice(&m2.expose()[..w]);

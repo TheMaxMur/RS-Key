@@ -77,11 +77,11 @@ def test_every_rule_ran(audit):
 @pytest.mark.parametrize(
     "before, after, expect",
     [
-        ("1082 lines of Thumb-2 assembly", "1081 lines of Thumb-2 assembly",
-         r"RSA Thumb-2 assembly reads '1081', the tree says 1082"),
-        ("15 of the 39 `[[boundary]]`", "15 of the 28 `[[boundary]]`",
-         r"`\[\[boundary\]\]` rows reads '28', the tree says 39"),
-        ("15 of the 39 `[[boundary]]`", "10 of the 39 `[[boundary]]`",
+        ("400 lines of Thumb-2 assembly", "399 lines of Thumb-2 assembly",
+         r"RSA Thumb-2 assembly reads '399', the tree says 400"),
+        ("15 of the 36 `[[boundary]]`", "15 of the 28 `[[boundary]]`",
+         r"`\[\[boundary\]\]` rows reads '28', the tree says 36"),
+        ("15 of the 36 `[[boundary]]`", "10 of the 36 `[[boundary]]`",
          r"linker-symbol boundaries reads '10', the tree says 15"),
         ("177 of those carry", "178 of those carry",
          r"`<S: Storage` sites reads '178', the tree says 177"),
@@ -124,7 +124,7 @@ def test_the_page_standing_still_while_the_tree_moves_is_refused(audit):
     findings = audit(
         lines=lambda rel: real(rel) + 200 if rel.endswith("bignum_asm.S") else real(rel)
     )
-    assert any("RSA Thumb-2 assembly reads '1082', the tree says" in f for f in findings), findings
+    assert any("RSA Thumb-2 assembly reads '400', the tree says" in f for f in findings), findings
 
 
 def test_the_named_row_still_runs_this_guard():

@@ -34,6 +34,14 @@ crates/rsk-mldsa/src/sample.rs: replace | with ^ in coeff_from_three_bytes
 crates/rsk-mldsa/src/sample.rs: replace | with ^ in coeff_from_three_bytes
 crates/rsk-rsa/src/lib.rs: replace | with ^ in mod_small
 crates/rsk-rsa/src/lib.rs: replace | with ^ in shr_into_be
+crates/rsk-rsa/src/montgomery.rs: replace | with ^ in negative_inverse
+crates/rsk-rsa/src/montgomery.rs: replace | with ^ in negative_inverse
+crates/rsk-rsa/src/montgomery.rs: replace | with ^ in negative_inverse
+crates/rsk-rsa/src/montgomery.rs: replace | with ^ in quotient
+crates/rsk-rsa/src/montgomery.rs: replace | with ^ in quotient
+crates/rsk-rsa/src/montgomery.rs: replace | with ^ in to_mont
+crates/rsk-rsa/src/montgomery.rs: replace | with ^ in to_mont
+crates/rsk-rsa/src/montgomery.rs: replace | with ^ in to_mont
 crates/rsk-sha512/src/block.rs: replace ^ with | in compress
 crates/rsk-sha512/src/block.rs: replace ^ with | in compress
 crates/rsk-sha512/src/block.rs: replace ^ with | in compress
@@ -48,7 +56,6 @@ crates/rsk-mldsa/src/pack.rs: replace + with - in bit_unpack
 crates/rsk-mldsa/src/pack.rs: replace - with + in bit_unpack
 
 [device-only] The host sweep never compiles the Thumb-2 private exponentiation and CRT backend. A Cortex-M33 ELF with 736 independent Python vectors and refusal checks rejected these variants at runtime or during the device build. This does not claim silicon refutation.
-crates/rsk-rsa/src/privexp.rs: delete ! in backend::crt
 crates/rsk-rsa/src/privexp.rs: delete ! in backend::parameters
 crates/rsk-rsa/src/privexp.rs: replace * with + in backend::crt
 crates/rsk-rsa/src/privexp.rs: replace * with + in backend::crt
@@ -102,9 +109,11 @@ crates/rsk-rsa/src/privexp.rs: replace backend::parameters with ()
 crates/rsk-rsa/src/privexp.rs: replace backend::pow with ()
 crates/rsk-rsa/src/privexp.rs: replace backend::reduce_wide with ()
 
+[unused-padding] The public exponentiation allocates double-width scratch for REDC. Growing the separate output buffer leaves its used low words and the disjoint scratch unchanged.
+crates/rsk-rsa/src/pubexp.rs: replace * with + in backend::pow
+
 [device-only] The host sweep never compiles the Thumb-2 public exponentiation backend. A Cortex-M33 ELF with 257 independent power vectors rejects these mutations in QEMU.
 crates/rsk-rsa/src/pubexp.rs: delete ! in backend::pow
-crates/rsk-rsa/src/pubexp.rs: replace * with + in backend::pow
 crates/rsk-rsa/src/pubexp.rs: replace * with + in backend::pow
 crates/rsk-rsa/src/pubexp.rs: replace * with + in backend::pow
 crates/rsk-rsa/src/pubexp.rs: replace * with / in backend::pow

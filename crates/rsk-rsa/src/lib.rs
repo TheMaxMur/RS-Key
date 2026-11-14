@@ -36,7 +36,7 @@ pub mod pubdo;
 mod error;
 mod key;
 mod lucas;
-#[cfg(target_os = "none")]
+#[cfg(any(test, target_os = "none"))]
 mod montgomery;
 mod privexp;
 mod pubexp;

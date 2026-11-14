@@ -2,7 +2,7 @@
 // Copyright (C) 2026 RS-Key contributors
 
 //! Fixed public exponent for CRT blinding and the result check. The ARM
-//! Montgomery operations are from rsa-armv7 (see `csrc/LICENSE.txt`).
+//! multiplication, square and reduction use rsa-armv7 (see `csrc/LICENSE.txt`).
 
 use crate::RSA_E;
 
@@ -78,7 +78,6 @@ mod backend {
         let words = len / 4;
         let mut n = [0u32; MAX_WORDS];
         let mut not_n = [0u32; MAX_WORDS];
-        let mut inverse = [0u32; 4];
         bytes_to_words_le(modulus, &mut n[..words]);
         for (dst, &word) in not_n.iter_mut().zip(&n[..words]) {
             *dst = !word;
@@ -86,18 +85,23 @@ mod backend {
         let mut base_words = Secret::new([0u32; MAX_WORDS]);
         bytes_to_words_le(base, &mut base_words.expose_mut()[..words]);
         let mut value = Secret::new([0u32; 2 * MAX_WORDS]);
-        value.expose_mut()[words..2 * words].copy_from_slice(&base_words.expose()[..words]);
         let mut product = Secret::new([0u32; 2 * MAX_WORDS]);
 
-        let n = n.as_ptr();
+        let n = &n[..words];
+        to_mont(
+            &mut value.expose_mut()[..words],
+            &base_words.expose()[..words],
+            n,
+            product.expose_mut(),
+        );
+        let inverse = negative_inverse(n);
+        let modulus = n.as_ptr();
         let not_n = not_n.as_ptr();
         let mut buffers = (value.expose_mut(), product.expose_mut());
         // SAFETY: modexp_pub checks len (32..=512, multiple of 32), odd n and
         // base < n. The disjoint aligned arrays hold n/~n, a four-word inverse,
-        // and two double-width buffers; only submod aliases its input/output.
+        // and two double-width buffers.
         unsafe {
-            bignum_to_mont(buffers.0.as_mut_ptr(), n, len, buffers.1.as_mut_ptr());
-            bignum_modular_inverse(inverse.as_mut_ptr(), n);
             let inverse = inverse.as_ptr();
             buffers.1[..words].fill(0);
             super::pow_65537(
@@ -105,17 +109,17 @@ mod backend {
                 |(value, product)| {
                     let (value, product) = (value.as_mut_ptr(), product.as_mut_ptr());
                     bignum_sqracc(product, value, len);
-                    bignum_mont_redc(product, len, n, inverse, not_n, value);
+                    bignum_mont_redc(product, len, modulus, inverse, not_n, value);
                 },
                 |(value, product)| {
                     let (value, product) = (value.as_mut_ptr(), product.as_mut_ptr());
                     // Multiplication by the original base cancels the Montgomery factor.
                     bignum_mulacc(product, value, base_words.expose().as_ptr(), len);
-                    bignum_mont_redc(product, len, n, inverse, not_n, value);
-                    bignum_submod(value, not_n, n, value, len);
+                    bignum_mont_redc(product, len, modulus, inverse, not_n, value);
                 },
             );
         }
+        sub_mod(&mut value.expose_mut()[..words], n, n);
         words_to_bytes_le(&value.expose()[..words], out);
     }
 }

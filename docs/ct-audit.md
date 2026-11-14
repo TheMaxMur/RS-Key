@@ -144,7 +144,8 @@ today.
   too — core1's `CORE1_STACK` (`firmware/src/core1.rs`), a `.bss` static outside
   that pair and SRAM by the same script. The code that reads it is SRAM-resident
   by link section. Rust places the private window loop in
-  `.data.bignum_hl` and the assembly is in `.data.bignum_asm`. The public
+  `.data.bignum_hl` with the conversion to Montgomery form. The remaining
+  assembly is in `.data.bignum_asm`. The public
   exponentiation schedule lives in flash and calls the same SRAM arithmetic.
   The CRT wrapper prepares and combines residues outside the SRAM window loop.
 

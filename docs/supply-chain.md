@@ -77,12 +77,9 @@ Root inputs of `flake.lock` deliberately outside this TCB:
 | `RSK_NS_PROBE_PROGRESS` | export | `firmware/trustzone/nonsecure/src/probe.rs, #[unsafe(no_mangle symbol, unconditional` | `rustc` |
 | `RSK_NS_PROBE_TARGET` | export | `firmware/trustzone/nonsecure/src/probe.rs, #[unsafe(no_mangle symbol, unconditional` | `rustc` |
 | `TIMER1_IRQ_0` | export | `firmware/trustzone/nonsecure/src/time.rs, #[unsafe(no_mangle symbol, unconditional` | `rustc` |
-| `bignum_modular_inverse` | import | `crates/rsk-rsa/src/montgomery.rs, extern "C", unconditional` | `arm-none-eabi-as` |
-| `bignum_mont_redc` | import | `crates/rsk-rsa/src/montgomery.rs, extern "C", unconditional` | `arm-none-eabi-as` |
-| `bignum_mulacc` | import | `crates/rsk-rsa/src/montgomery.rs, extern "C", unconditional` | `arm-none-eabi-as` |
-| `bignum_sqracc` | import | `crates/rsk-rsa/src/montgomery.rs, extern "C", unconditional` | `arm-none-eabi-as` |
-| `bignum_submod` | import | `crates/rsk-rsa/src/montgomery.rs, extern "C", unconditional` | `arm-none-eabi-as` |
-| `bignum_to_mont` | import | `crates/rsk-rsa/src/montgomery.rs, extern "C", unconditional` | `arm-none-eabi-as` |
+| `bignum_mont_redc` | import | `crates/rsk-rsa/src/montgomery.rs, extern "C", #[cfg(target_os = "none")]` | `arm-none-eabi-as` |
+| `bignum_mulacc` | import | `crates/rsk-rsa/src/montgomery.rs, extern "C", #[cfg(target_os = "none")]` | `arm-none-eabi-as` |
+| `bignum_sqracc` | import | `crates/rsk-rsa/src/montgomery.rs, extern "C", #[cfg(target_os = "none")]` | `arm-none-eabi-as` |
 | `__kvcnt_end` | import | `firmware/src/main.rs, extern "C", unconditional` | `rust-lld` |
 | `__kvcnt_start` | import | `firmware/src/main.rs, extern "C", unconditional` | `rust-lld` |
 | `__kvmain_end` | import | `firmware/src/main.rs, extern "C", unconditional` | `rust-lld` |
@@ -109,7 +106,7 @@ Root inputs of `flake.lock` deliberately outside this TCB:
 
 - **assembler** — `arm-none-eabi-as`, `cortex-m`
 - **compiler** — `arm-none-eabi-gcc`, `rustc`
-- **ffi** — the 39 boundary(s) in the table above, each joined to the pinned tool that produces its foreign half
+- **ffi** — the 36 boundary(s) in the table above, each joined to the pinned tool that produces its foreign half
 - **linker** — `flip-link`, `rust-lld`
 
 Not enumerated by this generator at all, and not by any other:

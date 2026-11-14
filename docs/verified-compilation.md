@@ -35,9 +35,9 @@ subset. RSA uses Rust and hand-written assembly, and three other candidates also
 |---|---|---|---|
 | gate / transition functions | the ten concrete gates `docs/authorization-slice.md` lists, over `crates/rsk-fido/src/state.rs` | 856 lines in `state.rs` alone | **No.** Half are generic over two traits (`<S: Storage, R: Rng>`); the other half take a Rust struct by reference, whose layout Rust owns |
 | zeroization routines | 16 `scrub` / `wipe_*` sites across `crates/` and `firmware/`, and `rsk_secret`'s drops | 16 sites, 49 files using `zeroize` | **No.** Each is a method on a Rust type, and the drop glue that makes it sound is the compiler's |
-| RSA exponentiation and CRT | Rust over the vendored rsa-armv7 primitives | 1082 lines of Thumb-2 assembly | The Rust code and hand-written assembly require separate verification |
+| RSA exponentiation and CRT | Rust over the vendored rsa-armv7 primitives | 400 lines of Thumb-2 assembly | The Rust code and hand-written assembly require separate verification |
 | ML-DSA reductions | `crates/rsk-mldsa/src/reduce.rs`, `ntt.rs`, `round.rs` | 256 lines | **Yes, in principle.** Branch-free integer arithmetic, no generic function in any of the three |
-| linker-generated boundaries | 15 of the 39 `[[boundary]]` rows in `assurance/toolchain.toml` | 15 symbol imports | **Not code.** The datum is a symbol's address; a compiler has nothing to say about it |
+| linker-generated boundaries | 15 of the 36 `[[boundary]]` rows in `assurance/toolchain.toml` | 15 symbol imports | **Not code.** The datum is a symbol's address; a compiler has nothing to say about it |
 
 The genericity is the load-bearing number. Across the production modules of
 `crates/rsk-fido/src/`, 243 of 470 functions are generic and 177 of those carry
@@ -57,8 +57,8 @@ This tree already pays for one foreign-language boundary, so "a second one
 costs at least as much again" is a measurement rather than a guess. What the
 first one costs today:
 
-- **six runtime `unsafe` blocks** in `docs/unsafe.md` under `PLAT-UNSAFE-007`;
-- **6 Montgomery assembly imports** and one assembly translation unit in
+- **five runtime `unsafe` blocks** in `docs/unsafe.md` under `PLAT-UNSAFE-007`;
+- **3 Montgomery assembly imports** and one assembly translation unit in
   `assurance/toolchain.toml`. The assembler is pinned through the GCC package;
 - **an AAPCS contract** in `crates/rsk-rsa/src/montgomery.rs` and the assembly.
   The callers own the widths, endianness, overlap rules and buffer sizes;

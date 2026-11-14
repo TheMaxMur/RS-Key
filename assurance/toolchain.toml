@@ -197,16 +197,6 @@ reason = "eachDefaultSystem plumbing (flake.nix:36). It emits no binary into any
 # criterion asks this file not to be.
 
 [[boundary]]
-id = "import:crates/rsk-rsa/src/montgomery.rs:bignum_to_mont"
-provider = "arm-none-eabi-as"
-statement = "Converts the high half of a double-width word buffer to Montgomery form using double-width scratch. The definition is in csrc/bignum_asm.S."
-
-[[boundary]]
-id = "import:crates/rsk-rsa/src/montgomery.rs:bignum_modular_inverse"
-provider = "arm-none-eabi-as"
-statement = "Computes the four-word negative inverse of the odd modulus. The definition is in csrc/bignum_asm.S."
-
-[[boundary]]
 id = "import:crates/rsk-rsa/src/montgomery.rs:bignum_sqracc"
 provider = "arm-none-eabi-as"
 statement = "Accumulates a square in a double-width product buffer. The definition is in csrc/bignum_asm.S."
@@ -220,11 +210,6 @@ statement = "Accumulates the product of two modulus-width operands in double-wid
 id = "import:crates/rsk-rsa/src/montgomery.rs:bignum_mont_redc"
 provider = "arm-none-eabi-as"
 statement = "Reduces the double-width product with the modulus, its complement and its four-word negative inverse. The definition is in csrc/bignum_asm.S."
-
-[[boundary]]
-id = "import:crates/rsk-rsa/src/montgomery.rs:bignum_submod"
-provider = "arm-none-eabi-as"
-statement = "Canonicalizes the public power with a single in-place subtraction. The definition is in csrc/bignum_asm.S."
 
 [[boundary]]
 id = "import:firmware/src/main.rs:_stack_end"

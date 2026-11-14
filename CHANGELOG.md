@@ -38,6 +38,9 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ## [Unreleased]
 
+- Move RSA modular subtraction, the Montgomery inverse and conversion to
+  Montgomery form to Rust (bcdDevice 0x0BE6).
+
 - Move RSA private exponentiation and CRT recombination to Rust while
   retaining the Thumb-2 arithmetic (bcdDevice 0x0BE5).
 
