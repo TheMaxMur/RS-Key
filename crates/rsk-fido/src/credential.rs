@@ -1020,12 +1020,9 @@ fn bump_rp<S: Storage>(
     )
 }
 
-/// Box the rpId domain under the device seed. Layout written to `out`:
-/// `iv(12) ‖ ciphertext ‖ poly1305_tag(16)`, ChaCha20-Poly1305 with the rpIdHash
-/// as AAD. The IV is *deterministic* — there is exactly one EF_RP record per
-/// rpIdHash and its plaintext (the domain) is immutable, so a fixed (key, iv)
-/// never encrypts two different messages, which is the only thing nonce reuse
-/// must avoid. Returns the box length.
+/// Box the RP domain as `iv(12) ‖ ciphertext ‖ poly1305_tag(16)` under the seed.
+/// Validate the rpIdHash because ChaCha20-Poly1305 uses it both as AAD and to
+/// derive the deterministic nonce. Returns the box length.
 pub(crate) fn seal_rp_id(
     seed: &[u8; 32],
     rp_id: &str,
@@ -1033,6 +1030,9 @@ pub(crate) fn seal_rp_id(
     out: &mut [u8],
 ) -> Result<usize> {
     let id = rp_id.as_bytes();
+    if sha256(id) != *rp_id_hash {
+        return Err(Error::WrongData);
+    }
     let total = IV_LEN + id.len() + TAG_LEN;
     let Some((iv_out, ct, tag_out)) = box_windows(out, id.len()) else {
         return Err(Error::NoMemory);

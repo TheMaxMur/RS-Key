@@ -102,6 +102,17 @@ fn serial_source_bounds_do_not_create_an_unfinished_credential() {
 }
 
 #[test]
+fn rp_box_sealing_rejects_a_mismatched_hash_without_changing_output() {
+    let hash = sha256(b"example.com");
+    let mut boxed = [0xA5; RP_REC_MAX];
+    assert_eq!(
+        seal_rp_id(&SEED, "legacy.example", &hash, &mut boxed),
+        Err(Error::WrongData)
+    );
+    assert_eq!(boxed, [0xA5; RP_REC_MAX]);
+}
+
+#[test]
 fn rp_boxes_require_a_complete_buffer_and_authenticated_utf8() {
     let hash = sha256(b"example.com");
     let mut boxed = [0u8; RP_REC_MAX];

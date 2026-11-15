@@ -68,6 +68,9 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Detailed changes
 
+- Validate the relying-party hash before sealing legacy FIDO metadata
+  (bcdDevice 0x0BEA).
+
 - Speed up RSA-2048 signing with batched blinding inversion and fixed-width
   Montgomery kernels (bcdDevice 0x0BE9).
 
