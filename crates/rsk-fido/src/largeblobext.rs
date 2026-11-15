@@ -253,26 +253,16 @@ pub fn read<S: Storage, R: Rng>(
     if n < BOX_OVERHEAD {
         return None;
     }
-    let mut iv = [0u8; IV_LEN];
-    iv.copy_from_slice(&scratch[..IV_LEN]);
-    let mut tag = [0u8; TAG_LEN];
-    tag.copy_from_slice(&scratch[n - TAG_LEN..n]);
-    let body = IV_LEN..n - TAG_LEN;
+    let (iv, rest) = scratch.get_mut(..n)?.split_first_chunk_mut::<IV_LEN>()?;
+    let (body, tag) = rest.split_last_chunk_mut::<TAG_LEN>()?;
     let mut key = derive_chacha_key(seed, BLOB_PROTO);
-    let ok = chacha20poly1305_decrypt(key.expose(), &iv, cred_id, &mut scratch[body.clone()], &tag)
-        .is_ok();
+    let ok = chacha20poly1305_decrypt(key.expose(), iv, cred_id, body, tag).is_ok();
     key.wipe();
     if !ok {
         return None;
     }
-    let size_at = body.start;
-    let original_size = u32::from_le_bytes([
-        scratch[size_at],
-        scratch[size_at + 1],
-        scratch[size_at + 2],
-        scratch[size_at + 3],
-    ]);
-    Some((size_at + SIZE_LEN..body.end, original_size))
+    let original_size = u32::from_le_bytes(*body.first_chunk()?);
+    Some((IV_LEN + SIZE_LEN..n - TAG_LEN, original_size))
 }
 
 /// Drop a credential's blob. Called wherever the credential itself goes, and on

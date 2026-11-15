@@ -228,7 +228,7 @@ why = "the entries are already folded into the epoch and passed by m.start, and 
 
 [[site]]
 file = "crates/rsk-fido/src/largeblobext.rs"
-line = 281
+line = 271
 call = "let _ = fs.delete(EF_CRED_BLOB + slot);"
 verb = "delete"
 answer = "discarded"

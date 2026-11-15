@@ -246,28 +246,15 @@ impl Device<'_> {
         version: PinKdf,
         out: &mut [u8],
     ) -> Result<usize> {
-        if input.len() < NONCE_LEN + TAG_LEN {
-            return Err(Error::BadLength);
-        }
-        let pt_len = input.len() - NONCE_LEN - TAG_LEN;
-        if out.len() < pt_len {
-            return Err(Error::BadLength);
-        }
-        let mut nonce = [0u8; NONCE_LEN];
-        nonce.copy_from_slice(&input[..NONCE_LEN]);
-        let mut tag = [0u8; TAG_LEN];
-        tag.copy_from_slice(&input[input.len() - TAG_LEN..]);
-        out[..pt_len].copy_from_slice(&input[NONCE_LEN..NONCE_LEN + pt_len]);
-
+        let (nonce, body) = input
+            .split_first_chunk::<NONCE_LEN>()
+            .ok_or(Error::BadLength)?;
+        let (ciphertext, tag) = body.split_last_chunk::<TAG_LEN>().ok_or(Error::BadLength)?;
+        let plaintext = out.get_mut(..ciphertext.len()).ok_or(Error::BadLength)?;
+        plaintext.copy_from_slice(ciphertext);
         let kenc = self.derive_kenc(token, version);
-        aes256gcm_decrypt(
-            kenc.expose(),
-            &nonce,
-            self.serial_hash,
-            &mut out[..pt_len],
-            &tag,
-        )?;
-        Ok(pt_len)
+        aes256gcm_decrypt(kenc.expose(), nonce, self.serial_hash, plaintext, tag)?;
+        Ok(plaintext.len())
     }
 
     /// SHA-256 of the serial id followed by `input` repeated to 256 bytes; empty

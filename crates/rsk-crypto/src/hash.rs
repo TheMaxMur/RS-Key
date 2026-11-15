@@ -59,10 +59,7 @@ pub fn sha1(input: &[u8]) -> [u8; 20] {
 
 /// One-shot SHA-256.
 pub fn sha256(input: &[u8]) -> [u8; 32] {
-    let digest = Sha256::digest(input);
-    let mut out = [0u8; 32];
-    out.copy_from_slice(&digest);
-    out
+    Sha256::digest(input).into()
 }
 
 /// One-shot SHA-384.

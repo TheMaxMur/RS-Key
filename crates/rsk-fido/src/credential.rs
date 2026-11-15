@@ -1071,9 +1071,8 @@ fn box_parts(sealed: &[u8]) -> Option<(&[u8; IV_LEN], &[u8], &[u8; TAG_LEN])> {
 /// Recover the rpId domain from an EF_RP `tail`, whether it is a box (written by
 /// [`seal_rp_id`]) or a legacy cleartext domain. The recovered string is written
 /// into `out` and returned alongside a `was_boxed` flag (used by the boot
-/// migration to decide whether to re-box). Trial-decryption distinguishes the
-/// two formats: a cleartext domain fails the poly1305 check (probability of a
-/// false positive ≈ 2⁻¹²⁸).
+/// migration to decide whether to re-box). The stored hash must match the
+/// decoded domain in either format.
 pub(crate) fn unseal_rp_id<'a>(
     seed: &[u8; 32],
     rp_id_hash: &[u8; 32],
@@ -1092,16 +1091,17 @@ pub(crate) fn unseal_rp_id<'a>(
         let ok = chacha20poly1305_decrypt(key.expose(), iv, rp_id_hash, pt, tag).is_ok();
         key.wipe();
         if ok {
-            return core::str::from_utf8(out.get(..ct_len)?)
-                .ok()
-                .map(|s| (s, true));
+            let plain = out.get(..ct_len)?;
+            let domain = core::str::from_utf8(plain).ok()?;
+            return (sha256(plain) == *rp_id_hash).then_some((domain, true));
         }
     }
     // Legacy cleartext domain (the failed decrypt above left `out` garbled, so
     // re-copy the raw tail here).
     let plain = out.get_mut(..n)?;
     plain.copy_from_slice(tail);
-    core::str::from_utf8(plain).ok().map(|s| (s, false))
+    let domain = core::str::from_utf8(plain).ok()?;
+    (sha256(plain) == *rp_id_hash).then_some((domain, false))
 }
 
 /// Box a device-local RP nickname under the device seed. Layout written to `out`:

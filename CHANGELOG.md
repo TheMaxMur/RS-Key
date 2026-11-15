@@ -68,6 +68,9 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Detailed changes
 
+- Reject FIDO relying-party records with mismatched domain hashes on read
+  and simplify SHA-256 outputs and encrypted-record parsing (bcdDevice 0x0BEB).
+
 - Validate the relying-party hash before sealing legacy FIDO metadata
   (bcdDevice 0x0BEA).
 

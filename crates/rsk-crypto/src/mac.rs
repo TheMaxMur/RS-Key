@@ -31,10 +31,7 @@ pub fn hmac_sha1(key: &[u8], msg: &[u8]) -> [u8; 20] {
 pub fn hmac_sha256(key: &[u8], msg: &[u8]) -> [u8; 32] {
     let mut mac = Hmac::<Sha256>::new_from_slice(key).expect("HMAC accepts any key length");
     mac.update(msg);
-    let tag = mac.finalize().into_bytes();
-    let mut out = [0u8; 32];
-    out.copy_from_slice(&tag);
-    out
+    mac.finalize().into_bytes().into()
 }
 
 /// A command-local HMAC template; keep it in returned frames covered by the

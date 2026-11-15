@@ -113,7 +113,7 @@ fn rp_box_sealing_rejects_a_mismatched_hash_without_changing_output() {
 }
 
 #[test]
-fn rp_boxes_require_a_complete_buffer_and_authenticated_utf8() {
+fn rp_boxes_require_a_complete_buffer_and_a_domain_matching_the_hash() {
     let hash = sha256(b"example.com");
     let mut boxed = [0u8; RP_REC_MAX];
     let n = seal_rp_id(&SEED, "example.com", &hash, &mut boxed).unwrap();
@@ -127,17 +127,21 @@ fn rp_boxes_require_a_complete_buffer_and_authenticated_utf8() {
         Some(("example.com", true))
     );
     assert!(unseal_rp_id(&SEED, &hash, &[0xFF], &mut out).is_none());
-    let mut invalid = [0u8; IV_LEN + 1 + TAG_LEN];
-    invalid[..IV_LEN].copy_from_slice(&IV);
-    invalid[IV_LEN] = 0xFF;
     let mut key = derive_chacha_key(&SEED, RP_PROTO);
-    let tag = chacha20poly1305_encrypt(key.expose(), &IV, &hash, &mut invalid[IV_LEN..IV_LEN + 1]);
+    for (plaintext, nonce) in [(&[0xFF][..], IV), (&b"legacy.example"[..], [0xA7; IV_LEN])] {
+        let mut invalid = [0u8; RP_REC_MAX];
+        let (iv, ciphertext, tag) = box_windows(&mut invalid, plaintext.len()).unwrap();
+        *iv = nonce;
+        ciphertext.copy_from_slice(plaintext);
+        *tag = chacha20poly1305_encrypt(key.expose(), &nonce, &hash, ciphertext);
+        let len = IV_LEN + plaintext.len() + TAG_LEN;
+        assert!(unseal_rp_id(&SEED, &hash, &invalid[..len], &mut out).is_none());
+    }
     key.wipe();
-    invalid[IV_LEN + 1..].copy_from_slice(&tag);
-    assert!(unseal_rp_id(&SEED, &hash, &invalid, &mut out).is_none());
+    assert!(unseal_rp_id(&SEED, &hash, b"legacy.example", &mut out).is_none());
     assert_eq!(
-        unseal_rp_id(&SEED, &hash, b"legacy.example", &mut out),
-        Some(("legacy.example", false))
+        unseal_rp_id(&SEED, &hash, b"example.com", &mut out),
+        Some(("example.com", false))
     );
 }
 

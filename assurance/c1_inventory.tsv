@@ -504,7 +504,7 @@ remaining_rk	crates/rsk-fido/src/credential.rs:789	12	marshals	M	min of two budg
 credential_store	crates/rsk-fido/src/credential.rs:811	102	decides	D3	writes EF_CRED, bumps EF_RP and the signature counter; the order is chosen so that a power cut does not leave a credential without EF_RP	SEC-FIDO-005
 bump_rp	crates/rsk-fido/src/credential.rs:963	63	decides	D3	creates/increments EF_RP; an unread slot → MemoryFatal, otherwise a second EF_RP would appear for the same rpIdHash	SEC-FIDO-005,SEC-STORE-002
 seal_rp_id	crates/rsk-fido/src/credential.rs:1030	28	decides	D2	decides whether the rpId domain sits in flash as plaintext	SEC-FIDO-004
-unseal_rp_id	crates/rsk-fido/src/credential.rs:1078	36	decides	D2	hands out the plaintext domain; on AEAD failure it returns the RAW tail as legacy cleartext (was_boxed=false)	SEC-FIDO-004
+unseal_rp_id	crates/rsk-fido/src/credential.rs:1076	36	decides	D2	returns a UTF-8 domain whose hash matches the stored rpIdHash and indicates whether AEAD opened it or the tail was legacy cleartext	SEC-FIDO-004
 seal_nick	crates/rsk-fido/src/credential.rs:1114	42	decides	D2	seals the nickname, the IV is synthesized from the plaintext — this is the rule against nonce reuse	SEC-FIDO-004
 unseal_nick	crates/rsk-fido/src/credential.rs:1163	31	decides	D2	opens only under its own rpIdHash — the AEAD itself is the protection against slot reuse	SEC-FIDO-004
 migrate_rp_seal	crates/rsk-fido/src/credential.rs:1186	62	decides	D3	the boot pass rewrites the EF_RP records and makes the write conditional on request_rescrub	SEC-FIDO-004
