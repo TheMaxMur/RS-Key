@@ -30,6 +30,7 @@ pub mod keygen;
 pub mod pkcs1v15;
 pub mod pubdo;
 
+mod blind_inverse;
 mod error;
 mod key;
 mod lucas;
@@ -52,6 +53,8 @@ pub use key::{RsaKey, modulus_be};
 pub use keygen::{RsaKeygen, RsaStep, generate_rsa, rsa_from_pqe};
 pub use pubdo::{MAX_RSA_PUBDO, make_rsa_pub_body, make_rsa_response};
 pub use rng::Rng;
+
+const RSA_2048_BYTES: usize = 256;
 
 /// Largest modulus this handles: an RSA-4096 prime is 2048 bits = 256 bytes. The
 /// routines retain a 32-byte width requirement — every standard

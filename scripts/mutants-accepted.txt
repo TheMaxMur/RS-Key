@@ -32,6 +32,7 @@ crates/rsk-crypto/src/base64url.rs: replace | with ^ in encode
 crates/rsk-crypto/src/base64url.rs: replace | with ^ in encode
 crates/rsk-mldsa/src/sample.rs: replace | with ^ in coeff_from_three_bytes
 crates/rsk-mldsa/src/sample.rs: replace | with ^ in coeff_from_three_bytes
+crates/rsk-rsa/src/blind_inverse.rs: replace | with ^ in top_word
 crates/rsk-rsa/src/lib.rs: replace | with ^ in mod_small
 crates/rsk-rsa/src/lib.rs: replace | with ^ in shr_into_be
 crates/rsk-rsa/src/montgomery.rs: replace | with ^ in square_block
@@ -100,6 +101,17 @@ crates/rsk-rsa/src/crt.rs: replace * with + in crt_plaintext
 crates/rsk-rsa/src/crt.rs: replace * with / in crt_plaintext
 crates/rsk-rsa/src/crt.rs: replace * with / in crt_plaintext
 crates/rsk-rsa/src/crt.rs: replace * with / in crt_plaintext
+
+[montgomery-width-dispatch] Both branches call the same arithmetic over the original slices. A different array width changes where LLVM can specialize the code, so it can change latency without changing the result.
+crates/rsk-rsa/src/montgomery.rs: replace / with %
+crates/rsk-rsa/src/montgomery.rs: replace / with *
+crates/rsk-rsa/src/montgomery.rs: replace * with +
+crates/rsk-rsa/src/montgomery.rs: replace * with + in mul_acc
+crates/rsk-rsa/src/montgomery.rs: replace * with / in mul_acc
+crates/rsk-rsa/src/montgomery.rs: replace * with + in square
+crates/rsk-rsa/src/montgomery.rs: replace * with / in square
+crates/rsk-rsa/src/montgomery.rs: replace * with + in reduce
+crates/rsk-rsa/src/montgomery.rs: replace * with / in reduce
 
 [seed-stack-cost] The enlarged temporary seed array still fills, consumes and wipes the same half_bytes prefix. Device stack-cost equivalence is not established by host output tests.
 crates/rsk-rsa/src/keygen.rs: replace / with * in RsaKeygen::try_candidate

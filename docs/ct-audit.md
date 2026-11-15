@@ -124,6 +124,10 @@ today.
   a dependency question — but the mitigation it named is what remains load-bearing:
   every private-key path, including CRT, is base-blinded per
   operation, and none of them is exempt. See [threat-model.md](threat-model.md).
+- **RSA-2048 blinding inversion** uses variable-time Lehmer batches with an exact
+  Euclidean fallback. The operands are the fresh random blinding factor and the
+  public modulus. Private exponentiation and the final Bellcore check use the
+  existing schedules.
 - **`rsk-rsa` modexp secret-indexed window lookup**: the window index is a secret
   nibble — of the candidate in the keygen prime search, and of `dP`/`dQ` in
   `sign_crt`. Both reach `privexp::backend::pow` on the device. The index folds

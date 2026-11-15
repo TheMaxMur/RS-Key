@@ -5,6 +5,9 @@
 //! The doubling strategy for squaring follows Emil Lenngren's rsa-armv7
 //! (copyright 2025, BSD-2-Clause, csrc/LICENSE.txt).
 
+// Array arguments let LLVM specialize the hot loops for RSA-2048 prime widths.
+const RSA_2048_PRIME_WORDS: usize = crate::RSA_2048_BYTES / (2 * size_of::<u32>());
+
 /// The reducer derives its cancellation factors from −n⁻¹ mod 2³².
 /// Newton doubling starts at −n, which is correct modulo 8 for odd n.
 pub(crate) fn negative_inverse(n: &[u32]) -> u32 {
@@ -116,6 +119,19 @@ fn factor4(t: &[u32; 4], n: &[u32; 4], inverse: u32) -> [u32; 4] {
 #[cfg_attr(target_os = "none", unsafe(link_section = ".data.bignum_mul"))]
 #[inline(never)]
 pub(crate) fn mul_acc(product: &mut [u32], a: &[u32], b: &[u32]) {
+    if let (Ok(product), Ok(a), Ok(b)) = (
+        <&mut [u32; 2 * RSA_2048_PRIME_WORDS]>::try_from(&mut *product),
+        <&[u32; RSA_2048_PRIME_WORDS]>::try_from(a),
+        <&[u32; RSA_2048_PRIME_WORDS]>::try_from(b),
+    ) {
+        mul_acc_width(product, a, b);
+        return;
+    }
+    mul_acc_width(product, a, b);
+}
+
+#[inline(always)]
+fn mul_acc_width(product: &mut [u32], a: &[u32], b: &[u32]) {
     let w = a.len();
     if w.is_multiple_of(4) {
         for (k, block) in a.as_chunks::<4>().0.iter().enumerate() {
@@ -142,6 +158,18 @@ pub(crate) fn mul(product: &mut [u32], a: &[u32], b: &[u32]) {
 #[cfg_attr(target_os = "none", unsafe(link_section = ".data.bignum_sqr"))]
 #[inline(never)]
 pub(crate) fn square(product: &mut [u32], a: &[u32]) {
+    if let (Ok(product), Ok(a)) = (
+        <&mut [u32; 2 * RSA_2048_PRIME_WORDS]>::try_from(&mut *product),
+        <&[u32; RSA_2048_PRIME_WORDS]>::try_from(a),
+    ) {
+        square_width(product, a);
+        return;
+    }
+    square_width(product, a);
+}
+
+#[inline(always)]
+fn square_width(product: &mut [u32], a: &[u32]) {
     let w = a.len();
     product.fill(0);
     if w.is_multiple_of(4) {
@@ -173,6 +201,18 @@ pub(crate) fn square(product: &mut [u32], a: &[u32]) {
 #[cfg_attr(target_os = "none", unsafe(link_section = ".data.bignum_redc"))]
 #[inline(never)]
 pub(crate) fn reduce(product: &mut [u32], n: &[u32], inverse: u32) {
+    if let (Ok(product), Ok(n)) = (
+        <&mut [u32; 2 * RSA_2048_PRIME_WORDS]>::try_from(&mut *product),
+        <&[u32; RSA_2048_PRIME_WORDS]>::try_from(n),
+    ) {
+        reduce_width(product, n, inverse);
+        return;
+    }
+    reduce_width(product, n, inverse);
+}
+
+#[inline(always)]
+fn reduce_width(product: &mut [u32], n: &[u32], inverse: u32) {
     let w = n.len();
     let mut carry = 0u32;
     if w >= 4 && w.is_multiple_of(4) {

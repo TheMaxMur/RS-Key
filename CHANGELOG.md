@@ -38,6 +38,9 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ## [Unreleased]
 
+- Speed up RSA-2048 signing with batched blinding inversion and fixed-width
+  Montgomery kernels (bcdDevice 0x0BE9).
+
 - Speed up Montgomery squaring and reduction on the RP2350 (bcdDevice 0x0BE8).
 
 - Move RSA Montgomery multiplication, squaring and reduction to Rust on host

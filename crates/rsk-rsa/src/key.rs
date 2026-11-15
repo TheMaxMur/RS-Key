@@ -240,13 +240,17 @@ pub(crate) fn blind_pair(
         let raw = Secret::new(from_secret_be(&rb.expose()[..width]));
         let mut cand = Secret::new(raw.expose() % n);
         rb.wipe();
-        match cand
-            .expose()
-            .mod_inverse(n)
-            .map(Secret::new)
-            .and_then(|i| i.expose().to_biguint())
-        {
-            Some(inv) => return (cand, Secret::new(inv)),
+        let inverse = if width == crate::RSA_2048_BYTES {
+            crate::blind_inverse::inverse_2048(cand.expose(), n)
+        } else {
+            cand.expose()
+                .mod_inverse(n)
+                .map(Secret::new)
+                .and_then(|i| i.expose().to_biguint())
+                .map(Secret::new)
+        };
+        match inverse {
+            Some(inv) => return (cand, inv),
             None => cand.wipe(),
         }
     }

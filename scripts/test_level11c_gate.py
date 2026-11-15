@@ -77,8 +77,8 @@ def test_every_rule_ran(audit):
 @pytest.mark.parametrize(
     "before, after, expect",
     [
-        ("309 lines in `montgomery.rs`", "308 lines in `montgomery.rs`",
-         r"RSA Montgomery arithmetic reads '308', the tree says 309"),
+        ("349 lines in `montgomery.rs`", "348 lines in `montgomery.rs`",
+         r"RSA Montgomery arithmetic reads '348', the tree says 349"),
         ("15 of the 32 `[[boundary]]`", "15 of the 28 `[[boundary]]`",
          r"`\[\[boundary\]\]` rows reads '28', the tree says 32"),
         ("15 of the 32 `[[boundary]]`", "10 of the 32 `[[boundary]]`",
@@ -124,7 +124,7 @@ def test_the_page_standing_still_while_the_tree_moves_is_refused(audit):
     findings = audit(
         lines=lambda rel: real(rel) + 200 if rel.endswith("montgomery.rs") else real(rel)
     )
-    assert any("RSA Montgomery arithmetic reads '309', the tree says" in f for f in findings), findings
+    assert any("RSA Montgomery arithmetic reads '349', the tree says" in f for f in findings), findings
 
 
 def test_the_named_row_still_runs_this_guard():
