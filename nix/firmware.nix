@@ -249,9 +249,6 @@ in
   packages = {
     default = mkFirmware { name = "firmware"; };
     firmware = mkFirmware { name = "firmware"; };
-    firmware-trustzone = mkFirmware {
-      name = "firmware-trustzone";
-    };
     firmware-no-touch = mkFirmware {
       name = "firmware-no-touch";
       cargoFlags = [

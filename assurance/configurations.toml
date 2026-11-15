@@ -193,7 +193,7 @@ properties = [
   "SEC-DISP-001", "SEC-DISP-002", "SEC-DISP-003",
 ]
 columns = [
-  "firmware", "firmware-trustzone", "firmware-no-touch", "firmware-fips", "firmware-pqc",
+  "firmware", "firmware-no-touch", "firmware-fips", "firmware-pqc",
   "firmware-fips-pqc", "firmware-no-touch-pqc", "firmware-no-touch-fips",
   "firmware-no-touch-fips-pqc", "firmware-strong-pin",
   "firmware-strong-pin-pqc", "firmware-always-uv", "firmware-always-uv-pqc",
@@ -309,7 +309,13 @@ build", and `release-build.yml` refuses to create a release carrying one. \
 column = "firmware"
 owner = "contributor"
 settled_by = "evidence"
-text = "Which existing properties retain scoped evidence in the default combined TrustZone image? Earlier featureless legacy evidence stays in dated bundles; independent Non-secure code, gateways, IRQ scheduling and cleanup need evidence on this execution context."
+text = """
+Which applet and authorization properties retain scoped evidence in the default \
+combined TrustZone image? Earlier monolithic evidence stays in dated bundles. \
+The Secure IRQ worker, hardware-owned USB epochs, CMSE packet gateways, fatal \
+admission fencing and banked FP policy need evidence from this build. Crypto, \
+presence and reset image tests cover specific behavior. Resolve each property \
+against its current implementation and evidence before claiming coverage."""
 
 [[question]]
 column = "firmware-pico"
@@ -657,9 +663,3 @@ The V2 package selects the CST3530 driver with `DISPLAY_TP_CHIP=cst3530`. \
 The gate builds it and checks the stack floor. The image harness can exercise \
 its I2C transactions and report handling. Touch alignment, timing and the \
 electrical behavior still need evidence from a physical V2 board."""
-
-[[question]]
-column = "firmware-trustzone"
-owner = "contributor"
-settled_by = "evidence"
-text = "Which existing applet and authorization properties retain their evidence under Secure IRQ worker/board scheduling, hardware-owned USB epochs, CMSE packet gateways, fatal admission fencing and banked FP policy? Real crypto, presence and reset image rows test specific behavior; they do not prove the entire P0 matrix or physical isolation. Resolve each property using its current owner and build-specific evidence before promoting this configuration's formal claims."

@@ -239,7 +239,7 @@ each published flavor and compares its UF2 bytes. See
 
 | Package suffix after `firmware` | Settings |
 |---|---|
-| none, `-trustzone` | Default TrustZone configuration. The filename uses the package name. |
+| none | Default configuration |
 | `-2mb`, `-16mb` | 2 MiB with `KVMAIN=896K`, or 16 MiB with the default KV size |
 | `-display`, `-display-v2` | Trusted display on Waveshare V1 (CST328) or V2 (CST3530). Both use 16 MiB flash and `LED_KIND=none`. |
 | `-pico` | `VIDPID=Pico` |

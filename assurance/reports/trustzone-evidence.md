@@ -680,6 +680,9 @@ nix develop -c bash firmware/trustzone/build.sh
 nix build .#firmware-trustzone
 ```
 
+These commands describe the recorded build. In the current tree, use
+`nix develop -c bash scripts/build.sh` or `nix build .#firmware`.
+
 For the no-touch crypto/lifecycle harnesses use an explicit disposable test build:
 
 ```sh
