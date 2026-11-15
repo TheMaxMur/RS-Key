@@ -38,6 +38,8 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ## [Unreleased]
 
+- Speed up Montgomery squaring and reduction on the RP2350 (bcdDevice 0x0BE8).
+
 - Move RSA Montgomery multiplication, squaring and reduction to Rust on host
   and device. Process four limbs at a time and store prime-sieve residues as
   16-bit values to reduce SRAM use (bcdDevice 0x0BE7).

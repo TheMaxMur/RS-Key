@@ -34,7 +34,7 @@ subset. RSA and three other candidates fall outside the verified C subset.
 |---|---|---|---|
 | gate / transition functions | the ten concrete gates `docs/authorization-slice.md` lists, over `crates/rsk-fido/src/state.rs` | 856 lines in `state.rs` alone | **No.** Half are generic over two traits (`<S: Storage, R: Rng>`); the other half take a Rust struct by reference, whose layout Rust owns |
 | zeroization routines | 16 `scrub` / `wipe_*` sites across `crates/` and `firmware/`, and `rsk_secret`'s drops | 16 sites, 49 files using `zeroize` | **No.** Each is a method on a Rust type, and the drop glue that makes it sound is the compiler's |
-| RSA exponentiation and CRT | Rust with shared host and device Montgomery arithmetic | 299 lines in `montgomery.rs` | Moving the kernels to C would require a source rewrite and a new FFI contract |
+| RSA exponentiation and CRT | Rust with shared host and device Montgomery arithmetic | 309 lines in `montgomery.rs` | Moving the kernels to C would require a source rewrite and a new FFI contract |
 | ML-DSA reductions | `crates/rsk-mldsa/src/reduce.rs`, `ntt.rs`, `round.rs` | 256 lines | **Yes, in principle.** Branch-free integer arithmetic, no generic function in any of the three |
 | linker-generated boundaries | 15 of the 32 `[[boundary]]` rows in `assurance/toolchain.toml` | 15 symbol imports | **Not code.** The datum is a symbol's address; a compiler has nothing to say about it |
 

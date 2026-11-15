@@ -34,6 +34,10 @@ crates/rsk-mldsa/src/sample.rs: replace | with ^ in coeff_from_three_bytes
 crates/rsk-mldsa/src/sample.rs: replace | with ^ in coeff_from_three_bytes
 crates/rsk-rsa/src/lib.rs: replace | with ^ in mod_small
 crates/rsk-rsa/src/lib.rs: replace | with ^ in shr_into_be
+crates/rsk-rsa/src/montgomery.rs: replace | with ^ in square_block
+crates/rsk-rsa/src/montgomery.rs: replace | with ^ in square_block
+crates/rsk-rsa/src/montgomery.rs: replace | with ^ in square_block
+crates/rsk-rsa/src/montgomery.rs: replace | with ^ in square_block
 crates/rsk-rsa/src/montgomery.rs: replace | with ^ in quotient
 crates/rsk-rsa/src/montgomery.rs: replace | with ^ in quotient
 crates/rsk-rsa/src/montgomery.rs: replace | with ^ in to_mont
@@ -85,6 +89,9 @@ crates/rsk-rsa/src/crt.rs: replace * with + in crt_plaintext
 
 [unused-padding] Increasing the maximum word count grows the fixed stack buffers. Public exponentiation still uses slices of the same modulus width and produces identical bytes. The mutation increases the stack footprint.
 crates/rsk-rsa/src/pubexp.rs: replace / with * in backend::pow
+
+[borrow-low-bit] The carry out of subtraction is 0 or 1. Replacing 1-carry with 1+carry preserves bit zero, the only bit that can affect the masked add in either caller.
+crates/rsk-rsa/src/montgomery.rs: replace - with + in subtract
 
 [scalar-fallback] Reversing the minimum width check sends every nonempty modulus through single-word Montgomery reduction. It yields the same canonical result and loses four-limb batching.
 crates/rsk-rsa/src/montgomery.rs: replace >= with < in reduce
