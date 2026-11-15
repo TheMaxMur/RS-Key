@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 RS-Key contributors
 
-//! PKCS#1 v1.5 (RFC 8017): the signer on the asm CRT core ([`crate::crt`]) over
+//! PKCS#1 v1.5 (RFC 8017): the signer on the fixed-width CRT core ([`crate::crt`]) over
 //! the bytes a host sends, the decryption both DECIPHER arms end in, and the
 //! constant-time unpadding they read the block back with.
 //!
@@ -32,7 +32,7 @@ fn emsa_block(di: &[u8], mlen: usize, em: &mut [u8]) -> Result<(), RsaError> {
 }
 
 /// PKCS#1 v1.5 over `data` exactly as given, with the cached CRT params on the
-/// UMAAL asm: `00 01 FF… 00 ‖ data` through the blinded, Bellcore-fault-checked
+/// fixed-width CRT: `00 01 FF… 00 ‖ data` through the blinded, Bellcore-fault-checked
 /// private op ([`crate::crt::private_op`]). This is how a YubiKey 5.8.0 signs for
 /// OpenPGP: a DigestInfo is what a conformant host sends, a bare hash is not
 /// wrapped in one, and nothing is signed raw. `BadWidth` past `mlen − 11` bytes.
@@ -50,8 +50,8 @@ pub fn rsa_sign_crt(
 
 /// PKCS#1 v1.5 decryption with a full [`RsaKey`], on the software private op —
 /// the arm PSO:DECIPHER falls back to for a legacy `P‖Q` key whose prime width
-/// the asm CRT core cannot take. Same blinded, Bellcore-fault-checked operation
-/// and the same constant-time [`unpad_encrypt`] as the asm arm.
+/// the fixed-width CRT core cannot take. Same blinded, Bellcore-fault-checked operation
+/// and the same constant-time [`unpad_encrypt`] as the CRT arm.
 pub fn rsa_decrypt(
     key: &RsaKey,
     ct: &[u8],

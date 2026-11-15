@@ -252,7 +252,7 @@ fn private_op_refuses_a_block_that_is_not_below_the_modulus() {
 
 #[test]
 fn private_op_round_trips_an_openssl_ciphertext() {
-    // The other direction of the same operation, on a key too narrow for the asm
+    // The other direction of the same operation, on a key too narrow for the fixed-width
     // core — so this is the software arm PSO:DECIPHER falls back to.
     let k = test_key();
     for (i, (msg, ct)) in ENCRYPT.iter().enumerate() {

@@ -357,7 +357,7 @@ impl Rng for DrbgRng {
 
 /// Draw and test candidates until the pool is satisfied or core0 says stop.
 fn search(job: &Job) {
-    // The same paranoia as core0's gate: if the asm modexp known-answer test
+    // The same paranoia as core0's gate: if the RSA modexp known-answer test
     // fails on THIS core, contribute nothing (core0's own `usable()` gate has
     // already refused the whole operation if its KAT failed).
     if !RsaKeygen::new(job.half_bytes * 16).usable() {

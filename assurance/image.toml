@@ -18,10 +18,9 @@
 profile = "default"
 elf = "target/trustzone/combined.elf"
 
-# `.rsk_exec` carries RAM code copied at startup. ELF flags include write access
-# for relocation; the Secure MPU makes this interval read-only executable.
-# No other writable executable section is allowed.
-writable_executable = [".rsk_exec"]
+# Both SRAM code segments are RX in the ELF. Startup copies them before the
+# Secure MPU applies read-only executable permissions.
+writable_executable = []
 
 # The image HAS a heap. `firmware/src/main.rs` declares
 # `#[global_allocator] static HEAP: ZeroingHeap` over 128 KiB — `LlffHeap` behind

@@ -77,9 +77,6 @@ Root inputs of `flake.lock` deliberately outside this TCB:
 | `RSK_NS_PROBE_PROGRESS` | export | `firmware/trustzone/nonsecure/src/probe.rs, #[unsafe(no_mangle symbol, unconditional` | `rustc` |
 | `RSK_NS_PROBE_TARGET` | export | `firmware/trustzone/nonsecure/src/probe.rs, #[unsafe(no_mangle symbol, unconditional` | `rustc` |
 | `TIMER1_IRQ_0` | export | `firmware/trustzone/nonsecure/src/time.rs, #[unsafe(no_mangle symbol, unconditional` | `rustc` |
-| `bignum_mont_redc` | import | `crates/rsk-rsa/src/montgomery.rs, extern "C", #[cfg(target_os = "none")]` | `arm-none-eabi-as` |
-| `bignum_mulacc` | import | `crates/rsk-rsa/src/montgomery.rs, extern "C", #[cfg(target_os = "none")]` | `arm-none-eabi-as` |
-| `bignum_sqracc` | import | `crates/rsk-rsa/src/montgomery.rs, extern "C", #[cfg(target_os = "none")]` | `arm-none-eabi-as` |
 | `__kvcnt_end` | import | `firmware/src/main.rs, extern "C", unconditional` | `rust-lld` |
 | `__kvcnt_start` | import | `firmware/src/main.rs, extern "C", unconditional` | `rust-lld` |
 | `__kvmain_end` | import | `firmware/src/main.rs, extern "C", unconditional` | `rust-lld` |
@@ -100,13 +97,12 @@ Root inputs of `flake.lock` deliberately outside this TCB:
 | `__rsk_scratch_exec_end` | import | `tests/tz_hardware/secure.rs, extern "C", unconditional` | `rust-lld` |
 | `__rsk_scratch_exec_load` | import | `tests/tz_hardware/secure.rs, extern "C", unconditional` | `rust-lld` |
 | `__rsk_scratch_exec_start` | import | `tests/tz_hardware/secure.rs, extern "C", unconditional` | `rust-lld` |
-| `crates/rsk-rsa/csrc/bignum_asm.S` | unit | `crates/rsk-rsa/build.rs, cc::Build` | `arm-none-eabi-as` |
 
 **Coverage against the six TCB categories.** Enumerated here, each with a pin held against its source file:
 
 - **assembler** — `arm-none-eabi-as`, `cortex-m`
 - **compiler** — `arm-none-eabi-gcc`, `rustc`
-- **ffi** — the 36 boundary(s) in the table above, each joined to the pinned tool that produces its foreign half
+- **ffi** — the 32 boundary(s) in the table above, each joined to the pinned tool that produces its foreign half
 - **linker** — `flip-link`, `rust-lld`
 
 Not enumerated by this generator at all, and not by any other:
@@ -364,7 +360,7 @@ The files that decide what a release is. A digest here covers the parts the tabl
 |---|---|
 | `.github/workflows/release.yml` | `9f4218cfb9869bc458be8076f2185af6bdb734598db9b49167557dca30324a05` |
 | `.github/workflows/release-build.yml` | `dfe836938a828195cbf05b84d963d2cea735b9acbcdb616dfd30f91ef3a9da2a` |
-| `nix/firmware.nix` | `4cf923375a2831510e82ae013bd1486f8d09efd4a6a4dffd696ff95b25f1cc48` |
+| `nix/firmware.nix` | `8d62fa6cb5941b05ede508f7a90425e610bde22e8e200dee8b307bcd959c10b5` |
 | `scripts/build.sh` | `48059de27f8d63748ab2aeb23cca71e84e93d281330be219e7b7a7130f923db4` |
 
 The CI code that runs them, pinned by commit:

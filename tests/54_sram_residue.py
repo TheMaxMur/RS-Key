@@ -26,7 +26,7 @@ outright rather than confirming the scrub:
 `control` separates them from the flashed ELF alone, with no key generated. It
 reads a window of `.text` first, which both proves picoboot reads work at all and
 authenticates the ELF against the image actually running. Then it reads `.data` —
-RAM-resident asm (`bignum_*`, `IncrementalSieve::step`) plus the `SMALL_PRIMES`
+RAM-resident code (RSA arithmetic, `IncrementalSieve::step`) plus the `SMALL_PRIMES`
 table, moved to RAM by c9a74ef, immutable after boot and known byte-for-byte from
 the file. If those come back, the dump is device SRAM, proven a priori and by the
 same mechanism (a known byte string at a known address) the residue hunt uses. If

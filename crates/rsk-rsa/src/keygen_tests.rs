@@ -153,7 +153,7 @@ fn keygen_pool_le_transport() {
 
 #[test]
 fn try_candidate_le_finds_exact_half() {
-    // Smallest asm-eligible half (32 bytes = RSA-512) so the host search is
+    // Smallest supported half (32 bytes = RSA-512) so the host search is
     // quick; a find must fill the half exactly, odd and with the top bits set.
     let mut rng = SeqRng(42);
     let mut sieve = IncrementalSieve::new();
@@ -173,7 +173,7 @@ fn try_candidate_le_finds_exact_half() {
 
 #[test]
 fn keygen_bpsw_split_matches_library() {
-    // try_candidate's accept = strong-MR(asm) + strong-Lucas. Any prime it
+    // try_candidate's accept = strong-MR + strong-Lucas. Any prime it
     // produces must satisfy the library's own one-call Baillie-PSW — the
     // split changed backends, not the test.
     use num_bigint_dig::prime::probably_prime;
@@ -238,7 +238,7 @@ fn keygen_pool_rejects_duplicate_prime() {
 
 #[test]
 fn generate_rsa_refuses_an_unusable_size() {
-    // A half-width the asm CRT core cannot take never reaches a prime search —
+    // A half-width the fixed-width CRT core cannot take never reaches a prime search —
     // it returns `Failed`, which the applets answer `EXEC_ERROR` to.
     assert_eq!(
         generate_rsa(&mut SeqRng(1), 1000).err(),
@@ -277,7 +277,7 @@ fn abandoning_a_one_prime_search_does_not_complete_the_next_search() {
 fn a_failed_modexp_self_test_latch_disables_an_otherwise_supported_keygen() {
     let mut keygen = RsaKeygen::new(2048);
     assert!(keygen.usable());
-    keygen.asm_ok = false;
+    keygen.modexp_ok = false;
     assert!(!keygen.usable());
     assert_eq!(keygen.half_bytes(), 128);
 }

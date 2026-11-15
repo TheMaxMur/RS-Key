@@ -222,9 +222,8 @@ fn small_factor_detection() {
 #[test]
 fn incremental_matches_flat() {
     // The running sieve's verdict must equal the flat has_small_factor on
-    // the exact same candidate, every step, across reseeds — for both the
-    // 1024-bit (128 B) and 2048-bit (256 B) candidate lengths.
-    for half in [128usize, 256] {
+    // the exact same candidate at every step, across all sieve depths.
+    for half in [64usize, 128, 192, 256] {
         let mut sieve = IncrementalSieve::new();
         let mut seed = vec![0u8; half];
         let mut state = 0x9E3779B97F4A7C15u64 ^ (half as u64);

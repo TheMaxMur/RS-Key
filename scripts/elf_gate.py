@@ -19,11 +19,9 @@ Three facts this measured that the tree's prose does not carry:
   new code, not a description of the tree — `docs/unsafe.md` site 4 is the heap
   init and says so. Nothing held that surface, so a SECOND allocator, or a
   `malloc` arriving through a dependency, was invisible.
-* **One segment is writable AND executable, and that is deliberate.** `.data`
-  carries the routines that must not run from XIP flash — the RSA assembly and
-  the keygen sieve step, whose absence from `.data` was measured as a 1.36x
-  regression. A blanket "no W+X" rule would be red on a correct image, which is
-  why the rule here is "exactly the registered one".
+* **Executable SRAM code has separate RX load segments.** Startup copies
+  `.rsk_exec` and `.rsk_scratch_exec` before setting the Secure MPU permissions.
+  The registry requires zero writable-executable segments in both images.
 * **Two compilers built it.** The image's own DWARF names 165 compile units:
   164 from the pinned rustc and one from a 2021 nightly, the prebuilt `cortex-m`
   `asm/lib.rs` blob that ships as an object and is never recompiled.
@@ -252,7 +250,7 @@ def audit(root: pathlib.Path, image=None, linker=None, raw=None):
                     " erased by its own store"
                 )
 
-    # W+X: exactly the registered one, by the sections it carries.
+    # W+X: exactly the registered set, by the sections each segment carries.
     wx = [
         names.get(index, "?")
         for index, row in enumerate(rows)

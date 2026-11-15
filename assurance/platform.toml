@@ -402,23 +402,6 @@ covers = [
 ]
 
 [[assumption]]
-id = "PLAT-UNSAFE-007"
-class = "toolchain"
-statement = "RSA passes aligned buffers of sufficient width to the Thumb-2 primitives, with overlap only where the assembly explicitly permits it."
-discharge = "Read the calls in crates/rsk-rsa/src/privexp.rs and crates/rsk-rsa/src/pubexp.rs against csrc/bignum_asm.S. The widths determine the table stride, the single-width operands, the double-width work areas and the four-word inverse. The prime KAT and Bellcore check detect wrong results within their scope; neither checks native memory bounds."
-discharge_owner = "contributor"
-status = "pending"
-failure_direction = "memory-safety: a length disagreement across the ABI writes into whatever the caller's stack frame holds, on the path that is handling a private key"
-refines = ["PLAT-TOOLCHAIN-002"]
-covers = [
-  "unsafe:crates/rsk-rsa/src/pubexp.rs#block:let-inverse-inverse-as_ptr-buffers-words",
-  "unsafe:crates/rsk-rsa/src/privexp.rs#block:for-i-in-w-product-add",
-  "unsafe:crates/rsk-rsa/src/privexp.rs#block:bignum_mont_redc-v-len-n-as_ptr-inverse",
-  "unsafe:crates/rsk-rsa/src/privexp.rs#block:bignum_mulacc-value-as_mut_ptr-result-as_ptr-qinv_words",
-  "unsafe:crates/rsk-rsa/src/privexp.rs#block:bignum_mulacc-result-as_mut_ptr-q-as_ptr-value",
-]
-
-[[assumption]]
 id = "PLAT-UNSAFE-008"
 class = "toolchain"
 statement = "The wiper's two ROM flash sequences run with interrupts off and XIP disabled for their whole extent, and no part of rsk-wipe is linked into the firmware image."
@@ -465,8 +448,8 @@ covers = [
 [[assumption]]
 id = "PLAT-UNSAFE-011"
 class = "build-configuration"
-statement = "The small-prime table and the sieve step are placed in `.data.small_primes` and `.data.sieve_step`, which the link script collects into `.data` in SRAM, so the sieve executes and reads out of RAM rather than through the XIP cache. The private exponentiation loop in crates/rsk-rsa/src/privexp.rs, the conversion in crates/rsk-rsa/src/montgomery.rs and the remaining Thumb-2 kernels are linked into executable SRAM. The public journal digest in firmware/src/flash_storage/sha256.rs and CPU FIFO reader in firmware/src/flash_storage/stream.rs use the existing .data.ram_func section, copied before use and included in the Secure read-only executable SRAM range. firmware/src/flash_storage/quad.rs performs volatile status commands, QMI changes and full terminal USB fencing there; firmware/src/core1.rs acknowledges the configuration park only after masking interrupts in SRAM."
-discharge = "Read the link script's `.data` input-section pattern for `.data.*`, then confirm on a built image that both symbols of crates/rsk-rsa/src/lib.rs land in the RAM region — `nm` over the ELF settles it in one command, and no artifact in this tree records that today. This row exists because the two sites were on NO line of docs/unsafe.md before the derivation moved to sites: they were the half of that page's enumeration nothing was holding. For firmware/src/flash_storage/sha256.rs and firmware/src/flash_storage/stream.rs, inspect the digest and stream symbols and their call graphs in both the default and TrustZone ELFs: startup must copy it into the existing SRAM code range before use. For firmware/src/flash_storage/quad.rs and firmware/src/core1.rs, inspect all paths while direct mode or a park is active, including the inlined firmware/src/usb_fence.rs cleanup. Only the pre-ACK and post-release core1 paths may call XIP helpers. Both section names are part of the site keys now, so `.data.small_primes` or `.data.sieve_step` renamed is a red row rather than the byte-identical exit 0 it was."
+statement = "The Secure linker places the small-prime table in `.data` and the sieve step in executable `.rsk_exec`. Both sites are in crates/rsk-rsa/src/lib.rs and access SRAM directly. The private exponentiation loop in crates/rsk-rsa/src/privexp.rs, the conversion and the arithmetic kernels in crates/rsk-rsa/src/montgomery.rs are linked into executable SRAM. The public journal digest in firmware/src/flash_storage/sha256.rs and CPU FIFO reader in firmware/src/flash_storage/stream.rs use the existing .data.ram_func section, copied before use and included in the Secure read-only executable SRAM range. firmware/src/flash_storage/quad.rs performs volatile status commands, QMI changes and full terminal USB fencing there; firmware/src/core1.rs acknowledges the configuration park only after masking interrupts in SRAM."
+discharge = "Read the link script's `.data` input-section pattern for `.data.*`, then confirm on a built image that the sieve and RSA arithmetic symbols land in the RAM region — `nm` over the ELF settles it in one command, and no artifact in this tree records that today. This row exists because the two sites were on NO line of docs/unsafe.md before the derivation moved to sites: they were the half of that page's enumeration nothing was holding. For firmware/src/flash_storage/sha256.rs and firmware/src/flash_storage/stream.rs, inspect the digest and stream symbols and their call graphs in both the default and TrustZone ELFs: startup must copy it into the existing SRAM code range before use. For firmware/src/flash_storage/quad.rs and firmware/src/core1.rs, inspect all paths while direct mode or a park is active, including the inlined firmware/src/usb_fence.rs cleanup. Only the pre-ACK and post-release core1 paths may call XIP helpers. Both section names are part of the site keys now, so `.data.small_primes` or `.data.sieve_step` renamed is a red row rather than the byte-identical exit 0 it was."
 discharge_owner = "contributor"
 status = "pending"
 failure_direction = "performance for the sieve/hash/stream; execution integrity and availability for Quad configuration, which must not fetch XIP instructions or leave USB/DPRAM armed while the bus is unavailable"
@@ -476,6 +459,9 @@ covers = [
   "unsafe:crates/rsk-rsa/src/lib.rs#attr:link_section-data-sieve_step-pub-fn-step",
   "unsafe:crates/rsk-rsa/src/privexp.rs#attr:link_section-data-bignum_hl-fn-pow-exponent",
   "unsafe:crates/rsk-rsa/src/montgomery.rs#attr:link_section-data-bignum_hl-pub-crate-fn",
+  "unsafe:crates/rsk-rsa/src/montgomery.rs#attr:link_section-data-bignum_mul-pub-crate-fn",
+  "unsafe:crates/rsk-rsa/src/montgomery.rs#attr:link_section-data-bignum_redc-pub-crate-fn",
+  "unsafe:crates/rsk-rsa/src/montgomery.rs#attr:link_section-data-bignum_sqr-pub-crate-fn",
   "unsafe:firmware/src/flash_storage/sha256.rs#attr:link_section-data-ram_func-pub-super-fn",
   "unsafe:firmware/src/flash_storage/stream.rs#attr:link_section-data-ram_func-pub-super-fn-read",
   "unsafe:firmware/src/flash_storage/stream.rs#attr:link_section-data-ram_func-pub-super-fn-read_erased",
@@ -487,14 +473,13 @@ covers = [
 [[assumption]]
 id = "PLAT-UNSAFE-012"
 class = "toolchain"
-statement = "The RSA declarations match the Thumb-2 AAPCS signatures. The two firmware extern blocks name linker symbols used only by address."
-discharge = "Read crates/rsk-rsa/src/montgomery.rs against the three exported kernels in csrc/bignum_asm.S and the two firmware/src/main.rs blocks against the linker scripts. kvmain_range, kvcnt_range and arm_stack_limit take symbol addresses without dereferencing them."
+statement = "The two firmware extern blocks name linker symbols used only by address."
+discharge = "Read the two firmware/src/main.rs blocks against the linker scripts. kvmain_range, kvcnt_range and arm_stack_limit take symbol addresses without dereferencing them."
 discharge_owner = "contributor"
 status = "pending"
-failure_direction = "memory-safety: a declared signature that disagrees with its definition is a call made with the wrong stack layout, and neither the Rust side nor the C side can see the other"
+failure_direction = "memory-safety: a wrong linker-supplied address can arm the stack limit or delimit a storage partition incorrectly"
 refines = ["PLAT-TOOLCHAIN-002"]
 covers = [
-  "unsafe:crates/rsk-rsa/src/montgomery.rs#extern:pub-crate-fn-bignum_sqracc-product-mut",
   "unsafe:firmware/src/main.rs#extern:static-_stack_end-u8",
   "unsafe:firmware/src/main.rs#extern:static-__kvmain_start-u32-static-__kvmain_end-u32",
 ]
@@ -646,8 +631,8 @@ supports = ["SEC-FIDO-002"]
 [[assumption]]
 id = "PLAT-BUILD-005"
 class = "build-configuration"
-statement = "The Rust private exponentiation uses direct indexing of its 16-entry table. The dormant Thumb-2 full-table selection primitive is excluded by CONSTANT_MEMORY_ACCESS_PATTERN=0, and the Rust caller has no transpose for that primitive."
-discharge = "Inspect crates/rsk-rsa/src/privexp.rs and csrc/bignum_asm.S. To change this policy, implement a fixed-address selection for the Rust table, then compare arithmetic, executable SRAM and timing in the ARM ELF and on the board. The Bellcore check remains required on every private operation."
+statement = "The Rust private exponentiation uses direct indexing of its 16-entry table."
+discharge = "Inspect crates/rsk-rsa/src/privexp.rs. To change this policy, implement a fixed-address selection for the Rust table, then compare arithmetic, executable SRAM and timing in the ARM ELF and on the board. The Bellcore check remains required on every private operation."
 discharge_owner = "contributor"
 status = "accepted-risk"
 out_of_scope_by = "docs/limitations.md#cryptography"

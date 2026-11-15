@@ -1,9 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 RS-Key contributors
 
-//! Four-bit private exponentiation and CRT recombination over rsa-armv7's
-//! Thumb-2 arithmetic (see csrc/LICENSE.txt).
-//! Based on Emil Lenngren's rsa-armv7, copyright 2025, BSD-2-Clause.
+//! Four-bit private exponentiation and CRT recombination.
+//! Based on Emil Lenngren's rsa-armv7, copyright 2025, BSD-2-Clause (csrc/LICENSE.txt).
 
 use crate::MAX_MOD;
 
@@ -72,74 +71,6 @@ fn windows(exponent: &[u8], mut step: impl FnMut(usize, bool)) {
     }
 }
 
-#[cfg(not(target_os = "none"))]
-mod backend {
-    use crate::key::from_secret_be;
-    use num_bigint_dig::BigUint;
-    use rsk_secret::Secret;
-
-    fn pow(base: &BigUint, exponent: &[u8], n: &BigUint) -> Secret<BigUint> {
-        let mut table: [Secret<BigUint>; super::WINDOW_ENTRIES] =
-            core::array::from_fn(|_| Secret::new(BigUint::default()));
-        table[0] = Secret::new(BigUint::from(1u8));
-        table[1] = Secret::new(base % n);
-        for i in 2..table.len() {
-            let product = Secret::new(table[i - 1].expose() * table[1].expose());
-            table[i] = Secret::new(product.expose() % n);
-        }
-        let mut value = Secret::new(BigUint::from(1u8));
-        super::windows(exponent, |index, square| {
-            if square {
-                for _ in 0..4 {
-                    let product = Secret::new(value.expose() * value.expose());
-                    value = Secret::new(product.expose() % n);
-                }
-            }
-            let product = Secret::new(value.expose() * table[index].expose());
-            value = Secret::new(product.expose() % n);
-        });
-        value
-    }
-
-    fn write_le(value: &Secret<BigUint>, out: &mut [u8]) {
-        let le = Secret::new(value.expose().to_bytes_le());
-        out.fill(0);
-        out[..le.expose().len()].copy_from_slice(le.expose());
-    }
-
-    pub(super) fn modexp(base: &[u8], exponent: &[u8], n: &[u8], out: &mut [u8]) {
-        let base = Secret::new(BigUint::from_bytes_le(base));
-        let n = Secret::new(BigUint::from_bytes_le(n));
-        write_le(&pow(base.expose(), exponent, n.expose()), out);
-    }
-
-    pub(super) fn crt(
-        base: &[u8],
-        dp: &[u8],
-        dq: &[u8],
-        p: &[u8],
-        q: &[u8],
-        qinv: &[u8],
-        out: &mut [u8],
-    ) {
-        let base = Secret::new(BigUint::from_bytes_le(base));
-        let p = Secret::new(from_secret_be(p));
-        let q = Secret::new(from_secret_be(q));
-        let qinv = Secret::new(from_secret_be(qinv));
-        let m2 = pow(base.expose(), dq, q.expose());
-        let m1 = pow(base.expose(), dp, p.expose());
-        let m2p = Secret::new(m2.expose() % p.expose());
-        let sum = Secret::new(m1.expose() + p.expose());
-        let diff = Secret::new(sum.expose() - m2p.expose());
-        let product = Secret::new(diff.expose() * qinv.expose());
-        let h = Secret::new(product.expose() % p.expose());
-        let qh = Secret::new(q.expose() * h.expose());
-        let result = Secret::new(m2.expose() + qh.expose());
-        write_le(&result, out);
-    }
-}
-
-#[cfg(target_os = "none")]
 mod backend {
     use crate::montgomery::*;
     use crate::{MAX_MOD, be_bytes_to_words_le, bytes_to_words_le, words_to_bytes_le};
@@ -149,19 +80,17 @@ mod backend {
     const TABLE: usize = super::WINDOW_ENTRIES;
 
     // Keep the window loop and its calls in SRAM while both cores test primes.
-    #[unsafe(link_section = ".data.bignum_hl")]
+    #[cfg_attr(target_os = "none", unsafe(link_section = ".data.bignum_hl"))]
     #[inline(never)]
     fn pow(
         exponent: &[u8],
         n: &[u32],
-        complement: &[u32],
-        inverse: &[u32; 4],
+        inverse: u32,
         base: &[u32],
         scratch: &mut [u32; (TABLE + 2) * WORDS],
         out: &mut [u32],
     ) {
         let w = n.len();
-        let len = core::mem::size_of_val(n);
         let (table, product) = scratch[..(TABLE + 2) * w].split_at_mut(TABLE * w);
         let (one, rest) = table.split_at_mut(w);
         let (base_mont, tmp) = rest.split_at_mut(w);
@@ -170,54 +99,36 @@ mod backend {
         tmp[0] = 1;
         to_mont(one, &tmp[..w], n, product);
         to_mont(base_mont, base, n, product);
-        let t = table.as_mut_ptr();
-        let product = product.as_mut_ptr();
-        let result = out.as_mut_ptr();
-        let modulus = n.as_ptr();
-        let not_n = complement.as_ptr();
-        let inverse = inverse.as_ptr();
-        // SAFETY: callers provide w words per operand, aligned to eight words.
-        // The table, output and double-width product are disjoint.
-        unsafe {
-            for i in 0..w {
-                product.add(i).write(0);
-            }
-            for i in 2..TABLE {
-                bignum_mulacc(product, t.add(w), t.add((i - 1) * w), len);
-                bignum_mont_redc(product, len, modulus, inverse, not_n, t.add(i * w));
-            }
-            core::ptr::copy_nonoverlapping(t, result, w);
-            super::windows(exponent, |index, square| {
-                if square {
-                    for _ in 0..4 {
-                        bignum_sqracc(product, result, len);
-                        bignum_mont_redc(product, len, modulus, inverse, not_n, result);
-                    }
-                }
-                bignum_mulacc(product, t.add(index * w), result, len);
-                bignum_mont_redc(product, len, modulus, inverse, not_n, result);
-            });
-            for i in 0..w {
-                product.add(i).write(result.add(i).read());
-                product.add(w + i).write(0);
-            }
-            bignum_mont_redc(product, len, modulus, inverse, not_n, result);
-        }
-        sub_mod(out, n, n);
-    }
 
-    fn parameters(n: &[u32], complement: &mut [u32], inverse: &mut [u32; 4]) {
-        for (dst, &value) in complement.iter_mut().zip(n) {
-            *dst = !value;
+        for i in 2..TABLE {
+            let (previous, remaining) = table.split_at_mut(i * w);
+            mul(product, &previous[w..2 * w], &previous[(i - 1) * w..]);
+            reduce(product, n, inverse);
+            remaining[..w].copy_from_slice(&product[w..]);
         }
-        *inverse = negative_inverse(n);
+        out.copy_from_slice(&table[..w]);
+        super::windows(exponent, |index, square_first| {
+            if square_first {
+                for _ in 0..4 {
+                    square(product, out);
+                    reduce(product, n, inverse);
+                    out.copy_from_slice(&product[w..]);
+                }
+            }
+            mul(product, &table[index * w..][..w], out);
+            reduce(product, n, inverse);
+            out.copy_from_slice(&product[w..]);
+        });
+        let (low, high) = product.split_at_mut(w);
+        low.copy_from_slice(out);
+        high.fill(0);
+        reduce(product, n, inverse);
+        out.copy_from_slice(&product[w..]);
     }
 
     pub(super) fn modexp(base: &[u8], exponent: &[u8], n: &[u8], out: &mut [u8]) {
         let w = n.len() / 4;
         let mut modulus = Secret::new([0u32; WORDS]);
-        let mut complement = Secret::new([0u32; WORDS]);
-        let mut inverse = Secret::new([0u32; 4]);
         let mut padded = Secret::<[u8; MAX_MOD]>::zeroed();
         padded.expose_mut()[..base.len()].copy_from_slice(base);
         let mut base_words = Secret::new([0u32; WORDS]);
@@ -229,13 +140,11 @@ mod backend {
         );
         bytes_to_words_le(n, &mut modulus.expose_mut()[..w]);
         let n = &modulus.expose()[..w];
-        let complement = &mut complement.expose_mut()[..w];
-        parameters(n, complement, inverse.expose_mut());
+        let inverse = Secret::new(negative_inverse(n));
         pow(
             exponent,
             n,
-            complement,
-            inverse.expose(),
+            *inverse.expose(),
             &base_words.expose()[..w],
             scratch.expose_mut(),
             &mut result.expose_mut()[..w],
@@ -244,29 +153,9 @@ mod backend {
     }
 
     // For x < R*n, REDC followed by conversion to Montgomery form gives x mod n.
-    fn reduce_wide(
-        value: &mut [u32],
-        n: &[u32],
-        complement: &[u32],
-        inverse: &[u32; 4],
-        scratch: &mut [u32],
-    ) {
-        let w = n.len();
-        let len = core::mem::size_of_val(n);
-        let v = value.as_mut_ptr();
-        // SAFETY: value holds 2*w words. REDC may alias the upper half.
-        unsafe {
-            bignum_mont_redc(
-                v,
-                len,
-                n.as_ptr(),
-                inverse.as_ptr(),
-                complement.as_ptr(),
-                v.add(w),
-            );
-        }
-        let (low, high) = value.split_at_mut(w);
-        sub_mod(high, n, n);
+    fn reduce_wide(value: &mut [u32], n: &[u32], inverse: u32, scratch: &mut [u32]) {
+        reduce(value, n, inverse);
+        let (low, high) = value.split_at_mut(n.len());
         to_mont(low, high, n, scratch);
     }
 
@@ -289,47 +178,34 @@ mod backend {
         be_bytes_to_words_le(qinv, &mut qinv_words.expose_mut()[..w]);
         let p = &p_words.expose()[..w];
         let q = &q_words.expose()[..w];
-        let mut complement = Secret::new([0u32; WORDS]);
-        let complement = &mut complement.expose_mut()[..w];
-        let mut inverse = Secret::new([0u32; 4]);
-        let inverse = inverse.expose_mut();
         let mut value = Secret::new([0u32; 2 * WORDS]);
         let value = &mut value.expose_mut()[..2 * w];
         let mut m2 = Secret::new([0u32; WORDS]);
+        let inverse_p = Secret::new(negative_inverse(p));
+        let inverse_q = Secret::new(negative_inverse(q));
         let mut result = Secret::new([0u32; 2 * WORDS]);
         let result = &mut result.expose_mut()[..2 * w];
         let mut scratch = Secret::new([0u32; (TABLE + 2) * WORDS]);
         let scratch = scratch.expose_mut();
 
-        for (n, d, residue) in [
-            (q, dq, &mut m2.expose_mut()[..w]),
-            (p, dp, &mut result[..w]),
+        for (n, inverse, d, residue) in [
+            (q, *inverse_q.expose(), dq, &mut m2.expose_mut()[..w]),
+            (p, *inverse_p.expose(), dp, &mut result[..w]),
         ] {
-            parameters(n, complement, inverse);
             bytes_to_words_le(base, value);
-            reduce_wide(value, n, complement, inverse, scratch);
-            pow(d, n, complement, inverse, &value[..w], scratch, residue);
+            reduce_wide(value, n, inverse, scratch);
+            pow(d, n, inverse, &value[..w], scratch, residue);
         }
 
         // Garner recombination: m2 + q * ((m1 - m2) * qInv mod p).
         value[..w].copy_from_slice(&m2.expose()[..w]);
         value[w..].fill(0);
-        reduce_wide(value, p, complement, inverse, scratch);
+        reduce_wide(value, p, *inverse_p.expose(), scratch);
         sub_mod(&mut result[..w], &value[..w], p);
-        value[..w].fill(0);
-        // SAFETY: value is double width and disjoint from both w-word operands.
-        unsafe {
-            bignum_mulacc(
-                value.as_mut_ptr(),
-                result.as_ptr(),
-                qinv_words.expose().as_ptr(),
-                len,
-            );
-        }
-        reduce_wide(value, p, complement, inverse, scratch);
+        mul(value, &result[..w], &qinv_words.expose()[..w]);
+        reduce_wide(value, p, *inverse_p.expose(), scratch);
         result[..w].copy_from_slice(&m2.expose()[..w]);
-        // SAFETY: result is double width and disjoint from q and the factor.
-        unsafe { bignum_mulacc(result.as_mut_ptr(), q.as_ptr(), value.as_ptr(), len) };
+        mul_acc(result, q, &value[..w]);
         words_to_bytes_le(result, out);
     }
 }

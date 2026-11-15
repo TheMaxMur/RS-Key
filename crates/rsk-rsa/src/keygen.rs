@@ -32,7 +32,7 @@ pub fn rsa_from_pqe(e: &[u8], p: &[u8], q: &[u8]) -> Option<RsaKey> {
 /// two `nbits/2`-bit primes with the top two bits set and `gcd(e, prime − 1) = 1`,
 /// assembled into an [`RsaKey`]. The primality decision is
 /// Baillie-PSW split across backends: the strong Miller-Rabin base-2 half on
-/// the KAT-gated asm modexp (ours, differentially tested against the library),
+/// the KAT-gated fixed-width modexp (ours, differentially tested against the library),
 /// the strong Lucas half uses the library's algorithm with cancellation. Key
 /// assembly is ours — [`RsaKey`], checked against OpenSSL vectors.
 ///
@@ -45,10 +45,8 @@ pub struct RsaKeygen {
     half_bytes: usize,
     e: BigUint,
     p: Option<BigUint>,
-    /// Result of the asm modexp known-answer test, checked once up front: if the
-    /// fast modexp is wrong on this build/silicon, refuse to generate (rather than
-    /// emit a weak key). Always true on the host (num-bigint backend).
-    asm_ok: bool,
+    /// The RSA modexp known-answer test gates generation on both host and device.
+    modexp_ok: bool,
 }
 
 // A keygen abandoned between steps still holds the first found prime.
@@ -62,7 +60,7 @@ impl Drop for RsaKeygen {
             half_bytes: _,
             e: _,
             p,
-            asm_ok: _,
+            modexp_ok: _,
         } = self;
         if let Some(p) = p {
             p.zeroize();
@@ -91,17 +89,15 @@ impl RsaKeygen {
             half_bytes: nbits / 16,
             e: BigUint::from(RSA_E),
             p: None,
-            asm_ok: self_test(),
+            modexp_ok: self_test(),
         }
     }
 
-    /// Whether this keygen can run at all: the modulus size is supported (the
-    /// asm modexp needs the prime length to be a multiple of 32 bytes — every
-    /// standard RSA size qualifies) and the modexp known-answer test passed
-    /// (a broken fast modexp must never yield a key).
+    /// Generation requires a supported prime width in multiples of 32 bytes
+    /// and a passing modexp known-answer test.
     pub fn usable(&self) -> bool {
         let half = self.half_bytes;
-        self.asm_ok && half != 0 && half <= MAX_RSA_BYTES / 2 && half.is_multiple_of(32)
+        self.modexp_ok && half != 0 && half <= MAX_RSA_BYTES / 2 && half.is_multiple_of(32)
     }
 
     /// One prime's size in bytes (half the modulus).
@@ -114,7 +110,7 @@ impl RsaKeygen {
     /// concurrently with its own RNG stream. The pipeline is Baillie-PSW split
     /// across backends: the cheap rejections (the small-prime sieve, the
     /// `gcd(e, n−1)` check), then the strong Miller-Rabin base-2 gate on the
-    /// KAT-gated asm modexp, then the cancellable software strong Lucas test for
+    /// KAT-gated fixed-width modexp, then the cancellable software strong Lucas test for
     /// the final accept. Admitting a composite would take a simultaneous
     /// failure of both halves — the same combined guarantee
     /// `probably_prime(_, 0)` gives, with the modexp-heavy half on the fast
@@ -160,7 +156,7 @@ impl RsaKeygen {
         if mod_small(n, RSA_E) == 1 {
             return None;
         }
-        // The strong Miller-Rabin half of Baillie-PSW, on the asm modexp.
+        // The strong Miller-Rabin half of Baillie-PSW, on the fixed-width modexp.
         if !passes_strong_mr_base2(n) {
             return None;
         }

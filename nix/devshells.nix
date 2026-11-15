@@ -39,9 +39,7 @@ rec {
       pkgs.probe-rs-tools # flash/debug over SWD (optional; needs a probe)
       pkgs.picotool # ELF -> UF2 + BOOTSEL flashing, no probe needed
       pkgs.pkg-config
-      pkgs.gcc-arm-embedded
-      # arm-none-eabi-gcc — assembles rsk-rsa's Thumb-2 and builds the Secure gateway
-      # fast RSA modexp. `cc` auto-detects it.
+      pkgs.gcc-arm-embedded # Secure TrustZone gateway and ARM image tools
 
       pkgs.yubikey-manager # ykman CLI (device management, guides)
       pkgs.libgcrypt # the vendored OpenPGP card suite loads it via ctypes

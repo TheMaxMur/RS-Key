@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 RS-Key contributors
 
-//! Fixed public exponent for CRT blinding and the result check. The ARM
-//! multiplication, square and reduction use rsa-armv7 (see `csrc/LICENSE.txt`).
+//! Fixed public exponent for CRT blinding and the result check.
 
 use crate::RSA_E;
 
@@ -30,42 +29,14 @@ pub(crate) fn modexp_pub(base: &[u8], modulus: &[u8], out: &mut [u8]) -> bool {
     true
 }
 
-fn pow_65537<T>(power: &mut T, mut square: impl FnMut(&mut T), multiply_base: impl FnOnce(&mut T)) {
+fn square_for_65537(mut square: impl FnMut()) {
     const SQUARES: u32 = (RSA_E - 1).trailing_zeros();
     const { assert!(RSA_E == (1 << SQUARES) + 1) };
     for _ in 0..SQUARES {
-        square(power);
-    }
-    multiply_base(power);
-}
-
-#[cfg(not(target_os = "none"))]
-mod backend {
-    use num_bigint_dig::BigUint;
-    use rsk_secret::Secret;
-
-    pub(super) fn pow(base: &[u8], modulus: &[u8], out: &mut [u8]) {
-        let modulus = BigUint::from_bytes_le(modulus);
-        let base = Secret::new(BigUint::from_bytes_le(base));
-        let mut power = Secret::new(base.expose().clone());
-        super::pow_65537(
-            &mut power,
-            |power| {
-                let square = Secret::new(power.expose() * power.expose());
-                *power = Secret::new(square.expose() % &modulus);
-            },
-            |power| {
-                let product = Secret::new(power.expose() * base.expose());
-                let reduced = Secret::new(product.expose() % &modulus);
-                let bytes = Secret::new(reduced.expose().to_bytes_le());
-                out.fill(0);
-                out[..bytes.expose().len()].copy_from_slice(bytes.expose());
-            },
-        );
+        square();
     }
 }
 
-#[cfg(target_os = "none")]
 mod backend {
     use crate::montgomery::*;
     use crate::{MAX_RSA_BYTES, bytes_to_words_le, words_to_bytes_le};
@@ -74,53 +45,29 @@ mod backend {
     #[inline(never)]
     pub(super) fn pow(base: &[u8], modulus: &[u8], out: &mut [u8]) {
         const MAX_WORDS: usize = MAX_RSA_BYTES / 4;
-        let len = modulus.len();
-        let words = len / 4;
+        let words = modulus.len() / 4;
         let mut n = [0u32; MAX_WORDS];
-        let mut not_n = [0u32; MAX_WORDS];
-        bytes_to_words_le(modulus, &mut n[..words]);
-        for (dst, &word) in not_n.iter_mut().zip(&n[..words]) {
-            *dst = !word;
-        }
         let mut base_words = Secret::new([0u32; MAX_WORDS]);
-        bytes_to_words_le(base, &mut base_words.expose_mut()[..words]);
-        let mut value = Secret::new([0u32; 2 * MAX_WORDS]);
+        let mut value = Secret::new([0u32; MAX_WORDS]);
         let mut product = Secret::new([0u32; 2 * MAX_WORDS]);
-
-        let n = &n[..words];
-        to_mont(
-            &mut value.expose_mut()[..words],
-            &base_words.expose()[..words],
-            n,
-            product.expose_mut(),
-        );
+        let n = &mut n[..words];
+        let base_words = &mut base_words.expose_mut()[..words];
+        let value = &mut value.expose_mut()[..words];
+        let product = &mut product.expose_mut()[..2 * words];
+        bytes_to_words_le(modulus, n);
+        bytes_to_words_le(base, base_words);
+        to_mont(value, base_words, n, product);
         let inverse = negative_inverse(n);
-        let modulus = n.as_ptr();
-        let not_n = not_n.as_ptr();
-        let mut buffers = (value.expose_mut(), product.expose_mut());
-        // SAFETY: modexp_pub checks len (32..=512, multiple of 32), odd n and
-        // base < n. The disjoint aligned arrays hold n/~n, a four-word inverse,
-        // and two double-width buffers.
-        unsafe {
-            let inverse = inverse.as_ptr();
-            buffers.1[..words].fill(0);
-            super::pow_65537(
-                &mut buffers,
-                |(value, product)| {
-                    let (value, product) = (value.as_mut_ptr(), product.as_mut_ptr());
-                    bignum_sqracc(product, value, len);
-                    bignum_mont_redc(product, len, modulus, inverse, not_n, value);
-                },
-                |(value, product)| {
-                    let (value, product) = (value.as_mut_ptr(), product.as_mut_ptr());
-                    // Multiplication by the original base cancels the Montgomery factor.
-                    bignum_mulacc(product, value, base_words.expose().as_ptr(), len);
-                    bignum_mont_redc(product, len, modulus, inverse, not_n, value);
-                },
-            );
-        }
-        sub_mod(&mut value.expose_mut()[..words], n, n);
-        words_to_bytes_le(&value.expose()[..words], out);
+
+        super::square_for_65537(|| {
+            square(product, value);
+            reduce(product, n, inverse);
+            value.copy_from_slice(&product[words..]);
+        });
+        // Multiplication by the original base cancels the Montgomery factor.
+        mul(product, value, base_words);
+        reduce(product, n, inverse);
+        words_to_bytes_le(&product[words..], out);
     }
 }
 

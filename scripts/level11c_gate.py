@@ -158,7 +158,7 @@ def derived() -> list[tuple[str, int, re.Pattern]]:
     second place to rot, which is the rule `run_count_gate.py` calls "not said
     twice" and the reason this list holds a COUNT of matches rather than a hit.
     """
-    asm = lines("crates/rsk-rsa/csrc/bignum_asm.S")
+    rsa = lines("crates/rsk-rsa/src/montgomery.rs")
     generic, total, bound = fido_functions()
     every, linker = boundaries()
     total_rows, cargo, python, other, blind, clippy, rustdoc, fmt, tests = rows()
@@ -170,12 +170,12 @@ def derived() -> list[tuple[str, int, re.Pattern]]:
     return [
         ("rsk-fido/src/state.rs", lines("crates/rsk-fido/src/state.rs"),
          re.compile(r"(\d+) lines in `state\.rs` alone")),
-        ("RSA Thumb-2 assembly", asm,
-         re.compile(r"(\d+) lines of Thumb-2 assembly")),
-        ("RSA assembly imports", sum(
-            row["id"].startswith("import:crates/rsk-rsa/src/montgomery.rs:")
+        ("RSA Montgomery arithmetic", rsa,
+         re.compile(r"(\d+) lines in `montgomery\.rs`")),
+        ("RSA native imports", sum(
+            row["id"].startswith("import:crates/rsk-rsa/")
             for row in tomllib.loads((ROOT / "assurance/toolchain.toml").read_text())["boundary"]
-         ), re.compile(r"(\d+) Montgomery assembly imports")),
+         ), re.compile(r"(\d+) RSA native imports")),
         ("the ML-DSA reduction kernel", reduction,
          re.compile(r"(\d+) lines, no generic function")),
         ("generic functions in rsk-fido", generic,

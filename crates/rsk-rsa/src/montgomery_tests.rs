@@ -10,17 +10,55 @@ fn big(words: &[u32]) -> BigUint {
 }
 
 #[test]
-fn inverse_cancels_four_words() {
-    for n in [
-        [1, 0, 0, 0],
-        [3, 0, 0, 0],
-        [u32::MAX; 4],
-        [21, 7, 0, u32::MAX],
-    ] {
-        assert_eq!(
-            (big(&n) * big(&negative_inverse(&n)) + 1u8) % (BigUint::from(1u8) << 128),
-            BigUint::default()
-        );
+fn inverse_cancels_a_word() {
+    for n in [1u32, 3, u32::MAX, 21, 0x8000_0001] {
+        assert_eq!(n.wrapping_mul(negative_inverse(&[n])), u32::MAX);
+    }
+}
+
+#[test]
+fn wide_arithmetic_matches_biguint() {
+    let mut state = 0x3979_b3f5u32;
+    let mut random = || {
+        state ^= state << 13;
+        state ^= state >> 17;
+        state ^= state << 5;
+        state
+    };
+    for w in [1, 2, 3, 4, 5, 8, 32, 48, 64, 128] {
+        for (a, b) in [
+            (alloc::vec![0; w], alloc::vec![u32::MAX; w]),
+            (alloc::vec![u32::MAX; w], alloc::vec![u32::MAX; w]),
+            (
+                (0..w).map(|_| random()).collect(),
+                (0..w).map(|_| random()).collect(),
+            ),
+        ] {
+            let a_big = big(&a);
+            let b_big = big(&b);
+            let mut product = alloc::vec![u32::MAX; 2 * w];
+            let radix = BigUint::from(1u8) << (32 * w);
+            mul_acc(&mut product, &a, &b);
+            assert_eq!(big(&product), &a_big * &b_big + &radix - 1u8);
+            square(&mut product, &a);
+            assert_eq!(big(&product), &a_big * &a_big);
+            for n in [alloc::vec![u32::MAX; w], {
+                let mut small = alloc::vec![0; w];
+                small[0] = 3;
+                small
+            }] {
+                let value = &radix * big(&n) - 1u8;
+                let mut bytes = value.to_bytes_le();
+                bytes.resize(8 * w, 0);
+                crate::bytes_to_words_le(&bytes, &mut product);
+                reduce(&mut product, &n, negative_inverse(&n));
+                let n = big(&n);
+                let out = big(&product[w..]);
+                assert!(out < n);
+                assert_eq!(out * &radix % &n, value % &n);
+                assert!(product[..w].iter().all(|word| *word == 0));
+            }
+        }
     }
 }
 

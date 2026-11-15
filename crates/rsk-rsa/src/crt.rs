@@ -3,7 +3,7 @@
 
 //! The sealed CRT parameter layout (`P ‖ Q ‖ dP ‖ dQ ‖ qInv`), its
 //! length-discriminated parse, and the blinded, Bellcore-fault-checked private
-//! operation backed by the UMAAL asm (`sign_crt` / `pubexp::modexp_pub`).
+//! operation backed by fixed-width Montgomery arithmetic.
 //! The PIV and OpenPGP applets store the same plaintext and sign through the
 //! same [`private_op`], so this security-critical path (blinding, fault check,
 //! zeroization) lives once.
@@ -49,7 +49,7 @@ fn put_field(dst: &mut [u8], src: &[u8]) -> Result<(), RsaError> {
 /// the tie. Returns the prime width `half` and whether it is the CRT form. Only
 /// this firmware writes 5-field (always a 32-multiple width); a legacy `P‖Q`
 /// blob may carry any width, so the 2-field arm is not width-restricted (its
-/// caller enforces what its consumer needs — the asm CRT path wants a 32-mult).
+/// caller enforces what its consumer needs — the fixed-width CRT path wants a 32-mult).
 pub fn parse_rsa_blob(plain: &[u8]) -> Result<(usize, bool), RsaError> {
     let n = plain.len();
     let five = n
@@ -91,9 +91,8 @@ fn five_field_consistent(plain: &[u8], half: usize) -> bool {
 
 /// Build the CRT plaintext `P ‖ Q ‖ dP ‖ dQ ‖ qInv` (five `half`-byte big-endian
 /// fields) for `key` into the pre-zeroed `out`, returning its length `5·half`.
-/// Caching the CRT parameters next to the primes lets [`crt_from_plain`] feed the
-/// asm CRT signer directly, so a signature no longer rebuilds `d`, `dP`, `dQ` and
-/// `qInv` (two modular inversions) every time.
+/// Caching the CRT parameters lets [`crt_from_plain`] feed the signer without
+/// recomputing `d`, `dP`, `dQ` and `qInv` on each signature.
 pub fn crt_plaintext(key: &RsaKey, out: &mut [u8]) -> Result<usize, RsaError> {
     // Absent only for a key whose primes share a factor — an IMPORT can offer
     // such a pair, and it is refused here rather than sealed unusable.
@@ -106,9 +105,8 @@ pub fn crt_plaintext(key: &RsaKey, out: &mut [u8]) -> Result<usize, RsaError> {
     let mut dqb = Secret::new(dq.to_bytes_be());
     let mut qib = Secret::new(qinv.to_bytes_be());
     let r = (|| {
-        // The asm CRT signer processes 32-bit words in 32-byte groups, so a
-        // non-32-multiple prime width has no fast path — reject it at seal time
-        // (fail loud) rather than write a blob the loader would refuse.
+        // The sealed CRT format accepts prime widths in multiples of 32 bytes.
+        // Enforce that at seal time so the loader can reopen the blob.
         if !half.is_multiple_of(32) || n > out.len() {
             return Err(RsaError::BadWidth);
         }
@@ -192,15 +190,11 @@ impl Drop for RsaCrt {
 }
 
 /// Parse a decrypted sealed plaintext into an [`RsaCrt`]. New
-/// `P‖Q‖dP‖dQ‖qInv` blobs slice directly; older `P‖Q` blobs recompute
-/// `dP/dQ/qInv` once here (the cost the new layout removes — such keys still get
-/// the fast asm CRT modexp, but keep the one-time precompute per signature until
-/// re-provisioned).
+/// `P‖Q‖dP‖dQ‖qInv` blobs slice directly. Loading an older `P‖Q` blob
+/// recomputes `dP/dQ/qInv` before calling the same signer.
 pub fn crt_from_plain(plain: &[u8]) -> Result<RsaCrt, RsaError> {
     let (half, is_crt) = parse_rsa_blob(plain)?;
-    // The asm CRT signer needs a 32-multiple field width; a legacy `P‖Q` blob of
-    // a non-standard width still DECIPHERs (via load_rsa_key on num-bigint) but
-    // cannot sign here — fail closed rather than feed the asm a bad width.
+    // Legacy DECIPHER accepts other widths through the BigUint signer.
     if !half.is_multiple_of(32) {
         return Err(RsaError::BadWidth);
     }
@@ -231,12 +225,9 @@ pub fn crt_from_plain(plain: &[u8]) -> Result<RsaCrt, RsaError> {
 }
 
 /// Raw RSA private-key operation `sig = cᵈ mod n`, computed over the cached CRT
-/// parameters with the UMAAL asm (the crate-private `sign_crt`, the backend this wraps —
-/// same job, one layer down, without blinding or the fault check). Base-blinded
-/// `(c·rᵉ)ᵈ·r⁻¹ mod n` with a fresh random `r`, so the variable-time modexp
-/// cannot become a timing oracle; then Bellcore fault-checked (`sigᵉ ≡ c mod n`)
-/// so a faulted CRT half — or an asm/marshaling bug — can never leave as a valid
-/// signature. `c` is the full modulus-width block (a PKCS#1 EM for OpenPGP, a
+/// parameters. Base blinding with fresh `r` randomizes the base before the
+/// private exponentiation. The Bellcore check verifies `sigᵉ ≡ c mod n`
+/// before returning the result. `c` is the full modulus-width block (a PKCS#1 EM for OpenPGP, a
 /// host-padded block for PIV GENERAL AUTHENTICATE). Writes the `modulus_len`-byte
 /// big-endian signature to `out`.
 pub fn private_op(

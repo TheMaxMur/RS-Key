@@ -2,22 +2,19 @@
 // Copyright (C) 2026 RS-Key contributors
 
 #![cfg_attr(not(test), no_std)]
-// Only the device build links the bignum assembly, so a host build stays unsafe-free.
+// On-device arithmetic runs from SRAM while both cores search for primes.
 #![cfg_attr(
     target_os = "none",
     expect(
         unsafe_code,
-        reason = "the bignum asm FFI and its .data placement; docs/unsafe.md"
+        reason = "the .data placement of the RSA kernels; docs/unsafe.md"
     )
 )]
 
 //! The RSA algorithm family: key generation, the CRT parameter layout and its
 //! blinded private operation, PKCS#1 v1.5, and the public-key DO both card
-//! applets answer with — over fast bignum modular exponentiation for ARMv7E-M
-//! (Cortex-M33 + DSP), using the vendored rsa-armv7 ARM assembly (Emil
-//! Lenngren, BSD-2-Clause — see `csrc/LICENSE.txt`). The host build (no ARM
-//! assembler) uses num-bigint-dig for arithmetic, keeping the prime-search
-//! logic testable. All multi-byte values in this file are **little-endian**
+//! applets answer with. Both host and device use the same fixed-width
+//! Montgomery arithmetic. All multi-byte values in this file are **little-endian**
 //! except the modexp exponent (big-endian).
 //!
 //! Nothing here names a status word or a filesystem: `rsk-openpgp` and `rsk-piv`
@@ -36,7 +33,6 @@ pub mod pubdo;
 mod error;
 mod key;
 mod lucas;
-#[cfg(any(test, target_os = "none"))]
 mod montgomery;
 mod privexp;
 mod pubexp;
@@ -58,7 +54,7 @@ pub use pubdo::{MAX_RSA_PUBDO, make_rsa_pub_body, make_rsa_response};
 pub use rng::Rng;
 
 /// Largest modulus this handles: an RSA-4096 prime is 2048 bits = 256 bytes. The
-/// asm requires the modulus length to be a multiple of 32 bytes — every standard
+/// routines retain a 32-byte width requirement — every standard
 /// RSA prime size (512/1024/1536/2048-bit) qualifies.
 pub const MAX_MOD: usize = 256;
 
@@ -131,6 +127,8 @@ const fn build_small_primes() -> [u32; N_SMALL] {
         }
         cand += 2;
     }
+    // Every residue plus one sieve stride must fit before reduction.
+    assert!(primes[N_SMALL - 1] <= u16::MAX as u32 - 2);
     primes
 }
 
@@ -182,7 +180,7 @@ pub struct IncrementalSieve {
     cnt: usize,
     // `MAX_MOD` is already a single prime's width (an RSA-4096 prime = 256 B).
     cand: [u8; MAX_MOD],
-    res: [u32; N_SMALL],
+    res: [u16; N_SMALL],
     steps: u32,
     seeded: bool,
 }
@@ -226,7 +224,7 @@ impl IncrementalSieve {
             .iter_mut()
             .zip(&SMALL_PRIMES[..self.cnt])
         {
-            *r = mod_small(&self.cand[..half], p);
+            *r = mod_small(&self.cand[..half], p) as u16;
         }
         self.steps = 0;
         self.seeded = true;
@@ -277,6 +275,7 @@ impl IncrementalSieve {
             .iter_mut()
             .zip(&SMALL_PRIMES[..self.cnt])
         {
+            let p = p as u16;
             *r += 2;
             if *r >= p {
                 *r -= p;
@@ -314,7 +313,6 @@ impl IncrementalSieve {
 
 // -------------------------------------------------------- modexp backend -----
 
-#[cfg(any(test, target_os = "none"))]
 fn bytes_to_words_le(src: &[u8], dst: &mut [u32]) {
     for (i, w) in dst.iter_mut().enumerate() {
         let b = i * 4;
@@ -322,7 +320,6 @@ fn bytes_to_words_le(src: &[u8], dst: &mut [u32]) {
     }
 }
 
-#[cfg(any(test, target_os = "none"))]
 fn words_to_bytes_le(src: &[u32], dst: &mut [u8]) {
     for (i, w) in src.iter().enumerate() {
         dst[i * 4..i * 4 + 4].copy_from_slice(&w.to_le_bytes());
@@ -331,7 +328,6 @@ fn words_to_bytes_le(src: &[u32], dst: &mut [u8]) {
 
 /// The i-th least-significant 32-bit limb of a big-endian value: fill `dst`
 /// (length = `be.len() / 4`) with `be` re-read as little-endian u32 words.
-#[cfg(any(test, target_os = "none"))]
 fn be_bytes_to_words_le(be: &[u8], dst: &mut [u32]) {
     for (i, w) in dst.iter_mut().enumerate() {
         let hi = be.len() - 4 * i;
@@ -409,7 +405,7 @@ fn is_one_le(v: &[u8]) -> bool {
 }
 
 /// Strong Miller-Rabin probable-prime test to base 2 — the Miller-Rabin half
-/// of Baillie-PSW — on the (SRAM-resident) asm modexp. `n_le` is the odd
+/// of Baillie-PSW — on the SRAM-resident modexp. `n_le` is the odd
 /// little-endian candidate, length a multiple of 32 bytes, like
 /// [`passes_fermat_base2`] but strictly stronger: write n − 1 = d·2^s (d odd);
 /// n passes iff 2^d ≡ ±1 (mod n) or one of the s − 1 successive squarings
@@ -492,8 +488,8 @@ const KAT_COMPOSITE_LE: [u8; 32] = [
 
 /// Known-answer test of the modexp path: a known prime must pass and a known
 /// composite must fail BOTH the base-2 Fermat test and the strong Miller-Rabin
-/// gate the keygen actually uses. Catches a wrong asm result (marshaling /
-/// calling-convention bug) before it can weaken the primality decision.
+/// gate the keygen uses. Catches a wrong modexp result before it can weaken
+/// the primality decision.
 pub fn self_test() -> bool {
     passes_fermat_base2(&KAT_PRIME_LE)
         && !passes_fermat_base2(&KAT_COMPOSITE_LE)

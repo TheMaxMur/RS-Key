@@ -70,7 +70,7 @@ fn decipher_recovers_an_openssl_session_key() {
     assert_eq!(&out[..n], msg.as_slice());
 
     // The legacy fallback must return the same plaintext, or a key that took it
-    // would silently decrypt to something else than the asm path.
+    // would silently decrypt to something else than the crt_result path.
     let mut slow = [0u8; MAX_RSA_BYTES];
     let sn = rsa_decipher_legacy(&key, &mut SeqRng(9), &data, &mut slow).unwrap();
     assert_eq!(&slow[..sn], &out[..n]);
@@ -149,8 +149,8 @@ fn decipher_answers_what_a_yubikey_answers_to_a_refused_cryptogram() {
         ("no data at all", vec![], Sw::WRONG_DATA),
     ];
     for (what, data, sw) in cases {
-        let asm = rsa_decipher(&crt, &mut SeqRng(16), &data, &mut out);
-        assert_eq!(asm, Err(sw), "{what}: the asm CRT arm");
+        let crt_result = rsa_decipher(&crt, &mut SeqRng(16), &data, &mut out);
+        assert_eq!(crt_result, Err(sw), "{what}: the fixed-width CRT arm");
         let legacy = rsa_decipher_legacy(&key, &mut SeqRng(17), &data, &mut out);
         assert_eq!(legacy, Err(sw), "{what}: the legacy arm");
     }
@@ -183,7 +183,7 @@ fn decipher_does_not_check_the_padding_indicator_either() {
         assert_eq!(
             n.map(|k| out[..k].to_vec()),
             Ok(msg.clone()),
-            "{indicator:02X}: asm CRT"
+            "{indicator:02X}: fixed-width CRT"
         );
         let n = rsa_decipher_legacy(&key, &mut SeqRng(20), &data, &mut out);
         assert_eq!(
@@ -211,7 +211,7 @@ fn decipher_refuses_a_cryptogram_with_bytes_appended() {
         assert_eq!(
             rsa_decipher(&crt, &mut SeqRng(14), &data, &mut out),
             Err(Sw::MEMORY_FAILURE),
-            "the asm CRT arm, {n} byte(s) appended"
+            "the fixed-width CRT arm, {n} byte(s) appended"
         );
         assert_eq!(
             rsa_decipher_legacy(&key, &mut SeqRng(15), &data, &mut out),
@@ -222,7 +222,7 @@ fn decipher_refuses_a_cryptogram_with_bytes_appended() {
 }
 
 /// Every Wycheproof decryption case through both DECIPHER arms, behind the padding
-/// indicator a host sends: the asm CRT arm over the five-field blob a sealed key
+/// indicator a host sends: the fixed-width CRT arm over the five-field blob a sealed key
 /// holds, and the legacy one. A valid case gives its message back; an invalid one
 /// is refused with 6581, the one answer a YubiKey 5.8.0 gives every such shape.
 #[test]
@@ -239,7 +239,8 @@ fn wycheproof_decipher_reads_the_valid_and_refuses_the_rest() {
             .unwrap_or_else(|| panic!("{at}: the key"));
         let data = [vec![0x00], hex(case.ct)].concat();
         let mut out = [0u8; MAX_RSA_BYTES];
-        let asm = rsa_decipher(&crt, &mut SeqRng(21), &data, &mut out).map(|n| out[..n].to_vec());
+        let crt_result =
+            rsa_decipher(&crt, &mut SeqRng(21), &data, &mut out).map(|n| out[..n].to_vec());
         let legacy =
             rsa_decipher_legacy(&key, &mut SeqRng(22), &data, &mut out).map(|n| out[..n].to_vec());
         let want = match case.result {
@@ -247,7 +248,7 @@ fn wycheproof_decipher_reads_the_valid_and_refuses_the_rest() {
             Outcome::Invalid => Err(Sw::MEMORY_FAILURE),
             Outcome::Acceptable => panic!("{at}: no decryption case is merely acceptable"),
         };
-        assert_eq!(asm, want, "{at}: the asm CRT arm");
+        assert_eq!(crt_result, want, "{at}: the fixed-width CRT arm");
         assert_eq!(legacy, want, "{at}: the legacy arm");
     }
 }

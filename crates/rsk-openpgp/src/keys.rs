@@ -593,7 +593,7 @@ pub fn load_rsa_crt<S: Storage>(
 }
 
 /// PSO:DECIPHER for RSA: strip the leading OpenPGP padding-indicator byte, run
-/// `cᵈ mod n` on the asm CRT core — blinded and Bellcore-fault-checked, the same
+/// `cᵈ mod n` on the fixed-width CRT core — blinded and Bellcore-fault-checked, the same
 /// private op PSO:CDS uses — then unpad PKCS#1 v1.5 in constant time. `data` is
 /// the raw command data field (`apdu.data`).
 pub fn rsa_decipher(
@@ -629,12 +629,12 @@ pub fn rsa_sign_block(
     rsk_rsa::pkcs1v15::rsa_sign_crt(crt, data, &mut RsaRng(rng), out).map_err(rsa_sw)
 }
 
-/// [`rsa_decipher`] for a key the asm CRT core cannot take: a legacy `P‖Q` blob
+/// [`rsa_decipher`] for a key the fixed-width CRT core cannot take: a legacy `P‖Q` blob
 /// whose prime width is not a 32-multiple, which older firmware could store and
 /// which [`rsk_rsa::crt::crt_from_plain`] refuses. Such a key already cannot
 /// sign; it would lose the ability to decrypt its own archived messages too, so
 /// it takes the software private op instead — blinded and Bellcore-fault-checked
-/// like the asm one, and ending in the same constant-time unpad.
+/// like the fixed-width path, and ending in the same constant-time unpad.
 pub fn rsa_decipher_legacy(
     key: &RsaKey,
     rng: &mut dyn Rng,
@@ -643,7 +643,7 @@ pub fn rsa_decipher_legacy(
 ) -> Result<usize, Sw> {
     let key_size = key.size();
     let ct = cryptogram(data, key_size)?;
-    // The asm arm's answer to every refusal, so the two arms stay one surface.
+    // The CRT arm's answer to every refusal, so the two arms stay one surface.
     rsk_rsa::pkcs1v15::rsa_decrypt(key, ct, &mut RsaRng(rng), out).map_err(|_| Sw::MEMORY_FAILURE)
 }
 

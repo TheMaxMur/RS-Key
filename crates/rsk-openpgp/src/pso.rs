@@ -118,7 +118,7 @@ fn try_pso<S: Storage>(
             return Ok(n);
         }
         // DECIPHER: PKCS#1 v1.5 decrypt the ciphertext that follows the leading
-        // OpenPGP padding-indicator byte, on the same asm CRT core as PSO:CDS.
+        // OpenPGP padding-indicator byte, on the same fixed-width CRT core as PSO:CDS.
         // `WRONG_LENGTH` is `rsk_rsa::crt::crt_from_plain`'s one refusal — a
         // legacy `P‖Q` blob whose prime width is not a 32-multiple — and only
         // such a key, which cannot sign either, falls back to the software

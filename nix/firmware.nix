@@ -194,7 +194,7 @@ let
         nativeBuildInputs = [
           pkgs.rustPlatform.cargoSetupHook
           toolchain
-          pkgs.gcc-arm-embedded # Thumb-2 RSA, Secure gateway and image tools
+          pkgs.gcc-arm-embedded # Secure TrustZone gateway and ARM image tools
           pkgs.picotool # ELF -> UF2
           pkgs.flip-link # .cargo/config.toml's linker (stack guard)
         ];

@@ -37,10 +37,6 @@ class Tree:
         self.write("LICENSE", "the licence itself\n")
         self.write("third_party/upstream/LICENSE", "MIT\n")
         self.write("third_party/upstream/test_it.py", "def test(): pass\n")
-        self.write(
-            "crates/rsk-rsa/csrc/bignum.c",
-            "/*\n* Copyright (c) 2025 Someone Else\n*/\nint f(void) { return 0; }\n",
-        )
         subprocess.run(["git", "-C", str(root), "init", "-q"], check=True)
 
     def write(self, rel, text):
@@ -151,8 +147,11 @@ def test_a_vendored_file_under_its_own_licence(tree):
 
 def test_vendored_c_with_its_own_copyright_block(tree):
     """No LICENSE beside it, so the notice in the file is what excuses it."""
+    tree.write(
+        "third_party/standalone/example.c",
+        "/*\n* Copyright (c) 2025 Someone Else\n*/\nint f(void) { return 0; }\n",
+    )
     assert tree.problems() == []
-    assert "csrc" in " ".join(spdx_gate.EXEMPT)
 
 
 # --- the exemptions are a debt, so they are checked too -----------------------

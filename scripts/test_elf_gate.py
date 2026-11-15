@@ -261,7 +261,7 @@ def row(needle: str) -> int:
 def test_the_registry_is_the_shape_the_gate_reads():
     image = shipped()
     assert image["profile"] == "default"
-    assert image["writable_executable"] == [".rsk_exec"]
+    assert image["writable_executable"] == []
     assert set(image["allocator"]) == {
         "__rust_alloc",
         "__rust_realloc",

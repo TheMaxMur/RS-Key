@@ -4154,8 +4154,8 @@ fn on_device_rsa_stores_into_empty_retired_slot() {
 }
 
 /// Buffer-sizing proof for the largest key: a real RSA-4096 key seals, its attestation
-/// statement fits `MAX_CERT` and parses, and it reads back as RSA-4096. Slow on host
-/// (num-bigint, no asm), so `#[ignore]`d — run with `--ignored`.
+/// statement fits `MAX_CERT` and parses, and it reads back as RSA-4096.
+/// Run the slow full-width generation with `--ignored`.
 #[test]
 #[ignore = "full on-host RSA-4096 keygen — slow; run with --ignored"]
 fn on_device_rsa4096_buffers_round_trip() {

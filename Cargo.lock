@@ -2345,7 +2345,6 @@ dependencies = [
 name = "rsk-rsa"
 version = "0.1.0"
 dependencies = [
- "cc",
  "num-bigint-dig",
  "num-integer",
  "rsk-secret",

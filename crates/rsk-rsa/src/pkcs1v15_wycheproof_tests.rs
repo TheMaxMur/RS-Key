@@ -10,7 +10,7 @@ use crate::verify::verify_pkcs1v15;
 use crate::wycheproof::{Outcome, Sign, sign};
 
 /// Every Wycheproof signing case through both private operations, byte for byte:
-/// the asm CRT signer OpenPGP signs with, fed the DigestInfo a host sends, and the
+/// the fixed-width CRT signer OpenPGP signs with, fed the DigestInfo a host sends, and the
 /// software one a legacy key's PSO:DECIPHER takes, fed the same PKCS#1 v1.5 block.
 /// The acceptable cases are a small modulus or SHA-1, which the card signs, so
 /// they are held to the same bytes.

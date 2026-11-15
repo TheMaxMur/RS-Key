@@ -34,9 +34,6 @@ crates/rsk-mldsa/src/sample.rs: replace | with ^ in coeff_from_three_bytes
 crates/rsk-mldsa/src/sample.rs: replace | with ^ in coeff_from_three_bytes
 crates/rsk-rsa/src/lib.rs: replace | with ^ in mod_small
 crates/rsk-rsa/src/lib.rs: replace | with ^ in shr_into_be
-crates/rsk-rsa/src/montgomery.rs: replace | with ^ in negative_inverse
-crates/rsk-rsa/src/montgomery.rs: replace | with ^ in negative_inverse
-crates/rsk-rsa/src/montgomery.rs: replace | with ^ in negative_inverse
 crates/rsk-rsa/src/montgomery.rs: replace | with ^ in quotient
 crates/rsk-rsa/src/montgomery.rs: replace | with ^ in quotient
 crates/rsk-rsa/src/montgomery.rs: replace | with ^ in to_mont
@@ -54,76 +51,6 @@ crates/rsk-mldsa/src/round.rs: replace - with / in decompose
 crates/rsk-mldsa/src/pack.rs: replace + with * in bit_unpack
 crates/rsk-mldsa/src/pack.rs: replace + with - in bit_unpack
 crates/rsk-mldsa/src/pack.rs: replace - with + in bit_unpack
-
-[device-only] The host sweep never compiles the Thumb-2 private exponentiation and CRT backend. A Cortex-M33 ELF with 736 independent Python vectors and refusal checks rejected these variants at runtime or during the device build. This does not claim silicon refutation.
-crates/rsk-rsa/src/privexp.rs: delete ! in backend::parameters
-crates/rsk-rsa/src/privexp.rs: replace * with + in backend::crt
-crates/rsk-rsa/src/privexp.rs: replace * with + in backend::crt
-crates/rsk-rsa/src/privexp.rs: replace * with + in backend::crt
-crates/rsk-rsa/src/privexp.rs: replace * with + in backend::crt
-crates/rsk-rsa/src/privexp.rs: replace * with + in backend::crt
-crates/rsk-rsa/src/privexp.rs: replace * with + in backend::modexp
-crates/rsk-rsa/src/privexp.rs: replace * with + in backend::pow
-crates/rsk-rsa/src/privexp.rs: replace * with + in backend::pow
-crates/rsk-rsa/src/privexp.rs: replace * with + in backend::pow
-crates/rsk-rsa/src/privexp.rs: replace * with + in backend::pow
-crates/rsk-rsa/src/privexp.rs: replace * with + in backend::pow
-crates/rsk-rsa/src/privexp.rs: replace * with + in backend::pow
-crates/rsk-rsa/src/privexp.rs: replace * with + in backend::pow
-crates/rsk-rsa/src/privexp.rs: replace * with + in backend::pow
-crates/rsk-rsa/src/privexp.rs: replace * with / in backend::crt
-crates/rsk-rsa/src/privexp.rs: replace * with / in backend::crt
-crates/rsk-rsa/src/privexp.rs: replace * with / in backend::crt
-crates/rsk-rsa/src/privexp.rs: replace * with / in backend::crt
-crates/rsk-rsa/src/privexp.rs: replace * with / in backend::crt
-crates/rsk-rsa/src/privexp.rs: replace * with / in backend::modexp
-crates/rsk-rsa/src/privexp.rs: replace * with / in backend::pow
-crates/rsk-rsa/src/privexp.rs: replace * with / in backend::pow
-crates/rsk-rsa/src/privexp.rs: replace * with / in backend::pow
-crates/rsk-rsa/src/privexp.rs: replace * with / in backend::pow
-crates/rsk-rsa/src/privexp.rs: replace * with / in backend::pow
-crates/rsk-rsa/src/privexp.rs: replace * with / in backend::pow
-crates/rsk-rsa/src/privexp.rs: replace * with / in backend::pow
-crates/rsk-rsa/src/privexp.rs: replace * with / in backend::pow
-crates/rsk-rsa/src/privexp.rs: replace + with * in backend::crt
-crates/rsk-rsa/src/privexp.rs: replace + with * in backend::modexp
-crates/rsk-rsa/src/privexp.rs: replace + with * in backend::pow
-crates/rsk-rsa/src/privexp.rs: replace + with * in backend::pow
-crates/rsk-rsa/src/privexp.rs: replace + with * in backend::pow
-crates/rsk-rsa/src/privexp.rs: replace + with - in backend::crt
-crates/rsk-rsa/src/privexp.rs: replace + with - in backend::modexp
-crates/rsk-rsa/src/privexp.rs: replace + with - in backend::pow
-crates/rsk-rsa/src/privexp.rs: replace + with - in backend::pow
-crates/rsk-rsa/src/privexp.rs: replace + with - in backend::pow
-crates/rsk-rsa/src/privexp.rs: replace - with + in backend::pow
-crates/rsk-rsa/src/privexp.rs: replace - with / in backend::pow
-crates/rsk-rsa/src/privexp.rs: replace / with %
-crates/rsk-rsa/src/privexp.rs: replace / with % in backend::crt
-crates/rsk-rsa/src/privexp.rs: replace / with % in backend::modexp
-crates/rsk-rsa/src/privexp.rs: replace / with *
-crates/rsk-rsa/src/privexp.rs: replace / with * in backend::crt
-crates/rsk-rsa/src/privexp.rs: replace / with * in backend::modexp
-crates/rsk-rsa/src/privexp.rs: replace backend::crt with ()
-crates/rsk-rsa/src/privexp.rs: replace backend::modexp with ()
-crates/rsk-rsa/src/privexp.rs: replace backend::parameters with ()
-crates/rsk-rsa/src/privexp.rs: replace backend::pow with ()
-crates/rsk-rsa/src/privexp.rs: replace backend::reduce_wide with ()
-
-[unused-padding] The public exponentiation allocates double-width scratch for REDC. Growing the separate output buffer leaves its used low words and the disjoint scratch unchanged.
-crates/rsk-rsa/src/pubexp.rs: replace * with + in backend::pow
-
-[device-only] The host sweep never compiles the Thumb-2 public exponentiation backend. A Cortex-M33 ELF with 257 independent power vectors rejects these mutations in QEMU.
-crates/rsk-rsa/src/pubexp.rs: delete ! in backend::pow
-crates/rsk-rsa/src/pubexp.rs: replace * with + in backend::pow
-crates/rsk-rsa/src/pubexp.rs: replace * with + in backend::pow
-crates/rsk-rsa/src/pubexp.rs: replace * with / in backend::pow
-crates/rsk-rsa/src/pubexp.rs: replace * with / in backend::pow
-crates/rsk-rsa/src/pubexp.rs: replace * with / in backend::pow
-crates/rsk-rsa/src/pubexp.rs: replace / with % in backend::pow
-crates/rsk-rsa/src/pubexp.rs: replace / with % in backend::pow
-crates/rsk-rsa/src/pubexp.rs: replace / with * in backend::pow
-crates/rsk-rsa/src/pubexp.rs: replace / with * in backend::pow
-crates/rsk-rsa/src/pubexp.rs: replace backend::pow with ()
 
 [empty-or-final-update] The final full hash_multi chunk can move into the loop, and updating SHA-256 with an empty slice has no effect.
 crates/rsk-crypto/src/kdf.rs: replace > with >= in Device<'_>::hash_multi
@@ -150,16 +77,17 @@ crates/rsk-rsa/src/key.rs: replace % with + in RsaKey::private_op
 crates/rsk-rsa/src/key.rs: replace % with + in RsaKey::private_op
 crates/rsk-rsa/src/key.rs: replace % with + in RsaKey::private_op
 
-[host-residue-equivalence] The two table reductions and the intermediate square differ by multiples of the modulus; the window multiply still reduces the result. Omitting these reductions can increase allocations; the Cortex-M backend never uses this code.
-crates/rsk-rsa/src/privexp.rs: replace % with + in backend::pow
-crates/rsk-rsa/src/privexp.rs: replace % with + in backend::pow
-crates/rsk-rsa/src/privexp.rs: replace % with + in backend::pow
-
 [repeated-width-guard] decoded_len repeats the modulo-four refusal before decode consumes input; removing the outer refusal preserves the same error and effects.
 crates/rsk-crypto/src/base64url.rs: replace % with + in decode
 
 [right-aligned-field] The changed start only enlarges an unused prefix. put_field writes at the unchanged right endpoint, and RsaKey's derived CRT values fit the original half-width. Output and errors agree for that producer invariant.
 crates/rsk-rsa/src/crt.rs: replace * with + in crt_plaintext
+
+[unused-padding] Increasing the maximum word count grows the fixed stack buffers. Public exponentiation still uses slices of the same modulus width and produces identical bytes. The mutation increases the stack footprint.
+crates/rsk-rsa/src/pubexp.rs: replace / with * in backend::pow
+
+[scalar-fallback] Reversing the minimum width check sends every nonempty modulus through single-word Montgomery reduction. It yields the same canonical result and loses four-limb batching.
+crates/rsk-rsa/src/montgomery.rs: replace >= with < in reduce
 crates/rsk-rsa/src/crt.rs: replace * with + in crt_plaintext
 crates/rsk-rsa/src/crt.rs: replace * with + in crt_plaintext
 crates/rsk-rsa/src/crt.rs: replace * with / in crt_plaintext

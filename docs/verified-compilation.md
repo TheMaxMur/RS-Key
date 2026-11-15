@@ -20,24 +20,23 @@ output is outside every proof this tree runs, is untouched by it and stays
 
 ## The decision
 
-A verified C compiler cannot compile this firmware's chip, cannot compile the
-part of the one already-foreign kernel that matters, and would add tools to the
-toolchain TCB without removing any — so level 11C is declined for the RP2350,
-and the source-to-binary gap stays where `assurance/platform.toml` already
-records it.
+The compiler targets reviewed below lack Armv8-M Mainline support. Moving a
+Rust kernel to verified C would add tools and an FFI boundary. Level 11C is
+declined for the RP2350. The source-to-binary gap is recorded in
+`assurance/platform.toml`.
 
 ## The candidate kernels
 
 Stage 11B names five. Measured over the tree, one of them is portable to a C
-subset. RSA uses Rust and hand-written assembly, and three other candidates also fall outside the verified C subset.
+subset. RSA and three other candidates fall outside the verified C subset.
 
 | Candidate | Where | Size | Portable to a verified C subset? |
 |---|---|---|---|
 | gate / transition functions | the ten concrete gates `docs/authorization-slice.md` lists, over `crates/rsk-fido/src/state.rs` | 856 lines in `state.rs` alone | **No.** Half are generic over two traits (`<S: Storage, R: Rng>`); the other half take a Rust struct by reference, whose layout Rust owns |
 | zeroization routines | 16 `scrub` / `wipe_*` sites across `crates/` and `firmware/`, and `rsk_secret`'s drops | 16 sites, 49 files using `zeroize` | **No.** Each is a method on a Rust type, and the drop glue that makes it sound is the compiler's |
-| RSA exponentiation and CRT | Rust over the vendored rsa-armv7 primitives | 400 lines of Thumb-2 assembly | The Rust code and hand-written assembly require separate verification |
+| RSA exponentiation and CRT | Rust with shared host and device Montgomery arithmetic | 299 lines in `montgomery.rs` | Moving the kernels to C would require a source rewrite and a new FFI contract |
 | ML-DSA reductions | `crates/rsk-mldsa/src/reduce.rs`, `ntt.rs`, `round.rs` | 256 lines | **Yes, in principle.** Branch-free integer arithmetic, no generic function in any of the three |
-| linker-generated boundaries | 15 of the 36 `[[boundary]]` rows in `assurance/toolchain.toml` | 15 symbol imports | **Not code.** The datum is a symbol's address; a compiler has nothing to say about it |
+| linker-generated boundaries | 15 of the 32 `[[boundary]]` rows in `assurance/toolchain.toml` | 15 symbol imports | **Not code.** The datum is a symbol's address; a compiler has nothing to say about it |
 
 The genericity is the load-bearing number. Across the production modules of
 `crates/rsk-fido/src/`, 243 of 470 functions are generic and 177 of those carry
@@ -51,31 +50,20 @@ exposed. `crates/rsk-mldsa/src/round.rs` already carries a Kani proof
 verified compiler does not reach — so moving it to C would trade a proof this
 tree runs for one it cannot.
 
-## What the existing FFI boundary costs
+## RSA and the remaining FFI boundary
 
-This tree already pays for one foreign-language boundary, so "a second one
-costs at least as much again" is a measurement rather than a guess. What the
-first one costs today:
-
-- **five runtime `unsafe` blocks** in `docs/unsafe.md` under `PLAT-UNSAFE-007`;
-- **3 Montgomery assembly imports** and one assembly translation unit in
-  `assurance/toolchain.toml`. The assembler is pinned through the GCC package;
-- **an AAPCS contract** in `crates/rsk-rsa/src/montgomery.rs` and the assembly.
-  The callers own the widths, endianness, overlap rules and buffer sizes;
-- **a containment argument**, which is the reason the sites are allowed at all:
-  a power-on known-answer self-test and a Bellcore fault check on every
-  signature. A new boundary owes an argument of that shape or it owes
-  `docs/unsafe.md` an entry it cannot fill;
-- **native source citations require manual review.** `scripts/citation_gate.py`
-  does not resolve the C or assembly sources cited by `assurance/toolchain.toml`.
+The Rust RSA kernels have **0 RSA native imports**. The Secure TrustZone
+gateway still uses C, with a calling convention and native source inventory
+recorded in `assurance/toolchain.toml`.
 
 ## The TCB delta
 
 `scripts/check-assurance.sh:"toolchain TCB registry"` prints the live roster, and
 `assurance/toolchain.toml` is what it prints from: 13 registered tools
 carrying 7 distinct roles, of which 12 name a file that pins them and 1 is
-unpinned against an open obligation. The tree carries 25 FFI boundaries; 15 belong
-to the separate TrustZone build's CMSE entries and Non-secure vectors. Of
+unpinned against an open obligation. The registry records 32 boundaries,
+including 15 linker-symbol imports. The remaining 17 cover the TrustZone
+gateway, interrupt vectors, probe symbols and Secure fault entry. Of
 the six TCB categories the criterion counts, the registry reaches 4 and says
 why the other two are out of reach.
 
@@ -86,8 +74,7 @@ kernel, but LLVM is not in the roster: it is one of the two categories
 `assurance/toolchain.toml` records as out of reach, because rustc's LLVM
 version is written in no file of this tree and its pass pipeline is written
 nowhere at all. Replacing an unenumerated tool for one kernel does not
-enumerate it. And `arm-none-eabi-gcc` and `arm-none-eabi-as` both stay, because
-the assembly stays.
+enumerate it. And `arm-none-eabi-gcc` and `arm-none-eabi-as` both stay, because the Secure gateway still uses that toolchain.
 
 **It adds at least one tool and plausibly three.** CompCert alone is a
 `[[tool]]` with role `compiler` and a `provenance` a gate must open on every
@@ -110,9 +97,7 @@ category count unchanged.**
 refinements `armv6-`, `armv7a-`, `armv7r-` and `armv7m-`. The firmware's target
 is `thumbv8m.main-none-eabihf` — Armv8-M Mainline, Cortex-M33 — which no
 CompCert target names. The nearest, `armv7m-`, is a different architecture
-profile, and the build also passes `-mfpu=fpv5-sp-d16`
-(`crates/rsk-rsa/build.rs`), a single-precision FPv5 unit that is not the
-VFPv3-d16 the ARM ports assume.
+profile.
 
 **The pinned nixpkgs has CompCert and this project may not use it.** The same
 nixpkgs revision `assurance/toolchain.toml` pins for `arm-none-eabi-gcc`
@@ -175,14 +160,11 @@ A decision with no falsifier is a preference. Any one of these overturns it:
   speed and that the proof obligations it discharges are ones Kani does not
   already reach on the Rust would reopen the question for that kernel alone —
   never for the whole firmware.
-- **The assembly stops dominating the foreign half.** If the RSA core were
-  ever replaced by a pure-C implementation fast enough for on-card key
-  generation, verifying that C could cover the native arithmetic.
 - **The gate stops being Rust-shaped.** If the tree acquires a second language
   for an unrelated reason and pays the linting cost listed above anyway, the
   marginal cost of this decision falls to the toolchain delta alone.
 
-None of the five is close. The first two are outside this project's control.
+None of these is close. The first two are outside this project's control.
 
 ## Reproduce
 
@@ -192,7 +174,7 @@ nix develop -c python scripts/release_gate.py       # 15 steps over 6 subjects
 nix develop -c python scripts/docs_constants.py     # MAX_MOD, held against the code
 
 # the candidate kernels
-wc -l crates/rsk-rsa/csrc/bignum_asm.S
+wc -l crates/rsk-rsa/src/montgomery.rs
 wc -l crates/rsk-mldsa/src/reduce.rs crates/rsk-mldsa/src/ntt.rs crates/rsk-mldsa/src/round.rs
 
 # the FIDO gate surface: functions, generic functions, and the storage bound.

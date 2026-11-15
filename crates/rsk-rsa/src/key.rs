@@ -162,7 +162,7 @@ impl RsaKey {
     /// base-blinded `(c·rᵉ)ᵈ·r⁻¹ mod n` with a fresh random `r` so the
     /// variable-time exponentiation cannot become a Marvin-style timing oracle,
     /// then Bellcore fault-checked (`mᵉ ≡ c mod n`). Writes `size()` big-endian
-    /// bytes to `out`. The asm CRT core is the fast path for a key of a width it
+    /// bytes to `out`. The fixed-width CRT core is the fast path for a key of a width it
     /// can take ([`crate::crt::private_op`]); this is the software one every
     /// other key still needs.
     pub(crate) fn private_op(

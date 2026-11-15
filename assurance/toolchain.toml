@@ -111,7 +111,7 @@ name = "arm-none-eabi-as"
 role = "assembler"
 provenance = "flake.lock:nixpkgs"
 pin = "31ecbaca1bdefa45dffc409f0250bd8039ea0010"
-statement = "Assembles rsk-rsa's hand-written ARM asm. Same gcc-arm-embedded package as the C compiler; a row of its own because the assembler is one of the criterion's six categories."
+statement = "Assembles the code GCC emits for the Secure gateway. Same gcc-arm-embedded package as the C compiler; a row of its own because the assembler is one of the criterion's six categories."
 
 [[tool]]
 name = "cortex-m"
@@ -197,21 +197,6 @@ reason = "eachDefaultSystem plumbing (flake.nix:36). It emits no binary into any
 # criterion asks this file not to be.
 
 [[boundary]]
-id = "import:crates/rsk-rsa/src/montgomery.rs:bignum_sqracc"
-provider = "arm-none-eabi-as"
-statement = "Accumulates a square in a double-width product buffer. The definition is in csrc/bignum_asm.S."
-
-[[boundary]]
-id = "import:crates/rsk-rsa/src/montgomery.rs:bignum_mulacc"
-provider = "arm-none-eabi-as"
-statement = "Accumulates the product of two modulus-width operands in double-width scratch. The definition is in csrc/bignum_asm.S."
-
-[[boundary]]
-id = "import:crates/rsk-rsa/src/montgomery.rs:bignum_mont_redc"
-provider = "arm-none-eabi-as"
-statement = "Reduces the double-width product with the modulus, its complement and its four-word negative inverse. The definition is in csrc/bignum_asm.S."
-
-[[boundary]]
 id = "import:firmware/src/main.rs:_stack_end"
 provider = "flip-link"
 statement = "Not a function: a symbol whose ADDRESS is the datum. cortex-m-rt's link.x emits it and flip-link rewrites it when it inverts RAM, so the value MSPLIM is armed with is the linker's output and not the source's."
@@ -235,11 +220,6 @@ statement = "firmware/memory.x:32. The counter partition's flash offset, fenced 
 id = "import:firmware/src/main.rs:__kvcnt_end"
 provider = "rust-lld"
 statement = "firmware/memory.x:33. The end of the counter partition; scripts/check.sh:265 holds the partition table against __kvmain_start..__kvcnt_end."
-
-[[boundary]]
-id = "unit:crates/rsk-rsa/csrc/bignum_asm.S"
-provider = "arm-none-eabi-as"
-statement = "The hand-written Armv7-M assembly, preprocessed by gcc and assembled by as. Seven START_GLOBAL_FUNC symbols, none of them declared by any Rust extern block — the C above is their only caller. It is linked into .data so it executes from SRAM."
 
 [[boundary]]
 id = "export:firmware/src/trustzone/mod.rs:rsk_tz_readable_impl"

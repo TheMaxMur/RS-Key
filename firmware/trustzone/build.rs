@@ -171,7 +171,7 @@ pub fn configure(out: &Path, memory: &mut String, code_size: u32, flash_size: u3
          __rsk_sha256_initial_start = .;\n\
          KEEP(*(.rodata._RNvCs*_10rsk_sha2567INITIAL))\n\
          __rsk_sha256_initial_end = .;\n\
-         KEEP(*(.text.*rsk_sha256* .text._RNvM*10rsk_crypto3mac*10HmacSha256* .text._RNvNtCs*_10rsk_crypto3mac11hkdf_sha256* .text._RNvM*10rsk_crypto4drbg*8HmacDrbg*)) KEEP(*(.data.bignum_hl .data.bignum_asm .data.sieve_step .data.ram_func))\n\
+         KEEP(*(.text.*rsk_sha256* .text._RNvM*10rsk_crypto3mac*10HmacSha256* .text._RNvNtCs*_10rsk_crypto3mac11hkdf_sha256* .text._RNvM*10rsk_crypto4drbg*8HmacDrbg*)) KEEP(*(.data.bignum_* .data.sieve_step .data.ram_func))\n\
          KEEP(*(.text._RNvM*9rsk_store13authenticated6record*5Entry15verify_with_mac*))\n\
          KEEP(*(.text._RNvNtCs*_10rsk_crypto4hash6sha256*))\n\
          __rsk_memory_start = .;\n\
@@ -225,6 +225,7 @@ pub fn configure(out: &Path, memory: &mut String, code_size: u32, flash_size: u3
          __rsk_scratch_exec_start = .;\n\
          KEEP(*(.text._RNvNtNtNtCs*_4p52110arithmetic5field10field_impl19fiat_p521_carry_mul*))\n\
          KEEP(*(.text._RNvNtNtNtCs*_4p52110arithmetic5field10field_impl22fiat_p521_carry_square*))\n\
+         KEEP(*(.text._RNCNvNtNtCs*_7rsk_rsa7privexp7backend3pow*))\n\
          __rsk_scratch_payload_end = .;\n\
          . = ORIGIN(SCRATCH) + LENGTH(SCRATCH);\n\
          __rsk_scratch_exec_end = .;\n\
@@ -232,7 +233,7 @@ pub fn configure(out: &Path, memory: &mut String, code_size: u32, flash_size: u3
          __rsk_scratch_exec_load = LOADADDR(.rsk_scratch_exec);\n\
          } INSERT BEFORE .rsk_exec;\n\
          ASSERT(__rsk_scratch_payload_end > __rsk_scratch_exec_start, \"P-521 field code is missing from scratch SRAM\")\n\
-         ASSERT(__rsk_scratch_payload_end <= __rsk_scratch_exec_end, \"P-521 field code exceeds scratch SRAM\")\n",
+         ASSERT(__rsk_scratch_payload_end <= __rsk_scratch_exec_end, \"P-521 and RSA code exceed scratch SRAM\")\n",
     );
     let object = out.join("gateway.o");
     run(Command::new("arm-none-eabi-gcc")

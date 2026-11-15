@@ -90,9 +90,8 @@ indexed by the public length counter, and the one load-shaped residual
 `docs/ct-audit.md` names — the `rsk-rsa` modexp secret-indexed window lookup —
 is out of reach two ways, whichever surface drives it. The arm that ships folds
 the secret nibble into the BASE pointer rather than an index
-(`crates/rsk-rsa/src/privexp.rs`'s `t.add(index * w)` in the call to
-`bignum_mulacc`); the load itself happens inside `bignum_mulacc`, so the taint would have
-to cross a `bl` and the ABI into hand-written asm. Both ends now reside in
+(`crates/rsk-rsa/src/privexp.rs`'s `&table[index * w..][..w]` passed to
+`mul`); the load happens inside `mul_acc`, beyond the taint walk's call boundary. Both ends now reside in
 executable SRAM sections read by this gate; including those sections does not
 extend the taint walk across calls. A rule whose extension is empty over everything the
 audit page names is a green cell with nothing in it, which is the shape this file

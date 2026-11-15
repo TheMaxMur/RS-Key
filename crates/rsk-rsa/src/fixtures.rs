@@ -46,7 +46,7 @@ pub(crate) fn test_key_1024() -> RsaKey {
     rsa_from_pqe(E_BE, &hex(P1024_HEX), &hex(Q1024_HEX)).unwrap()
 }
 
-/// The RSA-640 key: `half = 40`, which the asm CRT core refuses because it is
+/// The RSA-640 key: `half = 40`, which the fixed-width CRT core refuses because it is
 /// not a multiple of 32. Generation cannot produce one; only an import can.
 pub(crate) fn test_key_640() -> RsaKey {
     rsa_from_pqe(E_BE, &hex(P640_HEX), &hex(Q640_HEX)).unwrap()

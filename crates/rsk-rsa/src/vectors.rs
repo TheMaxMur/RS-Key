@@ -28,7 +28,7 @@ pub const Q1024_HEX: &str = "ed764fec2f76eb5ac58a8d99c6075e8d5f8647e801f25665d18
 /// See [`P1024_HEX`].
 pub const N1024_HEX: &str = "de5c2a4ebe7f192a928200b518c06885733e797d25c8858b4795a8da5033f0a40b2e168e5629d453d1dbc1403bed339e4923ebb6bd5059400fe1051e76b217455a1fe64e7434231281f55189f8e5ccb14ddb224d4c9851210d255b563b7cec0a0cdfbefcbee4cf0c96c06b7f12d3fbe13982f8eed25a8f9b01d02380104e3775";
 
-/// An RSA-640 key: 40-byte primes, the width the asm CRT core refuses because
+/// An RSA-640 key: 40-byte primes, the width the fixed-width CRT core refuses because
 /// it is not a multiple of 32.
 pub const P640_HEX: &str =
     "ffe2e4a07c75787c7b8b5b902633f9495f8daf04cd3b6930c04b5879ad1e912291f7f41bcbfe0c57";

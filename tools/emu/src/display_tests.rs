@@ -753,7 +753,11 @@ fn the_panel_generates_the_rsa_key_the_wire_can() {
     let started = Instant::now();
     let key = rsk_display::Hooks::rsa_search_progress(&mut hooks, RSA_BITS, &mut rng, &mut || {
         ticks += 1;
-        at_first_tick.get_or_insert(pushes.get());
+        if ticks == 1 {
+            at_first_tick = Some(pushes.get());
+            // Make a repaint due on this tick even on a fast host.
+            std::thread::sleep(Duration::from_millis(crate::display::SPIN_PRESENT_MS));
+        }
     })
     .expect("the panel has a single-core path to fall through to, as the wire does");
     let took = started.elapsed();

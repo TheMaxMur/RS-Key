@@ -66,7 +66,7 @@ The assurance result. Sites checked and found **correct**:
   mutual-auth** all route through the constant-time comparator (PIV against a
   single-use per-session challenge, not the persistent management key).
 - **The RSA sign/decipher mainline is blinded** — one helper inside `rsk-rsa`
-  draws a fresh `r` around every secret-exponent modexp, asm CRT and software
+  draws a fresh `r` around every secret-exponent modexp, fixed-width CRT and software
   alike, and with the fix above so was the raw fallback, until 0x0A4F removed
   it. (Re-checked at 0.4.12, when the operation moved off `rsa` 0.9.10's own
   `blind`/`unblind`.)
@@ -129,8 +129,8 @@ today.
   `sign_crt`. Both reach `privexp::backend::pow` on the device. The index folds
   into the table's base pointer. The instruction sequence is independent of the
   nibble's value; only the *address* changes
-  (`crates/rsk-rsa/src/privexp.rs`, the `t.add(index * w)` input to
-  `bignum_mulacc`).
+  (`crates/rsk-rsa/src/privexp.rs`, the `&table[index * w..][..w]` input to
+  `mul`).
 
   *There is no XIP-cache channel — and not because the core is cacheless.* The
   RP2350 does put a cache in front of its QSPI flash, and it is load-bearing
@@ -144,15 +144,15 @@ today.
   too — core1's `CORE1_STACK` (`firmware/src/core1.rs`), a `.bss` static outside
   that pair and SRAM by the same script. The code that reads it is SRAM-resident
   by link section. Rust places the private window loop in
-  `.data.bignum_hl` with the conversion to Montgomery form. The remaining
-  assembly is in `.data.bignum_asm`. The public
+  `.data.bignum_hl` with the conversion to Montgomery form. The arithmetic kernels occupy the other
+  `.data.bignum_*` input sections. The public
   exponentiation schedule lives in flash and calls the same SRAM arithmetic.
   The CRT wrapper prepares and combines residues outside the SRAM window loop.
 
   *What that does not settle.* An SRAM access is not a cache access, but it is
   not nothing. Two mechanisms could still turn the address into a time, and this
   audit measures neither: SRAM banking, and data-dependent multiplier latency
-  inside `bignum_mulacc`. The banking half is an assumption and not a finding —
+  inside `mul_acc`. The banking half is an assumption and not a finding —
   *if* the bank a cycle touches follows the address, then a secret nibble picks
   it, and nothing in this tree establishes that. It is the conservative reading
   of the SoC's memory organisation; the nearest in-tree note
@@ -202,7 +202,7 @@ today.
 **Covered:** all hand-rolled comparator definitions and call sites; every
 PIN/PUK/password/MAC/verifier comparison across FIDO, PIV, OpenPGP, OATH; OTP
 slot access-code compares; HOTP/TOTP; RSA private sign/decrypt/raw paths; the
-`rsk-rsa` Rust/Thumb-2 modexp, sieve, and primality primitives; secret-indexed
+`rsk-rsa` modexp, sieve, and primality primitives; secret-indexed
 lookups; and status-word/error-path oracles.
 
 **What a source/disassembly audit cannot prove:**

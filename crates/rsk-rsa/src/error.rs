@@ -23,7 +23,7 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RsaError {
     /// A width does not fit: an output buffer too small for the result, a field
-    /// wider than its slot, a prime width the asm CRT core cannot take, or a
+    /// wider than its slot, a prime width the fixed-width CRT core cannot take, or a
     /// modulus too narrow for the block — or wider than this crate handles.
     /// Applets answer `Sw::WRONG_LENGTH`.
     BadWidth,

@@ -20,7 +20,7 @@ rsk-crypto = { workspace = true }
 # sign / d·G / ECDH operations, and the `7F49 { 86 }` public-key DO.
 rsk-ec = { workspace = true }
 # The RSA family: keygen, the sealed CRT layout and its blinded, fault-checked
-# private op (UMAAL asm on device), PKCS#1 v1.5, the public-key DO.
+# private op, PKCS#1 v1.5 and the public-key DO.
 rsk-rsa = { workspace = true }
 # Keys, management keys and the unsealed plaintext held in a type that wipes
 # itself; `zeroize` stays for the one struct field wiped in place.

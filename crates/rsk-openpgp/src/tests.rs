@@ -2723,7 +2723,7 @@ fn rsa_keepalive_generate_path_produces_signable_key() {
 fn rsa_generate_params_accepts_rsa4096() {
     // There is no 2048-only gate: a 4096-bit algorithm attribute flows straight
     // through `rsa_generate_params` to `RsaKeygen::new(4096)` (which is
-    // size-generic, asm modexp MAX_MOD = 256 B = an RSA-4096 prime). The full
+    // size-generic, modexp MAX_MOD = 256 B = an RSA-4096 prime). The full
     // keygen+sign is the `#[ignore]`d test below (on-device keygen runs for
     // minutes, so it is not a default test).
     let rng = RefCell::new(LcgRng(0xCAFE_F00D));

@@ -140,26 +140,26 @@ fn decrypts_an_openssl_ciphertext_on_both_arms() {
         let mut soft = [0u8; MAX_RSA_BYTES];
         let sn = rsa_decrypt(&key, &ct, &mut SeqRng(17 + i as u64), &mut soft).unwrap();
         assert_eq!(&soft[..sn], msg.as_slice(), "software arm, message {i}");
-        // The asm CRT arm the applet takes for a key of a width it can handle.
+        // The fixed-width CRT arm the applet takes for a key of a width it can handle.
         let mut em = [0u8; MAX_RSA_BYTES];
         crate::crt::private_op(&crt, &ct, &mut SeqRng(23 + i as u64), &mut em[..k]).unwrap();
-        assert_eq!(unpad(&em[..k]).unwrap(), msg, "asm arm, message {i}");
+        assert_eq!(unpad(&em[..k]).unwrap(), msg, "CRT arm, message {i}");
     }
 }
 
 #[test]
 fn sign_crt_digestinfo_matches_openssl() {
-    // The applets' asm CRT signer, over the CRT view built at seal time, must
+    // The applets' fixed-width CRT signer, over the CRT view built at seal time, must
     // produce OpenSSL's signature over the SHA-256 DigestInfo gpg sends.
     let key = test_key();
     let crt = crt_of(&key);
     for (i, (digest, want)) in SIGN_SHA256.iter().enumerate() {
         let mut di = DI_SHA256.to_vec();
         di.extend_from_slice(&hex(digest));
-        let mut asm = [0u8; MAX_RSA_BYTES];
-        let n = rsa_sign_crt(&crt, &di, &mut SeqRng(1 + i as u64), &mut asm).unwrap();
+        let mut signature = [0u8; MAX_RSA_BYTES];
+        let n = rsa_sign_crt(&crt, &di, &mut SeqRng(1 + i as u64), &mut signature).unwrap();
         assert_eq!(n, 256);
-        assert_eq!(&asm[..n], hex(want).as_slice(), "signature {i}");
+        assert_eq!(&signature[..n], hex(want).as_slice(), "signature {i}");
     }
 }
 

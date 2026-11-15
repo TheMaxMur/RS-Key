@@ -65,7 +65,7 @@ fn parse_rsa_blob_discriminates_layouts() {
     assert_eq!(parse_rsa_blob(&[0u8; 512]).unwrap(), (256, false));
     assert_eq!(parse_rsa_blob(&[0u8; 1280]).unwrap(), (256, true));
     // A non-standard even width (RSA-1600, half=100) reads as 2-field so it can
-    // still DECIPHER on num-bigint; the asm sign path rejects it separately.
+    // still DECIPHER on num-bigint; the CRT sign path rejects it separately.
     assert_eq!(parse_rsa_blob(&[0u8; 200]).unwrap(), (100, false));
     // Out of range fails closed — as `BadBlob`, which the applets answer
     // `MEMORY_FAILURE` to. The variant is the wire surface: pin it, not `is_err`.
@@ -174,7 +174,7 @@ fn private_op_legacy_two_field_recomputes_and_matches() {
 
 #[test]
 fn private_op_reproduces_an_openssl_signature() {
-    // The asm CRT core, driven exactly as PSO:CDS drives it, against OpenSSL's
+    // The fixed-width CRT core, driven exactly as PSO:CDS drives it, against OpenSSL's
     // own PKCS#1 v1.5 signatures over the same key. Byte-for-byte, not
     // "verifies": a signer that is merely self-consistent passes the latter.
     let key = test_key();
@@ -234,7 +234,7 @@ fn parse_disambiguates_320_byte_collision() {
 
 #[test]
 fn crt_plaintext_rejects_non_mult32_width() {
-    // A non-32-multiple prime width (RSA-640 → 40-byte primes) has no asm CRT
+    // A non-32-multiple prime width (RSA-640 → 40-byte primes) has no fixed-width CRT
     // path; sealing must fail loud, not seal a blob the loader would refuse.
     let k = test_key_640();
     let mut buf = [0u8; MAX_CRT_PLAIN];
@@ -244,7 +244,7 @@ fn crt_plaintext_rejects_non_mult32_width() {
 #[test]
 fn crt_from_plain_rejects_non_mult32_width() {
     // The loader half of the same rule, and the one PSO:CDS reports: a legacy
-    // `P‖Q` blob of a width the asm cannot take answers `WRONG_LENGTH`.
+    // `P‖Q` blob of a width the CRT signer refuses answers `WRONG_LENGTH`.
     assert_eq!(crt_from_plain(&[0u8; 200]).err(), Some(RsaError::BadWidth));
 }
 
