@@ -3,7 +3,7 @@
 
 //! Fixed-width Montgomery arithmetic over little-endian 32-bit limbs.
 //! The doubling strategy for squaring follows Emil Lenngren's rsa-armv7
-//! (copyright 2025, BSD-2-Clause, csrc/LICENSE.txt).
+//! (copyright 2025, BSD-2-Clause, `LICENSE-rsa-armv7.txt`).
 
 // Array arguments let LLVM specialize the hot loops for RSA-2048 prime widths.
 const RSA_2048_PRIME_WORDS: usize = crate::RSA_2048_BYTES / (2 * size_of::<u32>());

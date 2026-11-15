@@ -2,7 +2,7 @@
 // Copyright (C) 2026 RS-Key contributors
 
 //! Four-bit private exponentiation and CRT recombination.
-//! Based on Emil Lenngren's rsa-armv7, copyright 2025, BSD-2-Clause (csrc/LICENSE.txt).
+//! Based on Emil Lenngren's rsa-armv7, copyright 2025, BSD-2-Clause (`LICENSE-rsa-armv7.txt`).
 
 use crate::MAX_MOD;
 
