@@ -38,6 +38,36 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-11-21
+
+### TL;DR
+
+- **Back up before upgrading.** Boot migrates readable legacy storage to the
+  authenticated format and resumes an interrupted migration. Use v2-aware
+  firmware after migration. A 16 MB key provisioned before 0.4.8 still comes up
+  factory-empty because the storage offset moved.
+- **TrustZone in every build.** The Secure worker owns credentials and policy.
+  USB framing runs on the Non-secure side. Build the combined image with
+  `nix build .#firmware` or `nix develop -c bash scripts/build.sh`.
+- **Provisioned devices seal OTP page 58 during boot** after migration and
+  a flash scrub. PIN-dependent records can delay sealing until migration
+  completes. The [production guide](https://github.com/TheMaxMur/RS-Key/blob/v0.5.0/docs/production.md)
+  covers the status checks and recovery steps.
+- **Authenticated storage and mirrored retry counters.** Damaged or unreadable
+  records cause storage errors instead of triggering factory defaults. FIDO,
+  PIV and OpenPGP PIN retries and OATH HOTP use the mirrored journal.
+- **RSA arithmetic is now in Rust.** Public and private exponentiation, CRT
+  and the Montgomery kernels share the Rust implementation on host and device.
+  RSA-2048 signing took about 155 ms on the 150 MHz RP2350 in an SRAM benchmark
+  that included blinding and the Bellcore check (bcdDevice `0x0BE9`).
+- **Compatibility and tools.** PIV serves a default Card Capability Container
+  for Windows. The CLI and TUI recognize Linux PC/SC readers by USB serial.
+  The Waveshare V2 display supports CST3530 touch. `rsk flash` verifies the
+  release signature and pins provenance checks to the release tag when `gh`
+  is installed.
+
+### Detailed changes
+
 - Speed up RSA-2048 signing with batched blinding inversion and fixed-width
   Montgomery kernels (bcdDevice 0x0BE9).
 
@@ -16627,7 +16657,8 @@ family that keeps the "enterprise" features in the open tree.
   signature of it, and a CycloneDX SBOM. See
   [docs/releases.md](docs/releases.md) to verify a download.
 
-[Unreleased]: https://github.com/TheMaxMur/RS-Key/compare/v0.4.11...HEAD
+[Unreleased]: https://github.com/TheMaxMur/RS-Key/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/TheMaxMur/RS-Key/compare/v0.4.11...v0.5.0
 [0.4.11]: https://github.com/TheMaxMur/RS-Key/compare/v0.4.10...v0.4.11
 [0.4.10]: https://github.com/TheMaxMur/RS-Key/compare/v0.4.9...v0.4.10
 [0.4.9]: https://github.com/TheMaxMur/RS-Key/compare/v0.4.8...v0.4.9
