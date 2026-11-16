@@ -148,8 +148,11 @@ python tools/emu/image_assurance.py --emulator "$emu" --image "$elf" \
 `basic` covers startup and the boundary probes with the corresponding
 diagnostic ELFs. `stack` exercises stack-heavy operations, including
 ML-DSA and RSA. `operations` checks the command matrix against the
-applet and image backends. The separate `upgrade` scenario needs an
-older release image and checks persistence across the firmware change.
+applet and image backends. In CI, `operations-core` includes PIV key
+generation, and OpenPGP RSA generation runs in `rsa-openpgp` (2048/3072)
+and `rsa-openpgp-4096`, each with its own emulator sessions and time budget.
+The separate `upgrade` scenario needs an older release image and checks
+persistence across the firmware change.
 Reports identify the emulator and images by hash.
 
 ### USB/IP

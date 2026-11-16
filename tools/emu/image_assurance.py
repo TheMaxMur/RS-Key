@@ -569,7 +569,8 @@ def main():
     parser.add_argument("--incompatible-image", type=Path, help="scratch ELF with OATH FID base changed")
     parser.add_argument("--stack-regression", type=Path, help="scratch ELF with increased ML-DSA stack use")
     parser.add_argument("--work", type=Path, required=True, help="new directory for logs and emulated flash")
-    parser.add_argument("--only", choices=["basic", "stack", "operations", "upgrade", "cuts", "all"], default="all")
+    parser.add_argument("--only", choices=("basic", "stack", "upgrade", "cuts", "all", *image_operations.GROUPS),
+                        default="all")
     args = parser.parse_args()
     args.work.mkdir(parents=True, exist_ok=False)
     for name in ("emulator", "image", "import_image", "gateway_image", "release_image", "incompatible_image", "stack_regression"):
@@ -583,11 +584,12 @@ def main():
     if args.stack_regression:
         assert report["images"]["image"] != report["images"]["stack_regression"], "stack mutant ELF is identical to baseline"
     try:
-        if args.only in ("all", "operations"):
+        if args.only == "all" or args.only in image_operations.GROUPS:
+            group = "operations" if args.only == "all" else args.only
             for label, elf in (("native_operations", None), ("image_operations", args.image)):
                 report[label] = {}
                 with device(args.emulator, elf, args.work / f"{label}.store", args.work, label) as dev:
-                    image_operations.run(dev, report[label])
+                    image_operations.run(dev, report[label], group)
         if args.only in ("all", "basic"):
             if args.gateway_image:
                 with device(args.emulator, args.gateway_image, args.work / "gateway.flash", args.work, "gateway") as image:

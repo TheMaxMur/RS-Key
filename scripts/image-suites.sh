@@ -7,11 +7,12 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 suite="${2:-all}"
+platform=false
 case "$suite" in
-  all) scenarios=(basic stack operations cuts) ;;
-  platform) scenarios=(basic stack cuts) ;;
-  operations) scenarios=(operations) ;;
-  *) echo "unknown image suite: $suite (expected all, platform or operations)" >&2; exit 2 ;;
+  all) platform=true; scenarios=(basic stack operations cuts) ;;
+  platform) platform=true; scenarios=(basic stack cuts) ;;
+  operations|operations-core|rsa-openpgp|rsa-openpgp-4096) scenarios=("$suite") ;;
+  *) echo "unknown image suite: $suite" >&2; exit 2 ;;
 esac
 
 HOST_TARGET="${HOST_TARGET:-$(rustc -vV | sed -n 's/^host: //p')}"
@@ -33,7 +34,7 @@ build_hostile() {
   cp "$TZ_OUT/combined.elf" "$WORK/hostile-$name.elf"
   cp "$TZ_OUT/nonsecure/thumbv8m.main-none-eabihf/release/firmware-ns" "$WORK/hostile-$name-ns.elf"
 }
-if [[ "$suite" != operations ]]; then
+if "$platform"; then
   RSK_TZ_PROBE_NAME= RSK_TZ_PROBE_ADDRESS= RSK_TZ_GATEWAY_PROBES=1 bash scripts/build.sh --features no-touch
   cp "$TZ_OUT/combined.elf" "$WORK/gateway.elf"
   build_hostile usbctrl-read "$HOSTILE_USBCTRL" read
@@ -56,7 +57,7 @@ check_hostile() {
     --cfsr 0x8200 --require-fenced --base-port "$HOSTILE_PORT" 2>&1 | tee "$WORK/hostile-$name.log"
   HOSTILE_PORT=$((HOSTILE_PORT + 3))
 }
-if [[ "$suite" != operations ]]; then
+if "$platform"; then
   check_hostile usbctrl-read "$HOSTILE_USBCTRL" read
   check_hostile usbctrl-write "$HOSTILE_USBCTRL" write
   check_hostile dma-write "$HOSTILE_DMA" write
@@ -82,7 +83,7 @@ for scenario in "${scenarios[@]}"; do
   python tools/emu/image_assurance.py "${args[@]}" \
     --only "$scenario" --work "$WORK/$scenario" 2>&1 | tee "$WORK/$scenario.log"
 done
-if [[ "$suite" != operations ]]; then
+if "$platform"; then
   python tools/emu/image_otp_seal.py --binary "$EMU" --image "$WORK/firmware-pt.elf" \
     --out "$WORK/otp-seal" 2>&1 | tee "$WORK/otp-seal.log"
 fi

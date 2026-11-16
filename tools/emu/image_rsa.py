@@ -115,6 +115,7 @@ def generate(ops, label, command, bits):
             row["core1_wind_down_ns"] = int(fields(dev.inspect("status"))["emulated_ns"]) - start
         return key
 
+    start = time.monotonic()
     key = ops.run(label, operation)
     if dev.image:
         row = ops.report[label]
@@ -123,6 +124,9 @@ def generate(ops, label, command, bits):
         assert after["BUSY"] == 0 and after["JOB_PENDING"] == 0, "core1 did not wind down"
         assert row["stack"]["core1_used"] > CORE1_IDLE_ENVELOPE, "core1 stack stayed at idle depth"
         row["residue"] = clean(dev, key.public_numbers().n)
+    elapsed = time.monotonic() - start
+    ops.report[label]["wall_seconds"] = elapsed
+    print(f"image operations: {label} completed in {elapsed:.1f}s", flush=True)
     return key
 
 
@@ -145,10 +149,10 @@ def piv(ops):
             ops.report[label]["residue"] = clean(dev, key.public_numbers().n)
 
 
-def openpgp(ops):
+def openpgp(ops, sizes=tuple(RSA_ALGORITHMS)):
     dev = ops.dev
     dev.apdu(apdu(0x20, 0, 0x83, b"12345678"))
-    for bits in RSA_ALGORITHMS:
+    for bits in sizes:
         dev.apdu(apdu(0xDA, 0, 0xC1, b"\x01" + bits.to_bytes(2, "big") + b"\x00\x20\x00"))
         command = bytes.fromhex("00478000000002b6000000")
         key = generate(ops, f"openpgp_generate_rsa_{bits}", command, bits)

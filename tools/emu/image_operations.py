@@ -409,16 +409,27 @@ def otp(ops):
     ops.control("otp_key", OTP_KEY)
 
 
-def run(dev, report):
+RSA_GROUPS = ("rsa-openpgp", "rsa-openpgp-4096")
+GROUPS = ("operations", "operations-core", *RSA_GROUPS)
+
+
+def run(dev, report, group="operations"):
     import image_backup
     import image_rsa
 
     ops = Operations(dev, report)
+    if group in RSA_GROUPS:
+        dev.select(OPENPGP)
+        sizes = (4096,) if group == "rsa-openpgp-4096" else tuple(n for n in image_rsa.RSA_ALGORITHMS if n != 4096)
+        image_rsa.openpgp(ops, sizes)
+        return
+    assert group in GROUPS, f"unknown operation group: {group}"
     rsa_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
     fido(ops)
     image_backup.run(ops)
     piv(ops, rsa_key)
     image_rsa.piv(ops)
     openpgp(ops, rsa_key)
-    image_rsa.openpgp(ops)
+    if group == "operations":
+        image_rsa.openpgp(ops)
     otp(ops)

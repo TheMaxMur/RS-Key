@@ -66,6 +66,36 @@ def test_emulator_ports_are_distinct_when_the_kernel_reuses_freed_ports(laborato
     assert not bound
 
 
+@pytest.mark.parametrize("group, steps", [
+    ("operations", ["fido", "backup", "piv", "piv_rsa", "openpgp", "openpgp_rsa", "otp"]),
+    ("operations-core", ["fido", "backup", "piv", "piv_rsa", "openpgp", "otp"]),
+    ("rsa-openpgp", ["select", "openpgp_rsa"]),
+    ("rsa-openpgp-4096", ["select", "openpgp_rsa"]),
+])
+def test_operation_groups_keep_piv_generation_and_partition_openpgp_rsa(laboratory, monkeypatch, group, steps):
+    module, _ = laboratory
+    import image_backup
+    import image_rsa
+
+    operations = module.image_operations
+    trace = Mock()
+    for name in ("fido", "piv", "openpgp", "otp"):
+        monkeypatch.setattr(operations, name, getattr(trace, name))
+    monkeypatch.setattr(image_backup, "run", trace.backup)
+    monkeypatch.setattr(image_rsa, "piv", trace.piv_rsa)
+    monkeypatch.setattr(image_rsa, "openpgp", trace.openpgp_rsa)
+    dev = SimpleNamespace(select=trace.select, image=None)
+
+    operations.run(dev, {}, group)
+
+    assert [entry[0] for entry in trace.mock_calls] == steps
+    if group in operations.RSA_GROUPS:
+        trace.select.assert_called_once_with(operations.OPENPGP)
+        assert trace.openpgp_rsa.call_args.args[1] == {
+            "rsa-openpgp": (2048, 3072), "rsa-openpgp-4096": (4096,),
+        }[group]
+
+
 @pytest.mark.parametrize("chained", [False, True])
 def test_apdu_refusal_does_not_return_direct_or_chained_plaintext(laboratory, chained):
     _, device = laboratory
@@ -202,6 +232,8 @@ def test_otp_migration_cut_precedes_the_usb_recovery_deadline(laboratory, tmp_pa
 ] + [
     ("platform", None), ("platform", "otp-seal"),
     ("operations", None), ("operations", "operations"),
+    ("operations-core", None), ("rsa-openpgp", None),
+    ("rsa-openpgp-4096", None), ("rsa-openpgp-4096", "rsa-openpgp-4096"),
 ])
 def test_image_suite_requires_its_separate_probe_images(tmp_path, suite, failure):
     script = tmp_path / "scripts/image-suites.sh"
@@ -300,21 +332,20 @@ if os.environ["PROBE_FAILURE"] == scenario:
     assert (result.returncode == 0) == (failure is None), result.stdout + result.stderr
     assert (work / "firmware-pt.elf").read_bytes() == b"ordinary"
     order = ["usbctrl-read", "usbctrl-write", "dma-write", "matrix-read", "matrix-write"]
-    if suite == "operations":
+    if suite not in (None, "platform"):
         assert not hostile.exists()
         assert not (work / "gateway.elf").exists()
     else:
         expected = order[:order.index(failure) + 1] if failure in order else order
         assert hostile.read_text().splitlines() == expected
-    if failure is None or failure in ("otp-seal", "operations"):
+    if failure is None or failure == "otp-seal" or failure == suite:
         assert scenarios.read_text().splitlines() == {
             None: ["basic", "stack", "operations", "cuts", "otp-seal"],
             "platform": ["basic", "stack", "cuts", "otp-seal"],
-            "operations": ["operations"],
-        }[suite]
+        }.get(suite, [suite])
     if failure == "gateways":
         assert "gateway startup probes did not complete" in result.stdout
-    elif failure in ("rsa-events", "fault-recovery", "otp-seal", "operations"):
+    elif failure is not None and (failure == suite or failure in ("rsa-events", "fault-recovery", "otp-seal")):
         assert failure + " regression failed" in result.stdout
     elif failure is not None:
         access = "read" if failure.endswith("read") else "write"
