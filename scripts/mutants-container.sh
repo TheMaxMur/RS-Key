@@ -39,9 +39,8 @@ trap 'exit 143' TERM
   --memory=4g --memory-swap=4g --cpus=2 --pids-limit=256 \
   --cap-drop=ALL --cap-add=CHOWN --security-opt=no-new-privileges \
   --mount "type=bind,src=$rsk_root,dst=/repo,readonly" \
-  --mount "type=bind,src=$rsk_output,dst=/work" \
   --mount type=volume,src=rsk-mutants-nix,dst=/nix \
-  --workdir=/repo --env CARGO_BUILD_JOBS=1 --env CARGO_HOME=/work/cargo-home --env TMPDIR=/tmp \
+  --workdir=/repo --env CARGO_BUILD_JOBS=1 --env CARGO_HOME=/nix/rsk-mutants-cargo-home --env TMPDIR=/tmp \
   --env "MUTANTS_SHARD=${MUTANTS_SHARD:-1/1}" --env MUTANTS_OUT=/work \
   --env 'NIX_CONFIG=experimental-features = nix-command flakes
 sandbox = false
@@ -52,9 +51,29 @@ cores = 1' \
   sh -ec '
     # Nix uses libgit2, which reads the config file but ignores GIT_CONFIG_COUNT.
     git config --global --add safe.directory /repo
+    # Container root without DAC_OVERRIDE cannot write to the host output directory.
+    mkdir -p /work/mutants.out
+    # The Nix image may have no env at the shebang path used by the test runners.
+    if [ ! -x /usr/bin/env ]; then
+      mkdir -p /usr/bin
+      ln -sf "$(command -v env)" /usr/bin/env
+    fi
     exec nix develop --profile /work/nix-profile git+file:///repo -c ./scripts/mutants-all.sh "$@"
   ' sh "$@"
 ) >/dev/null
-docker start --attach "$(cat "$rsk_run/id")" &
+rsk_container="$(cat "$rsk_run/id")"
+docker start --attach "$rsk_container" &
 rsk_docker_pid=$!
-wait "$rsk_docker_pid"
+rsk_status=0
+wait "$rsk_docker_pid" || rsk_status=$?
+
+# Docker copies results out as the host user, including partial reports on failure.
+if docker cp "$rsk_container:/work/mutants.out" "$rsk_run/"; then
+  if [ -e "$rsk_output/mutants.out" ]; then
+    mv "$rsk_output/mutants.out" "$rsk_run/previous-report"
+  fi
+  mv "$rsk_run/mutants.out" "$rsk_output/"
+elif [ "$rsk_status" -eq 0 ]; then
+  exit 1
+fi
+exit "$rsk_status"

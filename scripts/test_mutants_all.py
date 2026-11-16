@@ -232,6 +232,7 @@ def test_the_container_launcher_enforces_the_whole_tree_limit(tree):
     docker = tree.fake / "bin/docker"
     docker.write_text("#!/usr/bin/env bash\n"
                       "if [ \"$1\" = image ]; then printf 'nixos/nix@sha256:%064d\\n' 0; exit 0; fi\n"
+                      "if [ \"$1\" = cp ]; then mkdir -p \"$3/mutants.out\"; exit 0; fi\n"
                       "if [ \"$1\" != create ]; then exit 0; fi\n"
                       "printf '%s\\n' \"$@\" > \"$FAKE/docker-argv\"\n"
                       "while [ $# -gt 0 ]; do\n"
@@ -247,6 +248,7 @@ def test_the_container_launcher_enforces_the_whole_tree_limit(tree):
                  "--cap-drop=ALL", "--security-opt=no-new-privileges", "--init"]:
         assert flag in argv, f"the actual launcher must enforce {flag}"
     assert argv[argv.index("--name") + 1] == "rsk-mutants-safe"
+    assert not any("dst=/work" in arg for arg in argv)
     command = [line.strip() for line in argv[argv.index("sh"):]]
     assert command[:2] == ["sh", "-ec"]
     assert command.index("git config --global --add safe.directory /repo") < command.index(
@@ -271,23 +273,29 @@ def test_a_container_name_conflict_cannot_stop_the_existing_runner(tree):
     assert not (tree.fake / "existing-runner-stopped").exists()
 
 
-@pytest.mark.parametrize("status", [0, 2, 125])
-def test_finished_launcher_preserves_the_container_verdict_and_removes_it(tree, status):
+@pytest.mark.parametrize("status,copy_ok,expected", [(0, True, 0), (2, True, 2), (125, False, 125), (0, False, 1)])
+def test_finished_launcher_copies_the_report_before_it_removes_the_container(tree, status, copy_ok, expected):
     script = tree.root / "scripts/mutants-container.sh"
     shutil.copy(ROOT / "scripts/mutants-container.sh", script)
     docker = tree.fake / "bin/docker"
     docker.write_text("#!/usr/bin/env bash\n"
                       "if [ \"$1\" = image ]; then printf 'nixos/nix@sha256:%064d\\n' 0; exit 0; fi\n"
                       f"if [ \"$1\" = start ]; then exit {status}; fi\n"
+                      f"if [ \"$1\" = cp ]; then [ {int(copy_ok)} -eq 1 ] || exit 1; "
+                      "mkdir -p \"$3/mutants.out\"; echo new > \"$3/mutants.out/caught.txt\"; exit 0; fi\n"
                       "if [ \"$1\" = rm ]; then printf '%s\\n' \"$3\" > \"$FAKE/removed-id\"; exit 0; fi\n"
                       "while [ $# -gt 0 ]; do\n"
                       "  if [ \"$1\" = --cidfile ]; then printf '%064d\\n' 1 > \"$2\"; fi\n"
                       "  shift\n"
                       "done\n")
     docker.chmod(0o755)
+    report = tree.root / "target/mutants/mutants.out"
+    report.mkdir(parents=True)
+    (report / "caught.txt").write_text("previous\n")
     done = subprocess.run(["bash", str(script)], cwd=tree.root, capture_output=True,
                           text=True, env=tree.env())
-    assert done.returncode == status
+    assert done.returncode == expected
+    assert (report / "caught.txt").read_text() == ("new\n" if copy_ok else "previous\n")
     assert (tree.fake / "removed-id").read_text().strip() == f"{1:064d}"
 
 
