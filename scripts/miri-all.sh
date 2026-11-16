@@ -5,6 +5,7 @@
 # Every fuzz target's logic under Miri's UB checker — the deep-checks `miri` row.
 #
 #   nix develop .#fuzz -c ./scripts/miri-all.sh
+#   nix develop .#fuzz -c ./scripts/miri-all.sh --smoke
 #   MIRI_SHARD=2/4 nix develop .#fuzz -c ./scripts/miri-all.sh
 #   FUZZ_CONFIG=flavours nix develop .#fuzz -c ./scripts/miri-all.sh
 #
@@ -46,6 +47,25 @@ if ! cargo miri --version >/dev/null 2>&1; then
   echo "      run it as: nix develop .#fuzz -c $0" >&2
   exit 1
 fi
+
+case "${1:-}" in
+  --smoke)
+    # A single seed keeps the develop check short and its output parseable.
+    log="$(mktemp)"
+    trap 'rm -f "$log"' EXIT
+    # The OpenPGP integration case takes about two minutes under Miri.
+    MIRIFLAGS="-Zmiri-strict-provenance -Zdeduplicate-diagnostics" \
+      cargo miri test --locked --manifest-path "$MANIFEST" --test apdu_frame \
+      -- --exact --skip an_escape_frame_delivers_a_max_length_put_data 2>&1 | tee "$log"
+    if ! grep -qE '^test result: ok\. [1-9][0-9]* passed' "$log"; then
+      echo 'FAIL: the Miri smoke ran no tests' >&2
+      exit 1
+    fi
+    exit 0
+    ;;
+  "") ;;
+  *) echo "usage: $0 [--smoke]" >&2; exit 2 ;;
+esac
 
 # Listed by Miri's own build, not by a native `cargo test --list`: a `cfg(miri)`
 # test exists in one and not the other, and the roster has to be the one that runs.

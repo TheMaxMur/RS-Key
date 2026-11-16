@@ -48,9 +48,20 @@ LED_STATUS_IDLE = "00"
 
 
 def port():
-    with socket.socket() as sock:
-        sock.bind(("127.0.0.1", 0))
-        return sock.getsockname()[1]
+    return ports(1)[0]
+
+
+def ports(count, exclude=()):
+    assigned = []
+    # Hold all selections until the last bind so Linux cannot reuse a port.
+    with contextlib.ExitStack() as stack:
+        while len(assigned) < count:
+            sock = stack.enter_context(socket.socket())
+            sock.bind(("127.0.0.1", 0))
+            assigned_port = sock.getsockname()[1]
+            if assigned_port not in exclude:
+                assigned.append(assigned_port)
+    return assigned
 
 
 def fields(reply):
@@ -98,7 +109,7 @@ class ImageDeadline:
 class Device:
     def __init__(self, binary, image, store, directory, label, usbip=None, rom=None,
                  display=False, taps_port=None, headless=True, *, check_boot_led=False):
-        self.fido_port, self.ccid_port, self.inspect_port = port(), port(), port()
+        self.fido_port, self.ccid_port, self.inspect_port = ports(3, (usbip, taps_port))
         self.log_path = directory / f"{label}.log"
         self.log = self.log_path.open("w")
         args = [str(binary), "--store", str(store), "--seed", SEED,
@@ -500,11 +511,11 @@ def import_stage_halts(args, work, report):
     "import image started the stale NS transport"; the intact branch passes."""
     store = work / "import-stage.flash"
     shutil.copyfile(work / "basic.flash", store)
-    inspector = port()
+    fido, ccid, inspector = ports(3)
     with (work / "import-stage.log").open("w") as log:
         process = subprocess.Popen([
             str(args.emulator), "--image", str(args.import_image), "--store", str(store),
-            "--seed", SEED, "--fido-port", str(port()), "--ccid-port", str(port()),
+            "--seed", SEED, "--fido-port", str(fido), "--ccid-port", str(ccid),
             "--inspect-port", str(inspector),
         ], stdout=log, stderr=log)
         try:

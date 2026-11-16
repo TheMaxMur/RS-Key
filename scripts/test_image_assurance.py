@@ -43,6 +43,29 @@ def hostile():
     return module
 
 
+def test_emulator_ports_are_distinct_when_the_kernel_reuses_freed_ports(laboratory, monkeypatch):
+    module, _ = laboratory
+    bound = set()
+
+    class Socket:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            bound.remove(self.port)
+
+        def bind(self, _):
+            self.port = next(p for p in range(49152, 49157) if p not in bound)
+            bound.add(self.port)
+
+        def getsockname(self):
+            return "127.0.0.1", self.port
+
+    monkeypatch.setattr(module.socket, "socket", Socket)
+    assert module.ports(3, (49152, 49154)) == [49153, 49155, 49156]
+    assert not bound
+
+
 @pytest.mark.parametrize("chained", [False, True])
 def test_apdu_refusal_does_not_return_direct_or_chained_plaintext(laboratory, chained):
     _, device = laboratory

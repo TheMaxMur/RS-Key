@@ -154,6 +154,7 @@ CLAIM_JOBS=(
   "ci:knobs|-|the same, sharded; the self-test row is what says the shards cover the matrix"
   "ci:assurance|assurance|"
   "ci:mutants-diff|mutants|"
+  "ci:miri-smoke|miri|the full Miri phase includes the APDU framing tests"
   "deep-checks:miri|miri|"
   "deep-checks:fuzz|fuzz|"
   "deep-checks:fuzz-coverage|-|needs the accumulated corpus cache; see REFUSED"

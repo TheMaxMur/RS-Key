@@ -331,6 +331,7 @@ that had already been removed.
 
 ```sh
 nix develop .#fuzz -c ./scripts/fuzz-all.sh
+nix develop .#fuzz -c ./scripts/miri-all.sh --smoke
 nix develop .#fuzz -c ./scripts/miri-all.sh
 ```
 
@@ -338,6 +339,9 @@ The `fuzz` workflow runs every target for 30 seconds on each push to
 `develop`. Four shards run in parallel for each of the `default` and
 `flavours` builds. Daily `deep-checks` uses the same runner with 120 seconds
 per target. Failing jobs upload crash inputs as artifacts.
+
+The `miri-smoke` job on each `develop` push runs the APDU framing tests
+under a single Miri seed. Daily `deep-checks` runs the full multi-seed matrix.
 
 Committed seeds, generated dictionaries and external corpora reach inputs
 that random bytes seldom produce. For example, a seed can get through

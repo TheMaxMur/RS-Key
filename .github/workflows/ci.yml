@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # Copyright (C) 2026 RS-Key contributors
 
-# Nine jobs:
+# Jobs:
 #   changes — what this change can possibly affect (`scripts/ci-scope.sh`), so a
 #             documentation edit does not build 24 firmware images. Gating is by
 #             `if:` on the jobs rather than `paths:` on the trigger: a skipped
@@ -42,9 +42,8 @@
 #   assurance — the gate's second layer, `scripts/check-assurance.sh`: the TLA+
 #             plumbing and the registries held against the prose, run once
 #             before a pull request rather than per commit (AGENTS.md).
-#   mutants-diff — advisory: cargo-mutants over the lines a pull request
-#             touches (`scripts/mutants-container.sh --in-diff`), survivors annotated
-#             on the diff. Never a required check.
+#   mutants-diff — advisory: cargo-mutants over the PR diff or incoming develop push.
+#   miri-smoke — one APDU integration target under Miri on develop pushes.
 
 name: ci
 
@@ -69,6 +68,8 @@ jobs:
       docs_only: ${{ steps.scope.outputs.docs_only }}
       proofs: ${{ steps.scope.outputs.proofs }}
       proofs_state: ${{ steps.scope.outputs.proofs_state }}
+      mutants: ${{ steps.scope.outputs.mutants }}
+      mutants_base: ${{ steps.scope.outputs.mutants_base }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -81,20 +82,9 @@ jobs:
       - name: what changed
         id: scope
         env:
-          EVENT: ${{ github.event_name }}
           BASE: ${{ github.base_ref }}
           BEFORE: ${{ github.event.before }}
-        run: |
-          files=""
-          if [ "$EVENT" = "pull_request" ]; then
-            files="$(git diff --name-only "origin/$BASE...HEAD")"
-          elif [ -n "$BEFORE" ] && git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
-            files="$(git diff --name-only "$BEFORE" HEAD)"
-          fi
-          # An empty list means we could not work out a base — ci-scope.sh reads
-          # that as "everything", which is the direction a mistake should fail in.
-          printf '%s\n' "$files"
-          printf '%s\n' "$files" | ./scripts/ci-scope.sh | tee -a "$GITHUB_OUTPUT"
+        run: ./scripts/ci-scope.sh --github | tee -a "$GITHUB_OUTPUT"
 
   docs:
     runs-on: ubuntu-latest
@@ -414,7 +404,7 @@ jobs:
   # through `env`, never through `${{ }}` inside the script (see `changes`).
   mutants-diff:
     needs: changes
-    if: github.event_name == 'pull_request' && needs.changes.outputs.proofs == 'true'
+    if: needs.changes.outputs.mutants == 'true' && (github.event_name == 'pull_request' || github.ref == 'refs/heads/develop')
     continue-on-error: true
     runs-on: ubuntu-latest
     timeout-minutes: 90
@@ -431,8 +421,38 @@ jobs:
           primary-key: nix-${{ runner.os }}-${{ hashFiles('flake.lock') }}
           restore-prefixes-first-match: nix-${{ runner.os }}-
 
-      - name: mutants over the lines this pull request touches (advisory)
+      - name: mutants over the changed lines (advisory)
         env:
-          BASE: ${{ github.base_ref }}
+          BASE: ${{ needs.changes.outputs.mutants_base }}
           HOST_TARGET: x86_64-unknown-linux-gnu
-        run: nix develop -c ./scripts/mutants-container.sh --in-diff "origin/$BASE"
+        run: nix develop -c ./scripts/mutants-container.sh --in-diff "$BASE"
+
+  miri-smoke:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/develop'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: DeterminateSystems/nix-installer-action@3138316df39ed29be04236d7ffc686fa525866aa # v23
+
+      - uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.2
+        with:
+          primary-key: nix-fuzz-${{ runner.os }}-${{ hashFiles('flake.lock') }}
+          restore-prefixes-first-match: |
+            nix-fuzz-${{ runner.os }}-
+            nix-${{ runner.os }}-
+
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            fuzz/target
+          key: miri-smoke-${{ runner.os }}-${{ hashFiles('fuzz/Cargo.lock', 'flake.lock') }}
+          restore-keys: miri-${{ runner.os }}-default-
+
+      - name: run the APDU framing tests under Miri
+        run: nix develop .#fuzz -c ./scripts/miri-all.sh --smoke

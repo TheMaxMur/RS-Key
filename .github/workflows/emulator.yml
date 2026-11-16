@@ -47,6 +47,7 @@ jobs:
     timeout-minutes: 5
     outputs:
       emulator: ${{ steps.scope.outputs.emulator }}
+      image: ${{ steps.scope.outputs.image }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -58,20 +59,9 @@ jobs:
       - name: what changed
         id: scope
         env:
-          EVENT: ${{ github.event_name }}
           BASE: ${{ github.base_ref }}
           BEFORE: ${{ github.event.before }}
-        run: |
-          files=""
-          if [ "$EVENT" = "pull_request" ]; then
-            files="$(git diff --name-only "origin/$BASE...HEAD")"
-          elif [ -n "$BEFORE" ] && git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
-            files="$(git diff --name-only "$BEFORE" HEAD)"
-          fi
-          # Empty means we could not work out a base (a schedule run, a new
-          # branch) — ci-scope.sh reads that as "everything", which is the
-          # direction a mistake should fail in.
-          printf '%s\n' "$files" | ./scripts/ci-scope.sh | tee -a "$GITHUB_OUTPUT"
+        run: ./scripts/ci-scope.sh --github | tee -a "$GITHUB_OUTPUT"
 
   sockets:
     needs: changes
@@ -112,7 +102,7 @@ jobs:
 
   image:
     needs: changes
-    if: needs.changes.outputs.emulator == 'true'
+    if: needs.changes.outputs.image == 'true'
     runs-on: ubuntu-latest
     # RSA key generation and the TrustZone/OTP checks need independent budgets.
     timeout-minutes: 180

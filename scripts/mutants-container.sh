@@ -43,15 +43,17 @@ trap 'exit 143' TERM
   --mount type=volume,src=rsk-mutants-nix,dst=/nix \
   --workdir=/repo --env CARGO_BUILD_JOBS=1 --env CARGO_HOME=/work/cargo-home --env TMPDIR=/tmp \
   --env "MUTANTS_SHARD=${MUTANTS_SHARD:-1/1}" --env MUTANTS_OUT=/work \
-  --env GIT_CONFIG_COUNT=1 --env GIT_CONFIG_KEY_0=safe.directory --env GIT_CONFIG_VALUE_0=/repo \
   --env 'NIX_CONFIG=experimental-features = nix-command flakes
 sandbox = false
 build-users-group =
 max-jobs = 1
 cores = 1' \
   "$rsk_image" \
-  nix develop --profile /work/nix-profile 'git+file:///repo' \
-    -c ./scripts/mutants-all.sh "$@"
+  sh -ec '
+    # Nix uses libgit2, which reads the config file but ignores GIT_CONFIG_COUNT.
+    git config --global --add safe.directory /repo
+    exec nix develop --profile /work/nix-profile git+file:///repo -c ./scripts/mutants-all.sh "$@"
+  ' sh "$@"
 ) >/dev/null
 docker start --attach "$(cat "$rsk_run/id")" &
 rsk_docker_pid=$!

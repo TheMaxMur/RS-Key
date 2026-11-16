@@ -59,6 +59,45 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 HERE = pathlib.Path(__file__).resolve().parent
 
 
+def test_develop_scope_keeps_unmerged_code_in_view(tmp_path):
+    def git(*args):
+        return subprocess.check_output(["git", "-C", str(tmp_path), *args], text=True).strip()
+
+    def commit(path):
+        file = tmp_path / path
+        file.parent.mkdir(parents=True, exist_ok=True)
+        file.write_text(path)
+        git("add", path)
+        git("-c", "user.name=CI", "-c", "user.email=ci@example.invalid", "-c",
+            "commit.gpgsign=false", "commit", "-qm", path)
+        return git("rev-parse", "HEAD")
+
+    def scope(event, ref, before):
+        env = dict(os.environ, GITHUB_EVENT_NAME=event, GITHUB_REF=ref, BASE="main", BEFORE=before)
+        output = subprocess.check_output([str(HERE / "ci-scope.sh"), "--github"],
+                                         cwd=tmp_path, env=env, text=True)
+        return dict(line.split("=", 1) for line in output.splitlines())
+
+    git("init", "-q")
+    main = commit("README.md")
+    git("update-ref", "refs/remotes/origin/main", main)
+    before = commit("crates/rsk-fido/src/lib.rs")
+    commit("CHANGELOG.md")
+
+    develop = scope("push", "refs/heads/develop", before)
+    pr = scope("pull_request", "refs/pull/149/merge", "")
+    main_push = scope("push", "refs/heads/main", before)
+    for name in ("image", "proofs", "proofs_state"):
+        assert develop[name] == pr[name] == "true"
+        assert main_push[name] == "false"
+    for name in ("firmware", "emulator"):
+        assert develop[name] == main_push[name] == "false"
+        assert pr[name] == "true"
+    assert develop["mutants"] == "false" and develop["mutants_base"] == before
+    assert pr["mutants"] == "true" and pr["mutants_base"] == main
+    assert scope("push", "refs/heads/develop", main)["mutants"] == "true"
+
+
 @pytest.mark.parametrize("block,digest,signature,earlier,error", [
     ("ignored", "verified", "verified", "", None),
     ("image", "verified", "verified", "", "first metadata block"),

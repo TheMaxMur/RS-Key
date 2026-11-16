@@ -247,7 +247,11 @@ def test_the_container_launcher_enforces_the_whole_tree_limit(tree):
                  "--cap-drop=ALL", "--security-opt=no-new-privileges", "--init"]:
         assert flag in argv, f"the actual launcher must enforce {flag}"
     assert argv[argv.index("--name") + 1] == "rsk-mutants-safe"
-    assert argv[-2:] == ["-c", "./scripts/mutants-all.sh"]
+    command = [line.strip() for line in argv[argv.index("sh"):]]
+    assert command[:2] == ["sh", "-ec"]
+    assert command.index("git config --global --add safe.directory /repo") < command.index(
+        'exec nix develop --profile /work/nix-profile git+file:///repo -c ./scripts/mutants-all.sh "$@"'
+    )
 
 
 def test_a_container_name_conflict_cannot_stop_the_existing_runner(tree):

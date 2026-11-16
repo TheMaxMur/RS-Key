@@ -78,6 +78,32 @@ classify() {
   echo "proofs_state=$proofs_state"
 }
 
+github_scope() {
+  local files="" baseline="" merge_base scope integration_scope
+  case "$GITHUB_EVENT_NAME:$GITHUB_REF" in
+    pull_request:*) baseline="$(git merge-base "origin/$BASE" HEAD 2>/dev/null)" || baseline="" ;;
+    push:*) baseline="$(git rev-parse --verify "${BEFORE:-}^{commit}" 2>/dev/null)" || baseline="" ;;
+  esac
+  if [ -n "$baseline" ]; then
+    files="$(git diff --name-only "$baseline" HEAD 2>/dev/null)" || files=""
+  fi
+  printf '%s\n' "$files" >&2
+  scope="$(printf '%s\n' "$files" | classify)"
+  integration_scope="$scope"
+
+  # Kani and the ARM image suite check the candidate as a whole. The build
+  # matrix and diff mutants still follow the incoming push to avoid repeat work.
+  if [ "$GITHUB_EVENT_NAME:$GITHUB_REF" = push:refs/heads/develop ]; then
+    merge_base="$(git merge-base origin/main HEAD 2>/dev/null)" || merge_base=""
+    files="$(git diff --name-only "$merge_base" HEAD 2>/dev/null)" || files=""
+    integration_scope="$(printf '%s\n' "$files" | classify)"
+    baseline="${baseline:-$merge_base}"
+  fi
+  printf '%s\n' "$scope" | sed -n '/^firmware=/p; /^emulator=/p; /^docs_only=/p; s/^proofs=/mutants=/p'
+  printf '%s\n' "$integration_scope" | sed -n '/^proofs=/p; /^proofs_state=/p; s/^emulator=/image=/p'
+  printf 'mutants_base=%s\n' "$baseline"
+}
+
 self_test() {
   local fails=0
   # case | stdin | expected substring(s), space-separated
@@ -137,9 +163,10 @@ crates/rsk-fido/src/getinfo.rs"                              "firmware=true emul
 
 case "${1:-}" in
   --self-test) self_test ;;
+  --github) github_scope ;;
   "") classify ;;
   *)
-    echo "usage: $0 [--self-test]   # changed paths on stdin" >&2
+    echo "usage: $0 [--self-test | --github]   # changed paths on stdin by default" >&2
     exit 2
     ;;
 esac

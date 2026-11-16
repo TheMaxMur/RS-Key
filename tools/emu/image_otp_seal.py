@@ -26,7 +26,7 @@ MIGRATION_CUT_TIMEOUT_S = 300
 class Boot(harness.Device):
     """CCID-only so recovery mode is observable without waiting for FIDO."""
     def __init__(self, binary, image, store, directory, label, cut=None, rom=None):
-        self.fido_port, self.ccid_port, self.inspect_port = (harness.port() for _ in range(3))
+        self.fido_port, self.ccid_port, self.inspect_port = harness.ports(3)
         self.log_path = directory / f"{label}.log"
         self.log = self.log_path.open("w")
         self.image, self.card, self.hid = image, None, None
