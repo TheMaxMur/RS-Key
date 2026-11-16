@@ -137,6 +137,32 @@ const RAW_SUBPARA: [u8; 3] = [0xA1, 0x01, 0x58];
 
 const NOW: u64 = 1_000;
 
+const BEGIN_PAYLOAD: [u8; 1] = [CM_ENUMERATE_RPS_BEGIN as u8];
+// HMAC-SHA-256 of BEGIN_PAYLOAD under the 32-byte StepRng(0xC9) token.
+const BEGIN_TAG: [u8; 32] = [
+    0x87, 0xA5, 0x51, 0x97, 0x8C, 0x72, 0x71, 0x8B, 0xB8, 0x1F, 0xB4, 0x4A, 0x01, 0x41, 0x9A, 0x3E,
+    0x48, 0x96, 0xC1, 0x7E, 0x5F, 0x1D, 0xEE, 0xF3, 0xFE, 0xA0, 0x9B, 0x14, 0xFA, 0xB1, 0x7E, 0xD1,
+];
+
+fn begin_mac_state() -> FidoState {
+    let mut st = FidoState::new();
+    st.reset_pin_uv_auth_token(&mut StepRng(0xC9));
+    st.begin_using_token(false, NOW);
+    st
+}
+
+#[kani::proof]
+fn begin_authenticate_matches_reference_tag() {
+    let st = begin_mac_state();
+    let mut param = [0u8; 32];
+    let n = pinproto::authenticate(PinProto::Two, &st.paut.token, &BEGIN_PAYLOAD, &mut param)
+        .expect("32-byte buffer fits a v2 MAC");
+    kani::assert(
+        n == BEGIN_TAG.len() && param == BEGIN_TAG,
+        "D3: the issued tag matches the reference",
+    );
+}
+
 /// **D3** — the flag the two harnesses below reason with means what it says.
 ///
 /// Both of them compute `authorized` from `forged`, which is the harness's own
@@ -145,28 +171,18 @@ const NOW: u64 = 1_000;
 /// it is this one — a `pinUvAuthParam` with a single bit of its tag flipped does
 /// not verify, and an untouched one does.
 ///
-/// Its own harness, and the reason is a number. A third HMAC-SHA-256 evaluation
-/// inside `no_authorization_bypass_rps_begin_at_call_site` took it to 448 s and
-/// **14.5 GiB** — over what a hosted runner has, and the `state` tier runs on one.
-/// Here the same fact costs two evaluations and nothing else.
+/// The preceding harness proves that `authenticate` emits the reference tag.
+/// Proving both halves separately keeps one HMAC-SHA-256 evaluation per harness.
 #[kani::proof]
 fn no_authorization_bypass_begin_mac_is_the_flag() {
-    let mut rng = StepRng(0xC9);
-    let mut st = FidoState::new();
-    let proto = PinProto::Two;
-    st.reset_pin_uv_auth_token(&mut rng);
-    st.begin_using_token(false, NOW);
-
-    let payload = [CM_ENUMERATE_RPS_BEGIN as u8];
-    let mut param = [0u8; 32];
-    let n = pinproto::authenticate(proto, &st.paut.token, &payload, &mut param)
-        .expect("32-byte buffer fits a v2 MAC");
+    let st = begin_mac_state();
+    let mut param = BEGIN_TAG;
     let forged: bool = kani::any();
     if forged {
         param[0] ^= 1;
     }
     kani::assert(
-        st.verify_token(proto, &payload, &param[..n]) == !forged,
+        st.verify_token(PinProto::Two, &BEGIN_PAYLOAD, &param) == !forged,
         "NoAuthorizationBypass/D3: the MAC's verdict does not track the flipped tag bit",
     );
     kani::cover!(forged);

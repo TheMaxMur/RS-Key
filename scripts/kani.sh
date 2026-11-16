@@ -132,13 +132,13 @@ STATEFUL="rsk-fido rsk-fs"
 # deleting a harness and pasting the new number is self-consistent, and only
 # the diff shows it.
 FLOOR_pr=75
-FLOOR_state=32
-FLOOR_all=107
+FLOOR_state=33
+FLOOR_all=108
 # The four weekly rows partition `all`, so these sum to FLOOR_all and the guard
 # checks each against the tree the same way. A harness that moves between shards
 # has to move a number with it.
 FLOOR_heavy=5
-FLOOR_light1=35
+FLOOR_light1=36
 FLOOR_light2=34
 FLOOR_light3=33
 
@@ -317,8 +317,8 @@ echo "== kani ($tier): $(echo "$crates" | xargs | tr ' ' ',') =="
 # violation ends the run here and never reaches the floor check below.
 # shellcheck disable=SC2086 # $packages is our own list, word-splitting intended
 # `-Z stubbing` for `credmgmt_kani.rs`'s HMAC stand-in, which is what keeps the
-# two call-site harnesses inside a hosted runner's memory; the harness that
-# proves the MAC itself does not carry the stub.
+# two call-site harnesses inside a hosted runner's memory. The two MAC
+# harnesses run the real HMAC.
 cargo kani $packages -Z unstable-options -Z stubbing --harness-timeout "$timeout" "$@" 2>&1 | tee "$log"
 
 # Kani's own count, off its summary line: "Complete - N successfully verified
