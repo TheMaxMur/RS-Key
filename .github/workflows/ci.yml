@@ -70,6 +70,7 @@ jobs:
       proofs_state: ${{ steps.scope.outputs.proofs_state }}
       mutants: ${{ steps.scope.outputs.mutants }}
       mutants_base: ${{ steps.scope.outputs.mutants_base }}
+      mutants_shards: ${{ steps.scope.outputs.mutants_shards }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -407,7 +408,13 @@ jobs:
     if: needs.changes.outputs.mutants == 'true' && (github.event_name == 'pull_request' || github.ref == 'refs/heads/develop')
     continue-on-error: true
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    # A cold container spent 42 minutes on setup and baseline before mutations.
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      max-parallel: 12
+      matrix:
+        shard: ${{ fromJSON(needs.changes.outputs.mutants_shards) }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -424,6 +431,7 @@ jobs:
       - name: mutants over the changed lines (advisory)
         env:
           BASE: ${{ needs.changes.outputs.mutants_base }}
+          MUTANTS_SHARD: ${{ matrix.shard }}
           HOST_TARGET: x86_64-unknown-linux-gnu
         run: nix develop -c ./scripts/mutants-container.sh --in-diff "$BASE"
 

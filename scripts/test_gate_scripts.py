@@ -63,10 +63,10 @@ def test_develop_scope_keeps_unmerged_code_in_view(tmp_path):
     def git(*args):
         return subprocess.check_output(["git", "-C", str(tmp_path), *args], text=True).strip()
 
-    def commit(path):
+    def commit(path, contents=None):
         file = tmp_path / path
         file.parent.mkdir(parents=True, exist_ok=True)
-        file.write_text(path)
+        file.write_text(path if contents is None else contents)
         git("add", path)
         git("-c", "user.name=CI", "-c", "user.email=ci@example.invalid", "-c",
             "commit.gpgsign=false", "commit", "-qm", path)
@@ -96,6 +96,12 @@ def test_develop_scope_keeps_unmerged_code_in_view(tmp_path):
     assert develop["mutants"] == "false" and develop["mutants_base"] == before
     assert pr["mutants"] == "true" and pr["mutants_base"] == main
     assert scope("push", "refs/heads/develop", main)["mutants"] == "true"
+    assert develop["mutants_shards"] == pr["mutants_shards"] == '["1/1"]'
+
+    head = commit("crates/rsk-fido/src/large.rs", "const _: () = ();\n" * 2100)
+    commit("crates/rsk-fido/src/state_kani.rs", "// a Kani fixture\n" * 4000)
+    assert scope("pull_request", "refs/pull/149/merge", "")["mutants_shards"] == '["1/3","2/3","3/3"]'
+    assert scope("push", "refs/heads/develop", head)["mutants_shards"] == '["1/1"]'
 
 
 @pytest.mark.parametrize("block,digest,signature,earlier,error", [

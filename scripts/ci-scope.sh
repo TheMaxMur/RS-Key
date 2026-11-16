@@ -102,6 +102,22 @@ github_scope() {
   printf '%s\n' "$scope" | sed -n '/^firmware=/p; /^emulator=/p; /^docs_only=/p; s/^proofs=/mutants=/p'
   printf '%s\n' "$integration_scope" | sed -n '/^proofs=/p; /^proofs_state=/p; s/^emulator=/image=/p'
   printf 'mutants_base=%s\n' "$baseline"
+  mutant_shards "$baseline"
+}
+
+mutant_shards() {
+  local baseline="$1" stats="" shards=32
+  # Estimate only the runner count. Every shard receives the same complete diff.
+  if [ -n "$baseline" ] && stats="$(git diff --numstat "$baseline" HEAD -- ':(glob)crates/**/*.rs' \
+    ':(exclude,glob)**/*_kani.rs' ':(exclude,glob)**/kani.rs' \
+    ':(exclude,glob)**/*_tests.rs' ':(exclude,glob)**/tests.rs')"; then
+    shards="$(awk '{ lines += $1 } END { n = int((lines + 1023) / 1024); print (n < 1 ? 1 : (n > 32 ? 32 : n)) }' <<<"$stats")"
+  fi
+  awk -v n="$shards" 'BEGIN {
+    printf "mutants_shards=["
+    for (i = 1; i <= n; i++) printf "%s\"%d/%d\"", i == 1 ? "" : ",", i, n
+    print "]"
+  }'
 }
 
 self_test() {

@@ -117,6 +117,16 @@ run_summary() {
 # A mutant's name without `:LINE:COL`, which moves with every edit above it.
 names() { sed -E 's/^([^:]+):[0-9]+:[0-9]+: /\1: /; s/[[:space:]]+$//' "$@" | grep -v '^$' || true; }
 
+MUTANTS_SHARD="${MUTANTS_SHARD:-1/1}"
+shard_i="${MUTANTS_SHARD%%/*}"
+shard_n="${MUTANTS_SHARD##*/}"
+if ! [[ "$MUTANTS_SHARD" =~ ^[1-9][0-9]*/[1-9][0-9]*$ ]] || ! [ "$shard_i" -le "$shard_n" ] 2>/dev/null; then
+  echo "::error::MUTANTS_SHARD=$MUTANTS_SHARD is not i/k with 1 <= i <= k"
+  exit 1
+fi
+# cargo-mutants numbers shards from zero.
+shard="$((shard_i - 1))/$shard_n"
+
 if [ -n "$base" ]; then
   mb="$(git merge-base "$base" HEAD)"
   {
@@ -129,13 +139,18 @@ if [ -n "$base" ]; then
   } > "$tmp/diff"
   # Not piped into the count: an empty diff or one with no Rust in it lists
   # nothing at rc 0, so a failing list is a failure, not "no mutants".
-  cargo-mutants mutants --list --in-diff "$tmp/diff" "${common[@]}" > "$tmp/list"
+  selection=(--in-diff "$tmp/diff" --shard "$shard" --sharding round-robin)
+  cargo-mutants mutants --list "${selection[@]}" "${common[@]}" > "$tmp/list"
   n="$(grep -cE '^crates/' "$tmp/list" || true)"
   echo "in-diff: ${n} mutants on the lines this tree changes against ${base} (${mb:0:12})"
   [ "$n" -gt 0 ] || exit 0
-  cargo-mutants mutants --in-diff "$tmp/diff" "${common[@]}" \
+  cargo-mutants mutants "${selection[@]}" "${common[@]}" \
     -j 1 --output "$OUT" 2>&1 | tee "$tmp/log" || true
   summary="$(run_summary "the in-diff run")"
+  if [ "${summary%% *}" -ne "$n" ]; then
+    echo "::error::in-diff shard $MUTANTS_SHARD tested ${summary%% *} of $n listed mutants" >&2
+    exit 1
+  fi
   echo "mutants: in-diff, ${summary}"
   names "$OUT/mutants.out/missed.txt" > "$tmp/missed"
   if [ -s "$tmp/missed" ]; then
@@ -156,22 +171,8 @@ if [ "$total" -lt "$MUTANT_FLOOR" ]; then
   exit 1
 fi
 
-MUTANTS_SHARD="${MUTANTS_SHARD:-1/1}"
-shard_i="${MUTANTS_SHARD%%/*}"
-shard_n="${MUTANTS_SHARD##*/}"
-if ! [ "$shard_i" -ge 1 ] 2>/dev/null || ! [ "$shard_i" -le "$shard_n" ] 2>/dev/null; then
-  echo "::error::MUTANTS_SHARD=$MUTANTS_SHARD is not i/k with 1 <= i <= k"
-  exit 1
-fi
-
-# cargo-mutants numbers shards from ZERO — `--shard 8/8` is "invalid value: shard
-# k must be less than n". Passing this script's 1-based number straight through
-# therefore ran indices 1..7 and never index 0: an eighth of the tree silently
-# unmutated, while the last shard failed outright. Converted here so the shard
-# number means the same thing in every row (`FUZZ_SHARD`, `MIRI_SHARD`, this one)
-# and only the flag sees the tool's own convention.
 cargo-mutants mutants "${common[@]}" \
-  --shard "$((shard_i - 1))/$shard_n" -j 1 --output "$OUT" 2>&1 | tee "$tmp/log" || true
+  --shard "$shard" -j 1 --output "$OUT" 2>&1 | tee "$tmp/log" || true
 summary="$(run_summary "shard ${MUTANTS_SHARD}")"
 echo "mutants: shard ${MUTANTS_SHARD}, ${summary}"
 

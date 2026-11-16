@@ -52,6 +52,7 @@ while [ $# -gt 0 ]; do
   shift
 done
 if [ "$list" = 1 ]; then
+  cp "$FAKE/argv" "$FAKE/list-argv"
   [ -e "$FAKE/list-fails" ] && { echo "error: could not parse the diff" >&2; exit 1; }
   if [ -n "$diff" ]; then cat "$FAKE/diff-list"; else cat "$FAKE/list"; fi
   exit 0
@@ -498,3 +499,24 @@ def test_in_diff_exits_2_on_a_survivor_and_names_it(tree):
     code, out = tree.run("--in-diff", "HEAD")
     assert code == 2, out
     assert f"  {name(F)}" in out
+
+
+def test_in_diff_shards_both_listing_and_execution(tree):
+    (tree.fake / "diff-list").write_text(f"{F}\n")
+    tree.outcomes(caught=[F])
+    tree.summary("1 mutants tested in 1s: 1 caught")
+    code, out = tree.run("--in-diff", "HEAD", MUTANTS_SHARD="3/4")
+    assert code == 0, out
+    for file in ("argv", "list-argv"):
+        args = (tree.fake / file).read_text().splitlines()
+        assert args[args.index("--shard") + 1] == "2/4"
+        assert args[args.index("--sharding") + 1] == "round-robin"
+
+
+def test_in_diff_rejects_a_partial_shard_summary(tree):
+    (tree.fake / "diff-list").write_text(f"{F}\n{H}\n")
+    tree.outcomes(caught=[F])
+    tree.summary("1 mutants tested in 1s: 1 caught")
+    code, out = tree.run("--in-diff", "HEAD", MUTANTS_SHARD="1/2")
+    assert code == 1, out
+    assert "tested 1 of 2 listed mutants" in out
