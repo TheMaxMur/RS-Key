@@ -306,6 +306,13 @@ fi
 packages="$packages --features kani-soft"
 export RUSTFLAGS="${RUSTFLAGS:+$RUSTFLAGS }--cfg sha2_backend=\"soft\" --cfg poly1305_force_soft --cfg sha1_force_soft"
 
+# FIDO's real HMAC proofs make CBMC build hundreds of automatic reachability
+# traces on successful runs. Assertions and the required cover witnesses
+# still run with those diagnostics off.
+if [[ " $crates " == *" rsk-fido "* ]]; then
+  set -- --no-assertion-reach-checks "$@"
+fi
+
 log=$(mktemp)
 # `set -e` + `pipefail` end this script at the `tee` on any failing run, so an
 # explicit `rm` below it never runs — and a tripped --harness-timeout is now a
