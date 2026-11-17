@@ -275,12 +275,12 @@ fn cbc_open(dev: &Device, buf: &[u8]) -> Option<Secret<[u8; 32]>> {
         }
         _ => return None,
     };
+    let iv = dev.serial_hash.first_chunk()?;
+
     let mut value = Secret::<[u8; 32]>::zeroed();
     value.expose_mut().copy_from_slice(&buf[1..KEYDEV_F1_LEN]);
     let mut kbase = arm.derive_kbase();
-    let mut iv = [0u8; 16];
-    iv.copy_from_slice(&dev.serial_hash[..16]);
-    let r = aes_decrypt(kbase.expose(), &iv, Mode::Cbc, value.expose_mut());
+    let r = aes_decrypt(kbase.expose(), iv, Mode::Cbc, value.expose_mut());
     kbase.wipe();
     match r {
         Ok(()) => Some(value),

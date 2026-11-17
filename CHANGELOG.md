@@ -70,6 +70,9 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Detailed changes
 
+- Derive the FIDO record nonce and legacy CBC IV directly from their inputs
+  (bcdDevice 0x0BED). The on-flash formats are unchanged.
+
 - Add the Bitmerse Romu board profile and release image, with its active-high
   touch sensor and common-anode RGB driver from Jaydeep Dhrangdhariya.
   `rsk hw` recognizes the Romu LED driver (bcdDevice 0x0BEC, `rsk` 0.3.55).

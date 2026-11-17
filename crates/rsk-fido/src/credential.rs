@@ -1039,11 +1039,11 @@ pub(crate) fn seal_rp_id(
     };
     let mut key = derive_chacha_key(seed, RP_PROTO);
     let iv_full = hmac_sha256(key.expose(), rp_id_hash);
-    let mut iv = [0u8; IV_LEN];
-    iv.copy_from_slice(&iv_full[..IV_LEN]);
-    *iv_out = iv;
+    let iv = iv_full.first_chunk().ok_or(Error::ExecError)?;
+    *iv_out = *iv;
+
     ct.copy_from_slice(id);
-    let tag = chacha20poly1305_encrypt(key.expose(), &iv, rp_id_hash, ct);
+    let tag = chacha20poly1305_encrypt(key.expose(), iv, rp_id_hash, ct);
     *tag_out = tag;
     key.wipe();
     Ok(total)
@@ -1143,11 +1143,11 @@ pub(crate) fn seal_nick(
         key.expose(),
         iv_src.get(..32 + id.len()).ok_or(Error::NoMemory)?,
     );
-    let mut iv = [0u8; IV_LEN];
-    iv.copy_from_slice(&iv_full[..IV_LEN]);
-    *iv_out = iv;
+    let iv = iv_full.first_chunk().ok_or(Error::ExecError)?;
+    *iv_out = *iv;
+
     ct.copy_from_slice(id);
-    let tag = chacha20poly1305_encrypt(key.expose(), &iv, rp_id_hash, ct);
+    let tag = chacha20poly1305_encrypt(key.expose(), iv, rp_id_hash, ct);
     *tag_out = tag;
     key.wipe();
     Ok(total)
