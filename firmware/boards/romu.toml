@@ -1,0 +1,20 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 RS-Key contributors
+#
+# Bitmerse Romu — RP2354A, common-anode RGB on GP29/28/27,
+# active-high AT42QT1011 touch sensor on GP20.
+
+[usb]
+vidpid = "RSKey"
+
+[led]
+kind = "rgb_gpio"
+
+[presence]
+source = "gpio"
+pin = 20
+active_high = true
+
+[flash]
+size_mb = 2
+kvmain_kb = 896

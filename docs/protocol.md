@@ -1181,7 +1181,7 @@ A zero-length string TLV is ignored.
 | `09` | USB_PRODUCT | 1..33 | up to 32 string bytes. A NUL ends the string and counts toward the TLV length. A 33-byte value with no NUL leaves the stored string unchanged. `09 01 00` clears the override |
 | `0A` | ENABLED_CURVES | 4 | FIDO curve bitmask (BE32) |
 | `0B` | ENABLED_USB_ITF | 1 | interface mask: `CCID 0x1`, `WCID 0x2`, `HID 0x4`, `KB 0x8`, `LWIP 0x10` |
-| `0C` | LED_DRIVER | 1 | `1` = gpio, `2` = pimoroni, `3` = ws2812 (follows PicoForge `LedDriverType`) |
+| `0C` | LED_DRIVER | 1 | `1` = gpio, `2` = pimoroni, `3` = ws2812 (PicoForge `LedDriverType`). A Romu build reports its fixed `rgb_gpio` driver as `4` in the effective map. |
 | `0D` | LED_ORDER | 1 | WS2812 wire order: `0` = rgb, `1` = grb |
 | `0E` | LED_NUM | 1 | **RS-Key extension** — addressable LEDs actually connected (`1..=255`; `0`/absent = the build's `MAX_LEDS`). Firmware saturates a value above its compiled `MAX_LEDS` ceiling. |
 | `0F` | USB_MANUFACTURER | 1..33 | iManufacturer string with the same encoding as USB_PRODUCT. `0F 01 00` clears the override and restores the default described in §3.1 |

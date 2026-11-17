@@ -68,6 +68,10 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Detailed changes
 
+- Add the fixed common-anode RGB driver for Bitmerse Romu, authored by
+  Jaydeep Dhrangdhariya. `rsk hw` recognizes the driver (bcdDevice 0x0BEC,
+  `rsk` 0.3.55).
+
 - Reject FIDO relying-party records with mismatched domain hashes on read
   and simplify SHA-256 outputs and encrypted-record parsing (bcdDevice 0x0BEB).
 

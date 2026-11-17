@@ -190,7 +190,7 @@ const XOSC_DELAY_MULT: u32 = env_u32(env!("PK_XOSC_DELAY_MULT"));
 // flags say. Only a non-`none` build renders an LED, so these exist only there.
 // The wire-order default lives in `led` (the `LED_RG_SWAP` atomic seeds from the
 // `led_order` cfg). `BUILD_DRIVER` maps the build LED_KIND onto the phy driver
-// numbering (1=gpio, 2=pimoroni, 3=ws2812).
+// numbering (1=gpio, 2=pimoroni, 3=ws2812, 4=rgb_gpio).
 #[cfg(not(led_kind = "none"))]
 const BUILD_LED_PIN: u8 = env_u16(env!("PK_LED_PIN")) as u8;
 // Optional LED power-enable pin: a GPIO driven high at boot to power a gated LED
@@ -422,6 +422,24 @@ const BUILD_DRIVER: u8 = 3;
 const BUILD_DRIVER: u8 = 1;
 #[cfg(led_kind = "pimoroni")]
 const BUILD_DRIVER: u8 = 2;
+#[cfg(led_kind = "rgb_gpio")]
+const BUILD_DRIVER: u8 = 4;
+#[cfg(led_kind = "rgb_gpio")]
+const _: () = {
+    // Romu owns GPIO27–29 for RGB. These configurable owners bypass typed pins.
+    assert!(
+        !(BUILD_PRESENCE_IS_GPIO && matches!(BUILD_PRESENCE_PIN, 27..=29)),
+        "PRESENCE_PIN overlaps a Romu RGB pin"
+    );
+    assert!(
+        !(BUILD_LED_POWER_ENABLED && matches!(BUILD_LED_POWER_PIN, 27..=29)),
+        "LED_POWER_PIN overlaps a Romu RGB pin"
+    );
+    assert!(
+        !(BUILD_USR_LED_ENABLED && matches!(BUILD_USR_LED_PIN, 27..=29)),
+        "USR_LED_PIN overlaps a Romu RGB pin"
+    );
+};
 
 // Holds the LED power-enable `Output` for the device's lifetime; dropping it would
 // release the pad and let the gated LED rail fall (see the LED block below).
@@ -901,7 +919,7 @@ async fn main(spawner: Spawner) {
     let phy = _phy;
     let rng_ref = RNG_CELL.init(RefCell::new(rng));
 
-    let device_release: u16 = 0x0BEB;
+    let device_release: u16 = 0x0BEC;
 
     {
         let (manufacturer, product) = if usb_vid == YUBICO_VID {
@@ -947,9 +965,8 @@ async fn main(spawner: Spawner) {
         USR_LED.init(Output::new(any, off));
     }
 
-    // LED backend, selected at runtime from the phy record (PicoForge-compatible),
-    // defaulting to the build LED_KIND / LED_PIN. A non-`none` build compiles all
-    // three hardware backends so the driver + pin can change without reflashing; a
+    // The generic LED backends read the phy record at runtime. Romu fixes its
+    // RGB backend because its three cathodes are wired to specific pins. A
     // `none` build is headless (the status engine still runs — vendor SET/GET LED
     // keep working — but nothing renders it). The runtime pin reaches the PIO state
     // machine via a `match` that moves the shared `sm0`/`DMA_CH0` across its
@@ -1003,9 +1020,14 @@ async fn main(spawner: Spawner) {
             .unwrap_or(BUILD_LED_PIN);
         // PHY led_driver (1=gpio, 2=pimoroni, 3=ws2812) overrides the build kind;
         // anything else (unset, or the N/A esp32 value) keeps the build default.
-        let led_driver = match phy.as_ref().and_then(|p| p.led_driver) {
-            Some(d @ 1..=3) => d,
-            _ => BUILD_DRIVER,
+        let led_driver = if cfg!(led_kind = "rgb_gpio") {
+            // An older EF_PHY may select a driver wired to a different board.
+            BUILD_DRIVER
+        } else {
+            match phy.as_ref().and_then(|p| p.led_driver) {
+                Some(d @ 1..=3) => d,
+                _ => BUILD_DRIVER,
+            }
         };
         // Publish the boot-resolved phy values so CONFIG_READ can show the host
         // the effective LED pin/driver + touch timeout, not a bare "default". A
@@ -1022,6 +1044,13 @@ async fn main(spawner: Spawner) {
         rsk_fido::config::set_effective_phy(led_gpio, led_driver, effective_timeout_secs);
 
         match led_driver {
+            #[cfg(led_kind = "rgb_gpio")]
+            BUILD_DRIVER => {
+                let red = Output::new(p.PIN_29, Level::High);
+                let green = Output::new(p.PIN_28, Level::High);
+                let blue = Output::new(p.PIN_27, Level::High);
+                _hp.spawn(led::rgb_gpio_task(red, green, blue).unwrap());
+            }
             1 => {
                 // `gpio`: a plain on/off LED on `led_gpio`. `Output<'static>` erases
                 // the pin, so every arm is the same type.

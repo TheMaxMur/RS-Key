@@ -446,14 +446,12 @@ fn main() {
     );
     println!("cargo:rerun-if-env-changed=WAKE_ACTIVE_HIGH");
 
-    // LED backend (default `ws2812`, the Waveshare RP2350-One). Selected at
-    // compile time so only the chosen driver — and its dependencies (PIO, PWM) —
-    // is built. `gpio` = a plain on/off indicator, `pimoroni` = a 3-pin PWM RGB
-    // (Pimoroni Tiny 2350), `none` = headless.
+    // Boot default for the runtime LED selection. Romu's discrete RGB and
+    // headless builds fix the driver at compile time.
     let led_kind = resolve_led_kind();
     println!("cargo:rustc-cfg=led_kind=\"{led_kind}\"");
     println!(
-        "cargo:rustc-check-cfg=cfg(led_kind, values(\"ws2812\", \"gpio\", \"pimoroni\", \"none\"))"
+        "cargo:rustc-check-cfg=cfg(led_kind, values(\"ws2812\", \"gpio\", \"pimoroni\", \"rgb_gpio\", \"none\"))"
     );
     println!("cargo:rerun-if-env-changed=LED_KIND");
 
@@ -874,8 +872,8 @@ fn resolve_led_kind() -> String {
     let v = raw.trim().to_ascii_lowercase();
     match v.as_str() {
         "" | "ws2812" => "ws2812".into(), // unset / empty → the default backend
-        "gpio" | "pimoroni" | "none" => v,
-        _ => panic!("LED_KIND={raw:?} must be one of: ws2812, gpio, pimoroni, none"),
+        "gpio" | "pimoroni" | "rgb_gpio" | "none" => v,
+        _ => panic!("LED_KIND={raw:?} must be one of: ws2812, gpio, pimoroni, rgb_gpio, none"),
     }
 }
 

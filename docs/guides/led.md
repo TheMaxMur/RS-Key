@@ -12,7 +12,7 @@ number of connected LEDs is configured at **runtime** via `rsk hw --led-num` (or
 
 | Knob | Default | When to change it |
 |---|---|---|
-| `LED_KIND` | `ws2812` | `ws2812` (addressable RGB, default), `gpio` (plain on/off), `pimoroni` (3-pin PWM RGB), or `none` (no indicator). See [build.md](../build.md). |
+| `LED_KIND` | `ws2812` | `ws2812` (addressable RGB), `gpio` (plain on/off), `pimoroni` (3-pin PWM RGB), `rgb_gpio` (Romu's fixed discrete RGB), or `none` (headless). See [build.md](../build.md). |
 | `LED_PIN` | `16` | A board whose addressable LED is on a different GPIO (`0..=29`). |
 | `LED_ORDER` | `rgb` | A WS2812 board with swapped red/green: set `grb` (the WS2812B standard). The Waveshare RP2350-One is `rgb`; most other parts are `grb`. |
 | `MAX_LEDS` | `1` | A board with **multiple** daisy-chained addressable LEDs: set it to the chain length (max `64`). Default `1` is a single onboard LED. The actual connected count is set at runtime with `rsk hw --led-num`. |
@@ -39,9 +39,9 @@ effects work with any number of LEDs. `vapor` and `sparkle` shine on a single
 LED too. `bounce` and `flow` naturally reduce to a static colour or a single
 pixel when there is only one LED.
 
-Effects only render on the **`ws2812`** backend (addressable RGB). The `gpio` and
-`pimoroni` backends always use the classic on/off blink, regardless of the
-effect setting. They lack per-LED control and pixel-level colour.
+Effects render on the **`ws2812`** backend (addressable RGB). The `gpio`,
+`pimoroni` and `rgb_gpio` backends use the classic on/off blink. On Romu,
+brightness selects whether each colour channel is on or off.
 
 | Effect | ID | What you see | Suits |
 |---|---|---|---|

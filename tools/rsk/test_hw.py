@@ -87,7 +87,20 @@ def test_upsert_str_rejects_oversize_and_empty():
 def test_driver_and_order_maps_match_firmware():
     # PicoForge LedDriverType numbering, and the RS-Key order values.
     assert hw.DRIVERS == {"gpio": 1, "pimoroni": 2, "ws2812": 3}
+    assert hw.DRIVER_NAMES[4] == "rgb_gpio"
     assert hw.ORDERS == {"rgb": 0, "grb": 1}
+
+
+def test_romu_fido_readback_uses_fixed_driver_without_altering_write_input(monkeypatch, capsys):
+    stored = [(hw.TAG_LED_DRIVER, b"\x03")]
+    phy = {1: hw._serialize_tlv(stored), 2: {hw.TAG_LED_DRIVER: hw.ROMU_LED_DRIVER}}
+    monkeypatch.setattr(hw, "_vendor", lambda *args: (0, phy))
+
+    assert hw._read_phy_fido(None, None) == stored
+    hw._show(hw._read_phy_fido(None, None, show_effective=True))
+    output = capsys.readouterr().out
+    assert "driver  rgb_gpio" in output
+    assert "pin     (fixed by board)" in output
 
 
 class _Args:

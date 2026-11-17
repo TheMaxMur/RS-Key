@@ -22,8 +22,8 @@ use embassy_time::{Duration, Instant, Timer};
 #[cfg(not(led_kind = "none"))]
 use smart_leds::RGB8;
 
-// Every non-`none` build compiles all three hardware backends — the driver and
-// pin are chosen at runtime from the phy record (see `main`). The embassy color
+// The generic backends are selected from the phy record in `main`; Romu fixes
+// its discrete RGB backend at build time. The embassy color
 // order is fixed at `Rgb` (raw passthrough); the WS2812 wire byte order is instead
 // a runtime software r/g swap (`LED_RG_SWAP`), so a board whose red/green come out
 // swapped (standard WS2812B = GRB, e.g. the TenStar RP2350-USB; the Waveshare
@@ -724,6 +724,36 @@ pub async fn pimoroni_task(mut rg: Pwm<'static>, mut b: Pwm<'static>) {
         let mut cfg_b = pimoroni_cfg();
         cfg_b.compare_a = u16::from(c.b);
         b.set_config(&cfg_b);
+        Timer::after_millis(5).await;
+    }
+}
+
+/// Romu's common-anode RGB uses active-low GPIOs without PWM.
+#[cfg(led_kind = "rgb_gpio")]
+#[embassy_executor::task]
+pub async fn rgb_gpio_task(
+    mut red: Output<'static>,
+    mut green: Output<'static>,
+    mut blue: Output<'static>,
+) {
+    let mut blinker = Blinker::new();
+    loop {
+        let c = blinker.tick();
+        if c.r > 0 {
+            red.set_low();
+        } else {
+            red.set_high();
+        }
+        if c.g > 0 {
+            green.set_low();
+        } else {
+            green.set_high();
+        }
+        if c.b > 0 {
+            blue.set_low();
+        } else {
+            blue.set_high();
+        }
         Timer::after_millis(5).await;
     }
 }
