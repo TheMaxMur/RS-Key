@@ -504,8 +504,9 @@ mutation prompts a review of whether the changed behavior is observable,
 whether a case is missing, and whether the relevant target even ran.
 `scripts/mutants-container.sh` runs the host mutation suite. For a crate
 change, `--in-diff HEAD` limits the run to the working diff. CI divides large
-diffs into round-robin shards over the same candidate list. The deep workflow
-compares the broad run with the accepted survivor list.
+diffs into round-robin shards over the same candidate list. Completed diff
+shards report survivors and mutation timeouts as warnings in CI. The deep
+workflow compares the broad run with the accepted survivor list.
 
 A recorded in-diff mutation run caught **20 / 20** mutants in the storage
 oracle and USB changes. Each verdict applies to that diff's mutation set.

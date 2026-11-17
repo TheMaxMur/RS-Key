@@ -38,8 +38,8 @@ SCRIPT = ROOT / "scripts" / "mutants-all.sh"
 
 #: The stand-in. It records what it was asked, answers `--list` from a fixture
 #: roster (`diff-list` under `--in-diff`), and for a run copies the fixture
-#: outcomes into `--output` and prints the fixture summary. Exits 2, as the real
-#: one does when a mutant survives, so the script's `|| true` is exercised.
+#: outcomes into `--output` and prints the fixture summary, with the real
+#: tool's exit codes for survivors and timeouts.
 FAKE = """#!/usr/bin/env bash
 printf '%s\\n' "$@" > "$FAKE/argv"
 out="" list=0 diff=""
@@ -71,7 +71,9 @@ if [ -e "$FAKE/doc-only-mutant" ]; then
 fi
 cp "$FAKE"/out/*.txt "$out/mutants.out/"
 cat "$FAKE/summary" 2>/dev/null
-exit 2
+[ ! -e "$FAKE/run-fails" ] || exit 70
+[ ! -s "$out/mutants.out/timeout.txt" ] || exit 3
+[ ! -s "$out/mutants.out/missed.txt" ] || exit 2
 """
 
 #: The fixture crate's one source file, and the mutants the fake reports in it,
@@ -499,6 +501,30 @@ def test_in_diff_exits_2_on_a_survivor_and_names_it(tree):
     code, out = tree.run("--in-diff", "HEAD")
     assert code == 2, out
     assert f"  {name(F)}" in out
+    code, out = tree.run("--in-diff", "HEAD", "--advisory")
+    assert code == 0, out
+    assert "::warning::" in out and f"  {name(F)}" in out
+
+
+def test_advisory_timeout_is_a_warning_after_a_complete_shard(tree):
+    (tree.fake / "diff-list").write_text(f"{F}\n")
+    tree.outcomes(timeout=[F])
+    tree.summary("1 mutants tested in 1s: 1 timeout")
+    code, out = tree.run("--in-diff", "HEAD")
+    assert code == 3, out
+    code, out = tree.run("--in-diff", "HEAD", "--advisory")
+    assert code == 0, out
+    assert "::warning::" in out and "1 timeout" in out
+
+
+def test_advisory_does_not_accept_a_tool_error_with_a_summary(tree):
+    (tree.fake / "diff-list").write_text(f"{F}\n")
+    (tree.fake / "run-fails").touch()
+    tree.outcomes(caught=[F])
+    tree.summary("1 mutants tested in 1s: 1 caught")
+    code, out = tree.run("--in-diff", "HEAD", "--advisory")
+    assert code == 1, out
+    assert "failed with exit code 70" in out
 
 
 def test_in_diff_shards_both_listing_and_execution(tree):
@@ -517,6 +543,6 @@ def test_in_diff_rejects_a_partial_shard_summary(tree):
     (tree.fake / "diff-list").write_text(f"{F}\n{H}\n")
     tree.outcomes(caught=[F])
     tree.summary("1 mutants tested in 1s: 1 caught")
-    code, out = tree.run("--in-diff", "HEAD", MUTANTS_SHARD="1/2")
+    code, out = tree.run("--in-diff", "HEAD", "--advisory", MUTANTS_SHARD="1/2")
     assert code == 1, out
     assert "tested 1 of 2 listed mutants" in out

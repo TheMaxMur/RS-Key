@@ -407,16 +407,15 @@ jobs:
       - name: check-assurance.sh — TLA+ plumbing, registries against prose
         run: nix develop -c ./scripts/check-assurance.sh
 
-  # `continue-on-error`: a survivor is for the author to read, and a red job
-  # would withhold the green run preview-publish waits on. The base ref goes
-  # through `env`, never through `${{ }}` inside the script (see `changes`).
+  # The runner reports survivors from completed shards as warnings. Keep the
+  # job advisory for preview publishing even when its infrastructure fails.
   mutants-diff:
     needs: changes
     if: needs.changes.outputs.mutants == 'true' && (github.event_name == 'pull_request' || github.ref == 'refs/heads/develop')
     continue-on-error: true
     runs-on: ubuntu-latest
-    # A cold container spent 42 minutes on setup and baseline before mutations.
-    timeout-minutes: 120
+    # A shard reached 120 minutes while still running storage mutations.
+    timeout-minutes: 150
     strategy:
       fail-fast: false
       max-parallel: 12
@@ -440,12 +439,12 @@ jobs:
           BASE: ${{ needs.changes.outputs.mutants_base }}
           MUTANTS_SHARD: ${{ matrix.shard }}
           HOST_TARGET: x86_64-unknown-linux-gnu
-        run: nix develop -c ./scripts/mutants-container.sh --in-diff "$BASE"
+        run: nix develop -c ./scripts/mutants-container.sh --in-diff "$BASE" --advisory
 
   miri-smoke:
     if: github.event_name == 'push' && github.ref == 'refs/heads/develop'
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -456,6 +455,8 @@ jobs:
       - uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.2
         with:
           primary-key: nix-fuzz-${{ runner.os }}-${{ hashFiles('flake.lock') }}
+          # Saving the shared Nix store outlasted the smoke job's deadline.
+          save: false
           restore-prefixes-first-match: |
             nix-fuzz-${{ runner.os }}-
             nix-${{ runner.os }}-

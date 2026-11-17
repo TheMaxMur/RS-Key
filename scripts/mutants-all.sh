@@ -27,8 +27,8 @@
 #
 # `--in-diff <base>` (default `origin/main`) mutates only the lines the working
 # tree changes against its merge base with <base>, untracked files under crates/
-# included. No baseline and no floor: it exits 2 when a mutant on those lines
-# survives, for the fix loop to read, and 0 when none does or none exists.
+# included. A completed run returns cargo-mutants' verdict: 2 for survivors
+# and 3 for test timeouts. CI adds `--advisory` to report those as warnings.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -46,7 +46,7 @@ base=""
 case "${1:-}" in
   "") ;;
   --in-diff) base="${2:-origin/main}" ;;
-  *) echo "usage: $0 [--in-diff [<base>]]" >&2; exit 2 ;;
+  *) echo "usage: $0 [--in-diff [<base>]] or $0 --in-diff <base> --advisory" >&2; exit 2 ;;
 esac
 
 ./scripts/mutants-nextest.sh --check-limits
@@ -97,9 +97,8 @@ export PATH="$tmp/bin:$PATH"
 # "no summary line" rather than passing with nothing tested.
 mkdir -p "$OUT"
 
-# `|| true` on each run deliberately: cargo-mutants exits non-zero when mutants
-# survive, which on this row is an outcome to read, not a failure. The summary
-# line is what says the run happened, so a crash cannot pass as "none survived".
+# cargo-mutants returns nonzero for ordinary mutation verdicts. Require a
+# summary so a failed run cannot pass as "none survived".
 run_summary() {
   local summary
   summary="$(grep -E '^[0-9]+ mutants tested' "$tmp/log" | tail -1 || true)"
@@ -144,21 +143,29 @@ if [ -n "$base" ]; then
   n="$(grep -cE '^crates/' "$tmp/list" || true)"
   echo "in-diff: ${n} mutants on the lines this tree changes against ${base} (${mb:0:12})"
   [ "$n" -gt 0 ] || exit 0
+  status=0
   cargo-mutants mutants "${selection[@]}" "${common[@]}" \
-    -j 1 --output "$OUT" 2>&1 | tee "$tmp/log" || true
+    -j 1 --output "$OUT" 2>&1 | tee "$tmp/log" || status=$?
   summary="$(run_summary "the in-diff run")"
   if [ "${summary%% *}" -ne "$n" ]; then
     echo "::error::in-diff shard $MUTANTS_SHARD tested ${summary%% *} of $n listed mutants" >&2
     exit 1
   fi
+  case "$status" in
+    0|2|3) ;;
+    *) echo "::error::in-diff run failed with exit code $status" >&2; exit 1 ;;
+  esac
   echo "mutants: in-diff, ${summary}"
   names "$OUT/mutants.out/missed.txt" > "$tmp/missed"
   if [ -s "$tmp/missed" ]; then
     echo "$(grep -c . "$tmp/missed") mutant(s) on this diff's lines survived — each is a test to write or a reason to state:"
     sed 's/^/  /' "$tmp/missed"
-    exit 2
   fi
-  exit 0
+  if [ "${3:-}" = --advisory ] && [ "$status" -ne 0 ]; then
+    echo "::warning::Mutation shard $MUTANTS_SHARD — $summary"
+    exit 0
+  fi
+  exit "$status"
 fi
 
 # `|| true` because `grep -c` exits 1 on zero matches, and with `set -e` that

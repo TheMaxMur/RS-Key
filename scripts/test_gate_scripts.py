@@ -380,7 +380,7 @@ def test_ci_runs_both_runners():
     advisory mutants over each pull request's lines. Read out of the `run:` scalars,
     so a step name or a comment naming one is not a run."""
     wanted = {"ci.yml": ("./scripts/check.sh", "./scripts/check-assurance.sh",
-                         "./scripts/mutants-container.sh --in-diff"),
+                         './scripts/mutants-container.sh --in-diff "$BASE" --advisory'),
               "deep-checks.yml": ("./scripts/check-assurance.sh",)}
     for workflow, commands in wanted.items():
         text = (ROOT / ".github/workflows" / workflow).read_text()
