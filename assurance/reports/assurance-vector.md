@@ -106,9 +106,9 @@ The `freshness` axis reads committed history only, so an uncommitted edit to an 
 | `SEC-ADM-002` | `PrivilegedOpNeedsPresence` | 1 of 6 | 1 | 0 of 0 | 0 | 0 | 0 | 4 | — | MODELLED-ONLY |
 | `SEC-ADM-003` | `DisableSetSurvivesLockWrite` | 1 of 6 | 1 | 0 of 0 | 0 | 0 | 0 | 0 | — | MODELLED-ONLY |
 | `SEC-ADM-004` | `DisabledAppletNeverDispatches` | 1 of 6 | 1 | 0 of 0 | 0 | 0 | 0 | 0 | — | MODELLED-ONLY |
-| `SEC-DISP-001` | `ConfirmNamesTheOperation` | 1 of 5 | 1 | 0 of 0 | 0 | 0 | 0 | 31 | — | MODELLED-ONLY |
-| `SEC-DISP-002` | `StaleTouchApprovesNothing` | 1 of 5 | 1 | 0 of 0 | 0 | 0 | 0 | 31 | — | MODELLED-ONLY |
-| `SEC-DISP-003` | `OnlyAllowConfirms` | 1 of 5 | 1 | 0 of 0 | 0 | 0 | 0 | 31 | — | MODELLED-ONLY |
+| `SEC-DISP-001` | `ConfirmNamesTheOperation` | 1 of 5 | 1 | 0 of 0 | 0 | 0 | 0 | 33 | — | MODELLED-ONLY |
+| `SEC-DISP-002` | `StaleTouchApprovesNothing` | 1 of 5 | 1 | 0 of 0 | 0 | 0 | 0 | 33 | — | MODELLED-ONLY |
+| `SEC-DISP-003` | `OnlyAllowConfirms` | 1 of 5 | 1 | 0 of 0 | 0 | 0 | 0 | 33 | — | MODELLED-ONLY |
 | `SEC-BOOT-001` | `MarkerNeverLies` | 4 of 13 | 2 | 0 of 0 | 0 | 0 | 0 | 0 | — | MODELLED-ONLY |
 | `SEC-BOOT-002` | `TheWholeLockRides` | 3 of 8 | 1 | 0 of 0 | 0 | 0 | 0 | 0 | — | MODELLED-ONLY |
 | `SEC-TRANS-001` | `NoCrossChannelSplice` | 1 of 5 | 1 | 0 of 0 | 2 | 0 | 0 | 0 | — | BOUNDED |
@@ -146,6 +146,7 @@ The same 40 P0-family rows, counted the other way round: per column rather than 
 | `firmware-display-v2` | package | no | 0 | 7 |
 | `firmware-2mb` | package | yes | 3 | 4 |
 | `firmware-16mb` | package | yes | 3 | 4 |
+| `firmware-romu` | package | yes | 3 | 4 |
 | `firmware-strict-config` | package | yes | 3 | 4 |
 | `keygen-bench` | feature | no | 3 | 4 |
 | `core1-stats` | feature | no | 3 | 4 |
@@ -156,6 +157,7 @@ The same 40 P0-family rows, counted the other way round: per column rather than 
 | `preview-sign` | feature | no | 3 | 4 |
 | `abrobot-16m` | board | no | 3 | 4 |
 | `abrobot-4m` | board | no | 3 | 4 |
+| `romu` | board | no | 3 | 4 |
 | `seeed-xiao` | board | no | 3 | 4 |
 | `tenstar-usb` | board | no | 3 | 4 |
 | `waveshare-one` | board | no | 3 | 4 |

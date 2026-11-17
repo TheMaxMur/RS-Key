@@ -117,8 +117,8 @@ ELSEWHERE = "verified_by"
 #: Where a verifier can live. "A file that exists" is the rule f124135 threw out
 #: one registry over — met by `README.md` — so the named file must be a workflow
 #: AND must RUN the row's own build command, read through `gate_lines`' `run:`
-#: walk. Measured over this repo's eight workflows: `release-build.yml` carries 4
-#: executed `nix build` lines and `ci.yml` none, so the rule separates them.
+#: walk. The release builder executes `nix build`; the transparency-log monitor
+#: has no build step.
 WORKFLOWS = ".github/workflows/"
 
 #: Why a registered owner may be missing from the image. Disjoint by

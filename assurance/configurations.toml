@@ -198,9 +198,9 @@ columns = [
   "firmware-no-touch-fips-pqc", "firmware-strong-pin",
   "firmware-strong-pin-pqc", "firmware-always-uv", "firmware-always-uv-pqc",
   "firmware-strict-up", "firmware-strict-up-pqc", "firmware-pico",
-  "firmware-2mb", "firmware-16mb", "firmware-strict-config", "keygen-bench",
-  "core1-stats", "bench", "fido-conformance", "ea-conformance-rpid",
-  "largeblob-ext", "preview-sign", "abrobot-16m", "abrobot-4m", "seeed-xiao",
+  "firmware-2mb", "firmware-16mb", "firmware-romu", "firmware-strict-config",
+  "keygen-bench", "core1-stats", "bench", "fido-conformance", "ea-conformance-rpid",
+  "largeblob-ext", "preview-sign", "abrobot-16m", "abrobot-4m", "romu", "seeed-xiao",
   "tenstar-usb", "waveshare-one", "waveshare-touch-lcd",
 ]
 disposition = "out-of-scope"
@@ -500,6 +500,12 @@ and boot row the question is not "does the code differ" (it does not) but "was \
 the evidence ever produced against this partition map"."""
 
 [[question]]
+column = "firmware-romu"
+owner = "contributor"
+settled_by = "evidence"
+text = "Does the release image preserve the Bitmerse fork's store on upgrade and receive fresh touch decisions on RP2354A hardware?"
+
+[[question]]
 column = "firmware-strict-config"
 owner = "contributor"
 settled_by = "evidence"
@@ -625,6 +631,12 @@ evenly it would have taken SEC-FIDO-003 out with them. What is left is \
 genuinely about the button: `crates/rsk-device/src/presence.rs` arbitrates \
 the scope and `firmware/src/presence.rs` holds the latch, and both compile \
 identically here — the one arm that moves is the raw sample."""
+
+[[question]]
+column = "romu"
+owner = "contributor"
+settled_by = "evidence"
+text = "Does the GPIO20 capacitive sensor deliver fresh confirmation across reboot, and does the discrete RGB LED distinguish a pending request from idle?"
 
 [[question]]
 column = "seeed-xiao"

@@ -35,9 +35,12 @@ match the build to its wiring and flash size.
 The **Waveshare RP2350-One** is the reference board. The default image matches
 its 4 MiB flash, WS2812 on GPIO16 and BOOTSEL button for presence.
 
-Bitmerse tested FIDO2 on **Romu** (RP2354A) with its RS-Key fork. Their build
-uses the 2 MiB layout, reads the active-high capacitive touch sensor on GPIO20,
-and adds an `rgb_gpio` driver for Romu's common-anode RGB LED.
+Bitmerse tested FIDO2 on **Romu** (RP2354A) with its RS-Key fork. Use the
+`romu` release UF2 or build `nix build .#firmware-romu`. The preset keeps
+the fork's 2 MiB flash and 896 KiB KVMAIN layout. The active-high capacitive
+touch sensor on GPIO20 provides presence. The common-anode RGB LED uses
+GPIO29 red, GPIO28 green and GPIO27 blue.
+Use `rsk hw --transport fido --get` to see the effective `rgb_gpio` driver.
 [Romu on Crowd Supply](https://www.crowdsupply.com/bitmerse/romu) ·
 [Bitmerse's RS-Key build guide](https://github.com/bitmerse/romu/blob/main/sw/fido2-security-key/README.md)
 
@@ -75,7 +78,7 @@ and LED to the wiring. See [Build options](build.md) for the full list.
 |---|---|---|
 | `FLASH_SIZE` | `4M` | Match the flash capacity, up to 16 MiB. The linker derives the firmware and storage layout from it. |
 | `KVMAIN` | `1408K` | Use `896K` with `FLASH_SIZE=2M` on boards such as the Seeed XIAO RP2350, Waveshare RP2350-Zero-CM or Romu. Leave at least 1 MiB for firmware. Keep both settings when updating a provisioned key. |
-| `LED_KIND` | `ws2812` | `ws2812` for addressable RGB, `gpio` for a plain on/off LED, `pimoroni` for the fixed Pimoroni PWM wiring, or `none` to omit the status LED. |
+| `LED_KIND` | `ws2812` | `ws2812` for addressable RGB, `gpio` for a plain on/off LED, `pimoroni` for the fixed Pimoroni PWM wiring, `rgb_gpio` for Romu's discrete RGB, or `none` to omit the status LED. |
 | `LED_PIN` | `16` | Data GPIO for `ws2812` or output GPIO for `gpio`. |
 | `LED_ORDER` | `rgb` | Set `grb` if the addressable LED's red and green are swapped. |
 | `LED_POWER_PIN` | `none` | GPIO to hold high for an LED power gate, such as GPIO23 on the Seeed XIAO RP2350. |

@@ -49,6 +49,8 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 - **TrustZone in every build.** The Secure worker owns credentials and policy.
   USB framing runs on the Non-secure side. Build the combined image with
   `nix build .#firmware` or `nix develop -c bash scripts/build.sh`.
+- **Bitmerse Romu has its own UF2.** Choose the `romu` image for the 2 MiB
+  RP2354A board with a discrete RGB LED and a touch pad.
 - **Provisioned devices seal OTP page 58 during boot** after migration and
   a flash scrub. PIN-dependent records can delay sealing until migration
   completes. The [production guide](https://github.com/TheMaxMur/RS-Key/blob/v0.5.0/docs/production.md)
@@ -68,9 +70,9 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Detailed changes
 
-- Add the fixed common-anode RGB driver for Bitmerse Romu, authored by
-  Jaydeep Dhrangdhariya. `rsk hw` recognizes the driver (bcdDevice 0x0BEC,
-  `rsk` 0.3.55).
+- Add the Bitmerse Romu board profile and release image, with its active-high
+  touch sensor and common-anode RGB driver from Jaydeep Dhrangdhariya.
+  `rsk hw` recognizes the Romu LED driver (bcdDevice 0x0BEC, `rsk` 0.3.55).
 
 - Reject FIDO relying-party records with mismatched domain hashes on read
   and simplify SHA-256 outputs and encrypted-record parsing (bcdDevice 0x0BEB).

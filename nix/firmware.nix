@@ -130,7 +130,7 @@ let
       flashSize ? null, # bytes / 0xHEX / <n>K|M (default 4M)
       kvmain ? null, # KV main-partition size (default 1408K; shrink for 2 MB boards)
       ledPin ? null, # WS2812 data GPIO 0..=29 (default 16)
-      ledKind ? null, # ws2812 | gpio | pimoroni | none (default ws2812)
+      ledKind ? null, # ws2812 | gpio | pimoroni | rgb_gpio | none (default ws2812)
       presencePin ? null, # BOOTSEL or GPIO 0..=29
       fakeMkek ? null, # 64 hex — TEST builds only
       fakeDevk ? null, # 64 hex — TEST builds only
@@ -398,6 +398,10 @@ in
     firmware-16mb = mkFirmware {
       name = "firmware-16mb";
       flashSize = "16M";
+    };
+    firmware-romu = mkFirmware {
+      name = "firmware-romu";
+      board = "romu";
     };
     # The strict admin-write posture as its own shipped flavor. The default
     # `firmware` is now the permissive, full-ykman-compatible admin surface;

@@ -53,6 +53,7 @@ Which file to take:
 |---|---|
 | Most RP2350 boards, 4 MB flash | `default` |
 | 2 MB flash (Seeed XIAO RP2350, Waveshare RP2350-Zero-CM) | `2mb` |
+| Bitmerse Romu | `romu` |
 | 16 MB flash (TenStar RP2350-USB) | `16mb` |
 | Waveshare RP2350-Touch-LCD-2.8 | `display` |
 

@@ -471,10 +471,9 @@ def test_a_verifier_that_is_a_page_rather_than_a_job_is_refused():
 
 
 def test_a_workflow_that_runs_the_build_is_what_verifies_it():
-    """Not "a workflow that exists": measured over this repo's eight, four
-    executed `nix build` lines in `release-build.yml` and none in `ci.yml`."""
+    """The transparency-log monitor exists but never runs `nix build`."""
     findings, _ = run(CLAIMS.replace(
-        ".github/workflows/release-build.yml", ".github/workflows/ci.yml"
+        ".github/workflows/release-build.yml", ".github/workflows/rekor-monitor.yml"
     ) + ABSENT)
     assert any("runs no `nix build`" in f for f in findings), findings
 

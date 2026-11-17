@@ -115,7 +115,7 @@ selected, the build uses the defaults below.
 
 | Variable | Default | Accepted values and effect |
 |---|---|---|
-| `BOARD` | unset | `abrobot-4m`, `abrobot-16m`, `waveshare-one`, `waveshare-touch-lcd`, `tenstar-usb`, `seeed-xiao`. Use the file stem, without `.toml`. |
+| `BOARD` | unset | `abrobot-4m`, `abrobot-16m`, `romu`, `seeed-xiao`, `tenstar-usb`, `waveshare-one`, `waveshare-touch-lcd`. Use the file stem, without `.toml`. |
 | `VIDPID` | `RSKey` | USB identity preset. `RSKey` is `0x1209:0xF1D2`. Other presets are `Pico`, `Dev`, `Yubikey5`, `YubikeyNeo`, `YubiHSM`, `NitroHSM`, `NitroFIDO2`, `NitroStart`, `NitroPro`, `Nitro3`, `Gnuk` and `GnuPG`. Use vendor presets for local interop. |
 | `USB_VID`, `USB_PID` | from preset | 16-bit IDs in decimal or `0xHHHH` form. Either half can override the preset independently. |
 | `USB_MANUFACTURER`, `USB_PRODUCT` | `RS-Key`, `RS-Key Security Key` for the default identity | Descriptor strings. An effective Yubico VID uses the built-in Yubico reader strings unless `EF_PHY` supplies a string override. |
@@ -123,7 +123,7 @@ selected, the build uses the defaults below.
 | `XOSC_DELAY_MULT` | `128` | `1..=1024`. Crystal oscillator startup delay multiplier. |
 | `FLASH_SIZE` | `4M` | Physical flash size, in bytes, hex, or with a `K` or `M` suffix. Must be 4 KiB aligned and at most 16 MiB. |
 | `KVMAIN` | `1408K` | Main-store capacity. Same size syntax as `FLASH_SIZE`, 4 KiB aligned, at least 128 KiB. Preserve the layout when updating a provisioned device. |
-| `LED_KIND` | `ws2812` | `ws2812`, `gpio`, `pimoroni` or `none`. Sets the boot default. `none` omits the status LED support and is required by the display build. |
+| `LED_KIND` | `ws2812` | `ws2812`, `gpio`, `pimoroni`, `rgb_gpio` (Romu), or `none`. `rgb_gpio` fixes the backend to Romu's GPIO29/28/27 wiring. `none` omits the status LED support and is required by the display build. |
 | `LED_PIN` | `16` | GPIO 0–29 for the WS2812 data line or GPIO status LED. Pimoroni PWM uses its fixed pins. |
 | `LED_ORDER` | `rgb` | `rgb` or `grb` wire order for addressable LEDs |
 | `LED_POWER_PIN` | `none` | `none` or GPIO 0–29, held high to power a gated LED rail. Use a pin distinct from the status LED and presence input. |
@@ -241,6 +241,7 @@ each published flavor and compares its UF2 bytes. See
 |---|---|
 | none | Default configuration |
 | `-2mb`, `-16mb` | 2 MiB with `KVMAIN=896K`, or 16 MiB with the default KV size |
+| `-romu` | `BOARD=romu` with 2 MiB flash, `KVMAIN=896K`, capacitive touch and discrete RGB |
 | `-display`, `-display-v2` | Trusted display on Waveshare V1 (CST328) or V2 (CST3530). Both use 16 MiB flash and `LED_KIND=none`. |
 | `-pico` | `VIDPID=Pico` |
 | `-pqc` | `advertise-pqc` |

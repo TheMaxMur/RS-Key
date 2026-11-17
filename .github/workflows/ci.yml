@@ -263,6 +263,9 @@ jobs:
           - name: board-seeed-xiao
             args: ""
             env: "BOARD=seeed-xiao"
+          - name: board-romu
+            args: ""
+            env: "BOARD=romu"
           - name: board-waveshare-touch-lcd
             args: "--features display"
             env: "BOARD=waveshare-touch-lcd"
@@ -306,6 +309,10 @@ jobs:
 
       - name: build (${{ matrix.name }})
         run: nix develop -c env ${{ matrix.env }} bash scripts/build.sh ${{ matrix.args }}
+
+      - name: build the Romu release package
+        if: matrix.name == 'board-romu'
+        run: nix build .#firmware-romu --no-link
 
       - name: package firmware-${{ matrix.name }}.uf2
         run: |
