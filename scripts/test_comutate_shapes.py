@@ -29,6 +29,8 @@ sys.path.insert(0, str(pathlib.Path(__file__).parent))
 import comutate
 import test_comutate
 
+pytestmark = pytest.mark.assurance
+
 
 @pytest.fixture
 def tree(tmp_path):

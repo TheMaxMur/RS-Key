@@ -7,7 +7,7 @@
 //! see [`crate::pin`]). EC blobs are `[curve_id] ‖ scalar`; signatures are raw
 //! `r ‖ s` (fixed field width), NOT DER.
 
-use zeroize::Zeroize;
+use rsk_secret::Secret;
 
 use rsk_crypto::aes::aes_decrypt_cfb_256;
 use rsk_crypto::{Device, aes256gcm_decrypt, aes256gcm_encrypt, hmac_sha256};
@@ -54,14 +54,15 @@ impl rsk_ec::Rng for EcRng<'_> {
 }
 
 /// The status word each [`EcError`] answers with. This table **is** wire
-/// surface — `ec_sw_reproduces_every_status_word` pins all three arms — and
+/// surface — `ec_sw_reproduces_every_status_word` pins every arm — and
 /// `rsk-piv` carries its own copy, for the reason `rsk_ec::EcError`'s module
 /// doc gives: a shared mapping in `rsk-sdk` would put the EC crate in every
 /// applet's dependency closure.
 pub(crate) fn ec_sw(e: EcError) -> Sw {
     match e {
         EcError::Failed => Sw::EXEC_ERROR,
-        EcError::BadPoint => Sw::DATA_INVALID,
+        EcError::BadPoint => Sw::WRONG_DATA,
+        EcError::RejectedPoint => Sw::MEMORY_FAILURE,
         EcError::Unsupported => Sw::FUNC_NOT_SUPPORTED,
     }
 }
@@ -194,21 +195,31 @@ fn legacy_rsa_len(n: usize) -> bool {
     (n.is_multiple_of(2) && half_ok(n / 2)) || (n.is_multiple_of(5) && half_ok(n / 5))
 }
 
-/// Load the DEK and split it into the GCM key (`dek[16..48]`) and the nonce-PRF
-/// key (`dek[0..16]`, also the legacy CFB IV) — disjoint bytes of one random DEK.
-fn load_dek_keys<S: Storage>(
+/// The DEK's GCM key and nonce-PRF key, as [`split_dek`] hands them out.
+type DekKeys = (Secret<[u8; 32]>, Secret<[u8; IV_SIZE]>);
+
+/// Split the DEK into the GCM key (`dek[16..48]`) and the nonce-PRF key
+/// (`dek[0..16]`, also the legacy CFB IV) — disjoint bytes of one random DEK.
+fn split_dek(dek: &[u8; DEK_SIZE]) -> DekKeys {
+    let mut key = Secret::<[u8; 32]>::zeroed();
+    key.expose_mut()
+        .copy_from_slice(&dek[IV_SIZE..IV_SIZE + 32]);
+    let mut nk = Secret::<[u8; IV_SIZE]>::zeroed();
+    nk.expose_mut().copy_from_slice(&dek[..IV_SIZE]);
+    (key, nk)
+}
+
+/// Load the DEK and [`split_dek`] it.
+pub(crate) fn load_dek_keys<S: Storage>(
     dev: &Device,
     fs: &mut Fs<S>,
     sess: &Session,
-) -> Result<([u8; 32], [u8; IV_SIZE]), Sw> {
-    let mut dek = [0u8; DEK_SIZE];
+) -> Result<DekKeys, Sw> {
+    let mut dek = Secret::<[u8; DEK_SIZE]>::zeroed();
     load_dek(dev, fs, sess, &mut dek)?;
-    let mut key = [0u8; 32];
-    key.copy_from_slice(&dek[IV_SIZE..IV_SIZE + 32]);
-    let mut nk = [0u8; IV_SIZE];
-    nk.copy_from_slice(&dek[..IV_SIZE]);
-    dek.zeroize();
-    Ok((key, nk))
+    let keys = split_dek(dek.expose());
+    dek.wipe();
+    Ok(keys)
 }
 
 /// Seal `plain` under the DEK into `out` (`nonce ‖ ct ‖ tag`); returns its length.
@@ -221,27 +232,35 @@ fn dek_seal<S: Storage>(
     out: &mut [u8],
 ) -> Result<usize, Sw> {
     let (mut key, mut nk) = load_dek_keys(dev, fs, sess)?;
-    let r = seal_with(&key, &nk, dev.serial_hash, fid, plain, out);
-    key.zeroize();
-    nk.zeroize();
+    let r = seal_with(key.expose(), nk.expose(), dev.serial_hash, fid, plain, out);
+    key.wipe();
+    nk.wipe();
     r
 }
 
 /// Unseal a DEK `blob` into `out`; returns `(plaintext_len, was_legacy)`.
 /// `is_legacy_len` names the widths a pre-GCM record for this slot could have —
-/// see [`unseal_with`] for why the fallback must not be shape-blind.
-fn dek_unseal<S: Storage>(
+/// see [`unseal_with`] for why the fallback must not be shape-blind. The
+/// plaintext is a key, so it goes only into a buffer that wipes itself.
+fn dek_unseal<S: Storage, const N: usize>(
     dev: &Device,
     fs: &mut Fs<S>,
     sess: &Session,
     blob: &[u8],
-    out: &mut [u8],
+    out: &mut Secret<[u8; N]>,
     is_legacy_len: fn(usize) -> bool,
 ) -> Result<(usize, bool), Sw> {
     let (mut key, mut nk) = load_dek_keys(dev, fs, sess)?;
-    let r = unseal_with(&key, &nk, dev.serial_hash, blob, out, is_legacy_len);
-    key.zeroize();
-    nk.zeroize();
+    let r = unseal_with(
+        key.expose(),
+        nk.expose(),
+        dev.serial_hash,
+        blob,
+        out.expose_mut(),
+        is_legacy_len,
+    );
+    key.wipe();
+    nk.wipe();
     r
 }
 
@@ -280,7 +299,7 @@ pub fn curve_from_attr(attr: &[u8]) -> Option<Curve> {
 // -------------------------------------------------------- store / load / DO --
 
 /// Seal the EC private key under the DEK and write it to `fid`
-/// (`EF_PK_SIG`/`DEC`/`AUT`). Blob = `dek_encrypt([curve_id] ‖ scalar)`.
+/// (`EF_PK_SIG`/`DEC`/`AUT`/`ATT`). Blob = `dek_encrypt([curve_id] ‖ scalar)`.
 pub fn store_ec_key<S: Storage>(
     dev: &Device,
     fs: &mut Fs<S>,
@@ -288,21 +307,45 @@ pub fn store_ec_key<S: Storage>(
     fid: KeyFid,
     key: &PrivKey,
 ) -> Result<(), Sw> {
-    let scalar = key.scalar();
-    let n = 1 + scalar.len();
-    let mut kdata = [0u8; MAX_EC_KDATA];
-    kdata[0] = key.curve().id();
-    kdata[1..n].copy_from_slice(scalar);
-    let mut blob = [0u8; MAX_EC_KDATA + DEK_SEAL_OVERHEAD];
-    let r = (|| {
-        let bn = dek_seal(dev, fs, sess, fid, &kdata[..n], &mut blob)?;
-        fs.put_key(fid, Sealed::wrap(&blob[..bn]))
-            .map_err(|_| Sw::MEMORY_FAILURE)
-    })();
-    kdata.zeroize();
-    blob.zeroize();
+    let mut dek = Secret::<[u8; DEK_SIZE]>::zeroed();
+    load_dek(dev, fs, sess, &mut dek)?;
+    let r = store_ec_key_under(dev, fs, dek.expose(), fid, key);
+    dek.wipe();
     r
 }
+
+/// [`store_ec_key`] under a DEK the caller holds: the first boot seals the
+/// attestation key with the DEK it has just minted, before any PIN is verified.
+pub(crate) fn store_ec_key_under<S: Storage>(
+    dev: &Device,
+    fs: &mut Fs<S>,
+    dek: &[u8; DEK_SIZE],
+    fid: KeyFid,
+    key: &PrivKey,
+) -> Result<(), Sw> {
+    let scalar = key.scalar();
+    let n = 1 + scalar.len();
+    let mut kdata = Secret::<[u8; MAX_EC_KDATA]>::zeroed();
+    kdata.expose_mut()[0] = key.curve().id();
+    kdata.expose_mut()[1..n].copy_from_slice(scalar);
+    let mut blob = Secret::<[u8; MAX_EC_KDATA + DEK_SEAL_OVERHEAD]>::zeroed();
+    let (gcm, nk) = split_dek(dek);
+    let bn = seal_with(
+        gcm.expose(),
+        nk.expose(),
+        dev.serial_hash,
+        fid,
+        &kdata.expose()[..n],
+        blob.expose_mut(),
+    )?;
+    fs.put_key(fid, Sealed::wrap(&blob.expose()[..bn]))
+        .map_err(|_| Sw::MEMORY_FAILURE)
+}
+
+/// What PSO:CDS, PSO:DECIPHER's RSA and ECDH arms and INTERNAL AUTHENTICATE answer
+/// with no key in the slot (or one the flash cannot serve): `6985` from a YubiKey
+/// 5.8.0 for all three, RSA or EC attributes.
+const KEY_ABSENT: Sw = Sw::CONDITIONS_NOT_SATISFIED;
 
 /// Read and unseal the EC key stored at `fid`. A key still in the legacy CFB
 /// seal is transparently re-sealed to the authenticated fresh-nonce format.
@@ -312,22 +355,25 @@ pub fn load_ec_key<S: Storage>(
     sess: &Session,
     fid: KeyFid,
 ) -> Result<PrivKey, Sw> {
-    let mut blob = [0u8; MAX_EC_KDATA + DEK_SEAL_OVERHEAD];
-    let n = fs.read_key(fid, &mut blob).ok_or(Sw::REFERENCE_NOT_FOUND)?;
-    let n = n.min(blob.len());
-    let mut kdata = [0u8; MAX_EC_KDATA];
-    let r = (|| {
-        let (pt, legacy) = dek_unseal(dev, fs, sess, &blob[..n], &mut kdata, legacy_ec_len)?;
-        if pt < 2 {
-            return Err(Sw::WRONG_DATA);
-        }
-        let curve = Curve::from_id(kdata[0]).ok_or(Sw::WRONG_DATA)?;
-        let key = PrivKey::from_scalar(curve, &kdata[1..pt]).ok_or(Sw::WRONG_DATA)?;
-        Ok((key, legacy))
-    })();
-    kdata.zeroize();
-    blob.zeroize();
-    let (key, legacy) = r?;
+    let mut blob = Secret::<[u8; MAX_EC_KDATA + DEK_SEAL_OVERHEAD]>::zeroed();
+    let n = fs.read_key(fid, blob.expose_mut()).ok_or(KEY_ABSENT)?;
+    let n = n.min(MAX_EC_KDATA + DEK_SEAL_OVERHEAD);
+    let mut kdata = Secret::<[u8; MAX_EC_KDATA]>::zeroed();
+    let (pt, legacy) = dek_unseal(
+        dev,
+        fs,
+        sess,
+        &blob.expose()[..n],
+        &mut kdata,
+        legacy_ec_len,
+    )?;
+    if pt < 2 {
+        return Err(Sw::WRONG_DATA);
+    }
+    let curve = Curve::from_id(kdata.expose()[0]).ok_or(Sw::WRONG_DATA)?;
+    let key = PrivKey::from_scalar(curve, &kdata.expose()[1..pt]).ok_or(Sw::WRONG_DATA)?;
+    kdata.wipe();
+    blob.wipe();
     if legacy {
         let _ = store_ec_key(dev, fs, sess, fid, &key);
     }
@@ -352,44 +398,40 @@ pub fn store_aes_key<S: Storage>(
     if !AES_KEY_LENS.contains(&key.len()) {
         return Err(Sw::WRONG_DATA);
     }
-    let mut blob = [0u8; 32 + DEK_SEAL_OVERHEAD];
-    let r = (|| {
-        let bn = dek_seal(dev, fs, sess, EF_AES_KEY, key, &mut blob)?;
-        fs.put_key(EF_AES_KEY, Sealed::wrap(&blob[..bn]))
-            .map_err(|_| Sw::MEMORY_FAILURE)
-    })();
-    blob.zeroize();
-    r
+    let mut blob = Secret::<[u8; 32 + DEK_SEAL_OVERHEAD]>::zeroed();
+    let bn = dek_seal(dev, fs, sess, EF_AES_KEY, key, blob.expose_mut())?;
+    fs.put_key(EF_AES_KEY, Sealed::wrap(&blob.expose()[..bn]))
+        .map_err(|_| Sw::MEMORY_FAILURE)
 }
 
 /// Load + DEK-unseal the symmetric AES key (`EF_AES_KEY`) for the AES PSO
-/// operations. Returns the key bytes in a 32-byte buffer plus the real length
-/// (16/24/32 → AES-128/192/256); the caller zeroizes the buffer after use.
+/// operations. Returns the key bytes in a 32-byte buffer that wipes itself,
+/// plus the real length (16/24/32 → AES-128/192/256).
 pub fn load_aes_key<S: Storage>(
     dev: &Device,
     fs: &mut Fs<S>,
     sess: &Session,
-) -> Result<([u8; 32], usize), Sw> {
-    let mut blob = [0u8; 32 + DEK_SEAL_OVERHEAD];
+) -> Result<(Secret<[u8; 32]>, usize), Sw> {
+    let mut blob = Secret::<[u8; 32 + DEK_SEAL_OVERHEAD]>::zeroed();
     let bn = fs
-        .read_key(EF_AES_KEY, &mut blob)
+        .read_key(EF_AES_KEY, blob.expose_mut())
         .filter(|&n| n > 0)
         .ok_or(Sw::REFERENCE_NOT_FOUND)?;
-    let bn = bn.min(blob.len());
-    let mut kdata = [0u8; 32];
-    let (n, legacy) = match dek_unseal(dev, fs, sess, &blob[..bn], &mut kdata, legacy_aes_len) {
-        Ok(v) => v,
-        Err(e) => {
-            blob.zeroize();
-            kdata.zeroize();
-            return Err(e);
-        }
-    };
-    blob.zeroize();
+    let bn = bn.min(32 + DEK_SEAL_OVERHEAD);
+    let mut kdata = Secret::<[u8; 32]>::zeroed();
+    let (n, legacy) = dek_unseal(
+        dev,
+        fs,
+        sess,
+        &blob.expose()[..bn],
+        &mut kdata,
+        legacy_aes_len,
+    )?;
+    blob.wipe();
     // No legacy record can be narrower: GENERATE only ever minted 32 bytes, and
     // `PUT DATA D5` (which can write 16) has always sealed under GCM.
     if legacy && n == 32 {
-        let _ = store_aes_key(dev, fs, sess, &kdata);
+        let _ = store_aes_key(dev, fs, sess, kdata.expose());
     }
     Ok((kdata, n))
 }
@@ -402,15 +444,16 @@ pub fn reset_sig_count<S: Storage>(fs: &mut Fs<S>) -> Result<(), Sw> {
         .map_err(|_| Sw::MEMORY_FAILURE)
 }
 
-/// Bump the 3-byte big-endian PSO:CDS counter. If the PW-status "PW1 valid for
-/// one signature" flag is set (`EF_PW_PRIV[0] == 0`), clears the PW1 session.
-pub fn inc_sig_count<S: Storage>(fs: &mut Fs<S>, sess: &mut Session) -> Result<(), Sw> {
+/// Spend PW1 if the PW-status "PW1 valid for one signature" flag is set
+/// (`EF_PW_PRIV[0] == 0`): PSO:CDS runs this after every attempt past its PIN check,
+/// ATTEST after every one past its touch.
+pub fn spend_one_shot_pw1<S: Storage>(fs: &mut Fs<S>, sess: &mut Session) {
     let mut pw = [0u8; 8];
     // A probe that FAILED is not a status byte reading "valid for several": the
     // collapsed `read` left PW1 standing, so one flash fault bought unlimited
     // further signatures on a single PIN entry. Fail closed by spending PW1 rather
-    // than refusing — the signature this call has already produced was authorised,
-    // and only the NEXT one is in question.
+    // than refusing — the attempt this command made was authorised, and only the
+    // NEXT one is in question.
     let one_shot = match fs.try_read(EF_PW_PRIV, &mut pw) {
         Ok(v) => v.is_some() && pw[0] == 0,
         Err(_) => true,
@@ -418,9 +461,19 @@ pub fn inc_sig_count<S: Storage>(fs: &mut Fs<S>, sess: &mut Session) -> Result<(
     if one_shot {
         sess.has_pw1 = false;
     }
+}
+
+/// Bump the 3-byte big-endian PSO:CDS counter, after a signature and only then.
+pub fn inc_sig_count<S: Storage>(fs: &mut Fs<S>) -> Result<(), Sw> {
     let mut c = [0u8; 3];
-    fs.read(EF_SIG_COUNT, &mut c)
-        .ok_or(Sw::REFERENCE_NOT_FOUND)?;
+    match fs
+        .try_read(EF_SIG_COUNT, &mut c)
+        .map_err(|_| Sw::MEMORY_FAILURE)?
+    {
+        Some(3) => {}
+        Some(_) => return Err(Sw::MEMORY_FAILURE),
+        None => return Err(Sw::REFERENCE_NOT_FOUND),
+    }
     let v = (((c[0] as u32) << 16) | ((c[1] as u32) << 8) | c[2] as u32).wrapping_add(1);
     let q = [(v >> 16) as u8, (v >> 8) as u8, v as u8];
     fs.put(EF_SIG_COUNT, &q).map_err(|_| Sw::MEMORY_FAILURE)
@@ -430,7 +483,7 @@ pub fn inc_sig_count<S: Storage>(fs: &mut Fs<S>, sess: &mut Session) -> Result<(
 //
 // The algorithm lives in [`rsk_rsa`]; what stays here is the applet's own half —
 // sealing a key into the DEK-protected store, loading it back, and the
-// PSO:DECIPHER command framing. The stored blob is `P ‖ Q ‖ dP ‖ dQ ‖ qInv`
+// PSO:DECIPHER and signing command framing. The stored blob is `P ‖ Q ‖ dP ‖ dQ ‖ qInv`
 // (older `P ‖ Q` blobs still load); on load the exponent is forced to 65537 —
 // gpg only ever imports e = 65537.
 
@@ -457,17 +510,12 @@ pub fn store_rsa_key<S: Storage>(
     fid: KeyFid,
     key: &RsaKey,
 ) -> Result<(), Sw> {
-    let mut kdata = [0u8; MAX_CRT_PLAIN];
-    let mut blob = [0u8; MAX_CRT_PLAIN + DEK_SEAL_OVERHEAD];
-    let r = (|| {
-        let n = rsk_rsa::crt::crt_plaintext(key, &mut kdata).map_err(rsa_sw)?;
-        let bn = dek_seal(dev, fs, sess, fid, &kdata[..n], &mut blob)?;
-        fs.put_key(fid, Sealed::wrap(&blob[..bn]))
-            .map_err(|_| Sw::MEMORY_FAILURE)
-    })();
-    kdata.zeroize();
-    blob.zeroize();
-    r
+    let mut kdata = Secret::<[u8; MAX_CRT_PLAIN]>::zeroed();
+    let mut blob = Secret::<[u8; MAX_CRT_PLAIN + DEK_SEAL_OVERHEAD]>::zeroed();
+    let n = rsk_rsa::crt::crt_plaintext(key, kdata.expose_mut()).map_err(rsa_sw)?;
+    let bn = dek_seal(dev, fs, sess, fid, &kdata.expose()[..n], blob.expose_mut())?;
+    fs.put_key(fid, Sealed::wrap(&blob.expose()[..bn]))
+        .map_err(|_| Sw::MEMORY_FAILURE)
 }
 
 /// Read and unseal the RSA key at `fid`, rebuilding it from `P ‖ Q` (present at
@@ -481,24 +529,24 @@ pub fn load_rsa_key<S: Storage>(
     sess: &Session,
     fid: KeyFid,
 ) -> Result<RsaKey, Sw> {
-    let mut blob = [0u8; MAX_CRT_PLAIN + DEK_SEAL_OVERHEAD];
-    let bn = fs.read_key(fid, &mut blob).ok_or(Sw::REFERENCE_NOT_FOUND)?;
-    let bn = bn.min(blob.len());
-    let mut kdata = [0u8; MAX_CRT_PLAIN];
-    let res = (|| {
-        let (n, legacy) = dek_unseal(dev, fs, sess, &blob[..bn], &mut kdata, legacy_rsa_len)?;
-        let (half, _) = rsk_rsa::crt::parse_rsa_blob(&kdata[..n]).map_err(|_| Sw::WRONG_DATA)?;
-        let key = rsk_rsa::rsa_from_pqe(
-            rsk_rsa::RSA_PUB_EXP_BE,
-            &kdata[..half],
-            &kdata[half..2 * half],
-        )
+    let mut blob = Secret::<[u8; MAX_CRT_PLAIN + DEK_SEAL_OVERHEAD]>::zeroed();
+    let bn = fs.read_key(fid, blob.expose_mut()).ok_or(KEY_ABSENT)?;
+    let bn = bn.min(MAX_CRT_PLAIN + DEK_SEAL_OVERHEAD);
+    let mut kdata = Secret::<[u8; MAX_CRT_PLAIN]>::zeroed();
+    let (n, legacy) = dek_unseal(
+        dev,
+        fs,
+        sess,
+        &blob.expose()[..bn],
+        &mut kdata,
+        legacy_rsa_len,
+    )?;
+    let kd = kdata.expose();
+    let (half, _) = rsk_rsa::crt::parse_rsa_blob(&kd[..n]).map_err(|_| Sw::WRONG_DATA)?;
+    let key = rsk_rsa::rsa_from_pqe(rsk_rsa::RSA_PUB_EXP_BE, &kd[..half], &kd[half..2 * half])
         .ok_or(Sw::WRONG_DATA)?;
-        Ok((key, legacy))
-    })();
-    kdata.zeroize();
-    blob.zeroize();
-    let (key, legacy) = res?;
+    kdata.wipe();
+    blob.wipe();
     if legacy {
         let _ = store_rsa_key(dev, fs, sess, fid, &key);
     }
@@ -515,38 +563,37 @@ pub fn load_rsa_crt<S: Storage>(
     sess: &Session,
     fid: KeyFid,
 ) -> Result<RsaCrt, Sw> {
-    let mut blob = [0u8; MAX_CRT_PLAIN + DEK_SEAL_OVERHEAD];
-    let bn = fs.read_key(fid, &mut blob).ok_or(Sw::REFERENCE_NOT_FOUND)?;
-    let bn = bn.min(blob.len());
-    let mut kdata = [0u8; MAX_CRT_PLAIN];
-    let unsealed = dek_unseal(dev, fs, sess, &blob[..bn], &mut kdata, legacy_rsa_len);
-    blob.zeroize();
-    let (n, legacy) = match unsealed {
-        Ok(v) => v,
-        Err(e) => {
-            kdata.zeroize();
-            return Err(e);
-        }
-    };
-    let crt = rsk_rsa::crt::crt_from_plain(&kdata[..n]);
+    let mut blob = Secret::<[u8; MAX_CRT_PLAIN + DEK_SEAL_OVERHEAD]>::zeroed();
+    let bn = fs.read_key(fid, blob.expose_mut()).ok_or(KEY_ABSENT)?;
+    let bn = bn.min(MAX_CRT_PLAIN + DEK_SEAL_OVERHEAD);
+    let mut kdata = Secret::<[u8; MAX_CRT_PLAIN]>::zeroed();
+    let unsealed = dek_unseal(
+        dev,
+        fs,
+        sess,
+        &blob.expose()[..bn],
+        &mut kdata,
+        legacy_rsa_len,
+    );
+    blob.wipe();
+    let (n, legacy) = unsealed?;
+    let kd = kdata.expose();
+    let crt = rsk_rsa::crt::crt_from_plain(&kd[..n]);
     // Migrate a legacy CFB key forward — now straight to the 5-field GCM layout.
     if legacy
         && crt.is_ok()
-        && let Ok((half, _)) = rsk_rsa::crt::parse_rsa_blob(&kdata[..n])
-        && let Some(key) = rsk_rsa::rsa_from_pqe(
-            rsk_rsa::RSA_PUB_EXP_BE,
-            &kdata[..half],
-            &kdata[half..2 * half],
-        )
+        && let Ok((half, _)) = rsk_rsa::crt::parse_rsa_blob(&kd[..n])
+        && let Some(key) =
+            rsk_rsa::rsa_from_pqe(rsk_rsa::RSA_PUB_EXP_BE, &kd[..half], &kd[half..2 * half])
     {
         let _ = store_rsa_key(dev, fs, sess, fid, &key);
     }
-    kdata.zeroize();
+    kdata.wipe();
     crt.map_err(rsa_sw)
 }
 
 /// PSO:DECIPHER for RSA: strip the leading OpenPGP padding-indicator byte, run
-/// `cᵈ mod n` on the asm CRT core — blinded and Bellcore-fault-checked, the same
+/// `cᵈ mod n` on the fixed-width CRT core — blinded and Bellcore-fault-checked, the same
 /// private op PSO:CDS uses — then unpad PKCS#1 v1.5 in constant time. `data` is
 /// the raw command data field (`apdu.data`).
 pub fn rsa_decipher(
@@ -556,26 +603,38 @@ pub fn rsa_decipher(
     out: &mut [u8],
 ) -> Result<usize, Sw> {
     let key_size = crt.modulus_len();
-    let ct = data.get(1..1 + key_size).ok_or(Sw::WRONG_DATA)?;
-    let mut em = [0u8; MAX_RSA_BYTES];
-    // A malformed block answered `EXEC_ERROR` when the `rsa` crate owned this
-    // path; keep that status word, so moving the implementation does not move the
-    // wire surface with it.
-    let res = rsk_rsa::crt::private_op(crt, ct, &mut RsaRng(rng), &mut em[..key_size])
-        .map_err(rsa_sw)
-        .and_then(|_| {
-            rsk_rsa::pkcs1v15::unpad_encrypt(&em[..key_size], out).map_err(|_| Sw::EXEC_ERROR)
-        });
-    em.zeroize();
+    let ct = cryptogram(data, key_size)?;
+    let mut em = Secret::<[u8; MAX_RSA_BYTES]>::zeroed();
+    // `MEMORY_FAILURE` for every refusal, whichever step it came from: a YubiKey
+    // 5.8.0 answers it to bad padding in any position, to c = 0, n - 1 and n.
+    let res = rsk_rsa::crt::private_op(crt, ct, &mut RsaRng(rng), &mut em.expose_mut()[..key_size])
+        .and_then(|_| rsk_rsa::pkcs1v15::unpad_encrypt(&em.expose()[..key_size], out))
+        .map_err(|_| Sw::MEMORY_FAILURE);
+    em.wipe();
     res
 }
 
-/// [`rsa_decipher`] for a key the asm CRT core cannot take: a legacy `P‖Q` blob
+/// PSO:CDS and INTERNAL AUTHENTICATE for RSA: PKCS#1 v1.5 over the command data as
+/// sent. A YubiKey 5.8.0 signs anything up to `k − 11` bytes that way and answers
+/// `6581` past it, the width PKCS#1 v1.5's framing leaves.
+pub fn rsa_sign_block(
+    crt: &RsaCrt,
+    rng: &mut dyn Rng,
+    data: &[u8],
+    out: &mut [u8],
+) -> Result<usize, Sw> {
+    if data.len() + rsk_rsa::pkcs1v15::PKCS1_V15_OVERHEAD > crt.modulus_len() {
+        return Err(Sw::MEMORY_FAILURE);
+    }
+    rsk_rsa::pkcs1v15::rsa_sign_crt(crt, data, &mut RsaRng(rng), out).map_err(rsa_sw)
+}
+
+/// [`rsa_decipher`] for a key the fixed-width CRT core cannot take: a legacy `P‖Q` blob
 /// whose prime width is not a 32-multiple, which older firmware could store and
 /// which [`rsk_rsa::crt::crt_from_plain`] refuses. Such a key already cannot
 /// sign; it would lose the ability to decrypt its own archived messages too, so
 /// it takes the software private op instead — blinded and Bellcore-fault-checked
-/// like the asm one, and ending in the same constant-time unpad.
+/// like the fixed-width path, and ending in the same constant-time unpad.
 pub fn rsa_decipher_legacy(
     key: &RsaKey,
     rng: &mut dyn Rng,
@@ -583,11 +642,21 @@ pub fn rsa_decipher_legacy(
     out: &mut [u8],
 ) -> Result<usize, Sw> {
     let key_size = key.size();
-    let ct = data.get(1..1 + key_size).ok_or(Sw::WRONG_DATA)?;
-    // Every failure here is `EXEC_ERROR`, which is what the `rsa` crate's
-    // `decrypt_blinded` collapsed to. Deliberately coarser than the asm arm,
-    // which answers `rsa_sw` for the private op and only collapses on the unpad.
-    rsk_rsa::pkcs1v15::rsa_decrypt(key, ct, &mut RsaRng(rng), out).map_err(|_| Sw::EXEC_ERROR)
+    let ct = cryptogram(data, key_size)?;
+    // The CRT arm's answer to every refusal, so the two arms stay one surface.
+    rsk_rsa::pkcs1v15::rsa_decrypt(key, ct, &mut RsaRng(rng), out).map_err(|_| Sw::MEMORY_FAILURE)
+}
+
+/// The cryptogram behind the padding indicator, exactly one modulus wide. A
+/// YubiKey 5.8.0 answers `6A80` to a command with no data at all and `6581` to a
+/// cryptogram of any other width, longer or shorter.
+fn cryptogram(data: &[u8], key_size: usize) -> Result<&[u8], Sw> {
+    let (_, ct) = data.split_first().ok_or(Sw::WRONG_DATA)?;
+    if ct.len() == key_size {
+        Ok(ct)
+    } else {
+        Err(Sw::MEMORY_FAILURE)
+    }
 }
 
 #[cfg(test)]
@@ -601,3 +670,7 @@ mod rsa_tests;
 #[cfg(test)]
 #[path = "keys_seal_tests.rs"]
 mod seal_tests;
+
+#[cfg(test)]
+#[path = "keys_limits_tests.rs"]
+mod limits_tests;

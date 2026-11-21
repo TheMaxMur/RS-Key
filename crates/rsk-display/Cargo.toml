@@ -5,6 +5,9 @@ license = "AGPL-3.0-only"
 edition = "2024"
 publish = false
 
+[lints]
+workspace = true
+
 # The trusted display's *flow* — which screen is shown when, the PIN pad's state
 # machine, the browse modals, the Approve/Deny wait. `rsk-ui` already held the
 # *rendering* (host-tested + Kani); this held everything that decides what to
@@ -41,7 +44,9 @@ embedded-graphics = { workspace = true }
 # Deadlines, debounce windows and the busy-wait polls the flow is built from.
 # Host builds supply the `std` driver; the firmware's comes from embassy-rp.
 embassy-time = { workspace = true }
-zeroize = { workspace = true }
+# The panel's PINs, the scramble entropy and the seed's words held in a type
+# that wipes itself.
+rsk-secret = { workspace = true }
 
 [dev-dependencies]
 # The tests drive the flow's real deadlines, debounces and busy-waits, so the
@@ -49,7 +54,12 @@ zeroize = { workspace = true }
 # feature `tools/emu` turns on). NOT `mock-driver` — its clock only moves when a
 # test advances it, and `block_for` busy-waits on `Instant::now()`, so every poll
 # loop in this crate would spin for ever under it.
-embassy-time = { workspace = true, features = ["std"] }
+# `generic-queue-8`: a `Timer` awaited under `embassy_futures::block_on` has no
+# embassy executor to hold its queue item (the queue `tools/emu` turns on too).
+embassy-time = { workspace = true, features = ["std", "generic-queue-8"] }
+# `status_loop` and a stand-in worker on one executor, the way the firmware runs
+# them: the firmware's own `select`, already in the image, not a new dependency.
+embassy-futures = { workspace = true }
 # The RAM `Storage` every other applet crate's tests already run against, so a
 # flow that reads or writes flash is exercised against the real `Fs`.
 rsk-fs = { workspace = true, features = ["test-util"] }

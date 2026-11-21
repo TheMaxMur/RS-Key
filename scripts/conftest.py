@@ -3,7 +3,9 @@
 """A skipped case is not a passed one, and only the exit code reaches the gate.
 
 `check.sh`'s `pytest (gate scripts)` row reads that exit code and nothing else,
-so a table that stops RUNNING is indistinguishable from one that passes: pytest
+and so does `check-assurance.sh`'s `pytest (assurance scripts)` — the same
+directory under the `assurance` marker registered below — so a table that stops
+RUNNING is indistinguishable from one that passes: pytest
 prints `s` in grey and exits 0. Measured on `test_elf_gate.py` before this file
 existed — 7 of its 13 cases were `skipif`'d on a built firmware, so a checkout
 with no `target/` ran the row at **6 passed, 7 skipped, exit 0**, and the seven
@@ -40,9 +42,19 @@ def verdict(skipped: int, budget: int) -> str | None:
     if skipped <= budget:
         return None
     return (
-        f"pytest (gate scripts): {skipped} skipped case(s) against a budget of"
+        f"pytest scripts: {skipped} skipped case(s) against a budget of"
         f" {budget} — a skipped case asserts nothing and still exits 0, which is"
         " the whole of what the row reads; hand it its subject or delete it"
+    )
+
+
+def pytest_configure(config):
+    # The split between the two runners' pytest rows; unregistered, it is a
+    # PytestUnknownMarkWarning in every file that carries it.
+    config.addinivalue_line(
+        "markers",
+        "assurance: a table of the TLA+ plumbing or of a registry held against"
+        " prose; scripts/check-assurance.sh runs these, scripts/check.sh the rest",
     )
 
 

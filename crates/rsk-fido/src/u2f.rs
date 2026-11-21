@@ -6,9 +6,18 @@
 //! the attestation certificate and a signature by the device key;
 //! authentication signs a challenge with the credential key.
 
-use zeroize::Zeroize;
+// Host bytes: a panic here is a board that answers nothing until unplugged.
+#![deny(
+    clippy::indexing_slicing,
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::cast_possible_truncation
+)]
 
-use rsk_fs::Storage;
+use rsk_secret::Secret;
+
+use rsk_fs::{Fs, Storage};
 use rsk_sdk::apdu::Apdu;
 use rsk_sdk::sw::Sw;
 
@@ -20,8 +29,8 @@ use crate::credential::{CRED_REC_MAX, credential_load};
 use crate::ec::{MAX_DER_SIG, P256Key};
 use crate::journal;
 use crate::keyderiv::{KEY_HANDLE_LEN, derive_new, fido_load_key, verify_key};
-use crate::seed::{bump_sign_counter, load_att_key};
-use crate::{Ctx, Rng};
+use crate::seed::{AttKey, bump_sign_counter, read_att_key};
+use crate::{Ctx, Rng, UserPresence};
 
 /// Dispatch a U2F APDU; writes the response body into `out`, returns `(SW, len)`.
 pub fn process_u2f<S: Storage, R: Rng>(
@@ -34,20 +43,23 @@ pub fn process_u2f<S: Storage, R: Rng>(
         return (Sw::CLA_NOT_SUPPORTED, 0);
     }
     match apdu.ins {
-        // §7.2.4: alwaysUv disables the CTAP1/U2F interface, so register and
-        // authenticate fail immediately with the status word that clause names —
-        // SW_COMMAND_NOT_ALLOWED, not the "test-of-user-presence required" code,
-        // which would have the client retry a switched-off interface forever.
-        // VERSION, a capability query that touches no credential, stays live.
-        CTAP_REGISTER | CTAP_AUTHENTICATE if u2f_gate(ctx) == U2fGate::Disabled => {
+        // §7.2.4: alwaysUv disables CTAP1/U2F, and a command fails at once with the
+        // SW_COMMAND_NOT_ALLOWED it names (not "touch me", which a client retries for
+        // ever) — VERSION too, as on a YubiKey 5.8.0 (measured 2026-09-30).
+        CTAP_REGISTER | CTAP_AUTHENTICATE | CTAP_VERSION
+            if u2f_gate(ctx.fs, ctx.presence) == U2fGate::Disabled =>
+        {
             (Sw::COMMAND_NOT_ALLOWED, 0)
         }
         CTAP_REGISTER => cmd_register(ctx, apdu, out),
         CTAP_AUTHENTICATE => cmd_authenticate(ctx, apdu, out),
+        CTAP_VERSION if apdu.nc != 0 => (Sw::WRONG_LENGTH, 0), // §6.1: "takes no data as input"
         CTAP_VERSION => {
-            let v = crate::consts::U2F_VERSION;
-            out[..v.len()].copy_from_slice(v);
-            (Sw::OK, v.len())
+            let Some(dst) = out.get_mut(..crate::consts::U2F_VERSION.len()) else {
+                return (Sw::EXEC_ERROR, 0);
+            };
+            dst.copy_from_slice(crate::consts::U2F_VERSION);
+            (Sw::OK, crate::consts::U2F_VERSION.len())
         }
         _ => (Sw::INS_NOT_SUPPORTED, 0),
     }
@@ -55,7 +67,7 @@ pub fn process_u2f<S: Storage, R: Rng>(
 
 /// What a U2F operation owes the user before it may run — CTAP 2.1 §7.2.4.
 #[derive(PartialEq, Eq, Clone, Copy)]
-enum U2fGate {
+pub(crate) enum U2fGate {
     /// alwaysUv is off: plain user presence, the classic U2F contract.
     Presence,
     /// alwaysUv is on and a built-in user verification method is configured. §7.2.4
@@ -64,18 +76,18 @@ enum U2fGate {
     /// operation runs that method instead of a bare touch, and U2F stops being a
     /// presence-only way around the always-require-UV guarantee.
     BuiltinUv,
-    /// alwaysUv is on with nothing to verify against: the interface is disabled, and
-    /// getInfo drops `U2F_V2` to match.
+    /// alwaysUv is on with nothing to verify against: every U2F answer says it is off.
     Disabled,
 }
 
-fn u2f_gate<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>) -> U2fGate {
-    if !crate::config::always_uv_enabled(ctx.fs) {
-        U2fGate::Presence
-    } else if crate::clientpin::builtin_uv_enabled(ctx) {
-        U2fGate::BuiltinUv
-    } else {
-        U2fGate::Disabled
+impl U2fGate {
+    /// §7.2.4, read once for every U2F answer; `builtin_uv` is a method configured.
+    pub(crate) fn of(always_uv: bool, builtin_uv: bool) -> Self {
+        match (always_uv, builtin_uv) {
+            (false, _) => U2fGate::Presence,
+            (true, true) => U2fGate::BuiltinUv,
+            (true, false) => U2fGate::Disabled,
+        }
     }
 }
 
@@ -88,7 +100,7 @@ fn u2f_gate<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>) -> U2fGate {
 /// user instead of collapsing into one unlabelled PIN prompt (audit run-28). The card
 /// comes first, so the operation is named before the PIN is typed.
 fn u2f_interaction<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, confirm: crate::Confirm<'_>) -> bool {
-    match u2f_gate(ctx) {
+    match u2f_gate(ctx.fs, ctx.presence) {
         U2fGate::BuiltinUv => {
             let owes_card =
                 crate::clientpin::UvOutcome::BUILTIN.needs_confirm(ctx.presence.shows_confirm());
@@ -97,6 +109,14 @@ fn u2f_interaction<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, confirm: crate::Conf
         }
         _ => ctx.check_user_presence(confirm),
     }
+}
+
+/// The store's and the backend's reading of [`U2fGate`]. getInfo, which is handed the
+/// same facts rather than the store, reads [`U2fGate::of`] too.
+fn u2f_gate<S: Storage>(fs: &mut Fs<S>, presence: &dyn UserPresence) -> U2fGate {
+    let always_uv = crate::config::always_uv_enabled(fs);
+    let builtin_uv = crate::clientpin::builtin_uv_enabled(fs, presence);
+    U2fGate::of(always_uv, builtin_uv)
 }
 
 fn cmd_register<S: Storage, R: Rng>(
@@ -115,31 +135,38 @@ fn cmd_register<S: Storage, R: Rng>(
     // U2F register request is challenge(32) ‖ application(32). The key handle
     // binds to the application and the signature base is
     // 0x00 ‖ application ‖ challenge ‖ … (note the swap).
-    let chal = &apdu.data[..32];
+    let Some(body) = apdu.data.first_chunk::<64>() else {
+        return (Sw::WRONG_LENGTH, 0);
+    };
+    let chal = &body[..32];
     let mut app = [0u8; 32];
-    app.copy_from_slice(&apdu.data[32..64]);
+    app.copy_from_slice(&body[32..64]);
 
     let mut seed = match ctx.load_keydev() {
         Some(s) => s,
         None => return (Sw::EXEC_ERROR, 0),
     };
-    let (key_handle, mut scalar) = derive_new(&seed, &app, ctx.rng);
-    let cred_key = P256Key::from_scalar(&scalar);
-    scalar.zeroize();
+    let (key_handle, mut scalar) = derive_new(seed.expose(), &app, ctx.rng);
+    let cred_key = P256Key::from_scalar(scalar.expose());
+    scalar.wipe();
     // Org-provisioned attestation (vendor ATT_IMPORT) wins — classic U2F batch
-    // attestation; otherwise the per-device key (the seed scalar) with its
-    // self-signed EF_EE_DEV cert.
-    let mut att_scalar = load_att_key(&ctx.dev, ctx.fs);
+    // attestation; otherwise the per-device key with its EF_EE_DEV cert. An org key the
+    // flash would not read is retried, as a counter fault is, not swapped for the device's.
+    let mut att_scalar = match read_att_key(&ctx.dev, ctx.fs) {
+        Ok(AttKey::Loaded(key)) => Some(key),
+        Ok(AttKey::Absent | AttKey::Unopenable) => None,
+        Err(_) => return (Sw::MEMORY_FAILURE, 0),
+    };
     let org = att_scalar.is_some();
     let device_key = match att_scalar.as_mut() {
         Some(s) => {
-            let k = P256Key::from_scalar(s);
-            s.zeroize();
+            let k = P256Key::from_scalar(s.expose());
+            s.wipe();
             k
         }
-        None => P256Key::from_scalar(&seed),
+        None => P256Key::from_scalar(seed.expose()),
     };
-    seed.zeroize();
+    seed.wipe();
     let (cred_key, device_key) = match (cred_key, device_key) {
         (Some(c), Some(d)) => (c, d),
         _ => return (Sw::EXEC_ERROR, 0),
@@ -148,34 +175,33 @@ fn cmd_register<S: Storage, R: Rng>(
 
     // sign base: 0x00 ‖ appId ‖ chal ‖ keyHandle ‖ (0x04 ‖ x ‖ y)
     let mut base = [0u8; 1 + 32 + 32 + KEY_HANDLE_LEN + 65];
-    let mut p = 0;
-    base[p] = 0x00;
-    p += 1;
-    base[p..p + 32].copy_from_slice(&app);
-    p += 32;
-    base[p..p + 32].copy_from_slice(chal);
-    p += 32;
-    base[p..p + KEY_HANDLE_LEN].copy_from_slice(&key_handle);
-    p += KEY_HANDLE_LEN;
-    base[p] = 0x04;
-    p += 1;
-    base[p..p + 32].copy_from_slice(&x);
-    p += 32;
-    base[p..p + 32].copy_from_slice(&y);
-    p += 32;
+    let fields = [0x00]
+        .iter()
+        .chain(&app)
+        .chain(chal)
+        .chain(&key_handle)
+        .chain(&[0x04])
+        .chain(&x)
+        .chain(&y);
+    for (dst, &b) in base.iter_mut().zip(fields) {
+        *dst = b;
+    }
     let mut sig = [0u8; MAX_DER_SIG];
-    let sl = device_key.sign_der(&base[..p], &mut sig);
+    let sl = device_key.sign_der(&base, &mut sig);
 
     let mut cert = [0u8; crate::cert::ATT_CHAIN_REC_MAX];
     let clen = if org {
         // The chain's leaf — a U2F response carries exactly one certificate.
         let n = match ctx.fs.read(EF_ATT_CHAIN, &mut cert) {
-            // Fs::read returns the full stored length; clamp to the buffer before
-            // slicing cert[..n] below, matching the EF_EE_DEV branch.
+            // Fs::read returns the full stored length; clamp it to what was copied,
+            // matching the EF_EE_DEV branch.
             Some(n) if n > 3 => n.min(cert.len()),
             _ => return (Sw::EXEC_ERROR, 0),
         };
-        let Some((off, len)) = crate::cert::att_chain_cert_range(&cert[..n], 0) else {
+        let Some((off, len)) = cert
+            .get(..n)
+            .and_then(|chain| crate::cert::att_chain_cert_range(chain, 0))
+        else {
             return (Sw::EXEC_ERROR, 0);
         };
         cert.copy_within(off..off + len, 0);
@@ -189,28 +215,25 @@ fn cmd_register<S: Storage, R: Rng>(
 
     // response: 0x05 ‖ (0x04 ‖ x ‖ y) ‖ 64 ‖ keyHandle ‖ cert ‖ sig
     let total = 1 + 65 + 1 + KEY_HANDLE_LEN + clen + sl;
-    if out.len() < total {
+    let (Some(resp), Some(cert), Some(sig)) =
+        (out.get_mut(..total), cert.get(..clen), sig.get(..sl))
+    else {
         return (Sw::EXEC_ERROR, 0);
+    };
+    let kh_len = [u8::try_from(KEY_HANDLE_LEN).unwrap_or(u8::MAX)];
+    let fields = [U2F_REGISTER_ID, 0x04]
+        .iter()
+        .chain(&x)
+        .chain(&y)
+        .chain(&kh_len)
+        .chain(&key_handle)
+        .chain(cert)
+        .chain(sig);
+    for (dst, &b) in resp.iter_mut().zip(fields) {
+        *dst = b;
     }
-    let mut q = 0;
-    out[q] = U2F_REGISTER_ID;
-    q += 1;
-    out[q] = 0x04;
-    q += 1;
-    out[q..q + 32].copy_from_slice(&x);
-    q += 32;
-    out[q..q + 32].copy_from_slice(&y);
-    q += 32;
-    out[q] = KEY_HANDLE_LEN as u8;
-    q += 1;
-    out[q..q + KEY_HANDLE_LEN].copy_from_slice(&key_handle);
-    q += KEY_HANDLE_LEN;
-    out[q..q + clen].copy_from_slice(&cert[..clen]);
-    q += clen;
-    out[q..q + sl].copy_from_slice(&sig[..sl]);
-    q += sl;
-    journal::append(ctx, journal::EV_U2F_REGISTER, 0, &apdu.data[32..40]);
-    (Sw::OK, q)
+    journal::append(ctx, journal::EV_U2F_REGISTER, 0, &app[..8]);
+    (Sw::OK, total)
 }
 
 fn cmd_authenticate<S: Storage, R: Rng>(
@@ -232,14 +255,19 @@ fn cmd_authenticate<S: Storage, R: Rng>(
     if apdu.nc < 32 + 32 + 1 + 1 {
         return (Sw::WRONG_DATA, 0);
     }
-    let chal = &apdu.data[..32];
+    let Some((head, rest)) = apdu.data.split_first_chunk::<65>() else {
+        return (Sw::WRONG_DATA, 0);
+    };
+    let chal = &head[..32];
     let mut app = [0u8; 32];
-    app.copy_from_slice(&apdu.data[32..64]);
-    let kh_len = apdu.data[64] as usize;
+    app.copy_from_slice(&head[32..64]);
+    let kh_len = head[64] as usize;
     if kh_len < KEY_HANDLE_LEN || 65 + kh_len > apdu.nc {
         return (Sw::WRONG_DATA, 0);
     }
-    let key_handle = &apdu.data[65..65 + kh_len];
+    let Some(key_handle) = rest.get(..kh_len) else {
+        return (Sw::WRONG_DATA, 0);
+    };
 
     let mut seed = match ctx.load_keydev() {
         Some(s) => s,
@@ -257,7 +285,7 @@ fn cmd_authenticate<S: Storage, R: Rng>(
     // scalar (verify_key, which fido_load_key would clobber by rewriting path[0]).
     // U2F is P-256 only, so take the leading 32 bytes of the ratchet as the scalar.
     let mut scratch = [0u8; CRED_REC_MAX];
-    let scalar: Option<[u8; 32]> = match credential_load(&seed, key_handle, &app, &mut scratch) {
+    let scalar = match credential_load(seed.expose(), key_handle, &app, &mut scratch) {
         // A CTAP2 credential box. credProtect=userVerificationRequired (L3) must
         // NOT be usable over U2F, which performs no user verification — only CTAP2
         // getAssertion (with a PIN/UV) may exercise it. L1/L2 stay usable: the RP
@@ -266,21 +294,19 @@ fn cmd_authenticate<S: Storage, R: Rng>(
             if c.ext.cred_protect == CRED_PROT_UV_REQUIRED {
                 None
             } else {
-                fido_load_key(&seed, key_handle).map(|raw| {
-                    let mut s = [0u8; 32];
-                    s.copy_from_slice(&raw[..32]);
+                fido_load_key(seed.expose(), key_handle).map(|raw| {
+                    let mut s = Secret::<[u8; 32]>::zeroed();
+                    s.expose_mut().copy_from_slice(&raw.expose()[..32]);
                     s
                 })
             }
         }
-        Some(_) => {
-            let mut kh = [0u8; KEY_HANDLE_LEN];
-            kh.copy_from_slice(&key_handle[..KEY_HANDLE_LEN]);
-            verify_key(&seed, &app, &kh)
-        }
+        Some(_) => key_handle
+            .first_chunk::<KEY_HANDLE_LEN>()
+            .and_then(|kh| verify_key(seed.expose(), &app, kh)),
         None => None,
     };
-    seed.zeroize();
+    seed.wipe();
     let mut scalar = match scalar {
         Some(s) => s,
         None => return (Sw::WRONG_DATA, 0), // 0x6A80 — handle not ours
@@ -289,7 +315,7 @@ fn cmd_authenticate<S: Storage, R: Rng>(
     // check-only (P1=0x07): a valid handle reports "would require user presence".
     // No touch.
     if apdu.p1 == U2F_AUTH_CHECK_ONLY {
-        scalar.zeroize();
+        scalar.wipe();
         return (Sw::CONDITIONS_NOT_SATISFIED, 0);
     }
 
@@ -300,13 +326,15 @@ fn cmd_authenticate<S: Storage, R: Rng>(
     // interface is still reachable under alwaysUv, so skipping it would hand back
     // exactly the presence-free signature the clause exists to prevent. The emitted
     // TUP flag still follows the raw `tup`, so the wire meaning is unchanged.
-    let owes = tup || u2f_gate(ctx) == U2fGate::BuiltinUv;
+    let owes = tup || u2f_gate(ctx.fs, ctx.presence) == U2fGate::BuiltinUv;
     if owes && !u2f_interaction(ctx, crate::Confirm::titled("Sign in?")) {
-        scalar.zeroize();
+        scalar.wipe();
         return (Sw::CONDITIONS_NOT_SATISFIED, 0);
     }
-    let key = P256Key::from_scalar(&scalar);
-    scalar.zeroize();
+    let key = P256Key::from_scalar(scalar.expose());
+    #[cfg(test)]
+    let key = tests::primitives::key_result_with_injected_failure(key);
+    scalar.wipe();
     let key = match key {
         Some(k) => k,
         None => return (Sw::EXEC_ERROR, 0),
@@ -330,9 +358,15 @@ fn cmd_authenticate<S: Storage, R: Rng>(
     let sl = key.sign_der(&base, &mut sig);
 
     // response: flags ‖ counter(BE) ‖ signature
-    out[0] = flags;
-    out[1..5].copy_from_slice(&ctr.to_be_bytes());
-    out[5..5 + sl].copy_from_slice(&sig[..sl]);
+    let (Some(resp), Some(sig)) = (out.get_mut(..5 + sl), sig.get(..sl)) else {
+        return (Sw::EXEC_ERROR, 0);
+    };
+    for (dst, &b) in resp
+        .iter_mut()
+        .zip([flags].iter().chain(&ctr.to_be_bytes()).chain(sig))
+    {
+        *dst = b;
+    }
     // `owes` is whether this AUTHENTICATE actually collected a gesture: without one
     // (P1 = don't-enforce, alwaysUv off) it is ungated and drivable on demand, so a run
     // of those costs one ring entry rather than one each — see `journal::append_run`.
@@ -344,6 +378,54 @@ fn cmd_authenticate<S: Storage, R: Rng>(
     (Sw::OK, 5 + sl)
 }
 
+/// A U2F request as CTAPHID_MSG carries it. U2F HID v1.2 §2: "all raw U2F messages
+/// are encoded using extended length APDU encoding", and a YubiKey 5.8.0 reads one
+/// so — the class first (`6E00`), then a bare header or `00 Lc Lc` and that many data
+/// bytes (`6700` otherwise), whatever follows them ignored, an `Le` included.
+pub fn hid_apdu(raw: &[u8]) -> Result<Apdu<'_>, Sw> {
+    let Some((&[cla, ins, p1, p2], lengths)) = raw.split_first_chunk::<4>() else {
+        return Err(Sw::WRONG_LENGTH);
+    };
+    if cla != 0x00 {
+        return Err(Sw::CLA_NOT_SUPPORTED);
+    }
+    let data = match lengths {
+        [] => &[][..],
+        [0x00, hi, lo, rest @ ..] => rest
+            .get(..usize::from(u16::from_be_bytes([*hi, *lo])))
+            .ok_or(Sw::WRONG_LENGTH)?,
+        _ => return Err(Sw::WRONG_LENGTH),
+    };
+    Ok(Apdu {
+        cla,
+        ins,
+        p1,
+        p2,
+        nc: data.len(),
+        ne: 0,
+        data,
+        extended: true,
+    })
+}
+
+/// The body a SELECT of [`FIDO_AID`](crate::consts::FIDO_AID) answers: `U2F_V2` while
+/// U2F is served, and once alwaysUv has switched it off the version CTAP 2.3 §11.3.3
+/// gives an authenticator with CTAP2 alone, as a YubiKey 5.8.0 answers (2026-09-30).
+pub fn select_version<S: Storage>(fs: &mut Fs<S>, presence: &dyn UserPresence) -> &'static [u8] {
+    match u2f_gate(fs, presence) {
+        U2fGate::Disabled => crate::consts::FIDO_2_0_VERSION,
+        U2fGate::Presence | U2fGate::BuiltinUv => crate::consts::U2F_VERSION,
+    }
+}
+
 #[cfg(test)]
+#[allow(
+    clippy::indexing_slicing,
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::cast_possible_truncation,
+    reason = "a test's fixture is its own bound, and a panic is its failure report"
+)]
 #[path = "u2f_tests.rs"]
 mod tests;

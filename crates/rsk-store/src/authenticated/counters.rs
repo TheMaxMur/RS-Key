@@ -1,0 +1,449 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 RS-Key contributors
+
+use super::authority::{Authority, Snapshot};
+use embedded_storage_async::nor_flash::{MultiwriteNorFlash, NorFlash};
+use rsk_crypto::ct_eq;
+use rsk_sdk::error::{Error, Result};
+
+use super::{Checkpoint, CounterBank, CounterScan, Directory, ENTRY_BYTES, Entry, Identity};
+use super::{JournalStatus, MAX_COUNTER_ENTRIES, Partition, RootArm};
+
+#[path = "counter_read.rs"]
+mod read;
+
+struct Current {
+    source: usize,
+    scans: [CounterScan; 2],
+    directory: Directory<MAX_COUNTER_ENTRIES>,
+}
+
+impl Current {
+    const fn new() -> Self {
+        Self {
+            source: 0,
+            scans: [CounterScan::new(); 2],
+            directory: Directory::new(),
+        }
+    }
+}
+
+/// Both replicas must agree durably before any counter value is acknowledged.
+pub struct Counters<F: NorFlash + MultiwriteNorFlash> {
+    banks: [CounterBank<F>; 2],
+    identity: Identity,
+    arm: RootArm,
+    mount: Option<[CounterScan; 2]>,
+    authority: Authority,
+    read_cache: read::tags::ReadCache,
+}
+
+impl<F: NorFlash + MultiwriteNorFlash> Counters<F> {
+    pub fn new(banks: [CounterBank<F>; 2], identity: Identity, arm: RootArm) -> Result<Self> {
+        if identity.partition != Partition::Counter {
+            return Err(Error::MemoryFatal);
+        }
+        Ok(Self::from_banks(banks, identity, arm))
+    }
+
+    pub(super) const fn from_banks(
+        banks: [CounterBank<F>; 2],
+        identity: Identity,
+        arm: RootArm,
+    ) -> Self {
+        Self {
+            banks,
+            identity,
+            arm,
+            mount: None,
+            authority: Authority::New,
+            read_cache: read::tags::ReadCache::new(),
+        }
+    }
+
+    pub(super) fn configure(&mut self, epoch: [u8; super::EPOCH_BYTES], arm: RootArm) {
+        self.mount = None;
+        self.read_cache.clear();
+        self.identity = Identity {
+            partition: Partition::Counter,
+            epoch,
+        };
+        self.arm = arm;
+    }
+
+    fn source_target(
+        &mut self,
+        source: usize,
+    ) -> Result<(&mut CounterBank<F>, &mut CounterBank<F>)> {
+        let [zero, one] = &mut self.banks;
+        match source {
+            0 => Ok((zero, one)),
+            1 => Ok((one, zero)),
+            _ => Err(Error::MemoryFatal),
+        }
+    }
+
+    fn checkpoint(
+        &self,
+        directory: &Directory<MAX_COUNTER_ENTRIES>,
+        key: &[u8; 32],
+        sequence: u64,
+    ) -> Result<Checkpoint> {
+        Ok(Checkpoint {
+            identity: self.identity,
+            arm: self.arm,
+            sequence,
+            entries: u32::try_from(directory.entries().len()).map_err(|_| Error::MemoryFatal)?,
+            digest: directory.digest(self.identity, key, sequence)?,
+        })
+    }
+
+    fn resolve_mounted(&mut self, key: &[u8; 32], current: &mut Current) -> Result<bool> {
+        if let Some(scans) = &self.mount {
+            let mut unchanged = true;
+            for (bank, scan) in self.banks.iter_mut().zip(scans) {
+                let fingerprint = bank.raw_fingerprint(scan.next)?;
+                unchanged &= scan
+                    .raw_fingerprint
+                    .zip(fingerprint)
+                    .is_some_and(|(expected, fresh)| ct_eq(&expected, &fresh));
+            }
+            if unchanged {
+                // Full media equality reuses the mounted directory only under its fresh MAC.
+                self.authority.verify_read(key, self.identity, self.arm)?;
+                for location in scans
+                    .first()
+                    .ok_or(Error::MemoryFatal)?
+                    .locations
+                    .iter()
+                    .flatten()
+                {
+                    current.directory.apply(location.entry)?;
+                }
+                current.source = 0;
+                current.scans = *scans;
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
+    // The caller owns the large result so unoptimized returns cannot duplicate it.
+    fn resolve(&mut self, key: &[u8; 32], current: &mut Current) -> Result<()> {
+        current.directory.clear();
+        let mounted = self.resolve_mounted(key, current);
+        if matches!(mounted, Ok(true)) {
+            return Ok(());
+        }
+        self.mount = None;
+        mounted?;
+        self.resolve_uncached(key, current)?;
+        let sequence = current
+            .scans
+            .get(current.source)
+            .ok_or(Error::MemoryFatal)?
+            .sequence
+            .ok_or(Error::MemoryFatal)?;
+        let snapshot = self.snapshot(&current.directory, sequence)?;
+        self.authority.cancel_unpublished(key, snapshot)?;
+        self.mount = Some(current.scans);
+        Ok(())
+    }
+
+    fn resolve_uncached(&mut self, key: &[u8; 32], current: &mut Current) -> Result<()> {
+        let [zero, one] = &mut self.banks;
+        let mut zero_dir = Directory::new();
+        let mut one_dir = Directory::new();
+        let [zero_scan, one_scan] = &mut current.scans;
+        zero.scan_into(key, &mut zero_dir, zero_scan)?;
+        one.scan_into(key, &mut one_dir, one_scan)?;
+        for scan in [&*zero_scan, &*one_scan] {
+            if let Some(header) = scan.checkpoint
+                && (header.identity != self.identity || header.arm != self.arm)
+            {
+                return Err(Error::MemoryFatal);
+            }
+        }
+        if zero_scan.status == JournalStatus::Empty && one_scan.status == JournalStatus::Empty {
+            return Err(Error::MemoryFatal);
+        }
+        let zero_seq = (zero_scan.status == JournalStatus::Complete)
+            .then_some(zero_scan.sequence)
+            .flatten();
+        let one_seq = (one_scan.status == JournalStatus::Complete)
+            .then_some(one_scan.sequence)
+            .flatten();
+        let (source, sequence) = match (zero_seq, one_seq) {
+            (Some(zero), Some(one)) if one > zero => (1, one),
+            (Some(zero), _) => (0, zero),
+            (None, Some(one)) => (1, one),
+            (None, None) => return Err(Error::MemoryFatal),
+        };
+        if current
+            .scans
+            .iter()
+            .filter_map(|scan| scan.lower_bound)
+            .any(|bound| bound > sequence)
+        {
+            return Err(Error::MemoryFatal);
+        }
+        let zero_digest = zero_dir.digest(self.identity, key, sequence)?;
+        let one_digest = one_dir.digest(self.identity, key, sequence)?;
+        let synchronized = zero_seq == Some(sequence) && one_seq == Some(sequence);
+        if synchronized && !ct_eq(&zero_digest, &one_digest) {
+            return Err(Error::MemoryFatal);
+        }
+        current.source = source;
+        current.directory = if source == 0 { zero_dir } else { one_dir };
+        let directory = &current.directory;
+        self.authority
+            .admit(key, self.snapshot(directory, sequence)?, None)?;
+        if synchronized {
+            return Ok(());
+        }
+        let checkpoint = self.checkpoint(directory, key, sequence)?;
+        let source_scan = current.scans.get(source).ok_or(Error::MemoryFatal)?;
+        let (read, write) = self.source_target(source)?;
+        write.write_snapshot(checkpoint, key, directory, |entry, out| {
+            let length = read.read_value(source_scan, key, entry.fid(), out)?;
+            if length != Some(out.len()) {
+                return Err(Error::MemoryFatal);
+            }
+            Ok(())
+        })?;
+        let mut repaired = Directory::new();
+        let repaired_scan = current
+            .scans
+            .get_mut(1 - source)
+            .ok_or(Error::MemoryFatal)?;
+        write.scan_into(key, &mut repaired, repaired_scan)?;
+        if repaired_scan.status != JournalStatus::Complete
+            || repaired_scan.sequence != Some(sequence)
+            || !ct_eq(
+                &repaired.digest(checkpoint.identity, key, sequence)?,
+                &directory.digest(checkpoint.identity, key, sequence)?,
+            )
+        {
+            return Err(Error::MemoryFatal);
+        }
+        Ok(())
+    }
+
+    pub fn initialize(
+        &mut self,
+        key: &[u8; 32],
+        directory: &Directory<MAX_COUNTER_ENTRIES>,
+        sequence: u64,
+        mut load: impl FnMut(Entry, &mut [u8]) -> Result<()>,
+    ) -> Result<()> {
+        if self.authority.established() {
+            return Err(Error::MemoryFatal);
+        }
+        self.mount = None;
+        let checkpoint = self.checkpoint(directory, key, sequence)?;
+        let [zero, one] = &mut self.banks;
+        zero.write_snapshot(checkpoint, key, directory, &mut load)?;
+        one.write_snapshot(checkpoint, key, directory, &mut load)?;
+        let mut current = const { Current::new() };
+        self.resolve(key, &mut current)?;
+        Ok(())
+    }
+
+    fn snapshot(
+        &self,
+        directory: &Directory<MAX_COUNTER_ENTRIES>,
+        sequence: u64,
+    ) -> Result<Snapshot> {
+        // Authority authenticates this complete digest together with epoch, arm and sequence.
+        // The persistent checkpoint keeps its original keyed directory encoding.
+        let mut digest = rsk_crypto::hash::Sha256State::new();
+        digest.update(b"RSKV2CST");
+        let count = u32::try_from(directory.entries().len()).map_err(|_| Error::MemoryFatal)?;
+        digest.update(&count.to_le_bytes());
+        for entry in directory.entries() {
+            digest.update(&entry.encode()?);
+        }
+        Ok(Snapshot {
+            identity: self.identity,
+            arm: self.arm,
+            sequence,
+            digest: digest.finish(),
+        })
+    }
+
+    pub fn read(&mut self, key: &[u8; 32], fid: u16, out: &mut [u8]) -> Result<Option<usize>> {
+        let mut current = const { Current::new() };
+        self.resolve(key, &mut current)?;
+        let scan = current
+            .scans
+            .get(current.source)
+            .ok_or(Error::MemoryFatal)?;
+        let (source, _) = self.source_target(current.source)?;
+        let result = source.read_value(scan, key, fid, out);
+        if result.is_err() {
+            self.mount = None;
+        }
+        result
+    }
+
+    pub fn rekey(&mut self, old: &[u8; 32], new: &[u8; 32], arm: RootArm) -> Result<()> {
+        self.read_cache.clear();
+        let mut current = const { Current::new() };
+        self.resolve(old, &mut current)?;
+        self.mount = None;
+        let source_scan = current
+            .scans
+            .get(current.source)
+            .ok_or(Error::MemoryFatal)?;
+        let sequence = source_scan
+            .sequence
+            .ok_or(Error::MemoryFatal)?
+            .checked_add(1)
+            .ok_or(Error::MemoryFatal)?;
+        let mut directory = Directory::new();
+        let mut buffer = rsk_secret::Secret::<[u8; crate::KV_BUF]>::zeroed();
+        for entry in current.directory.entries() {
+            let (source, _) = self.source_target(current.source)?;
+            let length = source
+                .read_value(source_scan, old, entry.fid(), buffer.expose_mut())?
+                .ok_or(Error::MemoryFatal)?;
+            directory.apply(Entry::live(
+                self.identity,
+                new,
+                entry.fid(),
+                sequence,
+                buffer.expose().get(..length).ok_or(Error::MemoryFatal)?,
+            )?)?;
+        }
+        buffer.wipe();
+        let target = Snapshot {
+            arm,
+            ..self.snapshot(&directory, sequence)?
+        };
+        self.authority.stage_replace(old, new, target)?;
+        self.arm = arm;
+        let checkpoint = self.checkpoint(&directory, new, sequence)?;
+        let (source, peer) = self.source_target(current.source)?;
+        peer.write_snapshot(checkpoint, new, &directory, |entry, out| {
+            if source.read_value(source_scan, old, entry.fid(), out)? != Some(out.len()) {
+                return Err(Error::MemoryFatal);
+            }
+            Ok(())
+        })?;
+        let mut peer_directory = Directory::new();
+        let scan = peer.scan(new, &mut peer_directory)?;
+        if scan.status != JournalStatus::Complete || scan.sequence != Some(sequence) {
+            return Err(Error::MemoryFatal);
+        }
+        source.write_snapshot(checkpoint, new, &directory, |entry, out| {
+            if peer.read_value(&scan, new, entry.fid(), out)? != Some(out.len()) {
+                return Err(Error::MemoryFatal);
+            }
+            Ok(())
+        })?;
+        self.resolve(new, &mut current)?;
+        Ok(())
+    }
+
+    pub fn write(&mut self, key: &[u8; 32], fid: u16, value: Option<&[u8]>) -> Result<()> {
+        let mut current = const { Current::new() };
+        self.resolve(key, &mut current)?;
+        self.mount = None;
+        let source_scan = current
+            .scans
+            .get(current.source)
+            .ok_or(Error::MemoryFatal)?;
+        let sequence = source_scan
+            .sequence
+            .ok_or(Error::MemoryFatal)?
+            .checked_add(1)
+            .ok_or(Error::MemoryFatal)?;
+        let entry = match value {
+            Some(data) => Entry::live(self.identity, key, fid, sequence, data)?,
+            None => Entry::deleted(self.identity, key, fid, sequence)?,
+        };
+        if !crate::is_counter_fid(fid) {
+            return Err(Error::MemoryFatal);
+        }
+        current.directory.apply(entry)?;
+        let target = self.snapshot(&current.directory, sequence)?;
+        self.authority.stage_replace(key, key, target)?;
+        let data = value.unwrap_or(&[]);
+        let needed = ENTRY_BYTES
+            .checked_add(data.len().div_ceil(16) * 16)
+            .ok_or(Error::MemoryFatal)?;
+        let space = current.scans.iter().zip(&self.banks).all(|(scan, bank)| {
+            u32::try_from(needed)
+                .ok()
+                .is_some_and(|needed| bank.capacity().saturating_sub(scan.next) >= needed)
+        });
+        if space {
+            let peer_scan = current
+                .scans
+                .get(1 - current.source)
+                .ok_or(Error::MemoryFatal)?;
+            let (source, peer) = self.source_target(current.source)?;
+            peer.append(peer_scan, key, entry, data)?;
+            source.append(source_scan, key, entry, data)?;
+            let zero = self
+                .banks
+                .first_mut()
+                .ok_or(Error::MemoryFatal)?
+                .confirm_append(
+                    current.scans.first_mut().ok_or(Error::MemoryFatal)?,
+                    key,
+                    entry,
+                    data,
+                )?;
+            let one = self
+                .banks
+                .get_mut(1)
+                .ok_or(Error::MemoryFatal)?
+                .confirm_append(
+                    current.scans.get_mut(1).ok_or(Error::MemoryFatal)?,
+                    key,
+                    entry,
+                    data,
+                )?;
+            if zero && one {
+                self.authority.admit(key, target, None)?;
+                self.mount = Some(current.scans);
+                return Ok(());
+            }
+        } else {
+            let checkpoint = self.checkpoint(&current.directory, key, sequence)?;
+            let (source, peer) = self.source_target(current.source)?;
+            peer.write_snapshot(checkpoint, key, &current.directory, |owner, out| {
+                if owner.fid() == fid {
+                    out.copy_from_slice(data);
+                } else if source.read_value(source_scan, key, owner.fid(), out)? != Some(out.len())
+                {
+                    return Err(Error::MemoryFatal);
+                }
+                Ok(())
+            })?;
+            let mut peer_dir = Directory::new();
+            let new_scan = peer.scan(key, &mut peer_dir)?;
+            if new_scan.status != JournalStatus::Complete || new_scan.sequence != Some(sequence) {
+                return Err(Error::MemoryFatal);
+            }
+            source.write_snapshot(checkpoint, key, &current.directory, |owner, out| {
+                if peer.read_value(&new_scan, key, owner.fid(), out)? != Some(out.len()) {
+                    return Err(Error::MemoryFatal);
+                }
+                Ok(())
+            })?;
+        }
+        self.resolve(key, &mut current)?;
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+#[expect(
+    clippy::unwrap_used,
+    clippy::indexing_slicing,
+    reason = "Counter API fixtures retain exact bank geometry and deliberate authenticated contradictions."
+)]
+#[path = "counters_tests.rs"]
+mod tests;

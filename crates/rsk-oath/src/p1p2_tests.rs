@@ -170,7 +170,7 @@ fn the_pairs_every_host_sends_are_still_taken() {
         (INS_CALCULATE, 0x01, &one),
         (INS_CALC_ALL, 0x00, &chal),
         (INS_CALC_ALL, 0x01, &chal),
-        (INS_SEND_REMAINING, 0x00, &[]),
+        // No SEND REMAINING: with no page owed it is 6D00 (paging_tests.rs).
     ] {
         let sw = run(&mut app, &mut fs, &apdu(ins, 0, p2, data)).0;
         assert_eq!(sw, Sw::OK, "ins {ins:#04x}, P2 {p2:#04x}");

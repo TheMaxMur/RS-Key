@@ -8,6 +8,9 @@ use alloc::vec;
 use alloc::vec::Vec;
 use rsk_fs::storage::ram::RamStorage;
 
+#[path = "kdf_restart_tests.rs"]
+mod restarts;
+
 struct CountRng(u8);
 impl Rng for CountRng {
     fn fill(&mut self, buf: &mut [u8]) {
@@ -23,6 +26,7 @@ fn dev() -> Device<'static> {
         serial_hash: &[0x44; 32],
         serial_id: &[1, 2, 3, 4, 5, 6, 7, 8],
         otp_key: None,
+        latched: false,
     }
 }
 
@@ -136,7 +140,7 @@ fn kdf_setup_moves_both_references_to_the_do_hashes() {
             PW3_MODE83,
             PW3_DEFAULT
         ),
-        Sw::retries(2)
+        Sw::SECURITY_STATUS_NOT_SATISFIED
     );
 }
 
@@ -191,7 +195,7 @@ fn the_dek_opens_under_both_new_references() {
             verify(&dev(), &mut fs, &mut s, &mut CountRng(0), 0x00, p2, pin),
             Sw::OK
         );
-        let mut dek = [0u8; DEK_SIZE];
+        let mut dek = Secret::<[u8; DEK_SIZE]>::zeroed();
         assert_eq!(
             pin::load_dek(&dev(), &mut fs, &s, &mut dek),
             Ok(()),
@@ -250,7 +254,28 @@ fn a_card_holding_a_key_refuses_the_do() {
         admin(&mut fs, &mut sess);
         fs.put(slot.get(), &[0xAB; 40]).unwrap();
         assert_eq!(
-            write(&mut fs, &mut sess, &three_salts()),
+            verify(
+                &dev(),
+                &mut fs,
+                &mut sess,
+                &mut CountRng(0),
+                0x00,
+                PW1_MODE81,
+                b"999999"
+            ),
+            Sw::SECURITY_STATUS_NOT_SATISFIED
+        );
+        let sw = write(&mut fs, &mut sess, &three_salts());
+        let mut pw = [0u8; 7];
+        let n = fs.read(EF_PW_PRIV, &mut pw).unwrap();
+        assert!(n > pw_retry_idx(EF_PW1));
+        assert_eq!(
+            pw[pw_retry_idx(EF_PW1)],
+            PW_RETRIES_DEFAULT - 1,
+            "KDF beside a private key must not refill PW1"
+        );
+        assert_eq!(
+            sw,
             Sw::CONDITIONS_NOT_SATISFIED,
             "a key in {:#06x} must block the KDF DO",
             slot.get()
@@ -505,7 +530,7 @@ fn the_access_status_survives_and_still_opens_the_dek() {
     assert_eq!(write(&mut fs, &mut sess, &three_salts()), Sw::OK);
     assert!(sess.has_pw3, "a YubiKey keeps PW3 standing here");
 
-    let mut dek = [0u8; DEK_SIZE];
+    let mut dek = Secret::<[u8; DEK_SIZE]>::zeroed();
     assert_eq!(
         pin::load_dek(&dev(), &mut fs, &sess, &mut dek),
         Ok(()),
@@ -541,7 +566,7 @@ fn a_standing_pw1_session_follows_the_re_seed_too() {
     assert!(sess.has_pw1 && sess.has_pw3);
     // `load_dek` prefers the PW1 copy when PW1/PW2 stand, so this reads the one
     // that would still be sealed under the old password if PW1 had been skipped.
-    let mut dek = [0u8; DEK_SIZE];
+    let mut dek = Secret::<[u8; DEK_SIZE]>::zeroed();
     assert_eq!(pin::load_dek(&dev(), &mut fs, &sess, &mut dek), Ok(()));
 }
 
@@ -574,7 +599,7 @@ fn the_retry_counters_are_restored() {
             PW1_MODE81,
             b"wrong1"
         ),
-        Sw::retries(2)
+        Sw::SECURITY_STATUS_NOT_SATISFIED
     );
     admin(&mut fs, &mut sess);
     assert_eq!(write(&mut fs, &mut sess, &three_salts()), Sw::OK);
@@ -593,4 +618,147 @@ fn the_layouts_describe_gpgs_two_lengths() {
     assert_eq!(THREE_SALTS_LEN, 110);
     assert_eq!(single_salt().len(), SINGLE_SALT_LEN);
     assert_eq!(three_salts().len(), THREE_SALTS_LEN);
+}
+
+/// Whether `pw` verifies reference `mode` on a fresh session.
+fn verifies<S: Storage>(fs: &mut Fs<S>, mode: u8, pw: &[u8]) -> bool {
+    let mut s = Session::new();
+    verify(&dev(), fs, &mut s, &mut CountRng(0), 0x00, mode, pw) == Sw::OK
+}
+
+/// `kdf-setup` cut at every mutation, then the boot a cut leads to (`scan_files`).
+/// No order keeps the DO and the references in step, so the claim is the weaker
+/// one the command's comment makes: some admin password always verifies — the old
+/// one or the DO's — and from it a re-run of the same command completes the setup.
+/// No cut ends in a card its admin cannot get back into.
+#[test]
+fn a_torn_kdf_setup_always_leaves_the_admin_a_way_back() {
+    let body = three_salts();
+    rsk_fs::cut::sweep(
+        || {
+            let (cut, medium) = rsk_fs::storage::faults::Cut::new();
+            let mut fs = Fs::new(cut);
+            fs.scan();
+            scan_files(&dev(), &mut fs, &mut CountRng(0)).unwrap();
+            (fs, medium)
+        },
+        |fs| {
+            // The VERIFY is cut too: its retry bookkeeping is an append of its own.
+            let mut sess = Session::new();
+            let rng = &mut CountRng(0);
+            verify(&dev(), fs, &mut sess, rng, 0x00, PW3_MODE83, PW3_DEFAULT) == Sw::OK
+                && write(fs, &mut sess, &body) == Sw::OK
+        },
+        |fs, budget, completed, medium| {
+            let _ = scan_files(&dev(), fs, &mut CountRng(9));
+            let pw3 = [PW3_DEFAULT, &HASH_PW3[..]]
+                .into_iter()
+                .find(|pw| verifies(fs, PW3_MODE83, pw))
+                .unwrap_or_else(|| {
+                    panic!(
+                        "budget {budget}: no admin password verifies — {:?}",
+                        medium.ops()
+                    )
+                });
+            if completed {
+                assert_eq!(pw3, &HASH_PW3[..], "budget {budget}: reported done, is not");
+            }
+            let mut sess = Session::new();
+            assert_eq!(
+                verify(
+                    &dev(),
+                    fs,
+                    &mut sess,
+                    &mut CountRng(0),
+                    0x00,
+                    PW3_MODE83,
+                    pw3
+                ),
+                Sw::OK
+            );
+            assert_eq!(
+                write(fs, &mut sess, &body),
+                Sw::OK,
+                "budget {budget}: the re-run did not heal — {:?}",
+                medium.ops()
+            );
+            assert!(
+                verifies(fs, PW3_MODE83, &HASH_PW3) && verifies(fs, PW1_MODE81, &HASH_PW1),
+                "budget {budget}: after the re-run a reference is not at its DO hash — {:?}",
+                medium.ops()
+            );
+        },
+    );
+}
+
+#[test]
+fn a_user_session_cannot_reseed_kdf() {
+    for mode in [PW1_MODE81, PW1_MODE82] {
+        let (mut fs, mut sess) = setup();
+        let mut rng = CountRng(7);
+        assert_eq!(
+            verify(
+                &dev(),
+                &mut fs,
+                &mut sess,
+                &mut rng,
+                0x00,
+                mode,
+                PW1_DEFAULT
+            ),
+            Sw::OK
+        );
+        assert_eq!(
+            verify(
+                &dev(),
+                &mut fs,
+                &mut sess,
+                &mut rng,
+                0x00,
+                PW3_MODE83,
+                b"99999999"
+            ),
+            Sw::SECURITY_STATUS_NOT_SATISFIED
+        );
+        assert_eq!(
+            write(&mut fs, &mut sess, &three_salts()),
+            Sw::SECURITY_STATUS_NOT_SATISFIED,
+            "a user session cannot reseed PW3 and restore its spent budget"
+        );
+    }
+}
+
+#[test]
+fn the_kdf_layouts_end_at_the_documented_record_widths() {
+    let length: fn(&[Field]) -> usize = core::hint::black_box(layout_len);
+    assert_eq!(length(&SINGLE_SALT), 90);
+    assert_eq!(length(&THREE_SALTS), 110);
+    for (layout, width) in [(&SINGLE_SALT[..], 90), (&THREE_SALTS[..], 110)] {
+        assert_eq!(
+            layout.last().map(|&(offset, _, count)| offset + 2 + count),
+            Some(width)
+        );
+        for pair in layout.windows(2) {
+            assert_eq!(pair[0].0 + 2 + pair[0].2, pair[1].0);
+        }
+    }
+}
+
+#[test]
+fn an_unreadable_key_slot_does_not_allow_kdf_reseeding() {
+    for slot in [EF_PK_SIG, EF_PK_DEC, EF_PK_AUT] {
+        let (storage, medium) = rsk_fs::storage::faults::ProbeStuck::new();
+        let mut fs = Fs::new(storage);
+        fs.scan();
+        scan_files(&dev(), &mut fs, &mut CountRng(0)).unwrap();
+        let mut sess = Session::new();
+        admin(&mut fs, &mut sess);
+        fs.put_key(slot, rsk_fs::Sealed::wrap(b"opaque owner"))
+            .unwrap();
+        medium.stick(Some(slot.get()));
+        let generation = fs.write_gen();
+        assert_eq!(write(&mut fs, &mut sess, &[0x81, 1, 0]), Sw::MEMORY_FAILURE);
+        assert_eq!(fs.write_gen(), generation);
+        assert!(sess.has_pw3);
+    }
 }

@@ -22,10 +22,44 @@ for the task.
 flowchart LR
     cli["rsk (host CLI)"] -->|hidapi / CTAPHID| fido["Device — FIDO<br/>backup · audit · lock · attestation"]
     cli -->|PC/SC / pcscd| ccid["Device — CCID applets<br/>OpenPGP · PIV · OATH · rescue"]
-    cli -->|USB BOOTSEL / picotool| boot["Device — bootloader<br/>secure-boot · OTP fuses"]
+    cli -->|USB BOOTSEL / picotool| boot["Device — bootloader<br/>flash · secure-boot · OTP fuses"]
 ```
 
 ## Running it
+
+### Storage initialization and upgrades
+
+Storage v2 initializes wholly erased storage and migrates readable legacy
+storage automatically during boot, before ordinary applets or seed/PIN
+provisioning run. Firmware upgrades require no storage command or physical
+confirmation. Use `rsk storage status` to read the resulting state.
+
+Migration preserves readable routed values and existing keys, needs temporary
+main-partition space for its manifest and counter backups, and refuses before
+counter erasure if those backups cannot be verified. An interrupted migration
+resumes automatically at the next boot. A known SDK E10 padding suffix in an
+otherwise unused counter sector is ignored by the legacy reader. Other occupied
+page data still requires a compatible storage layout. Keep an independent backup before an
+upgrade.
+
+Damaged v2 authority, unreadable storage or a malformed legacy page layout
+keeps the device in CCID rescue mode. Automatic boot never erases occupied
+storage to turn it into a fresh device. The attended `rsk storage initialize`
+and `rsk storage import-legacy` commands remain recovery tools, with physical
+confirmation; normal initialization and upgrades do not need them.
+
+Import trusts the legacy records currently readable. It cannot reconstruct a
+record already discarded by CRC or identify damage that already formed a valid
+legacy record. After activation, integrity is checked before codec interpretation;
+remaining v2 witnesses prevent unavailable authority from falling back to legacy. An activated v2 store
+requires v2-aware firmware: downgrading to the old backend is unsupported.
+Preserve the flash image when recovery fails; initialization does not repair
+occupied media. Endurance costs and remaining freshness limits are described
+in [Limitations](../limitations.md).
+
+The software emulator follows the same automatic initialization, migration and
+recovery rules. Existing images retain their magic and geometry. Authority is
+bound to the configured serial.
 
 In the Nix dev shell, `rsk` is already on `PATH` with every dependency pinned:
 
@@ -67,9 +101,7 @@ The Nix shell stays the primary, reproducible path (it also carries `picotool`,
 
 CCID reader selection recognizes `RS-Key`, `RSK`, or the firmware's appended
 `(rs-key-0001)` USB serial in the PC/SC reader name. Linux pcscd uses the
-driver's friendly name rather than the USB product string, so renaming the
-product does not fix reader selection on older CLI versions. Run the current
-source with `nix develop -c rsk status` to use the updated selection.
+driver's friendly name in place of the USB product string on some systems.
 
 ## Command groups
 
@@ -81,8 +113,9 @@ source with `nix develop -c rsk status` to use the updated selection.
 | `backup` | wallet-style seed export / restore / finalize (BIP-39, SLIP-39) | [Seed backup](seed-backup.md) |
 | `pair` | guided primary + backup (two independent keys) enrollment | [Backup key](backup-key.md) |
 | `lock` | at-rest soft-lock of the FIDO seed (`enable`/`unlock`/`disable`) | [Soft-lock](soft-lock.md) |
+| `flash` | check a release image (signature, checksum, provenance), then write it over BOOTSEL | [Supply chain](../supply-chain.md#verifying-a-download) |
 | `secure-boot` | secure-boot provisioning + key rotation **(irreversible)** | [Production](../production.md), [OTP fuses](../otp-fuses.md) |
-| `otp` | burn + lock the at-rest master key (MKEK) into OTP **(irreversible)** | [OTP fuses](../otp-fuses.md) |
+| `otp` | burn and verify keys, automatically seal at boot; `otp status` reads the result **(burn/seal irreversible)** | [OTP fuses](../otp-fuses.md) |
 | `fido` | FIDO2 management: `set-pin`, `list-passkeys`, `attestation` | [FIDO2](fido2.md), [Attestation](attestation.md) |
 | `led` | LED color / brightness per device state | [LED](led.md) |
 | `openpgp` | OpenPGP applet utilities (e.g. `reset` to factory PINs) | [OpenPGP card](openpgp.md) |
@@ -164,6 +197,12 @@ Destructive or fuse-burning commands (`offboard`, `secure-boot`, `otp`,
 exact token (e.g. `LOCK-SEED`) rather than pressing a single key. Anything else
 aborts. The OTP and secure-boot rituals burn one-time-programmable fuses and
 cannot be undone. Read [Production setup](../production.md) before running them.
+
+`secure-boot harden` programs both `DEBUG_DISABLE` and
+`SECURE_DEBUG_DISABLE`, plus the glitch policy, and verifies all eight CRIT1
+copies. Interrupted writes can be retried while page 1 remains writable.
+`secure-boot lock` refuses incomplete hardening; cold-boot and debug-denial
+checks on the board still precede enforcement and page locking.
 
 ### Errors and exit codes
 

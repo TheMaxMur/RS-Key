@@ -334,3 +334,37 @@ fn tampered_authdata_fails_for_every_algorithm() {
         );
     }
 }
+
+#[test]
+fn each_signature_oracle_refuses_malformed_encodings_before_verification() {
+    for spec in [&ES256, &ES384, &ES512, &EDDSA] {
+        let mut authenticator = Authr::fresh();
+        let registered = authenticator.send(CTAP_MAKE_CREDENTIAL, &mc_request(spec.alg));
+        assert_ok(&registered);
+        let data = authdata(&registered.body);
+        let key = cose_key(spec, &data);
+        let assertion = authenticator.send(CTAP_GET_ASSERTION, &ga_request(&cred_id_of(&data)));
+        assert_ok(&assertion);
+        let mut signed = authdata(&assertion.body);
+        signed.extend_from_slice(&CDH);
+        assert!(verifies(
+            spec.alg,
+            &key,
+            &signed,
+            &assertion_sig(&assertion.body)
+        ));
+        for malformed in [&[][..], &[0x30, 0][..], &[1; 3][..]] {
+            assert!(
+                !verifies(spec.alg, &key, &signed, malformed),
+                "{}",
+                spec.name
+            );
+        }
+    }
+}
+
+#[test]
+#[should_panic(expected = "algorithm / key-type mismatch")]
+fn the_signature_oracle_refuses_an_algorithm_and_key_type_mismatch() {
+    let _ = verifies(ALG_ES256, &CoseKey::Okp { x: [0; 32] }, b"", b"");
+}

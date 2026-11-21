@@ -1,0 +1,634 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 RS-Key contributors
+
+"""Exercise firmware ELF stack, residue, upgrade and interrupted NOR writes.
+
+This runner owns every process, flash file and TCP endpoint it uses. It talks
+only to tests/emu.py's socket clients, never to a connected security key.
+"""
+
+import argparse
+import contextlib
+import hashlib
+import hmac
+import json
+import os
+from pathlib import Path
+import shutil
+import socket
+import subprocess
+import sys
+import tempfile
+import time
+
+ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / "tests"))
+import emu  # noqa: E402
+
+emu.install()
+from ctaphid import ctaphid_init, decode, enc, read, send_cbor, write  # noqa: E402
+import image_operations  # noqa: E402
+
+OATH = bytes.fromhex("a0000005272101")
+OPENPGP = bytes.fromhex("d27600012401")
+NAME = b"image-assurance"
+KEY = bytes.fromhex("5a3c96e1d27b48f0a5c3691e2db7840f5e3ca197")
+NEW_KEY = bytes.fromhex("0123456789abcdeffedcba987654321001234567")
+RP = "image-assurance.invalid"
+CDH = hashlib.sha256(b"image-assurance").digest()
+PW3 = b"87654321"
+SEED = "1234567890abcdef" * 4
+# Interrupt entry can vary the sampled maximum by a few hundred bytes.
+STACK_JITTER = 1024
+CTAP_IMAGE_TIMEOUT_NS = 120_000_000_000
+CTAP_HOST_TIMEOUT_S = 1200
+USB_MAX_GAP_NS = 500_000_000
+LED_STATUS_IDLE = "00"
+
+
+def port():
+    return ports(1)[0]
+
+
+def ports(count, exclude=()):
+    assigned = []
+    # Hold all selections until the last bind so Linux cannot reuse a port.
+    with contextlib.ExitStack() as stack:
+        while len(assigned) < count:
+            sock = stack.enter_context(socket.socket())
+            sock.bind(("127.0.0.1", 0))
+            assigned_port = sock.getsockname()[1]
+            if assigned_port not in exclude:
+                assigned.append(assigned_port)
+    return assigned
+
+
+def fields(reply):
+    return dict(item.split("=", 1) for item in reply.split() if "=" in item)
+
+
+def scratch_code(image):
+    listing = subprocess.check_output(["arm-none-eabi-nm", "-n", str(image)], text=True)
+    names = ("__rsk_scratch_exec_start", "__rsk_scratch_exec_end")
+    symbols = {line.split()[-1]: int(line.split()[0], 16) for line in listing.splitlines()
+               if line.endswith(names)}
+    if not symbols:
+        return None  # Historical images predate the scratch code island.
+    start, end = (symbols[name] for name in names)
+    assert 0x20080100 <= start < end <= 0x20082000, "scratch code leaves SRAM8/9"
+    with tempfile.TemporaryDirectory(prefix="rskey-scratch-load-") as folder:
+        output = Path(folder) / "scratch.bin"
+        subprocess.run(["arm-none-eabi-objcopy", "-O", "binary",
+            "--only-section=.rsk_scratch_exec", str(image), str(output)], check=True)
+        expected = output.read_bytes()
+    assert len(expected) == end - start, "scratch load bytes do not cover the complete destination"
+    return start, expected
+
+
+class ImageDeadline:
+    def __init__(self, dev):
+        self.dev = dev
+        self.wall_start = time.monotonic()
+        state = fields(dev.inspect("status"))
+        self.power_ups = int(state["power_ups"])
+        self.start = self.previous = int(state["emulated_ns"])
+
+    def check(self):
+        assert time.monotonic() - self.wall_start < CTAP_HOST_TIMEOUT_S, "CTAP host watchdog expired"
+        state = fields(self.dev.inspect("status"))
+        assert state["dead"] == "false", "image faulted during CTAP"
+        assert int(state["power_ups"]) == self.power_ups, "image rebooted during CTAP"
+        now = int(state["emulated_ns"])
+        assert now >= self.previous, "image clock moved backwards during CTAP"
+        self.previous = now
+        assert now - self.start < CTAP_IMAGE_TIMEOUT_NS, "CTAP image deadline expired"
+        assert time.monotonic() - self.wall_start < CTAP_HOST_TIMEOUT_S, "CTAP host watchdog expired"
+
+
+class Device:
+    def __init__(self, binary, image, store, directory, label, usbip=None, rom=None,
+                 display=False, taps_port=None, headless=True, *, check_boot_led=False):
+        self.fido_port, self.ccid_port, self.inspect_port = ports(3, (usbip, taps_port))
+        self.log_path = directory / f"{label}.log"
+        self.log = self.log_path.open("w")
+        args = [str(binary), "--store", str(store), "--seed", SEED,
+                "--fido-port", str(self.fido_port), "--ccid-port", str(self.ccid_port)]
+        if image:
+            args += ["--image", str(image), "--inspect-port", str(self.inspect_port)]
+            if display:
+                args += ["--display"]
+                if headless:
+                    args += ["--headless"]
+            if taps_port:
+                args += ["--taps-port", str(taps_port)]
+            if rom:
+                args += ["--rom", str(rom)]
+        if usbip:
+            args += ["--usbip", f"127.0.0.1:{usbip}"]
+        self.process = subprocess.Popen(args, stdout=self.log, stderr=self.log)
+        self.image = image
+        self.scratch = None
+        self.card = None
+        self.hid = None
+        try:
+            self.scratch = scratch_code(image) if image else None
+            self.wait_ready()
+            if check_boot_led:
+                self.check_boot_led()
+            self.check_scratch_code()
+            os.environ[emu.ENV_ADDR] = f"127.0.0.1:{self.fido_port}"
+            os.environ[emu.ENV_CCID_ADDR] = f"127.0.0.1:{self.ccid_port}"
+            self.card = emu.EmuCard()
+            self.card.connect()
+            self.check_storage_ready()
+            self.hid = emu.EmuHid()
+            self.hid.open_path()
+            self.cid = ctaphid_init(self.hid)
+        except BaseException:
+            self.close()
+            raise
+
+    def check_storage_ready(self):
+        self.select(bytes.fromhex("a0583fc19b7e4f21"))
+        body, hi, lo = self.card.transmit(bytes.fromhex("801e080000"))
+        if (hi, lo) == (0x6A, 0x86):
+            return  # Historical release images predate storage v2.
+        assert (hi, lo) == (0x90, 0) and bytes(body) == b"\x02\x01", "automatic storage boot failed"
+
+    def check_scratch_code(self):
+        if self.image and self.scratch:
+            start, expected = self.scratch
+            actual = bytes.fromhex(self.inspect(f"read {start:x} {len(expected)}"))
+            assert actual == expected, "scratch code/padding differs from the exact ELF load bytes"
+
+    def check_boot_led(self):
+        listing = subprocess.check_output(["arm-none-eabi-nm", "-S", str(self.image)], text=True)
+        [(address, size, _, _)] = [line.split() for line in listing.splitlines() if "LED_STATUS" in line]
+        assert int(size, 16) == 1, "unexpected firmware LED status size"
+        # The USB host sees the ACK before the MCU has handled its completion IRQ.
+        deadline = time.monotonic() + 1
+        while True:
+            status = self.inspect(f"read {address} 1")
+            if status == LED_STATUS_IDLE:
+                return
+            assert time.monotonic() < deadline, (
+                f"LED status {status}, expected idle after USB configuration before any applet command"
+            )
+            time.sleep(0.01)
+
+    def inspect(self, command):
+        with socket.create_connection(("127.0.0.1", self.inspect_port), timeout=30) as sock:
+            sock.sendall(command.encode() + b"\n")
+            reply = sock.makefile("r").readline().rstrip()
+        if not reply.startswith("ok "):
+            raise AssertionError(f"inspection {command.split()[0]}: {reply}")
+        return reply[3:]
+
+    def wait_ready(self, power_ups=1):
+        deadline = time.monotonic() + 180
+        while time.monotonic() < deadline:
+            if self.process.poll() is not None:
+                raise RuntimeError(f"emulator exited; see {self.log_path}")
+            if self.image:
+                try:
+                    state = fields(self.inspect("status"))
+                    if state["ready"] == "true" and int(state["power_ups"]) >= power_ups:
+                        return state
+                    if state["dead"] == "true":
+                        raise RuntimeError(f"image faulted; see {self.log_path}")
+                except OSError:
+                    pass
+            elif "device ready" in self.log_path.read_text():
+                return None
+            time.sleep(0.02)
+        raise TimeoutError(f"emulator not ready; see {self.log_path}")
+
+    def close(self):
+        if self.hid:
+            self.hid.close()
+        if self.card and self.card.sock:
+            self.card.sock.close()
+        self.process.kill()
+        self.process.wait()
+        self.log.close()
+
+    def apdu(self, command, expected=0x9000):
+        body, hi, lo = self.card.transmit(command)
+        body = bytes(body)
+        while hi == 0x61:
+            more, hi, lo = self.card.transmit([0, 0xC0, 0, 0, lo])
+            body += bytes(more)
+        sw = (hi << 8) | lo
+        assert sw == expected, f"APDU {bytes(command[:4]).hex()}: {sw:04x}, expected {expected:04x}"
+        if expected != 0x9000:
+            assert not body, f"APDU refusal {sw:04x} returned {len(body)} bytes"
+        return body
+
+    def select(self, aid):
+        return self.apdu(bytes([0, 0xA4, 4, 0, len(aid)]) + aid)
+
+    def power_cycle(self):
+        with socket.create_connection(("127.0.0.1", self.ccid_port), timeout=180) as sock:
+            sock.sendall(bytes([emu.OP_REPLUG]) + bytes(4))
+            emu._recv_frame(sock)
+        self.reconnect()
+
+    def reconnect(self):
+        self.hid.close()
+        self.hid = emu.EmuHid()
+        self.hid.open_path()
+        self.cid = ctaphid_init(self.hid)
+        self.card.sock.close()
+        self.card = emu.EmuCard()
+        self.card.connect()
+
+    def ctap(self, command, body=None, expected=0):
+        payload = bytes([command]) + (enc(body) if body is not None else b"")
+        if self.image:
+            deadline = ImageDeadline(self)
+            self.inspect("transport-begin")
+            answer = send_cbor(self.hid, self.cid, payload, check_deadline=deadline.check)
+            timing = {key: int(value) for key, value in fields(self.inspect("transport-end")).items()}
+            timing["command"] = command
+            timing["wall_elapsed_s"] = round(time.monotonic() - deadline.wall_start, 3)
+            if getattr(self, "ctap_timings", None) is not None:
+                self.ctap_timings.append(timing)
+            assert timing["max_gap_ns"] <= USB_MAX_GAP_NS, "CTAP starved USB on the image clock"
+        else:
+            answer = send_cbor(self.hid, self.cid, payload)
+        assert answer[0] == expected, f"CTAP {command}: status {answer[0]:02x}, expected {expected:02x}"
+        if expected:
+            assert len(answer) == 1, "CTAP refusal returned a partial response"
+        return decode(answer[1:]) if len(answer) > 1 else None
+
+    def measured(self, label, operation, report):
+        self.inspect("begin")
+        self.ctap_timings = []
+        failed = False
+        try:
+            result = operation()
+        except BaseException:
+            failed = True
+            raise
+        finally:
+            if self.ctap_timings:
+                report[f"{label}_ctap"] = self.ctap_timings
+            self.ctap_timings = None
+            try:
+                measurement = fields(self.inspect("end"))
+                report[label] = {k: int(v) for k, v in measurement.items()}
+            except Exception as error:
+                if not failed:
+                    raise
+                report[f"{label}_measurement_error"] = str(error)
+        names = ["core0", "core1"] + (["ns0"] if "ns0_min" in measurement else [])
+        for name in names:
+            assert int(measurement[f"{name}_min"]) >= int(measurement[f"{name}_low"]), label
+        return result
+
+
+@contextlib.contextmanager
+def device(*args, **kwargs):
+    item = Device(*args, **kwargs)
+    try:
+        yield item
+        item.check_scratch_code()
+    finally:
+        item.close()
+
+
+def tlv(tag, value):
+    return bytes([tag, len(value)]) + value
+
+
+def put_oath(dev, key=KEY):
+    dev.select(OATH)
+    body = tlv(0x71, NAME) + tlv(0x73, bytes([0x21, 6]) + key)
+    dev.apdu(bytes([0, 1, 0, 0, len(body)]) + body)
+
+
+def calculate(dev):
+    dev.select(OATH)
+    body = tlv(0x71, NAME) + tlv(0x74, (1).to_bytes(8, "big"))
+    return dev.apdu(bytes([0, 0xA2, 0, 1, len(body)]) + body)
+
+
+def expected_oath(key):
+    digest = hmac.new(key, (1).to_bytes(8, "big"), "sha1").digest()
+    offset = digest[-1] & 15
+    truncated = int.from_bytes(digest[offset:offset + 4], "big") & 0x7FFFFFFF
+    return bytes([0x76, 5, 6]) + (truncated % 10**6).to_bytes(4, "big")
+
+
+def create_credential(dev, alg=-7):
+    answer = dev.ctap(1, {1: CDH, 2: {"id": RP}, 3: {"id": b"user", "name": "image"},
+                          4: [{"alg": alg, "type": "public-key"}], 7: {"rk": True}})
+    auth = answer[2]
+    size = int.from_bytes(auth[53:55], "big")
+    cred, public = auth[55:55 + size], decode(auth[55 + size:])
+    assert public[3] == alg
+    return cred, public
+
+
+def assertion(dev, cred, public):
+    response = dev.ctap(2, {1: RP, 2: CDH, 3: [{"id": cred, "type": "public-key"}]})
+    image_operations.verify_fido(public, response[2] + CDH, response[3])
+    return response
+
+
+def transcript(dev):
+    put_oath(dev)
+    otp = calculate(dev)
+    assert otp == expected_oath(KEY)
+    dev.select(OPENPGP)
+    before = dev.apdu(bytes.fromhex("00ca00c400"))
+    dev.apdu(bytes.fromhex("0020008106393939393939"), 0x6982)
+    after_wrong = dev.apdu(bytes.fromhex("00ca00c400"))
+    dev.apdu(bytes.fromhex("0020008106313233343536"))
+    after_right = dev.apdu(bytes.fromhex("00ca00c400"))
+    dev.apdu(bytes.fromhex("00fe0000"), 0x6D00)
+    return {"oath": otp.hex(), "pin_before": before.hex(),
+            "pin_wrong": after_wrong.hex(), "pin_correct": after_right.hex()}
+
+
+def assert_no_residue(dev):
+    for pattern in (KEY[:16], bytes(b ^ 0x36 for b in KEY[:16]), bytes(b ^ 0x5C for b in KEY[:16])):
+        scan = fields(dev.inspect(f"scan {pattern.hex()}"))
+        assert int(scan["count"]) == 0, f"secret residue remains at {scan['addresses']}"
+
+
+def residue(dev):
+    # Allow the post-response worker sweep to complete before inspecting SRAM.
+    time.sleep(0.05)
+    assert_no_residue(dev)
+    planted = KEY[:16]
+    # The SRAM8 prefix is outside both data and executable linker sections.
+    address = image_operations.CONTROL_ADDRESS
+    dev.inspect(f"plant {address} {planted.hex()}")
+    try:
+        try:
+            assert_no_residue(dev)
+        except AssertionError as error:
+            assert str(error) == f"secret residue remains at {address}", error
+        else:
+            raise AssertionError("planted OATH key did not fail the residue check")
+    finally:
+        dev.inspect(f"plant {address} {'00' * len(planted)}")
+    assert_no_residue(dev)
+
+
+def copy_store(source, destination):
+    shutil.copyfile(source, destination)
+    shutil.copyfile(Path(str(source) + ".otp"), Path(str(destination) + ".otp"))
+
+
+def upgrade(args, work, report):
+    store = work / "release.flash"
+    with device(args.emulator, args.release_image, store, work, "release") as old:
+        put_oath(old)
+        cred, public = create_credential(old)
+        old.select(OPENPGP)
+        body = b"12345678" + PW3
+        old.apdu(bytes([0, 0x24, 0, 0x83, len(body)]) + body)
+        assert calculate(old) == expected_oath(KEY)
+    upgraded = work / "upgrade.flash"
+    copy_store(store, upgraded)
+    with device(args.emulator, args.image, upgraded, work, "upgrade") as new:
+        assert calculate(new) == expected_oath(KEY), "upgrade lost the OATH credential"
+        assertion(new, cred, public)
+        new.select(OPENPGP)
+        new.apdu(bytes([0, 0x20, 0, 0x83, len(PW3)]) + PW3)
+    report["upgrade"] = "OATH key, resident FIDO signing key and changed OpenPGP PIN survived automatic migration"
+    if args.incompatible_image:
+        broken = work / "incompatible.flash"
+        copy_store(store, broken)
+        with device(args.emulator, args.incompatible_image, broken, work, "incompatible") as bad:
+            try:
+                calculate(bad)
+            except AssertionError as error:
+                assert "APDU 00a20001: 6984" in str(error), f"wrong falsification failure: {error}"
+                report["upgrade_falsification"] = str(error)
+            else:
+                raise AssertionError("incompatible image still reads the old OATH credential")
+
+
+def cuts(args, work, report):
+    original = work / "cuts-base.flash"
+    with device(args.emulator, args.image, original, work, "cuts-base") as dev:
+        put_oath(dev)
+        assert calculate(dev) == expected_oath(KEY)
+    control = work / "cuts-control.flash"
+    copy_store(original, control)
+    with device(args.emulator, args.image, control, work, "cuts-control") as dev:
+        before = int(fields(dev.inspect("status"))["programmed_bytes"])
+        put_oath(dev, NEW_KEY)
+        assert calculate(dev) == expected_oath(NEW_KEY), "successful replacement control failed"
+        total = int(fields(dev.inspect("status"))["programmed_bytes"]) - before
+        assert total > 0 and total % 256 == 0, "expected complete ROM page programs"
+        dev.inspect("cut-cycles 0")
+        interrupted = False
+        try:
+            dev.select(OATH)
+        except (emu.CardConnectionException, OSError):
+            interrupted = True
+        assert interrupted, "the post-acknowledgment cut did not interrupt its request"
+        state = dev.wait_ready(power_ups=2)
+        assert state["last_cut"] != "none", "post-acknowledgment power cut never fired"
+        dev.card.sock.close()
+        dev.card = emu.EmuCard()
+        dev.card.connect()
+        assert calculate(dev) == expected_oath(NEW_KEY), "acknowledged replacement was lost at power cut"
+        report["acknowledged_cut"] = {"acknowledged": True, "result": expected_oath(NEW_KEY).hex(),
+                                      "cut": dev.inspect("status")}
+    with device(args.emulator, args.image, control, work, "reopen-acknowledged-store") as fresh:
+        assert calculate(fresh) == expected_oath(NEW_KEY), "acknowledged replacement was not persisted"
+    byte_points = sorted({0, 1, 7, 63, 128, 256, total} | {
+        base + within for base in range(0, total, 256) for within in (0, 1, 255)
+    })
+    outcomes = []
+    snapshots = {}
+    committed_cut = None
+    for mode, points in (("program", byte_points),
+                         ("program-cycles", [0, 1, 1000, 30000]),
+                         ("cycles", [0, 1, 1000, 10000, 100000])):
+        for point in points:
+            store = work / f"cut-{mode}-{point}.flash"
+            copy_store(original, store)
+            with device(args.emulator, args.image, store, work, f"cut-{mode}-{point}") as dev:
+                dev.select(OATH)
+                dev.inspect(f"cut-{mode} {point}")
+                body = tlv(0x71, NAME) + tlv(0x73, bytes([0x21, 6]) + NEW_KEY)
+                acknowledged = False
+                try:
+                    dev.apdu(bytes([0, 1, 0, 0, len(body)]) + body)
+                    acknowledged = True
+                except (emu.CardConnectionException, OSError):
+                    pass
+                state = dev.wait_ready(power_ups=2)
+                assert state["last_cut"] != "none", "fault injection never fired"
+                dev.card.sock.close()
+                dev.card = emu.EmuCard()
+                dev.card.connect()
+                answer = calculate(dev)
+                assert answer in (expected_oath(KEY), expected_oath(NEW_KEY)), "torn credential accepted"
+                if acknowledged:
+                    assert answer == expected_oath(NEW_KEY), "acknowledged replacement was lost"
+                if mode == "program" and point == total:
+                    committed_cut = (store, answer)
+                cut = dev.inspect("status")
+                outcomes.append({"mode": mode, "point": point, "result": answer.hex(),
+                                 "acknowledged": acknowledged, "cut": cut})
+                detail = fields(cut)
+                if mode in ("program", "program-cycles"):
+                    assert detail["flash"].startswith("program"), "cut missed the page program"
+                    at = int(detail["address"], 0)
+                    page = Path(str(store) + ".cut").read_bytes()[at:at + 256]
+                    snapshots[(mode, point)] = (at, page, int(detail["bytes"].split("/")[0]))
+            reopened = work / f"reload-{mode}-{point}.flash"
+            shutil.copyfile(Path(str(store) + ".cut"), reopened)
+            shutil.copyfile(Path(str(store) + ".otp"), Path(str(reopened) + ".otp"))
+            with device(args.emulator, args.image, reopened, work, f"reload-{mode}-{point}") as fresh:
+                assert calculate(fresh) == answer, "persisted torn flash recovered differently"
+    before_at, before, _ = snapshots[("program", 0)]
+    after_at, after, _ = snapshots[("program", 256)]
+    assert before_at == after_at and before != after, "cut control did not change its flash page"
+    for (mode, point), (at, page, count) in snapshots.items():
+        if mode == "program" and point > 256:
+            continue
+        assert at == before_at, "fault runs targeted different array operations"
+        assert page == after[:count] + before[count:], f"{mode} {point}: flash is not the reported torn prefix"
+    store, answer = committed_cut
+    with device(args.emulator, args.image, store, work, "reopen-recovered-store") as fresh:
+        assert calculate(fresh) == answer, "the recovered --store file did not persist its state"
+    report["power_cuts"] = outcomes
+    report["replacement_programmed_bytes"] = total
+
+
+def import_stage_halts(args, work, report):
+    """The import ELF must not start the valid NS left by the combined image.
+    Control through the basic CLI: bypassing the length branch fails with
+    "import image started the stale NS transport"; the intact branch passes."""
+    store = work / "import-stage.flash"
+    shutil.copyfile(work / "basic.flash", store)
+    fido, ccid, inspector = ports(3)
+    with (work / "import-stage.log").open("w") as log:
+        process = subprocess.Popen([
+            str(args.emulator), "--image", str(args.import_image), "--store", str(store),
+            "--seed", SEED, "--fido-port", str(fido), "--ccid-port", str(ccid),
+            "--inspect-port", str(inspector),
+        ], stdout=log, stderr=log)
+        try:
+            def inspect(command):
+                with socket.create_connection(("127.0.0.1", inspector), timeout=10) as sock:
+                    sock.sendall(command.encode() + b"\n")
+                    reply = sock.makefile("r").readline().strip()
+                assert reply.startswith("ok "), reply
+                return reply[3:]
+
+            deadline = time.monotonic() + 60
+            while True:
+                assert process.poll() is None, "import image emulator exited"
+                assert time.monotonic() < deadline, "import image never reached its explicit halt"
+                try:
+                    where = inspect("where")
+                    state = fields(inspect("status"))
+                    assert state["ready"] == "false", "import image started the stale NS transport"
+                    assert state["dead"] == "false", "import image faulted instead of halting"
+                except OSError:
+                    time.sleep(0.02)
+                    continue
+                if "halt_incomplete_image" in where:
+                    break
+                time.sleep(0.02)
+            state = fields(inspect("status"))
+            assert state["ready"] == state["dead"] == state["bootloader"] == "false", state
+            assert int(state["programmed_bytes"]) == 0, "import link touched persistent state"
+            report["import_stage"] = {"where": where, "status": state}
+        finally:
+            process.kill()
+            process.wait()
+
+
+def gateway_probes(dev):
+    command, payload = 0xFE, b"gateways"
+    write(dev.hid, dev.cid + bytes([command, 0, len(payload)]) + payload)
+    response = read(dev.hid)
+    assert response[:7] == dev.cid + bytes([command, 0, 4]), "gateway probe diagnostic missing"
+    assert response[7:11] == b"\x01\x00\x00\x00", "gateway startup probes did not complete"
+    assert isinstance(dev.ctap(4), dict), "getInfo failed after gateway probes"
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--emulator", type=Path, required=True)
+    parser.add_argument("--image", type=Path, required=True, help="partitioned current no-touch ELF")
+    parser.add_argument("--import-image", type=Path, help="Secure import-library ELF without NS")
+    parser.add_argument("--gateway-image", type=Path, help="combined no-touch ELF with test-gateway-probes")
+    parser.add_argument("--release-image", type=Path, help="partitioned v0.4.11 no-touch ELF")
+    parser.add_argument("--incompatible-image", type=Path, help="scratch ELF with OATH FID base changed")
+    parser.add_argument("--stack-regression", type=Path, help="scratch ELF with increased ML-DSA stack use")
+    parser.add_argument("--work", type=Path, required=True, help="new directory for logs and emulated flash")
+    parser.add_argument("--only", choices=("basic", "stack", "upgrade", "cuts", "all", *image_operations.GROUPS),
+                        default="all")
+    args = parser.parse_args()
+    args.work.mkdir(parents=True, exist_ok=False)
+    for name in ("emulator", "image", "import_image", "gateway_image", "release_image", "incompatible_image", "stack_regression"):
+        value = getattr(args, name)
+        if value:
+            setattr(args, name, value.resolve(strict=True))
+    report = {"emulator": hashlib.sha256(args.emulator.read_bytes()).hexdigest(),
+              "images": {name: hashlib.sha256(getattr(args, name).read_bytes()).hexdigest()
+                         for name in ("image", "import_image", "gateway_image", "release_image", "incompatible_image", "stack_regression")
+                         if getattr(args, name)}}
+    if args.stack_regression:
+        assert report["images"]["image"] != report["images"]["stack_regression"], "stack mutant ELF is identical to baseline"
+    try:
+        if args.only == "all" or args.only in image_operations.GROUPS:
+            group = "operations" if args.only == "all" else args.only
+            for label, elf in (("native_operations", None), ("image_operations", args.image)):
+                report[label] = {}
+                with device(args.emulator, elf, args.work / f"{label}.store", args.work, label) as dev:
+                    image_operations.run(dev, report[label], group)
+        if args.only in ("all", "basic"):
+            if args.gateway_image:
+                with device(args.emulator, args.gateway_image, args.work / "gateway.flash", args.work, "gateway") as image:
+                    gateway_probes(image)
+                    report["gateway_probes"] = "startup refusals and valid NS RAM controls completed; getInfo passed"
+            with device(args.emulator, None, args.work / "native.store", args.work, "native") as native:
+                expected = transcript(native)
+            with device(args.emulator, args.image, args.work / "basic.flash", args.work, "basic",
+                        check_boot_led=True) as image:
+                observed = transcript(image)
+                assert observed == expected, f"native/image mismatch: {expected} != {observed}"
+                report["differential"] = observed
+                image.measured("oath_calculate", lambda: calculate(image), report)
+                residue(image)
+                report["residue"] = "known OATH key and HMAC pads absent; SRAM planted leak found and cleared"
+            if args.import_image:
+                import_stage_halts(args, args.work, report)
+        if args.only in ("all", "stack"):
+            for label, elf in (("stack", args.image), ("stack_regression", args.stack_regression)):
+                if not elf:
+                    continue
+                with device(args.emulator, elf, args.work / f"{label}.flash", args.work, label) as image:
+                    cred, public = image.measured(f"{label}_create_mldsa87", lambda: create_credential(image, -50), report)
+                    image.measured(f"{label}_sign_mldsa87", lambda: assertion(image, cred, public), report)
+            if args.stack_regression:
+                baseline = max(report[f"stack_{op}_mldsa87"]["core0_used"] for op in ("create", "sign"))
+                mutated = max(report[f"stack_regression_{op}_mldsa87"]["core0_used"] for op in ("create", "sign"))
+                assert mutated > baseline + STACK_JITTER, f"stack mutation did not exceed the baseline envelope: {baseline} -> {mutated}"
+                report["stack_falsification"] = {"baseline": baseline, "mutated": mutated}
+        if args.only in ("all", "upgrade"):
+            if not args.release_image:
+                parser.error("--release-image is required for the upgrade scenario")
+            upgrade(args, args.work, report)
+        if args.only in ("all", "cuts"):
+            cuts(args, args.work, report)
+    finally:
+        (args.work / "report.json").write_text(json.dumps(report, indent=2) + "\n")
+    print(f"IMAGE ASSURANCE PASSED; report: {args.work / 'report.json'}")
+
+
+if __name__ == "__main__":
+    main()

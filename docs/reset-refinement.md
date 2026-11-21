@@ -96,9 +96,7 @@ stack rather than adding another fuzz target.
 After a cut the target drops the dead store, rebuilds `SeqStorage` with fresh
 caches over the surviving bytes, scans it, runs boot-time `ensure_seed`, and
 checks the three clauses. It then boots and scans once more so a verdict cannot
-depend on the recovery mount's cache. A local corpus run on 2026-08-16 completed
-4,608 executions without a finding; that is sampled evidence, not an exhaustive
-result.
+depend on the recovery mount's cache. The fuzzer samples sequences and fault positions.
 
 ## Real-power HIL
 

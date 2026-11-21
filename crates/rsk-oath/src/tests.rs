@@ -14,6 +14,9 @@ mod put_tests;
 #[path = "increasing_tests.rs"]
 mod increasing_tests;
 
+#[path = "increasing_read_tests.rs"]
+mod increasing_read_tests;
+
 /// The challenge itself: how wide it may be, and that both read paths HMAC all
 /// of it.
 #[path = "challenge_tests.rs"]
@@ -77,8 +80,9 @@ const SERIAL: [u8; 8] = [0x12, 0x34, 0x56, 0x78, 0, 0, 0, 0];
 /// the key, so a test source has to be a plain `fn` — a closure over a local could
 /// not coerce to one.
 const TEST_MKEK: [u8; 32] = [0x55; 32];
-fn test_mkek() -> Option<[u8; 32]> {
-    Some(TEST_MKEK)
+fn test_mkek(out: &mut [u8; 32]) -> bool {
+    *out = TEST_MKEK;
+    true
 }
 
 fn new_fs() -> Fs<RamStorage> {
@@ -203,6 +207,7 @@ fn for_each_cred_lists_public_metadata() {
         serial_hash: &[0x22; 32],
         serial_id: &SERIAL,
         otp_key: None,
+        latched: false,
     };
     let mut seen: Vec<(Vec<u8>, bool, u8, u8, u16, bool)> = Vec::new();
     let n = for_each_cred(&dev, &mut fs, |c| {
@@ -310,6 +315,7 @@ fn totp_with_period_prefix_reports_period_and_strips_prefix() {
         serial_hash: &[0x22; 32],
         serial_id: &SERIAL,
         otp_key: None,
+        latched: false,
     };
     let mut got = None;
     for_each_cred(&dev, &mut fs, |c| {
@@ -497,7 +503,7 @@ fn cred_secret_is_sealed_on_flash() {
     );
 
     let mut fids = [0u16; MAX_OATH_CRED as usize];
-    assert_eq!(present_creds(&mut fs, &mut fids), 1);
+    assert_eq!(present_creds(&mut fs, &mut fids).len(), 1);
     let mut raw = [0u8; CRED_MAX];
     let len = fs.read(fids[0], &mut raw).unwrap();
     assert!(
@@ -542,7 +548,7 @@ fn present_creds_matches_for_each_key_occupancy() {
     );
 
     let mut fids = [0u16; MAX_OATH_CRED as usize];
-    let n = present_creds(&mut fs, &mut fids);
+    let n = present_creds(&mut fs, &mut fids).len();
 
     // Independent occupancy oracle: a fresh whole-partition scan of the range.
     let mut want = Vec::new();
@@ -596,6 +602,7 @@ fn legacy_plaintext_cred_migrates_and_stays_usable() {
         serial_hash: &[0x22; 32],
         serial_id: &SERIAL,
         otp_key: None,
+        latched: false,
     };
     let mut mrng = CountRng(1);
     migrate_seal(&dev, &mut fs, &mut mrng);
@@ -1012,6 +1019,7 @@ fn cred_sealed_before_otp_burn_survives_the_burn() {
         serial_hash: &[0x22; 32],
         serial_id: &SERIAL,
         otp_key: None,
+        latched: false,
     };
     let otp = Device {
         otp_key: Some(&TEST_MKEK),
@@ -1024,18 +1032,118 @@ fn cred_sealed_before_otp_burn_survives_the_burn() {
     assert!(seal::seal_put(&nootp, &mut fs, &mut rng, fid, secret));
 
     // The OTP-armed device cannot read it yet…
-    let mut buf = [0u8; CRED_MAX];
+    let mut buf = Secret::<[u8; CRED_MAX]>::zeroed();
     assert!(seal::seal_read(&otp, &mut fs, fid, &mut buf).is_none());
 
     // …migrate_seal recovers and re-seals it under the OTP arm, byte-identical.
-    migrate_seal(&otp, &mut fs, &mut rng);
+    assert!(
+        !migrate_seal(&otp, &mut fs, &mut rng),
+        "the credential it moved is not left"
+    );
     let n = seal::seal_read(&otp, &mut fs, fid, &mut buf).expect("cred survives the burn");
-    assert_eq!(&buf[..n], secret);
+    assert_eq!(&buf.expose()[..n], secret);
 
     // Idempotent, and it is no longer readable under the pre-OTP arm.
-    migrate_seal(&otp, &mut fs, &mut rng);
+    assert!(
+        !migrate_seal(&otp, &mut fs, &mut rng),
+        "nothing left on a second pass"
+    );
     assert!(seal::seal_read(&otp, &mut fs, fid, &mut buf).is_some());
     assert!(seal::seal_read(&nootp, &mut fs, fid, &mut buf).is_none());
+}
+
+/// Past the fuse latch a credential only the pre-OTP arm or the clear opens was
+/// planted: the boot pass leaves it where it is instead of sealing it onto the
+/// fused root.
+#[test]
+fn past_the_latch_no_pre_otp_or_clear_cred_moves() {
+    let nootp = Device {
+        serial_hash: &[0x22; 32],
+        serial_id: &SERIAL,
+        otp_key: None,
+        latched: false,
+    };
+    let latched = Device {
+        otp_key: Some(&TEST_MKEK),
+        latched: true,
+        ..nootp
+    };
+    let fid = KeyFid::new(EF_OATH_CRED);
+    let mut rng = CountRng(7);
+    let mut clear = tlv(TAG_NAME, b"acct");
+    let mut key = vec![0x21u8, 8];
+    key.extend_from_slice(SECRET_SHA1);
+    clear.extend(tlv(TAG_KEY, &key));
+    for shape in ["pre-OTP", "clear"] {
+        let mut fs = new_fs();
+        if shape == "clear" {
+            fs.put(EF_OATH_CRED, &clear).unwrap();
+        } else {
+            assert!(seal::seal_put(&nootp, &mut fs, &mut rng, fid, &clear));
+        }
+        let mut before = [0u8; CRED_MAX];
+        let n = fs.read(EF_OATH_CRED, &mut before).unwrap();
+        assert!(!migrate_seal(&latched, &mut fs, &mut rng), "{shape}");
+        let mut after = [0u8; CRED_MAX];
+        assert_eq!(fs.read(EF_OATH_CRED, &mut after), Some(n));
+        assert_eq!(
+            after, before,
+            "{shape}: a planted credential moved past the latch"
+        );
+    }
+}
+
+/// Past the latch a fused key that did not read leaves no arm to seal or open
+/// under: every command that needs it refuses, stores nothing, and a VERIFY PIN
+/// spends no retry, since the fuse refused it and not the PIN.
+#[test]
+fn past_the_latch_an_unread_key_refuses_and_stores_nothing() {
+    fn unread(_: &mut [u8; 32]) -> bool {
+        false
+    }
+    let mut fs = new_fs();
+    let rng = RefCell::new(CountRng(7));
+    let touch = RefCell::new(AlwaysConfirm);
+    let mut app = OathApplet::new(
+        SERIAL,
+        [0x22; 32],
+        Some(rsk_crypto::FusedKey::open(test_mkek)),
+        &rng,
+        &touch,
+    );
+    let cred = put_data(b"acct", 0x21, 6, SECRET_SHA1, false, None);
+    assert_eq!(put(&mut app, &mut fs, &cred), Sw::OK);
+    let pin = apdu(INS_SET_PIN, 0, 0, &tlv(TAG_PASSWORD, b"1234"));
+    assert_eq!(run(&mut app, &mut fs, &pin).0, Sw::OK);
+    let records = |fs: &mut Fs<RamStorage>| {
+        let (mut cred, mut pin) = ([0u8; CRED_MAX], [0u8; OTP_PIN_REC_V1]);
+        let cred = fs.read(EF_OATH_CRED, &mut cred).map(|n| cred[..n].to_vec());
+        let pin = fs.read(EF_OTP_PIN, &mut pin).map(|n| pin[..n].to_vec());
+        (cred, pin)
+    };
+    let before = records(&mut fs);
+
+    let mut shut = OathApplet::new(
+        SERIAL,
+        [0x22; 32],
+        Some(rsk_crypto::FusedKey::latched(unread)),
+        &rng,
+        &touch,
+    );
+    assert_eq!(select(&mut shut, &mut fs).0, Sw::OK);
+    let other = put_data(b"other", 0x21, 6, SECRET_SHA1, false, None);
+    assert_eq!(put(&mut shut, &mut fs, &other), Sw::FUSED_KEY_UNREAD);
+    let verify = apdu(INS_VERIFY_PIN, 0, 0, &tlv(TAG_PASSWORD, b"1234"));
+    assert_eq!(run(&mut shut, &mut fs, &verify).0, Sw::FUSED_KEY_UNREAD);
+    let mut pins = tlv(TAG_PASSWORD, b"1234");
+    pins.extend(tlv(TAG_NEW_PASSWORD, b"5678"));
+    let change = apdu(INS_CHANGE_PIN, 0, 0, &pins);
+    assert_eq!(run(&mut shut, &mut fs, &change).0, Sw::FUSED_KEY_UNREAD);
+    let mut calc = tlv(TAG_NAME, b"acct");
+    calc.extend(tlv(TAG_CHALLENGE, &[0; 8]));
+    let calc = apdu(INS_CALCULATE, 0, 0x01, &calc);
+    assert_eq!(run(&mut shut, &mut fs, &calc).0, Sw::FUSED_KEY_UNREAD);
+    assert_eq!(records(&mut fs), before, "stored or spent past the latch");
 }
 
 #[test]
@@ -1049,6 +1157,7 @@ fn the_boot_pass_re_arms_the_lap_before_it_supersedes_a_pre_otp_cred() {
         serial_hash: &[0x22; 32],
         serial_id: &SERIAL,
         otp_key: None,
+        latched: false,
     };
     let otp = Device {
         otp_key: Some(&TEST_MKEK),
@@ -1057,7 +1166,7 @@ fn the_boot_pass_re_arms_the_lap_before_it_supersedes_a_pre_otp_cred() {
     let secret = b"a-totp-cred-tlv-blob\x00\x01\x02";
     let fid = KeyFid::new(EF_OATH_CRED);
     let mut rng = CountRng(7);
-    let mut buf = [0u8; CRED_MAX];
+    let mut buf = Secret::<[u8; CRED_MAX]>::zeroed();
 
     // The ORDER, on the one medium that can tell the two orderings apart.
     let (mut fs, medium) = new_cut_fs();
@@ -1117,6 +1226,7 @@ fn the_boot_pass_re_arms_the_lap_before_it_seals_a_cleartext_cred() {
         serial_hash: &[0x22; 32],
         serial_id: &SERIAL,
         otp_key: Some(&TEST_MKEK),
+        latched: false,
     };
     // Pre-seal layout: NAME ‖ KEY(type|alg, digits, secret), written raw.
     let mut blob = tlv(TAG_NAME, b"acct");
@@ -1130,7 +1240,10 @@ fn the_boot_pass_re_arms_the_lap_before_it_seals_a_cleartext_cred() {
     fs.put(EF_OATH_CRED, &blob).unwrap();
     fs.put(rsk_fs::EF_HARDENED, &[1]).unwrap();
     medium.clear_ops();
-    migrate_seal(&otp, &mut fs, &mut rng);
+    assert!(
+        !migrate_seal(&otp, &mut fs, &mut rng),
+        "the plaintext it sealed is not left"
+    );
     medium.assert_re_armed_before(EF_OATH_CRED, |_| false, "migrate_seal's plaintext arm");
     assert!(!fs.has_data(rsk_fs::EF_HARDENED));
 
@@ -1141,7 +1254,10 @@ fn the_boot_pass_re_arms_the_lap_before_it_seals_a_cleartext_cred() {
     fs.put(EF_OATH_CRED, &blob).unwrap();
     fs.put(rsk_fs::EF_HARDENED, &[1]).unwrap();
     medium.refuse(Some(rsk_fs::EF_HARDENED));
-    migrate_seal(&otp, &mut fs, &mut rng);
+    assert!(
+        migrate_seal(&otp, &mut fs, &mut rng),
+        "a refused seal is left"
+    );
     let n = fs
         .read(EF_OATH_CRED, &mut stored)
         .expect("fixture: the credential is still there");
@@ -1155,7 +1271,10 @@ fn the_boot_pass_re_arms_the_lap_before_it_seals_a_cleartext_cred() {
          decrypt every command reads through, so LIST does not show it either"
     );
     medium.refuse(None);
-    migrate_seal(&otp, &mut fs, &mut rng);
+    assert!(
+        !migrate_seal(&otp, &mut fs, &mut rng),
+        "sealed once the medium recovers"
+    );
     let n = fs
         .read(EF_OATH_CRED, &mut stored)
         .expect("fixture: the credential is still there");
@@ -1175,13 +1294,14 @@ fn foreign_sealed(fs: &mut Fs<RamStorage>, fid: KeyFid, plain: &[u8]) -> Device<
         serial_hash: &[0x22; 32],
         serial_id: &SERIAL,
         otp_key: None,
+        latched: false,
     };
     let foreign = Device {
         serial_hash: &[0x77; 32],
         ..dev
     };
     assert!(seal::seal_put(&foreign, fs, &mut CountRng(7), fid, plain));
-    let mut buf = [0u8; seal::MAX_BLOB];
+    let mut buf = Secret::<[u8; seal::MAX_BLOB]>::zeroed();
     assert!(seal::seal_read(&dev, fs, fid, &mut buf).is_none());
     dev
 }
@@ -1274,7 +1394,13 @@ fn otp_pin_set_before_burn_still_verifies_after_burn() {
         .value(EF_OTP_PIN)
         .expect("fixture: EF_OTP_PIN is on the medium");
     medium.clear_ops();
-    let mut app = OathApplet::new(SERIAL, [0x22; 32], Some(test_mkek), &rng, &touch);
+    let mut app = OathApplet::new(
+        SERIAL,
+        [0x22; 32],
+        Some(rsk_crypto::FusedKey::open(test_mkek)),
+        &rng,
+        &touch,
+    );
     let (sw, _) = run(
         &mut app,
         &mut fs,
@@ -1292,13 +1418,14 @@ fn otp_pin_set_before_burn_still_verifies_after_burn() {
         serial_hash: &[0x22; 32],
         serial_id: &SERIAL,
         otp_key: Some(&TEST_MKEK),
+        latched: false,
     };
     let mut rec = [0u8; 34];
     assert_eq!(fs.read(EF_OTP_PIN, &mut rec), Some(34));
     assert_eq!(rec[1], OTP_PIN_FMT_V1);
     assert_eq!(
         &rec[2..],
-        &otp_dev.pin_derive_verifier(b"1234")[..],
+        &otp_dev.pin_derive_verifier(b"1234").expose()[..],
         "verifier re-stored under the OTP arm"
     );
     assert!(
@@ -1352,8 +1479,8 @@ fn set_pin_rejected_while_access_code_locked() {
 /// code exists. `select()` sets validated = !code_set, so on a factory-state applet
 /// `validated` is vacuously true and SET PIN was otherwise unauthenticated. The PIN
 /// then survived the owner setting an access code and unlocked the store through
-/// VERIFY PIN, invisibly. Two halves: the plant needs the operator, and installing
-/// a new access code drops any PIN minted without it.
+/// VERIFY PIN, invisibly. Two halves: the plant needs the operator, and a coded
+/// applet opens on its code alone, so the planted PIN is no way past it.
 #[test]
 fn otp_pin_cannot_be_planted_before_an_access_code_exists() {
     let mut fs = new_fs();
@@ -1383,16 +1510,12 @@ fn otp_pin_cannot_be_planted_before_an_access_code_exists() {
     assert_eq!(sw, Sw::OK);
     assert!(fs.has_data(EF_OTP_PIN));
 
-    // The owner now protects the applet: the pre-existing PIN must not remain as a
-    // second unlock path for the store this code is being set to guard.
+    // The owner now protects the applet. The PIN stays, guarding the password safe.
     lock_with_code(&mut app, &mut fs);
-    assert!(
-        !fs.has_data(EF_OTP_PIN),
-        "installing an access code drops an OTP-PIN minted without it"
-    );
+    assert!(fs.has_data(EF_OTP_PIN), "setting a code keeps the OTP PIN");
 
-    // And the applet really is closed: a fresh SELECT needs VALIDATE, and the old
-    // PIN no longer opens it.
+    // And the applet really is closed: a fresh SELECT needs VALIDATE, and the
+    // planted PIN, right as it is, does not open it.
     select(&mut app, &mut fs);
     let (sw, _) = run(&mut app, &mut fs, &apdu(INS_LIST, 0, 0, &[]));
     assert_eq!(sw, Sw::SECURITY_STATUS_NOT_SATISFIED);
@@ -1401,7 +1524,13 @@ fn otp_pin_cannot_be_planted_before_an_access_code_exists() {
         &mut fs,
         &apdu(INS_VERIFY_PIN, 0, 0, &tlv(TAG_PASSWORD, b"0000")),
     );
-    assert_ne!(sw, Sw::OK, "the dropped PIN must not unlock the store");
+    assert_eq!(sw, Sw::OK, "control: the PIN itself is right");
+    let (sw, _) = run(&mut app, &mut fs, &apdu(INS_LIST, 0, 0, &[]));
+    assert_eq!(
+        sw,
+        Sw::SECURITY_STATUS_NOT_SATISFIED,
+        "the planted PIN opened a coded applet"
+    );
 }
 
 #[test]
@@ -1501,11 +1630,12 @@ fn legacy_otp_pin_verifies_and_upgrades_to_otp_rooted() {
         serial_hash: &[0x22; 32],
         serial_id: &SERIAL,
         otp_key: None,
+        latched: false,
     };
     // Legacy record straight to flash (what old firmware wrote).
     let mut legacy = [0u8; 33];
     legacy[0] = MAX_OTP_COUNTER;
-    legacy[1..].copy_from_slice(&dev.double_hash_pin(b"1234"));
+    legacy[1..].copy_from_slice(dev.double_hash_pin(b"1234").expose());
     fs.put(EF_OTP_PIN, &legacy).unwrap();
 
     // The legacy PIN still verifies…
@@ -1520,10 +1650,10 @@ fn legacy_otp_pin_verifies_and_upgrades_to_otp_rooted() {
     let mut rec = [0u8; 34];
     assert_eq!(fs.read(EF_OTP_PIN, &mut rec), Some(34));
     assert_eq!(rec[1], OTP_PIN_FMT_V1);
-    assert_eq!(&rec[2..], &dev.pin_derive_verifier(b"1234")[..]);
+    assert_eq!(&rec[2..], &dev.pin_derive_verifier(b"1234").expose()[..]);
     assert_ne!(
         &rec[2..],
-        &dev.double_hash_pin(b"1234")[..],
+        &dev.double_hash_pin(b"1234").expose()[..],
         "must not store the legacy hash after upgrade"
     );
 
@@ -1699,6 +1829,7 @@ fn validate_fails_closed_on_unreadable_code() {
         serial_hash: &[0x22; 32],
         serial_id: &SERIAL,
         otp_key: None,
+        latched: false,
     };
     let big = [0x21u8; OATH_CODE_MAX + 8];
     assert!(seal::seal_put(
@@ -1835,6 +1966,7 @@ fn calculate_rejects_unknowns() {
         serial_hash: &[0x22; 32],
         serial_id: &SERIAL,
         otp_key: None,
+        latched: false,
     };
     let mut blob = tlv(TAG_NAME, b"bad");
     let mut key = vec![0x29u8, 6];
@@ -1852,7 +1984,7 @@ fn calculate_rejects_unknowns() {
     let (sw, _) = run(&mut app, &mut fs, &apdu(INS_CALCULATE, 0, 1, &d));
     assert_eq!(sw, Sw::EXEC_ERROR);
     // Bad CLA and unknown INS.
-    let (sw, _) = run(&mut app, &mut fs, &[0x80, INS_LIST, 0, 0]);
+    let (sw, _) = run(&mut app, &mut fs, &[0x40, INS_LIST, 0, 0]);
     assert_eq!(sw, Sw::CLA_NOT_SUPPORTED);
     let (sw, _) = run(&mut app, &mut fs, &[0x00, 0xEE, 0, 0]);
     assert_eq!(sw, Sw::INS_NOT_SUPPORTED);
@@ -1888,15 +2020,15 @@ fn slots_fill_and_report_full() {
 
 /// The response slice the CCID layer hands an applet: one frame, less its
 /// header, less the two status bytes appended after. The generic `run()` above
-/// uses 2048, which truncates at a slightly different count, so the enumeration
-/// cap has to be measured against this one instead.
+/// uses 2048, which truncates at a different count, so the enumeration cap has to
+/// be measured against this one instead.
 ///
-/// Derived from the transport rather than written out, because 2036 is the same
-/// number `rsk-device`'s `RESP_CAP - 2` and `rsk-openpgp`'s `MAX_DO_BYTES` are,
-/// and a fourth copy of it is what drifts (E72). `rsk-oath` cannot see
-/// `rsk-device`, but both of them can see where the frame size comes from.
+/// Derived from the transport rather than written out, because 3060 is the same
+/// number `rsk-device`'s `RESP_CAP - 2` and `rsk-sdk`'s `FRAME_BODY` are, and
+/// another copy of it is what drifts (E72). `rsk-oath` cannot see `rsk-device`,
+/// but both of them can see where the frame size comes from.
 const FW_RESP_CAP: usize = rsk_usb::ccid::MAX_CCID_MSG - rsk_usb::ccid::HEADER - 2;
-const _: () = assert!(FW_RESP_CAP == 2036);
+const _: () = assert!(FW_RESP_CAP == 3060);
 
 fn run_fw(app: &mut OathApplet, fs: &mut Fs<RamStorage>, raw: &[u8]) -> (Sw, Vec<u8>) {
     let mut out = [0u8; FW_RESP_CAP];
@@ -1935,7 +2067,7 @@ fn acct_name(i: u16) -> Vec<u8> {
 fn enumerate_all(app: &mut OathApplet, fs: &mut Fs<RamStorage>, first: &[u8]) -> (usize, Vec<u8>) {
     let (mut sw, mut body) = run_fw(app, fs, first);
     let mut pages = 1;
-    while sw == Sw::BYTES_REMAINING_00 {
+    while sw.sw1() == 0x61 {
         let (s, b) = run_fw(app, fs, &apdu(INS_SEND_REMAINING, 0, 0, &[]));
         sw = s;
         body.extend(b);
@@ -1946,7 +2078,7 @@ fn enumerate_all(app: &mut OathApplet, fs: &mut Fs<RamStorage>, first: &[u8]) ->
 }
 
 /// Regression for the OATH enumeration cap (HW-found 2026-07-15): a full store
-/// (255 credentials) exceeds the single 2036-byte response frame, so LIST and
+/// (255 credentials) exceeds a single response frame, so LIST and
 /// CALCULATE ALL used to silently `break` and return `Sw::OK` — a host saw only
 /// ~135 / ~94 of them. With YKOATH `61xx` + SEND REMAINING pagination every
 /// credential now surfaces across pages, the way ykman / Yubico Authenticator
@@ -1972,7 +2104,10 @@ fn list_and_calc_all_paginate_the_full_store() {
     // LIST spans multiple frames and enumerates all 255 — including the late
     // account the pre-fix single frame truncated out.
     let (pages, body) = enumerate_all(&mut app, &mut fs, &apdu(INS_LIST, 0, 0, &[]));
-    assert!(pages >= 2, "255 names cannot fit one 2036-byte frame");
+    assert!(
+        pages >= 2,
+        "255 names cannot fit one {FW_RESP_CAP}-byte frame"
+    );
     assert_eq!(count_tag(&body, TAG_NAME_LIST), MAX_OATH_CRED as usize);
     let late = acct_name(MAX_OATH_CRED - 1);
     assert!(
@@ -1988,7 +2123,7 @@ fn list_and_calc_all_paginate_the_full_store() {
 
     // Any command other than SEND REMAINING abandons a half-read page: after a
     // LIST returns 61xx, an unrelated CALCULATE clears the cursor, so the next
-    // SEND REMAINING is an empty OK, not a stale resumed frame.
+    // SEND REMAINING finds no page owed (6D00), not a stale resumed frame.
     let (sw, _) = run_fw(&mut app, &mut fs, &apdu(INS_LIST, 0, 0, &[]));
     assert_eq!(sw, Sw::BYTES_REMAINING_00);
     let mut d = tlv(TAG_NAME, &acct_name(0));
@@ -1996,7 +2131,7 @@ fn list_and_calc_all_paginate_the_full_store() {
     let (sw, _) = run_fw(&mut app, &mut fs, &apdu(INS_CALCULATE, 0, 0x01, &d));
     assert_eq!(sw, Sw::OK);
     let (sw, body) = run_fw(&mut app, &mut fs, &apdu(INS_SEND_REMAINING, 0, 0, &[]));
-    assert_eq!(sw, Sw::OK);
+    assert_eq!(sw, Sw::INS_NOT_SUPPORTED);
     assert!(body.is_empty(), "abandoned page must not resume");
 }
 
@@ -2205,7 +2340,13 @@ fn a_reset_re_arms_the_at_rest_lap_before_the_first_tombstone() {
     let (mut fs, medium) = new_cut_fs();
     let rng = RefCell::new(CountRng(7));
     let touch = RefCell::new(AlwaysConfirm);
-    let mut app = OathApplet::new(SERIAL, [0x22; 32], Some(test_mkek), &rng, &touch);
+    let mut app = OathApplet::new(
+        SERIAL,
+        [0x22; 32],
+        Some(rsk_crypto::FusedKey::open(test_mkek)),
+        &rng,
+        &touch,
+    );
     select(&mut app, &mut fs);
     fs.put(EF_OTP_PIN, &[MAX_OTP_COUNTER; 33]).unwrap();
     fs.put(rsk_fs::EF_HARDENED, &[1]).unwrap();
@@ -2229,7 +2370,13 @@ fn a_reset_re_arms_the_at_rest_lap_before_the_first_tombstone() {
     let (stuck, medium) = RemoveStuck::new();
     let mut fs = Fs::new(stuck);
     fs.scan();
-    let mut app = OathApplet::new(SERIAL, [0x22; 32], Some(test_mkek), &rng, &touch);
+    let mut app = OathApplet::new(
+        SERIAL,
+        [0x22; 32],
+        Some(rsk_crypto::FusedKey::open(test_mkek)),
+        &rng,
+        &touch,
+    );
     select(&mut app, &mut fs);
     fs.put(EF_OTP_PIN, &[MAX_OTP_COUNTER; 33]).unwrap();
     fs.put(rsk_fs::EF_HARDENED, &[1]).unwrap();
@@ -2258,7 +2405,13 @@ fn a_reset_retries_the_re_arm_after_the_sweep() {
     fs.scan();
     let rng = RefCell::new(CountRng(7));
     let touch = RefCell::new(AlwaysConfirm);
-    let mut app = OathApplet::new(SERIAL, [0x22; 32], Some(test_mkek), &rng, &touch);
+    let mut app = OathApplet::new(
+        SERIAL,
+        [0x22; 32],
+        Some(rsk_crypto::FusedKey::open(test_mkek)),
+        &rng,
+        &touch,
+    );
     select(&mut app, &mut fs);
     fs.put(EF_OTP_PIN, &[MAX_OTP_COUNTER; 33]).unwrap();
     fs.put(rsk_fs::EF_HARDENED, &[1]).unwrap();
@@ -2352,7 +2505,13 @@ fn reset_under(refuse_once: Option<u16>, truncate_after: Option<u16>) -> Residue
     fs.scan();
     let rng = RefCell::new(CountRng(7));
     let touch = RefCell::new(AlwaysConfirm);
-    let mut app = OathApplet::new(SERIAL, [0x22; 32], Some(test_mkek), &rng, &touch);
+    let mut app = OathApplet::new(
+        SERIAL,
+        [0x22; 32],
+        Some(rsk_crypto::FusedKey::open(test_mkek)),
+        &rng,
+        &touch,
+    );
     select(&mut app, &mut fs);
     fs.put(EF_OATH_CRED, &[0x11; 24]).unwrap();
     fs.put(EF_OTP_PIN, &[MAX_OTP_COUNTER; 33]).unwrap();
@@ -2453,8 +2612,8 @@ fn a_sweep_clears_more_credentials_than_one_batch_holds() {
 #[test]
 fn a_truncated_enumeration_fails_the_sweep_instead_of_reading_it_as_clear() {
     let mut fs = Fs::new(TruncatedWalk::new());
-    fs.scan();
     fs.put(EF_OATH_CRED, &[0x11; 24]).unwrap();
+    fs.scan();
     assert_eq!(sweep(&mut fs, is_oath_cred_fid), Err(Sw::MEMORY_FAILURE));
     let mut buf = [0u8; 24];
     assert_eq!(
@@ -2477,7 +2636,13 @@ fn an_otp_pin_is_required_before_the_password_safe_is_served() {
     let mut fs = new_fs();
     let rng = RefCell::new(CountRng(3));
     let touch = RefCell::new(AlwaysConfirm);
-    let mut app = OathApplet::new(SERIAL, [0x22; 32], Some(test_mkek), &rng, &touch);
+    let mut app = OathApplet::new(
+        SERIAL,
+        [0x22; 32],
+        Some(rsk_crypto::FusedKey::open(test_mkek)),
+        &rng,
+        &touch,
+    );
     select(&mut app, &mut fs);
 
     let mut cred = put_data(b"bank", 0x21, 6, SECRET_SHA1, false, None);
@@ -2503,7 +2668,13 @@ fn an_otp_pin_is_required_before_the_password_safe_is_served() {
 
     // A new session: SELECT re-opens the code-less applet, but the PIN now exists
     // and has not been presented.
-    let mut app = OathApplet::new(SERIAL, [0x22; 32], Some(test_mkek), &rng, &touch);
+    let mut app = OathApplet::new(
+        SERIAL,
+        [0x22; 32],
+        Some(rsk_crypto::FusedKey::open(test_mkek)),
+        &rng,
+        &touch,
+    );
     select(&mut app, &mut fs);
     let (sw, body) = run(&mut app, &mut fs, &get);
     assert_eq!(sw, Sw::SECURITY_STATUS_NOT_SATISFIED);
@@ -2552,7 +2723,7 @@ fn an_otp_pin_is_required_before_the_password_safe_is_served() {
         Sw::SECURITY_STATUS_NOT_SATISFIED
     );
 
-    // And a re-SELECT does not inherit it.
+    // And a SELECT does not inherit it.
     assert_eq!(
         run(
             &mut app,
@@ -2568,3 +2739,114 @@ fn an_otp_pin_is_required_before_the_password_safe_is_served() {
         Sw::SECURITY_STATUS_NOT_SATISFIED
     );
 }
+
+/// Which SELECT keeps the access status: a re-SELECT keeps the VALIDATE, as on a
+/// YubiKey 5.8.0, and drops the OTP PIN.
+#[path = "reselect_tests.rs"]
+mod reselect_tests;
+
+/// Paging a long response through SEND REMAINING, and what SEND REMAINING answers
+/// with no page owed, as on a YubiKey 5.8.0.
+#[path = "paging_tests.rs"]
+mod paging_tests;
+
+/// A legacy OTP-PIN is a serial-only hash a flash writer can plant, and only its
+/// next VERIFY moves it to v1, so the boot pass reports it as left under the
+/// chip-serial key while the device has the fused one (audit run-27 #8).
+#[test]
+fn a_legacy_otp_pin_is_reported_as_left_until_it_is_verified() {
+    let nootp = Device {
+        serial_hash: &[0x22; 32],
+        serial_id: &SERIAL,
+        otp_key: None,
+        latched: false,
+    };
+    let otp = Device {
+        otp_key: Some(&TEST_MKEK),
+        ..nootp
+    };
+    let mut rng = CountRng(1);
+    let mut fs = new_fs();
+    fs.put(EF_OTP_PIN, &[3; OTP_PIN_REC_LEGACY]).unwrap();
+    assert!(
+        migrate_seal(&otp, &mut fs, &mut rng),
+        "the legacy PIN is left"
+    );
+    assert!(
+        !migrate_seal(&nootp, &mut fs, &mut rng),
+        "no fused key, nothing judged"
+    );
+    fs.put(EF_OTP_PIN, &[3; OTP_PIN_REC_V1]).unwrap();
+    assert!(
+        !migrate_seal(&otp, &mut fs, &mut rng),
+        "a v1 PIN is on the fused root"
+    );
+}
+
+/// A read the flash failed is not a record with nothing left in it: whichever read
+/// the fault lands on, or every read, the pass moved the pre-OTP credential or
+/// reports it — and a legacy OTP-PIN it could not look at is reported too.
+#[test]
+fn a_faulted_read_of_a_pre_otp_record_is_never_reported_clear() {
+    let nootp = Device {
+        serial_hash: &[0x22; 32],
+        serial_id: &SERIAL,
+        otp_key: None,
+        latched: false,
+    };
+    let otp = Device {
+        otp_key: Some(&TEST_MKEK),
+        ..nootp
+    };
+    let fid = KeyFid::new(EF_OATH_CRED);
+    for fault in [None, Some(0), Some(1), Some(2)] {
+        let (backend, medium) = rsk_fs::storage::faults::ProbeStuck::new();
+        let mut fs = Fs::new(backend);
+        fs.scan();
+        let mut rng = CountRng(7);
+        assert!(seal::seal_put(&nootp, &mut fs, &mut rng, fid, b"a-cred"));
+        let before = medium.value(fid.get());
+        match fault {
+            None => medium.stick(Some(fid.get())),
+            Some(skip) => medium.stick_after(fid.get(), skip),
+        }
+        let left = migrate_seal(&otp, &mut fs, &mut rng);
+        medium.stick(None);
+        assert!(
+            left || medium.value(fid.get()) != before,
+            "fault {fault:?}: reported clear over the pre-OTP credential it never moved"
+        );
+    }
+
+    let (backend, medium) = rsk_fs::storage::faults::ProbeStuck::new();
+    let mut fs = Fs::new(backend);
+    fs.scan();
+    fs.put(EF_OTP_PIN, &[3; OTP_PIN_REC_LEGACY]).unwrap();
+    medium.stick(Some(EF_OTP_PIN));
+    assert!(
+        migrate_seal(&otp, &mut fs, &mut CountRng(1)),
+        "an OTP-PIN the pass could not look at is not a v1 one"
+    );
+}
+
+// The read-fault sweep lives in its own file; it needs this module's fixtures.
+#[path = "reads_tests.rs"]
+mod reads;
+
+#[path = "bounds_tests.rs"]
+mod bounds_tests;
+
+#[path = "stored_bounds_tests.rs"]
+mod stored_bounds_tests;
+
+#[path = "retry_decisions_tests.rs"]
+mod retry_decisions;
+
+#[path = "response_decisions_tests.rs"]
+mod response_decisions;
+
+#[path = "restart_tests.rs"]
+mod restarts;
+
+#[path = "mutation_tests.rs"]
+mod mutation;

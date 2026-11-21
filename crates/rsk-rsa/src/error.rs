@@ -23,13 +23,13 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RsaError {
     /// A width does not fit: an output buffer too small for the result, a field
-    /// wider than its slot, a prime width the asm CRT core cannot take, or a
+    /// wider than its slot, a prime width the fixed-width CRT core cannot take, or a
     /// modulus too narrow for the block — or wider than this crate handles.
     /// Applets answer `Sw::WRONG_LENGTH`.
     BadWidth,
-    /// The caller's block is not a valid input for this modulus — the wrong
-    /// length, not below the modulus, or padding that does not decode. Applets
-    /// answer `Sw::WRONG_DATA`.
+    /// The caller's block is not a valid input for this modulus — the wrong length,
+    /// not below it, or padding that does not decode. Applets answer `Sw::WRONG_DATA`,
+    /// but OpenPGP PSO:DECIPHER answers every refusal `Sw::MEMORY_FAILURE`, as a YubiKey.
     BadBlock,
     /// A stored key blob matches no known layout, or its primes do not form a
     /// key. Applets answer `Sw::MEMORY_FAILURE`.

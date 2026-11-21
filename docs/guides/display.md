@@ -27,7 +27,8 @@ unaffected.
 The full GUI uses always-on antialiasing. Text uses four-bit IBM Plex Sans and
 Mono coverage data. Icons, circles, status rings, rounded cards, and controls
 blend their edges into the surface below them. The device does this with integer
-math and retained panel writes. It does not use a framebuffer or a heap. A full
+geometry even for controls narrower than their rounded corners.
+It uses retained panel writes without a framebuffer or a heap. A full
 page is recorded once as compact drawing commands. The firmware compares keyed
 128-bit tags for 32×32 visual-state tiles and merges the changed tiles. Typed UI
 components can provide smaller exact damage before composition. Each changed
@@ -80,53 +81,50 @@ takes six taps to reach can be replayed instead of performed:
 The images themselves are regenerated with `rsk-emu --screenshots docs/images`
 when a screen changes.
 
+To run the compiled firmware itself, build the ordinary display image below,
+then launch it with `rsk-emu --image target/trustzone/combined.elf --display`.
+The window shows pixels captured from the firmware's PIO serial output. Mouse
+contacts become CST328 or CST3530 I2C reports; Space drives the board's wake GPIO. Add
+`--headless` for scripted runs. In image mode, tap-script hold and gap durations
+follow the emulated clock, so a slow host cannot turn a short contact into a
+long approval hold. See [display image testing](../testing.md#display-image-testing)
+for the runner and its limits.
+
+This exercises firmware instructions, rendering and USB framing against models
+of the panel and touch controller. Physical display timing, electrical I2C
+behaviour and touch calibration still require the board.
+
 ## Building and flashing
 
-The panel takes over the addressable-LED pin, so the display flavor is built
-`LED_KIND=none` (a compile-time guard enforces this) with the larger flash the UI
-assets want:
+Use the package for your board revision. Both use the same ST7789 display,
+but their touch controllers have different I²C addresses and register maps.
+With the wrong image the screen draws normally and touches do not register.
 
-```sh
-env LED_KIND=none FLASH_SIZE=16M cargo build --release -p firmware --features display
-# or the hermetic package:
-nix build .#firmware-display        # → result/firmware.uf2
-```
-
-`GPIO16` (the WS2812 pin on a standard board) drives the backlight here.
-`WAKE_PIN` (default `25`, the board's BAT_PWR button) both wakes the panel from
-display sleep and, while awake, sleeps it on demand from *any* screen. A press
-blanks the panel and (when a device PIN is set) locks the on-device UI, aborting
-any host prompt it interrupts. See the full knob table in [build.md](../build.md);
-the `display`-only knobs are `WAKE_PIN` / `WAKE_ACTIVE_HIGH`.
-
-### Which touch controller your board has
-
-The reference board exists in two revisions and they differ in exactly one part:
-
-| Board revision | Touch controller | I2C address | Register addresses |
+| Board revision | Touch controller | I²C address | Nix package |
 |---|---|---|---|
-| V1 | CST328 | `0x1A` | 2 bytes (`0xD000`) |
-| V2 (2026-10-14) | CST3530 | `0x58` | 4 bytes (`0xD0070000`) |
+| V1 | CST328 | `0x1A` | `firmware-display` |
+| V2 | CST3530 | `0x58` | `firmware-display-v2` |
 
-Same glass, same panel pins, same reset line — but **a build for the wrong one
-has no touch at all**, not a degraded one: the address NAKs, every read returns
-"no finger", and the on-screen flow stalls at its first prompt while the screen
-itself draws normally. Waveshare lists the chip per revision on the product page
-and the board silkscreen carries the revision; an I2C scan settles it (0x1A is V1,
-0x58 is V2).
-
-Pick the chip at build time — `DISPLAY_TP_CHIP`, which defaults to `cst328`:
+Check the board silkscreen or the controller address to identify the revision.
+[Waveshare board specifications](https://www.waveshare.com/wiki/RP2350-Touch-LCD-2.8)
 
 ```sh
-# V2 board (CST3530)
-env LED_KIND=none FLASH_SIZE=16M DISPLAY_TP_CHIP=cst3530 \
-  cargo build --release -p firmware --features display
-# or, hermetically:
-nix build .#firmware-display-v2      # → result/firmware.uf2
+nix build .#firmware-display     # V1 → result/firmware-display.uf2
+nix build .#firmware-display-v2  # V2 → result/firmware-display-v2.uf2
 
-# V1 board (CST328) — the default, and what `firmware-display` ships
-nix build .#firmware-display
+# Build V2 from source with the TrustZone builder.
+nix develop -c env BOARD=waveshare-touch-lcd DISPLAY_TP_CHIP=cst3530 \
+  bash scripts/build.sh --features display
 ```
+
+The source build writes `target/trustzone/combined.uf2`. Omit
+`DISPLAY_TP_CHIP=cst3530` for V1. The board preset selects 16 MiB of flash
+and disables the addressable LED, freeing GPIO16 for the backlight.
+
+The board's BAT_PWR button (GPIO25 by default) wakes and sleeps the panel.
+Sleeping blanks the screen, locks the on-device UI when a device PIN is set,
+and aborts any interrupted host prompt. See [Build options](../build.md) for
+`WAKE_PIN` and `WAKE_ACTIVE_HIGH`.
 
 Flash it like any other image (BOOTSEL → `picotool load`, [hardware.md](../hardware.md)).
 Two notes:
@@ -265,7 +263,10 @@ point is ever shown, and no OATH code is computed (the device has no clock).
   listing the *populated* retired key-management slots (82–95) and F9. From it,
   **Generate key** creates a key (EC P-256/P-384, Ed25519, X25519, or RSA
   2048/3072/4096) into the next *free* retired slot, gated by the device PIN and
-  a hold, restricted to empty slots (add-only, never overwrite). There is no
+  a hold, restricted to empty slots (add-only, never overwrite). It writes the key
+  alone, as a host generate does; make its certificate from the host. A slot whose key
+  was moved or deleted still holds its certificate, so it is not free until that
+  certificate is deleted (`ykman piv certificates delete 82`). There is no
   management-key auth: physical presence at the panel *is* the authorisation.
 - **OATH**: the stored credentials (label, TOTP/HOTP, a padlock when
   touch-gated), each with a detail (type, HMAC algorithm, digits, TOTP step).
@@ -284,7 +285,8 @@ Grouped into three domains, plus the journal / backup / reset actions:
   touch timeout, each adjusted live. All three **persist across reboots**:
   brightness and sleep in an `EF_DISPLAY` flash record; the touch timeout in
   `EF_PHY`'s `PresenceTimeout`, the same field `rsk hw --touch-timeout` writes,
-  so the panel and the host tool stay in sync.
+  so the panel and the host tool stay in sync. A configuration lock shuts the host
+  tool's write and not the panel's, which no host can reach.
 - **Security**: set / change the **device PIN** and the **FIDO clientPIN** (each
   chosen entirely on the panel). Changing the clientPIN asks for the current one
   first, and that prompt *is* the card's `changePIN` check: a **wrong** entry

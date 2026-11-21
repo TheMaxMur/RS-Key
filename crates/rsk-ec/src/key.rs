@@ -14,10 +14,11 @@
 //! Nothing here names a status word or a filesystem: the applets own the APDU
 //! framing and the seal I/O, and map [`EcError`] at their edge.
 
-use zeroize::{Zeroize, Zeroizing};
+use rsk_secret::Secret;
+use zeroize::Zeroize;
 
-use p256::ecdsa::signature::hazmat::PrehashSigner;
-use p256::elliptic_curve::sec1::FromSec1Point;
+use p256::elliptic_curve::sec1::{FromSec1Point, ModulusSize, Sec1Point, Tag, ToSec1Point};
+use p256::elliptic_curve::{AffinePoint, CurveArithmetic, FieldBytesSize, PublicKey};
 
 use crate::{Curve, EcError, Rng};
 
@@ -42,6 +43,10 @@ pub enum PrivKey {
 }
 
 impl Drop for PrivKey {
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "a PrivKey's drop is its wipe, as a Secret's is"
+    )]
     fn drop(&mut self) {
         match self {
             PrivKey::P256(s) | PrivKey::K256(s) | PrivKey::Ed25519(s) | PrivKey::X25519(s) => {
@@ -51,6 +56,8 @@ impl Drop for PrivKey {
             PrivKey::P384(s) | PrivKey::Bp384(s) => s.zeroize(),
             PrivKey::P521(s) => s.zeroize(),
         }
+        #[cfg(test)]
+        tests::observe_drop(self.scalar());
     }
 }
 
@@ -90,85 +97,89 @@ impl PrivKey {
         // clones it (the `SecretKey` itself zeroizes on drop).
         match curve {
             Curve::P256 => {
-                let mut b = [0u8; 32];
+                let mut b = Secret::<[u8; 32]>::zeroed();
                 loop {
-                    rng.fill(&mut b);
-                    if p256::SecretKey::from_bytes(&p256::FieldBytes::from(b)).is_ok() {
+                    rng.fill(b.expose_mut());
+                    if p256::SecretKey::from_bytes(&p256::FieldBytes::from(*b.expose())).is_ok() {
                         break;
                     }
                 }
-                let k = Self::from_scalar(curve, &b);
-                b.zeroize();
+                let k = Self::from_scalar(curve, b.expose());
+                b.wipe();
                 k
             }
             Curve::P384 => {
-                let mut b = [0u8; 48];
+                let mut b = Secret::<[u8; 48]>::zeroed();
                 loop {
-                    rng.fill(&mut b);
-                    if p384::SecretKey::from_bytes(&p384::FieldBytes::from(b)).is_ok() {
+                    rng.fill(b.expose_mut());
+                    if p384::SecretKey::from_bytes(&p384::FieldBytes::from(*b.expose())).is_ok() {
                         break;
                     }
                 }
-                let k = Self::from_scalar(curve, &b);
-                b.zeroize();
+                let k = Self::from_scalar(curve, b.expose());
+                b.wipe();
                 k
             }
             Curve::P521 => {
-                let mut b = [0u8; 66];
+                let mut b = Secret::<[u8; 66]>::zeroed();
                 loop {
-                    rng.fill(&mut b);
-                    b[0] &= 0x01; // a P-521 scalar is 521 bits: keep only the top bit
-                    if p521::SecretKey::from_bytes(&p521::FieldBytes::from(b)).is_ok() {
+                    rng.fill(b.expose_mut());
+                    b.expose_mut()[0] &= 0x01; // a P-521 scalar is 521 bits: keep only the top bit
+                    if p521::SecretKey::from_bytes(&p521::FieldBytes::from(*b.expose())).is_ok() {
                         break;
                     }
                 }
-                let k = Self::from_scalar(curve, &b);
-                b.zeroize();
+                let k = Self::from_scalar(curve, b.expose());
+                b.wipe();
                 k
             }
             Curve::K256 => {
-                let mut b = [0u8; 32];
+                let mut b = Secret::<[u8; 32]>::zeroed();
                 loop {
-                    rng.fill(&mut b);
-                    if k256::SecretKey::from_bytes(&k256::FieldBytes::from(b)).is_ok() {
+                    rng.fill(b.expose_mut());
+                    if k256::SecretKey::from_bytes(&k256::FieldBytes::from(*b.expose())).is_ok() {
                         break;
                     }
                 }
-                let k = Self::from_scalar(curve, &b);
-                b.zeroize();
+                let k = Self::from_scalar(curve, b.expose());
+                b.wipe();
                 k
             }
             // 0.14 `SecretKey::random` wants a rand_core 0.10 rng our `Rng` can't
             // supply; reject-sample raw bytes instead (`from_bytes` validates [1,n)).
             Curve::Bp256 => {
-                let mut b = [0u8; 32];
+                let mut b = Secret::<[u8; 32]>::zeroed();
                 loop {
-                    rng.fill(&mut b);
-                    if bp256::r1::SecretKey::from_bytes(&bp256::r1::FieldBytes::from(b)).is_ok() {
+                    rng.fill(b.expose_mut());
+                    if bp256::r1::SecretKey::from_bytes(&bp256::r1::FieldBytes::from(*b.expose()))
+                        .is_ok()
+                    {
                         break;
                     }
                 }
-                let k = Self::from_scalar(curve, &b);
-                b.zeroize();
+                let k = Self::from_scalar(curve, b.expose());
+                b.wipe();
                 k
             }
             Curve::Bp384 => {
-                let mut b = [0u8; 48];
+                let mut b = Secret::<[u8; 48]>::zeroed();
                 loop {
-                    rng.fill(&mut b);
-                    if bp384::r1::SecretKey::from_bytes(&bp384::r1::FieldBytes::from(b)).is_ok() {
+                    rng.fill(b.expose_mut());
+                    if bp384::r1::SecretKey::from_bytes(&bp384::r1::FieldBytes::from(*b.expose()))
+                        .is_ok()
+                    {
                         break;
                     }
                 }
-                let k = Self::from_scalar(curve, &b);
-                b.zeroize();
+                let k = Self::from_scalar(curve, b.expose());
+                b.wipe();
                 k
             }
             Curve::Ed25519 | Curve::X25519 => {
-                let mut s = [0u8; 32];
-                rng.fill(&mut s);
-                let k = Self::from_scalar(curve, &s);
-                s.zeroize();
+                let mut s = Secret::<[u8; 32]>::zeroed();
+                rng.fill(s.expose_mut());
+                let k = Self::from_scalar(curve, s.expose());
+                s.wipe();
                 k
             }
         }
@@ -218,60 +229,50 @@ impl PrivKey {
             // public-key derivation the generic `SigningKey` did on every signature.
             PrivKey::P256(s) => {
                 use p256::elliptic_curve::PrimeField;
-                let d = Zeroizing::new(
+                let d = Secret::new(
                     Option::<p256::Scalar>::from(p256::Scalar::from_repr(p256::FieldBytes::from(
                         *s,
                     )))
                     .ok_or(EcError::Failed)?,
                 );
-                let nz = Zeroizing::new(
-                    Option::<p256::NonZeroScalar>::from(p256::NonZeroScalar::new(*d))
+                let nz = Secret::new(
+                    Option::<p256::NonZeroScalar>::from(p256::NonZeroScalar::new(*d.expose()))
                         .ok_or(EcError::Failed)?,
                 );
-                let sig = crate::sign_p256(&nz, prehash).ok_or(EcError::Failed)?;
+                let sig = crate::sign_p256(nz.expose(), prehash).ok_or(EcError::Failed)?;
                 Ok(put(sig.to_bytes().as_slice(), out))
             }
             PrivKey::P384(s) => {
                 use p384::elliptic_curve::PrimeField;
-                let d = Zeroizing::new(
+                let d = Secret::new(
                     Option::<p384::Scalar>::from(p384::Scalar::from_repr(p384::FieldBytes::from(
                         *s,
                     )))
                     .ok_or(EcError::Failed)?,
                 );
-                let nz = Zeroizing::new(
-                    Option::<p384::NonZeroScalar>::from(p384::NonZeroScalar::new(*d))
+                let nz = Secret::new(
+                    Option::<p384::NonZeroScalar>::from(p384::NonZeroScalar::new(*d.expose()))
                         .ok_or(EcError::Failed)?,
                 );
-                let sig = crate::sign_p384(&nz, prehash).ok_or(EcError::Failed)?;
+                let sig = crate::sign_p384(nz.expose(), prehash).ok_or(EcError::Failed)?;
                 Ok(put(sig.to_bytes().as_slice(), out))
             }
             PrivKey::K256(s) => {
                 use k256::elliptic_curve::PrimeField;
-                let d = Zeroizing::new(
+                let d = Secret::new(
                     Option::<k256::Scalar>::from(k256::Scalar::from_repr(k256::FieldBytes::from(
                         *s,
                     )))
                     .ok_or(EcError::Failed)?,
                 );
-                let nz = Zeroizing::new(
-                    Option::<k256::NonZeroScalar>::from(k256::NonZeroScalar::new(*d))
+                let nz = Secret::new(
+                    Option::<k256::NonZeroScalar>::from(k256::NonZeroScalar::new(*d.expose()))
                         .ok_or(EcError::Failed)?,
                 );
-                let sig = crate::sign_k256(&nz, prehash).ok_or(EcError::Failed)?;
+                let sig = crate::sign_k256(nz.expose(), prehash).ok_or(EcError::Failed)?;
                 Ok(put(sig.to_bytes().as_slice(), out))
             }
-            PrivKey::P521(s) => {
-                // 0.14's p521 has a deterministic RFC 6979 signer (its `sha512` feature),
-                // so no random nonce / rand_core adapter is needed here. (FIDO's comb path
-                // instead signs P-521 with a random TRNG nonce -- both are safe.)
-                let k = p521::ecdsa::SigningKey::from_bytes(&p521::FieldBytes::from(*s))
-                    .map_err(|_| EcError::Failed)?;
-                let sig: p521::ecdsa::Signature =
-                    k.sign_prehash(prehash).map_err(|_| EcError::Failed)?;
-                let b = sig.to_bytes();
-                Ok(put(&b[..], out))
-            }
+            PrivKey::P521(s) => sign_p521(s, prehash, out),
             PrivKey::Bp256(s) => sign_bp256(s, prehash, out),
             PrivKey::Bp384(s) => sign_bp384(s, prehash, out),
             PrivKey::Ed25519(seed) => {
@@ -298,65 +299,73 @@ impl PrivKey {
             PrivKey::P256(s) => {
                 use p256::elliptic_curve::PrimeField;
                 use p256::elliptic_curve::sec1::ToSec1Point;
-                let d = Zeroizing::new(
+                let d = Secret::new(
                     Option::<p256::Scalar>::from(p256::Scalar::from_repr(p256::FieldBytes::from(
                         *s,
                     )))
                     .ok_or(EcError::Failed)?,
                 );
-                let nz = Zeroizing::new(
-                    Option::<p256::NonZeroScalar>::from(p256::NonZeroScalar::new(*d))
+                let nz = Secret::new(
+                    Option::<p256::NonZeroScalar>::from(p256::NonZeroScalar::new(*d.expose()))
                         .ok_or(EcError::Failed)?,
                 );
-                let pt = crate::comb_mul_p256(&nz).to_affine().to_sec1_point(false);
+                let pt = crate::comb_mul_p256(nz.expose())
+                    .to_affine()
+                    .to_sec1_point(false);
                 Ok(put(pt.as_bytes(), out))
             }
             PrivKey::P384(s) => {
                 use p384::elliptic_curve::PrimeField;
                 use p384::elliptic_curve::sec1::ToSec1Point;
-                let d = Zeroizing::new(
+                let d = Secret::new(
                     Option::<p384::Scalar>::from(p384::Scalar::from_repr(p384::FieldBytes::from(
                         *s,
                     )))
                     .ok_or(EcError::Failed)?,
                 );
-                let nz = Zeroizing::new(
-                    Option::<p384::NonZeroScalar>::from(p384::NonZeroScalar::new(*d))
+                let nz = Secret::new(
+                    Option::<p384::NonZeroScalar>::from(p384::NonZeroScalar::new(*d.expose()))
                         .ok_or(EcError::Failed)?,
                 );
-                let pt = crate::comb_mul_p384(&nz).to_affine().to_sec1_point(false);
+                let pt = crate::comb_mul_p384(nz.expose())
+                    .to_affine()
+                    .to_sec1_point(false);
                 Ok(put(pt.as_bytes(), out))
             }
             PrivKey::K256(s) => {
                 use k256::elliptic_curve::PrimeField;
                 use k256::elliptic_curve::sec1::ToSec1Point;
-                let d = Zeroizing::new(
+                let d = Secret::new(
                     Option::<k256::Scalar>::from(k256::Scalar::from_repr(k256::FieldBytes::from(
                         *s,
                     )))
                     .ok_or(EcError::Failed)?,
                 );
-                let nz = Zeroizing::new(
-                    Option::<k256::NonZeroScalar>::from(k256::NonZeroScalar::new(*d))
+                let nz = Secret::new(
+                    Option::<k256::NonZeroScalar>::from(k256::NonZeroScalar::new(*d.expose()))
                         .ok_or(EcError::Failed)?,
                 );
-                let pt = crate::comb_mul_k256(&nz).to_affine().to_sec1_point(false);
+                let pt = crate::comb_mul_k256(nz.expose())
+                    .to_affine()
+                    .to_sec1_point(false);
                 Ok(put(pt.as_bytes(), out))
             }
             PrivKey::P521(s) => {
                 use p521::elliptic_curve::PrimeField;
                 use p521::elliptic_curve::sec1::ToSec1Point;
-                let d = Zeroizing::new(
+                let d = Secret::new(
                     Option::<p521::Scalar>::from(p521::Scalar::from_repr(p521::FieldBytes::from(
                         *s,
                     )))
                     .ok_or(EcError::Failed)?,
                 );
-                let nz = Zeroizing::new(
-                    Option::<p521::NonZeroScalar>::from(p521::NonZeroScalar::new(*d))
+                let nz = Secret::new(
+                    Option::<p521::NonZeroScalar>::from(p521::NonZeroScalar::new(*d.expose()))
                         .ok_or(EcError::Failed)?,
                 );
-                let pt = crate::comb_mul_p521(&nz).to_affine().to_sec1_point(false);
+                let pt = crate::comb_mul_p521(nz.expose())
+                    .to_affine()
+                    .to_sec1_point(false);
                 Ok(put(pt.as_bytes(), out))
             }
             PrivKey::Bp256(s) => pubkey_bp256(s, out),
@@ -366,10 +375,10 @@ impl PrivKey {
                 Ok(put(&k.verifying_key().to_bytes(), out))
             }
             PrivKey::X25519(s) => {
-                let mut le = *s;
-                le.reverse();
-                let pk = x25519_dalek::x25519(le, x25519_dalek::X25519_BASEPOINT_BYTES);
-                le.zeroize();
+                let mut le = Secret::new(*s);
+                le.expose_mut().reverse();
+                let pk = x25519_dalek::x25519(*le.expose(), x25519_dalek::X25519_BASEPOINT_BYTES);
+                le.wipe();
                 Ok(put(&pk, out))
             }
         }
@@ -393,93 +402,141 @@ impl PrivKey {
     }
 }
 
+/// A Weierstrass agreement's peer point, sorted as a YubiKey 5.8.0 sorts it: all but
+/// an uncompressed `04 ‖ x ‖ y` (compressed, compact, identity, undecodable) is
+/// [`EcError::BadPoint`]; a coordinate off the field or the curve, [`EcError::RejectedPoint`].
+fn sec1_peer<C>(peer_point: &[u8]) -> Result<PublicKey<C>, EcError>
+where
+    C: CurveArithmetic,
+    FieldBytesSize<C>: ModulusSize,
+    AffinePoint<C>: FromSec1Point<C> + ToSec1Point<C>,
+{
+    let ep = Sec1Point::<C>::from_bytes(peer_point).map_err(|_| EcError::BadPoint)?;
+    if ep.tag() != Tag::Uncompressed {
+        return Err(EcError::BadPoint);
+    }
+    Option::from(PublicKey::<C>::from_sec1_point(&ep)).ok_or(EcError::RejectedPoint)
+}
+
+// Keep the P-521 signing workspace out of the other curves' dispatch frame.
+#[inline(never)]
+fn sign_p521(s: &[u8; 66], prehash: &[u8], out: &mut [u8]) -> Result<usize, EcError> {
+    let d = Secret::new({
+        let key = p521::SecretKey::from_bytes(&p521::FieldBytes::from(*s))
+            .map_err(|_| EcError::Failed)?;
+        key.to_nonzero_scalar()
+    });
+    let sig = crate::sign_p521_deterministic::sign(d.expose(), prehash);
+    let b = sig.to_bytes();
+    out[..b.len()].copy_from_slice(b.as_slice());
+    Ok(b.len())
+}
+
 /// P-256 ECDH: peer point parsed as a SEC1 uncompressed point, shared secret =
 /// the affine x-coordinate.
+// Keep peer decoding out of the other curves' dispatch frame.
+#[inline(never)]
 fn ecdh_p256(scalar: &[u8; 32], peer_point: &[u8], out: &mut [u8]) -> Result<usize, EcError> {
     let sk = p256::SecretKey::from_bytes(&p256::FieldBytes::from(*scalar))
-        .map_err(|_| EcError::BadPoint)?;
-    let ep = p256::Sec1Point::from_bytes(peer_point).map_err(|_| EcError::BadPoint)?;
-    let peer = Option::<p256::PublicKey>::from(p256::PublicKey::from_sec1_point(&ep))
-        .ok_or(EcError::BadPoint)?;
-    let shared = p256::ecdh::diffie_hellman(sk.to_nonzero_scalar(), peer.as_affine());
+        .map_err(|_| EcError::Failed)?;
+    let peer = sec1_peer::<p256::NistP256>(peer_point)?;
+    let shared = ecdh_p256_shared(&sk.to_nonzero_scalar(), peer.as_affine());
     let z = shared.raw_secret_bytes();
     out[..z.len()].copy_from_slice(z.as_slice());
     Ok(z.len())
+}
+
+// Give the TrustZone linker a small, independently placed multiplication loop.
+#[inline(never)]
+fn ecdh_p256_shared(
+    scalar: &p256::NonZeroScalar,
+    peer: &p256::AffinePoint,
+) -> p256::ecdh::SharedSecret {
+    p256::ecdh::diffie_hellman(scalar, peer)
 }
 
 /// P-384 ECDH — same SEC1 idiom as [`ecdh_p256`], 48-byte shared x-coordinate.
+// Keep peer decoding out of the other curves' dispatch frame.
+#[inline(never)]
 fn ecdh_p384(scalar: &[u8; 48], peer_point: &[u8], out: &mut [u8]) -> Result<usize, EcError> {
     let sk = p384::SecretKey::from_bytes(&p384::FieldBytes::from(*scalar))
-        .map_err(|_| EcError::BadPoint)?;
-    let ep = p384::Sec1Point::from_bytes(peer_point).map_err(|_| EcError::BadPoint)?;
-    let peer = Option::<p384::PublicKey>::from(p384::PublicKey::from_sec1_point(&ep))
-        .ok_or(EcError::BadPoint)?;
-    let shared = p384::ecdh::diffie_hellman(sk.to_nonzero_scalar(), peer.as_affine());
-    let z = shared.raw_secret_bytes();
-    out[..z.len()].copy_from_slice(z.as_slice());
-    Ok(z.len())
+        .map_err(|_| EcError::Failed)?;
+    let peer = sec1_peer::<p384::NistP384>(peer_point)?;
+    let shared = crate::ecdh_p384::mul(&peer, &sk.to_nonzero_scalar())?;
+    let z = Secret::new(p384::elliptic_curve::point::AffineCoordinates::x(
+        shared.expose(),
+    ));
+    out[..z.expose().len()].copy_from_slice(z.expose().as_slice());
+    Ok(z.expose().len())
 }
 
 /// P-521 ECDH — 66-byte shared x-coordinate.
+// Keep its multiplication workspace out of the other curves' dispatch frame.
+#[inline(never)]
 fn ecdh_p521(scalar: &[u8; 66], peer_point: &[u8], out: &mut [u8]) -> Result<usize, EcError> {
     let sk = p521::SecretKey::from_bytes(&p521::FieldBytes::from(*scalar))
-        .map_err(|_| EcError::BadPoint)?;
-    let ep = p521::Sec1Point::from_bytes(peer_point).map_err(|_| EcError::BadPoint)?;
-    let peer = Option::<p521::PublicKey>::from(p521::PublicKey::from_sec1_point(&ep))
-        .ok_or(EcError::BadPoint)?;
-    let shared = p521::ecdh::diffie_hellman(sk.to_nonzero_scalar(), peer.as_affine());
-    let z = shared.raw_secret_bytes();
-    out[..z.len()].copy_from_slice(z.as_slice());
-    Ok(z.len())
+        .map_err(|_| EcError::Failed)?;
+    let peer = sec1_peer::<p521::NistP521>(peer_point)?;
+    let d = Secret::new(sk.to_nonzero_scalar());
+    let shared = crate::ecdh_p521::mul(&peer, d.expose())?;
+    let z = Secret::new(p521::elliptic_curve::point::AffineCoordinates::x(
+        shared.expose(),
+    ));
+    out[..z.expose().len()].copy_from_slice(z.expose().as_slice());
+    Ok(z.expose().len())
 }
 
 /// secp256k1 ECDH — 32-byte shared x-coordinate.
 fn ecdh_k256(scalar: &[u8; 32], peer_point: &[u8], out: &mut [u8]) -> Result<usize, EcError> {
     let sk = k256::SecretKey::from_bytes(&k256::FieldBytes::from(*scalar))
-        .map_err(|_| EcError::BadPoint)?;
-    let ep = k256::Sec1Point::from_bytes(peer_point).map_err(|_| EcError::BadPoint)?;
-    let peer = Option::<k256::PublicKey>::from(k256::PublicKey::from_sec1_point(&ep))
-        .ok_or(EcError::BadPoint)?;
+        .map_err(|_| EcError::Failed)?;
+    let peer = sec1_peer::<k256::Secp256k1>(peer_point)?;
     let shared = k256::ecdh::diffie_hellman(sk.to_nonzero_scalar(), peer.as_affine());
     let z = shared.raw_secret_bytes();
     out[..z.len()].copy_from_slice(z.as_slice());
     Ok(z.len())
 }
 
-// brainpoolP256r1 / brainpoolP384r1 (bp256/bp384 0.14, fiat-crypto backend). These
+// brainpoolP256r1 / brainpoolP384r1 (bp256/bp384 0.14). These
 // crates leave `SigningKey`/`VerifyingKey` generic in `ecdsa`, so name them there;
 // signing is deterministic RFC 6979 (bp `sha256`/`sha384` feature) like P-256/P-384.
 
 /// brainpoolP256r1 ECDSA — raw `r ‖ s` (64 bytes).
+#[inline(never)]
 fn sign_bp256(s: &[u8; 32], prehash: &[u8], out: &mut [u8]) -> Result<usize, EcError> {
-    use ecdsa::signature::hazmat::PrehashSigner;
-    let k =
-        ecdsa::SigningKey::<bp256::BrainpoolP256r1>::from_bytes(&bp256::r1::FieldBytes::from(*s))
+    let d = Secret::new({
+        let key = bp256::r1::SecretKey::from_bytes(&bp256::r1::FieldBytes::from(*s))
             .map_err(|_| EcError::Failed)?;
-    let sig: bp256::r1::ecdsa::Signature = k.sign_prehash(prehash).map_err(|_| EcError::Failed)?;
+        key.to_nonzero_scalar()
+    });
+    let sig = crate::comb_brainpool::p256::sign(d.expose(), prehash);
     let b = sig.to_bytes();
-    out[..b.len()].copy_from_slice(&b);
+    out[..b.len()].copy_from_slice(b.as_slice());
     Ok(b.len())
 }
 
 /// brainpoolP384r1 ECDSA — raw `r ‖ s` (96 bytes).
+#[inline(never)]
 fn sign_bp384(s: &[u8; 48], prehash: &[u8], out: &mut [u8]) -> Result<usize, EcError> {
-    use ecdsa::signature::hazmat::PrehashSigner;
-    let k =
-        ecdsa::SigningKey::<bp384::BrainpoolP384r1>::from_bytes(&bp384::r1::FieldBytes::from(*s))
+    let d = Secret::new({
+        let key = bp384::r1::SecretKey::from_bytes(&bp384::r1::FieldBytes::from(*s))
             .map_err(|_| EcError::Failed)?;
-    let sig: bp384::r1::ecdsa::Signature = k.sign_prehash(prehash).map_err(|_| EcError::Failed)?;
+        key.to_nonzero_scalar()
+    });
+    let sig = crate::comb_brainpool::p384::sign(d.expose(), prehash);
     let b = sig.to_bytes();
-    out[..b.len()].copy_from_slice(&b);
+    out[..b.len()].copy_from_slice(b.as_slice());
     Ok(b.len())
 }
 
 /// brainpoolP256r1 public point: SEC1 uncompressed `04 ‖ x ‖ y` (65 bytes).
 fn pubkey_bp256(s: &[u8; 32], out: &mut [u8]) -> Result<usize, EcError> {
-    let k =
-        ecdsa::SigningKey::<bp256::BrainpoolP256r1>::from_bytes(&bp256::r1::FieldBytes::from(*s))
-            .map_err(|_| EcError::Failed)?;
-    let pt = k.verifying_key().to_sec1_point(false);
+    let k = bp256::r1::SecretKey::from_bytes(&bp256::r1::FieldBytes::from(*s))
+        .map_err(|_| EcError::Failed)?;
+    let d = Secret::new(k.to_nonzero_scalar());
+    let pt = crate::comb_brainpool::p256::mul(d.expose())
+        .to_affine()
+        .to_sec1_point(false);
     let b = pt.as_bytes();
     out[..b.len()].copy_from_slice(b);
     Ok(b.len())
@@ -487,62 +544,63 @@ fn pubkey_bp256(s: &[u8; 32], out: &mut [u8]) -> Result<usize, EcError> {
 
 /// brainpoolP384r1 public point: SEC1 uncompressed `04 ‖ x ‖ y` (97 bytes).
 fn pubkey_bp384(s: &[u8; 48], out: &mut [u8]) -> Result<usize, EcError> {
-    let k =
-        ecdsa::SigningKey::<bp384::BrainpoolP384r1>::from_bytes(&bp384::r1::FieldBytes::from(*s))
-            .map_err(|_| EcError::Failed)?;
-    let pt = k.verifying_key().to_sec1_point(false);
+    let k = bp384::r1::SecretKey::from_bytes(&bp384::r1::FieldBytes::from(*s))
+        .map_err(|_| EcError::Failed)?;
+    let d = Secret::new(k.to_nonzero_scalar());
+    let pt = crate::comb_brainpool::p384::mul(d.expose())
+        .to_affine()
+        .to_sec1_point(false);
     let b = pt.as_bytes();
     out[..b.len()].copy_from_slice(b);
     Ok(b.len())
 }
 
 /// brainpoolP256r1 ECDH — SEC1 peer point, 32-byte shared x-coordinate.
+#[inline(never)]
 fn ecdh_bp256(scalar: &[u8; 32], peer_point: &[u8], out: &mut [u8]) -> Result<usize, EcError> {
     let sk = bp256::r1::SecretKey::from_bytes(&bp256::r1::FieldBytes::from(*scalar))
-        .map_err(|_| EcError::BadPoint)?;
-    let pk =
-        bp256::elliptic_curve::PublicKey::<bp256::BrainpoolP256r1>::from_sec1_bytes(peer_point)
-            .map_err(|_| EcError::BadPoint)?;
-    let shared =
-        bp256::elliptic_curve::ecdh::diffie_hellman(sk.to_nonzero_scalar(), pk.as_affine());
-    let z = shared.raw_secret_bytes();
-    out[..z.len()].copy_from_slice(z.as_slice());
-    Ok(z.len())
+        .map_err(|_| EcError::Failed)?;
+    let pk = sec1_peer::<bp256::BrainpoolP256r1>(peer_point)?;
+    let scalar = Secret::new(sk.to_nonzero_scalar());
+    let point = crate::ecdh_bp256::mul(&pk, scalar.expose())?;
+    let z = Secret::new(bp256::elliptic_curve::point::AffineCoordinates::x(
+        point.expose(),
+    ));
+    out[..z.expose().len()].copy_from_slice(z.expose().as_slice());
+    Ok(z.expose().len())
 }
 
 /// brainpoolP384r1 ECDH — SEC1 peer point, 48-byte shared x-coordinate.
+#[inline(never)]
 fn ecdh_bp384(scalar: &[u8; 48], peer_point: &[u8], out: &mut [u8]) -> Result<usize, EcError> {
     let sk = bp384::r1::SecretKey::from_bytes(&bp384::r1::FieldBytes::from(*scalar))
-        .map_err(|_| EcError::BadPoint)?;
-    let pk =
-        bp384::elliptic_curve::PublicKey::<bp384::BrainpoolP384r1>::from_sec1_bytes(peer_point)
-            .map_err(|_| EcError::BadPoint)?;
-    let shared =
-        bp384::elliptic_curve::ecdh::diffie_hellman(sk.to_nonzero_scalar(), pk.as_affine());
-    let z = shared.raw_secret_bytes();
-    out[..z.len()].copy_from_slice(z.as_slice());
-    Ok(z.len())
+        .map_err(|_| EcError::Failed)?;
+    let pk = sec1_peer::<bp384::BrainpoolP384r1>(peer_point)?;
+    let scalar = Secret::new(sk.to_nonzero_scalar());
+    let point = crate::ecdh_bp384::mul(&pk, scalar.expose())?;
+    let z = Secret::new(bp384::elliptic_curve::point::AffineCoordinates::x(
+        point.expose(),
+    ));
+    out[..z.expose().len()].copy_from_slice(z.expose().as_slice());
+    Ok(z.expose().len())
 }
 
-/// X25519 ECDH (OpenPGP Cv25519). The stored scalar is the big-endian MPI; X25519
-/// wants it little-endian (RFC 7748) — reverse it (x25519-dalek clamps). The peer
-/// key arrives as the OpenPGP `0x40`-prefixed native point (little-endian
-/// u-coordinate); accept it with or without the prefix. The shared secret is the
-/// 32-byte little-endian X25519 result.
+/// X25519 ECDH (OpenPGP Cv25519, PIV X25519): the big-endian MPI scalar reversed
+/// into RFC 7748's little-endian (x25519-dalek clamps), against the bare 32-byte u —
+/// a YubiKey 5.8.0 refuses the `0x40`-prefixed native form in both applets.
 fn ecdh_x25519(scalar_be: &[u8; 32], peer_point: &[u8], out: &mut [u8]) -> Result<usize, EcError> {
-    let u = match peer_point.len() {
-        33 if peer_point[0] == 0x40 => &peer_point[1..],
-        32 => peer_point,
-        _ => return Err(EcError::BadPoint),
-    };
-    let mut peer = [0u8; 32];
-    peer.copy_from_slice(u);
-    let mut le = *scalar_be;
-    le.reverse();
-    let mut shared = x25519_dalek::x25519(le, peer);
-    le.zeroize();
-    out[..32].copy_from_slice(&shared);
-    shared.zeroize();
+    let peer: [u8; 32] = peer_point.try_into().map_err(|_| EcError::BadPoint)?;
+    let mut le = Secret::new(*scalar_be);
+    le.expose_mut().reverse();
+    let mut shared = Secret::new(x25519_dalek::x25519(*le.expose(), peer));
+    le.wipe();
+    // A small-order peer agrees to all zeros whatever the scalar: RFC 7748 §6.1
+    // allows refusing it, a YubiKey 5.8.0 does. The OR-fold keeps it branch-free.
+    if shared.expose().iter().fold(0, |acc, b| acc | b) == 0 {
+        return Err(EcError::RejectedPoint);
+    }
+    out[..32].copy_from_slice(shared.expose());
+    shared.wipe();
     Ok(32)
 }
 
@@ -555,5 +613,25 @@ mod tests;
 mod x25519_tests;
 
 #[cfg(test)]
+#[path = "key_ed25519_tests.rs"]
+mod ed25519_tests;
+
+#[cfg(test)]
 #[path = "key_bp_kat.rs"]
 mod bp_kat;
+
+#[cfg(test)]
+#[path = "key_wycheproof_tests.rs"]
+mod wycheproof_tests;
+
+#[cfg(test)]
+#[path = "key_p521_tests.rs"]
+mod p521_tests;
+
+#[cfg(test)]
+#[path = "key_bp384_tests.rs"]
+mod bp384_tests;
+
+#[cfg(test)]
+#[path = "key_bp256_tests.rs"]
+mod bp256_tests;

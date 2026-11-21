@@ -1,1030 +1,649 @@
+<!-- SPDX-License-Identifier: AGPL-3.0-only -->
+<!-- Copyright (C) 2026 RS-Key contributors -->
+
 # Testing
 
-Several layers, fastest first. The protocol and applet crates are
-hardware-agnostic on purpose (only `firmware` touches the HAL), so everything
-except board bring-up is tested and fuzzed on the host. The device is reserved
-for end-to-end integration.
+RS-Key tests command handling in Rust, drives the same protocols through
+an emulator and a real USB device, and boots the combined firmware ELF on
+picoem's RP2350 model. A test of one layer can pass while another fails.
+For example, a host test can verify that a USB reset clears a PIN token.
+To find out whether Secure firmware sees that reset when Non-secure code
+ignores it, run the image suite. For actual USB timing, use a board.
 
-| Layer | What it checks | Where |
-|---|---|---|
-| Host unit tests | parsers, state machines, applets, crypto, the display flow (~1500 tests) | `#[cfg(test)]` in each crate |
-| Fuzzing | the same logic under adversarial bytes | `fuzz/` |
-| Miri | the fuzz targets' logic under the UB checker | `fuzz/tests/miri.rs` |
-| Kani proofs | bounded model checking — every input, not a sample | `#[cfg(kani)]` in the crates |
-| `no_std` build | the crates still link for the device | default `thumbv8m` target |
-| On-device tests | real USB + flash on the board | `tests/*.py` |
+## The two commands
 
-```mermaid
-flowchart TD
-    u["Host unit tests"] --> f["Fuzzing"] --> m["Miri"] --> k["Kani proofs"] --> n["no_std build"] --> d["On-device tests"]
-```
-
-Top to bottom: fast and host-only, tapering to slow and needs-a-board.
-
-## The one command
+Run from the repository root. Nix supplies the pinned tools.
 
 ```sh
 nix develop -c ./scripts/check.sh
+nix develop -c ./scripts/check-assurance.sh
 ```
 
-runs fmt, clippy (embedded **and** host targets, `-D warnings`), rustdoc over
-every workspace (also `-D warnings`, so a broken intra-doc link fails the gate,
-private items included — but only links in `///` and `//!`: a name in a plain
-`//` comment is not parsed, and rots unseen), all host tests, both firmware
-builds (touch + no-touch), the rsk-wipe build, a firmware flash-size ratchet
-(the shipping image must stay under a ceiling that hugs its current size, well
-below the 2560K code region), `cargo-audit`, `cargo-deny`, `cargo-vet` and
-`gitleaks`.
-Green check.sh is the bar for every commit.
+`check.sh` is the per-commit gate. It builds and checks firmware, runs
+host tests across feature sets, checks the final image and tests the
+supporting tools. `check-assurance.sh` checks the model wiring, assurance
+registries, citations, test rosters and published evidence. Pull requests
+also run bounded proofs and emulator jobs. See [CI parity](#ci-parity)
+for the split.
 
-Two of those rows hold the crate tiers of
-[architecture.md](architecture.md#crates) rather than a dependency's licence or
-CVEs. `cargo-deny`'s `[bans]` stanza is the enforcing one: an applet that names
-another applet, or any crate but `rsk-crypto` that names one of the four
-hash/signature backends, is a banned edge and the row exits 2. The
-`-D unused-wrapper` flag fails it the other way too, when an allowlisted edge is
-gone and its entry has quietly become decoration. The `crate graph` row
-regenerates `docs/images/crate-graph.svg` from the manifests and fails when the
-committed drawing has drifted from them; its mutation table is
-`scripts/test_crate_graph.py`.
+| Harness | What executes | Example failure it finds |
+|---|---|---|
+| Cargo tests | Rust crates and test backends on the host | A PIN retry counter changes after a rejected request |
+| Applet emulator | Shared applet and store crates, with host transport and device hooks | A malformed CCID exchange leaves a selected applet in the wrong state |
+| picoem library tests | RP2350 CPU and peripheral models on the host | A write clears a programmed OTP bit in the model |
+| Image emulator | Secure and Non-secure firmware ELF running on picoem through `rsk-emu --image` | A reply from an old USB epoch reaches a new session |
+| USB/IP | An emulator backend and a Linux USB host stack | A client rejects a descriptor or fails to open a HID interface |
+| Board | Firmware on RP2350 silicon, driven over USB or through board inputs | A real reset, panel gesture, OTP access or cache behavior differs from the model |
+| Independent client or oracle | A protocol client, test vector, reference implementation or second device | A signature passes an internal round trip but fails independent verification |
 
 ## Host tests
 
-`cargo test` must target the host explicitly (the workspace defaults to
-`thumbv8m`):
+The firmware is `no_std`. Parsers, applet state machines, record codecs,
+cryptography and much of the transport and recovery logic live in
+`crates/rsk-*` so Cargo can test them on the host. The host suite exercises
+request parsing and response encoding, PIN and token policy, applet
+selection and state changes, flash recovery, and crypto against known
+answers. The firmware supplies the hardware implementations of the traits
+those crates use.
+
+The workspace defaults to the embedded target. Select the host explicitly.
 
 ```sh
-nix develop -c cargo test --workspace --exclude firmware --exclude rsk-wipe \
-    --target aarch64-apple-darwin
+nix develop
+host_target="$(rustc -vV | sed -n 's/^host: //p')"
+cargo test -p rsk-fido -p rsk-store --target "$host_target"
 ```
 
-(The two excludes are the whole of the exclusion: they are the only workspace
-members not under `crates/`, and both are thumbv8m-only. `HOST_TARGET` env
-overrides the triple in `check.sh`, which selects the same way — this used to be
-a hand-written 24-crate `-p` list written out nine times over four files, and
-it had rotted to 16 crates here, 20 on the nightly coverage row and 12 in
-`nix flake check`. `scripts/roster_gate.py` now holds every copy of the
-selection to that pair, and finds the copies rather than being told where they
-are.) Crypto tests pin NIST/RFC vectors; applet tests drive full protocol flows
-(register → assert, PIN lockout ladders, OpenPGP import → sign → verify, PIV
-generate → attest → parse with `x509-parser`).
-
-RSA has no second implementation in the tree to check itself against — the `rsa`
-crate that used to serve as one left with RUSTSEC-2023-0071 — so its ground
-truth is frozen instead: `crates/rsk-rsa/src/vectors.rs` holds OpenSSL
-signatures and ciphertexts under three fixed keys, and every signature the card
-produces is compared to them byte for byte. `scripts/rsa_vectors.py` regenerates
-that file from python-cryptography; run it inside `nix develop`.
-
-Fixed vectors cannot say which imported `(p, q, e)` a key assembly *refuses*, so
-that half is settled by a differential against `rsa` 0.9.10 in a throwaway crate
-**outside** the workspace — `rsk-rsa` by path with `test-util`, plus
-`rsa = "=0.9.10"` — because the crate must not come back into any lockfile the
-SCA rows read. Rebuild it whenever the key assembly moves. Two things it teaches
-about itself: the comparison has to be *reachable* (a first attempt gated it
-behind `ra.is_ok() || ra.is_err()`, which is always true, and reported zero
-mismatches over zero comparisons — falsify each arm by perturbing one side), and
-upstream cannot be asked about an unbalanced key at all, because its CRT
-recombination is `while m.is_negative() { m += p }` and for `q ≫ p` that does not
-return.
-
-`rsk-display` is the odd one: its subject is a *screen*, and it is tested by
-giving the flow a panel that records what was drawn, a touch pad that reads back
-a scripted sequence of samples, and a board whose backlight, wake button and
-presence flags are plain fields. The panel and the touch controller are type
-parameters and the rest sits behind `Hooks`, so the gestures that carry the
-security — the hold that approves a ceremony, the retry ladder behind the PIN
-pad, the auto-lock a host must not be able to postpone — run on the host at the
-same code the board runs. `embassy-time`'s `std` feature supplies the clock, so
-the deadlines and debounces are the real ones (see `crates/rsk-display/src/tests.rs`).
-
-## Fuzzing
-
-Every parser **and every applet's full dispatch** has a `cargo-fuzz` target.
-30+ of them: APDU, BER-TLV, CTAPHID reassembly (+ round-trip property), CCID
-framing, all the FIDO command surfaces (CBOR dispatch, credentials,
-credMgmt, U2F, extensions, large blobs, the vendor backup/lock commands,
-half that corpus runs soft-locked), OpenPGP dispatch + the EC/RSA crypto
-parsers, OATH/OTP/PIV/management/rescue dispatch, the keyboard frame codec,
-the phy TLV codec (parse∘serialize round-trip is an asserted invariant), the
-PIN protocols, AEADs, the DRBG, ML-DSA (all three parameter sets: attacker-shaped
-verify decode, plus a keygen→sign→verify property that a one-bit tamper must
-break) / ML-KEM decoding, the FIDO post-quantum credential path (the
-`(alg, curve)` box codec + `CredKey` dispatch → sign / COSE-AKP encode), the
-trusted-display `Label` sanitizer (attacker rpId / account text must stay
-printable ASCII, no bidi / homoglyph escape, and the confirm screen must
-render without panic), and the seed-blob format/migration state machine.
-
-Most targets drive one applet from a fresh state. Four are **stateful**. They
-replay an attacker-chosen *sequence* against persistent state, hunting the
-multi-step seams a fresh-state target can't reach (both real bugs of this
-class, the largeBlobs overflow and the mgmt write→read mismatch, were
-multi-step):
-
-- `cross_applet` wires the real `Dispatcher` to the OpenPGP / Management /
-  OATH / OTP / PIV set over a single shared `Fs`: SELECT switches, command
-  chaining and the file system persist across APDUs. State leaking between
-  applets, a SELECT mid-chain, FID collisions. (GENERATE is skipped, as on
-  device the RSA prime search is fast-pathed off the dispatcher.)
-- `fido_session` replays a CTAPHID_CBOR message sequence against one
-  `FidoState` + `Fs` with an all-permissions token armed and a resident
-  credential provisioned. PIN/token state, the credential store, large blobs
-  and the journal persist across commands. `now_ms` advances over the
-  token-timeout edges. A mid-sequence reset wipes the store under the
-  session's feet. getInfo must still succeed after anything.
-- `fs_ops` drives put / read / delete / meta ops / reboot
-  (`into_storage`→`scan`) over one image against a `HashMap` shadow model:
-  every read checks the full-length-returned / copy-clamped contract (the
-  mgmt bug was a caller missing it), `meta_add` is checked against the exact
-  `META_MAX` boundary, and the live key set must equal the model's after any
-  prefix of operations.
-- `power_cut` is the torture extension of `fs_ops`: the same op-sequence
-  shadow model, but over the on-device storage stack itself — `rsk-store`,
-  the two `sequential-storage` partitions with their counter-FID routing and
-  caches — on a mock NOR flash whose power can be cut after any byte of any
-  write or erase. It tortured a hand-written mirror of that stack until the
-  backend moved into a crate; the mirror had drifted (no `last_error`, no
-  `compact`, a missing counter FID), which is the argument for not having one. Once a cut fires, a
-  dead-latch fails every further mutation (a dead device cannot keep
-  writing), the stack is rebuilt with fresh caches over the surviving bytes,
-  and the model checks atomicity (the torn op reads as old or new, never
-  garbage; a torn `delete` never leaves the value gone but its metadata
-  alive), durability (every committed file reads back exactly; a spurious
-  "absent" is the on-device "seed lost" disaster), and the key set. Cuts
-  landing inside the next mount's own repair are survived by dying again. A
-  dedicated input class also runs the real FIDO reset on that same store,
-  checks `ResetNeverWeakensSurvivingState` after boot-time seed provisioning,
-  then mounts a second time to cross the reboot boundary again.
-
-```sh
-nix develop .#fuzz -c cargo fuzz list
-nix develop .#fuzz -c cargo fuzz run <target> -- -max_total_time=60
-```
-
-The fuzz workspace is separate (nightly + libfuzzer), but check.sh lints it on
-stable — the `clippy (fuzz)` row, `--all-targets` against the host target — so a
-shared type change that breaks a target fails the gate rather than the next
-nightly. The instrumented build still needs the nightly shell:
-`nix develop .#fuzz -c cargo fuzz build`. House rule: new attacker-facing parser
-or dispatch surface ⇒ new fuzz target in the same change.
-
-**Miri** runs every target's logic once more as plain tests under the UB
-checker, reporting undefined behavior instead of panics (`fuzz/tests/miri.rs`;
-the `MIRIFLAGS` policy is set by the `.#fuzz` shell):
-
-```sh
-nix develop .#fuzz -c cargo miri test --manifest-path fuzz/Cargo.toml
-```
-
-Neither suite gates a commit. CI runs both daily in the `deep-checks`
-workflow: the Miri suite, plus a timed libFuzzer pass over every target with
-the corpus carried between runs, crash artifacts uploaded. A separate
-`fuzz-coverage` job then measures per-target region/line coverage over that
-accumulated corpus (`scripts/fuzz-coverage.sh`, run it the same way locally),
-writing a summary table and uploading a per-target HTML report. A
-`for t in $(cargo fuzz list)` word list reports green when the list is empty, so
-both loops floor the roster first — `FUZZ_TARGET_FLOOR` in the workflow and the
-same number in the script. Lower it only in the commit that removes a target.
-
-Coverage says which *lines* a corpus reached. `scripts/fuzz-dimensions.py` says
-which **inputs** it explored, for `power_cut`: how much of the storage was
-invalid before init, how many operations and distinct FIDs an exec drove, how
-many times the power went, how many erases and bytes the store spent. It replays
-a corpus with `RSK_POWER_CUT_STATS=1` and prints one log-bucket row per axis.
-
-```sh
-nix develop .#fuzz -c ./scripts/fuzz-dimensions.py fuzz/corpus/power_cut
-```
-
-It gates nothing and is not in CI — there is no coverage floor anywhere in this
-tree, and a reporter that looks like a gate is worse than none.
-
-## Kani proofs
-
-Where a fuzzer samples inputs, [Kani](https://model-checking.github.io/kani/)
-(a bounded model checker over CBMC) checks **every** input up to a stated
-bound: no panic, no overflow, no out-of-bounds access, and the asserted
-invariants hold. The harnesses live next to the unit tests as
-`#[cfg(kani)] mod proofs` and cover the small, total, attacker- or
-crypto-critical helpers, where a proof genuinely beats a sample:
-
-- `rsk-sdk`: BER-TLV walk over arbitrary bytes — every yielded value is a
-  sub-slice of the input, and successive values neither overlap nor run
-  backwards; `format_len` round-trip for every `u16`; APDU case-1..4 parsing
-  over every buffer up to the bound; and the **dispatcher over every *pair* of
-  raw APDUs** up to six bytes each — the one harness here that applies a
-  sequence to a stateful object, because command chaining's three audit
-  findings each needed two commands to express. It pins that the applet is
-  never handed a body from a command it did not itself terminate, that a
-  dropped chain leaves no bytes behind, that a secure-messaging class reaches
-  no applet, and that a SELECT for a registered AID always arrives. Its bound is
-  a `cfg(kani)` shrink of production source — the table below is the whole set —
-  and it states what it stops proving where it is written, this one in
-  `applet_kani.rs`.
-- `rsk-fs`: the `EF_META` record-walk (`rebuild_meta`) over arbitrary (corrupt)
-  blobs — nothing written past the length it reports, and the old record for the
-  rebuilt fid is **gone** from the output, which is what `meta_delete` and
-  `meta_add`'s replace both mean. Stated by feeding the output back through the
-  same function rather than by a second decoder, which would only prove two
-  copies of one walk agree.
-- `rsk-rsa`: `mod_small` proven *functionally* (`== v % m`, every
-  dividend up to 2 bytes and every modulus) and panic-free / `< m` for every
-  input up to 8 bytes; the `IncrementalSieve` residue invariant
-  (`res[i] == cand mod p_i` after a step, verdict identical to the flat
-  sieve) for every seed, plus the concrete-seed twin that keeps that invariant
-  from holding over a sieve which never steps.
-- `rsk-crypto`: the `base64url` length helpers (`encoded_len` / `decoded_len`)
-  panic-free (no overflow/underflow) and mutually inverse for every length up
-  to 64 KiB; `encode∘decode == id` for every input up to 9 bytes (every
-  `len % 3` tail, with and without preceding full chunks); `decode` panic-free
-  over every byte string up to 8 chars and writing exactly the length it
-  reports, never a byte past it.
-- `rsk-phy`: the `EF_PHY` device-configuration record: `parse` total over
-  every byte string up to 12 bytes, always materializing an interface mask and
-  always yielding a record that serializes back into `PHY_MAX_SIZE` (the
-  read-modify-write the rescue interface performs); `overlay` never turning a
-  stored field back into "absent", and leaving a field whose tag the host blob
-  never mentions exactly as it was — the merge's own promise, and the
-  data-loss one; `serialize∘parse == id` for every `PhyData` (every
-  field-presence combination and value, product strings up to 4 bytes), modulo
-  the documented missing-ENABLED_USB_ITF→ALL normalization.
-- `rsk-device`: the presence-scope arbitration — one physical button, four
-  transports. Over a symbolic interleaving of button samples and host cancels,
-  a touch wait ends `Cancelled` only for the transport that owns it (so a CCID
-  or on-panel wait cannot be cancelled at all), is advertised as pending to that
-  transport and no other, and one unbroken hold satisfies at most one ceremony.
-  Those are `NoCrossTransportTouchConsumption`'s `TouchCancel` and `TouchConfirm`
-  clauses; the arbitration was lifted out of `firmware/src/presence.rs` so a
-  harness could reach it, since no `cargo kani -p` builds a thumbv8m binary.
-- `rsk-fido`: the tree's only **state-sequence** proofs. The others each check
-  one call; these drive a symbolic four- to five-operation sequence over the
-  real `FidoState` and check an invariant after every step — a pinUvAuthToken
-  dies on each invalidation and only a fresh issuance brings one back
-  (`NoTokenAfterInvalidation`, asserted both on the state the call sites read
-  and on the real `verify_cm_token` with a replayed genuine MAC), and a
-  credentialManagement enumerate walk is servable only to the channel whose
-  *Begin* opened it (`NoAuthorizationBypass`). The names are the ones
-  `formal/RSKeySecurityState.tla` uses, so one property can be traced model →
-  code → harness by grep. Phase 6 adds four one-step induction harnesses over
-  the reset's security-visible concrete projection: initialization and every
-  begin/delete/advance/abort/finish/power-cut step preserve
-  `ResetNeverWeakensSurvivingState` and its three independently named clauses.
-
-### What a proof no longer sees
-
-Some of that production source means something different under Kani than in the
-shipped build: an array cut to 16 so CBMC does not bit-blast 2 KiB, a file id
-aliased into a 24-bit map. Each such shrink narrows every proof over it, so each
-one says beside itself what it stops proving — and three `cfg(not(kani))`
-compile-time assertions carry the part of that shape a shrunk proof no longer
-can, about the width that ships.
-
-| Crate | Source | Kani-only item |
-|---|---|---|
-| `rsk-device` | `ctap.rs` | `const _` |
-| `rsk-fs` | `fs.rs` | `FID_PRESENT_BYTES` |
-| `rsk-fs` | `fs.rs` | `const _` |
-| `rsk-fs` | `lib.rs` | `EF_META` |
-| `rsk-sdk` | `applet.rs` | `CHAIN_BUF_SIZE` |
-| `rsk-sdk` | `applet.rs` | `RESP_CHAIN_CAP` |
-| `rsk-usb` | `ctaphid.rs` | `CTAP_MAX_MESSAGE` |
-| `rsk-usb` | `ctaphid.rs` | `const _` |
-
-`scripts/shrink_gate.py` derives that table from the crates and fails the merge
-gate on either direction — a shrink that arrives unrostered, and a row whose item
-has gone away — and on one that carries no reason above it. The rows are names
-only, deliberately: the values and the reason live in the code, and copying either
-here would give them a second place to rot — which is what the sentence above did
-until now. It said "one of four in the tree" and named three of them, having twice
-stayed green while a new shrink arrived, and `rsk-sdk` shrinks two constants rather
-than the one it was counted for.
-
-Kani is **not** in nixpkgs and its setup downloads a prebuilt CBMC bundle, so
-this is the one deliberately non-nix tool (install once, outside the dev
-shell):
-
-```sh
-cargo install --locked kani-verifier --version 0.67.0 && cargo kani setup
-./scripts/kani.sh pr       # the fast tier — what every pull request runs
-./scripts/kani.sh state    # rsk-fido + rsk-fs, the security-state sequences
-./scripts/kani.sh all      # every harness — the roster, and the local command
-./scripts/kani.sh light1   # one of the three weekly shards of "all but heavy"
-./scripts/kani.sh light2
-./scripts/kani.sh light3
-./scripts/kani.sh heavy    # rsk-phy alone, in its own job
-```
-
-`scripts/kani.sh` owns the tier → crate table and nothing else does, and it
-floors the number of harnesses each tier has to come back with — a roster that
-selects nothing prints a summary and exits 0, the same shape as a `cargo test`
-name filter that matches no test. `scripts/kani_gate.py` reads that table back
-with `--tiers` and fails the merge gate on a crate that carries a
-`#[kani::proof]` and is on no tier.
-
-It also reads back every `kani::cover!`, because **Kani does not fail a harness
-on one nothing satisfies**: 0.67.0 has no `--fail-uncoverable`, so an
-unsatisfiable or unreachable cover prints "N of M cover properties satisfied"
-and the run still reports SUCCESSFUL. Since a cover is what says a guarded
-assertion was reached at all, that made every "vacuity guard" in the tree a
-comment. The row groups Kani's per-check verdicts by harness and source location
-and fails on a cover no execution reaches — *grouped*, not off that summary line,
-because one `cover!` becomes several CBMC properties wherever the enclosing MIR
-branches on something the condition re-tests, and the copies on the contradicting
-arms are dead by construction. `rebuild_meta_any_blob` is the worked example: its
-`!with_new && …` cover is reported twice, UNSATISFIABLE on the `with_new` arm and
-SATISFIED on the other, and the summary line says "2 of 3" over a cover that is
-genuinely reached. Reading the summary would have failed a correct harness and
-sent someone to repair it.
-
-That grouping is why `scripts/kani.sh` refuses `--jobs`. Extra arguments go
-through to `cargo kani`, and parallel harnesses would interleave `Checking
-harness` with another one's checks, filing every verdict under whichever printed
-last. On the pinned 0.67.0 that cannot actually happen: `--jobs` there *requires*
-`--output-format=terse` and refuses the combination otherwise, and a terse run
-carries no per-check listing at all — which the row already fails on, by name. So
-the refusal buys a message that says which flag and why, one step before a run
-that would otherwise die half an hour later on a confusing one. It is also the
-thing that has to be revisited if a later Kani lets the two combine, because then
-the interleaving becomes real and grouping by harness stops being safe.
-
-The split is by measured cost, not by guess — but a row is not one reading, and
-its two halves must not be read as if they were. **Crates, Harnesses and Covers
-are the current tree's counts**, derived from source by `scripts/kani_gate.py`
-and held against `scripts/kani.sh`'s floors in both directions; they move the day
-a harness lands, and no run stands behind them. **Solve, Wall, Peak and Slowest
-harness are a measurement**, of one run of the command above the table, taken on
-2026-08-26 under kani 0.67.0 on the maintainer's 18-core Apple M5 Pro (48 GB,
-macOS 27) with nothing else on the machine. Nothing re-checks those four:
-`kani_gate.py` reads a row's Crates, Harnesses and Covers cells and stops there,
-so a tier that has gained harnesses since keeps the timing it was given before
-them, and only a fresh measurement moves it. "Solve" is the sum of Kani's own
-per-harness `Verification Time` and so excludes compilation; "Wall" is the whole
-command with it. "Peak" is the tier's `maximum resident set size` under
-`/usr/bin/time -l` — the largest single CBMC process, not the sum of them:
-
-| Tier | Crates | Harnesses | Covers | Solve | Wall | Peak | Slowest harness |
-|---|---|---|---|---|---|---|---|
-| `pr` | 13 | 65 | 41 | 229 s | 251 s | 2.8 GiB | `rsk-usb::no_buffer_overrun_after_any_single_frame`, 39 s |
-| `state` | 2 | 29 | 36 | 1341 s | 1365 s | 15.3 GiB | `rsk-fido::…_at_call_site`, 6 m 06 s |
-| `all` | 17 | 94 | 67 | 3735 s | 3770 s | 19.0 GiB | `rsk-phy::serialize_parse_roundtrip`, 19 m 07 s |
-| `light1` | 4 | 32 | 35 | 528 s | 538 s | 9.3 GiB | `rsk-fido::…_at_call_site`, 5 m 35 s |
-| `light2` | 5 | 29 | 12 | 1289 s | 1300 s | 8.9 GiB | `rsk-rsa::sieve_step_keeps_residues`, 17 m 38 s |
-| `light3` | 7 | 28 | 19 | 162 s | 176 s | 2.4 GiB | `rsk-usb::no_buffer_overrun_after_any_single_frame`, 36 s |
-| `heavy` | 1 | 5 | 1 | 1785 s | 1788 s | 19.9 GiB | `rsk-phy::serialize_parse_roundtrip`, 18 m 35 s |
-
-> **`state` is the one row re-measured after the authorization slice, and it
-> more than doubled.** Three new `credmgmt_kani.rs` harnesses drive a real
-> `pinUvAuthParam` through `verify_cm_token`, and an HMAC-SHA-256 evaluation is
-> what a bounded proof pays for at this call site: measured, a harness whose only
-> content is two of them costs 233 s on its own. Solving went 546 → 1341 s and
-> the peak 9.3 → **15.3 GiB**, over what a hosted `ubuntu-latest` has. `state` is
-> a CI step (`ci.yml`, gated on `proofs_state`), and **the margin is negative
-> before the OS is counted**: the measured peak is 16 418 144 256 bytes and a
-> `ubuntu-latest` runner is advertised at 16 GB — 16 000 000 000 bytes — so the
-> single largest CBMC process is already 418 MB over the machine's whole RAM,
-> with the kernel, the runner agent and cargo still to fit. Three ways out, and
-> the one that is **cheapest to reverse is the first**: a larger `runs-on:` label
-> is one line, moves no floor and re-measures nothing. Shrinking a `cfg(kani)`
-> constant across `rsk-fido` (`CredMgmtState::rp_index` alone is 1 KiB of
-> symbolic struct) changes every existing proof's domain, owes each one a "what
-> stops being proved", and cannot be undone without re-measuring the ratchets a
-> second time. Moving the crate to a weekly-only tier is one commit but takes
-> `rsk-fido` out of PR-time proof coverage, which is a gate weakening rather than
-> a scheduling change. The other six rows were NOT re-measured; their harness and
-> cover counts moved with the ratchets and their timings are the 2026-08-26
-> reading.
-
-Every tier came back at exactly the floor it carried that day: the four weekly
-shards ran separately in the same session and checked the same harness names as
-`all` did, compared name by name out of the four logs against `all`'s own
-listing, for 3763 s of solving against `all`'s 3735 s. That count was the `all`
-roster **of the 2026-08-26 tree: 89 names**. The same tier is **today's
-`FLOOR_all` of 94** — the `all` row above, five harnesses later — and the four
-weekly floors still sum to it, because the shards partition the crates and
-`kani.sh` refuses to run when they stop. The count adds up; the *solving* does
-not, which is what 3763 s against 3735 s says. So `FLOOR_all` and `COVERS_all`
-are numbers a run has reached, and the reading they have reached is the 89 —
-moving it onto the 94 takes a fresh run of the four shards.
-
-Two figures this page carried are refuted by that run rather than confirmed.
-`rsk-phy`'s tier peaks at **19.9 GiB** against the 11.1 GB recorded for the
-harness alone while it still lived in `rsk-rescue` — not a like-for-like pair,
-and not a close one either, wrong in the direction that makes `heavy`'s own job
-more necessary rather than less. And `light3`'s slowest harness is not
-`rsk-mldsa`'s rounding round-trips: all four of those together take 3.7 s, and
-the shard's cost is `rsk-usb` at 54 s and `rsk-led` at 36 s. So the three shards
-are balanced 528 : 1289 : 162 s, and the crate placed in `light3` to weigh it
-down weighs nothing. Left as it is on purpose — re-balancing moves harnesses between
-shards and every shard floor with them, which is a change to make deliberately
-and not as a side effect of measuring.
-
-**Where each of these has actually run.** The four weekly shards are the CI half.
-`deep-checks.yml` run 32621720655, the Sunday cron of 2026-08-23, took `light1`
-20 m 33 s, `light2` 54 m 52 s, `light3` 4 m 59 s and `heavy` 1 h 33 m 41 s on
-hosted `ubuntu-latest` runners, all four inside the 6 h job cap — and only one of
-the four is a reading of the roster above. That run was `main` at `06813cc1`,
-where `FLOOR_all` was 66 against today's `FLOOR_all` of 94, `light1` carried 17
-harnesses against today's `FLOOR_light1` of 32 and `light2` 21 against today's
-`FLOOR_light2` of 29. A run that proved 17 of `light1` is not evidence for a
-`light1` floor of 32.
-
-By *cost* it reads better than by count, and the two answers should not be
-conflated. Every harness the three shards have gained since is in one crate each
-— `rsk-fido` 3 → 13 in `light1`, `rsk-fs` 5 → 13 in `light2`, `rsk-usb` 3 → 8 in
-`light3` — and the single harness that dominates any of them,
-`rsk-rsa::sieve_step_keeps_residues` at 82% of `light2`, was in that run already.
-So the times are better evidence than the floors are. `heavy` needs no such
-correction at all: 5 harnesses and 1 cover then and now, over a proof file
-`189f24c` moved byte-identical. It is also the job that died twice while this
-split was being drawn, which makes its 1 h 33 m 41 s the figure that mattered.
-The three `light*` floors still owe a reading, and the next Sunday cron is the
-first that can give them one.
-
-`all` is the maintainer's half and stays off CI by arithmetic: one job costs what
-the four cost between them, which on this machine is 3770 s of wall clock against
-their 3802 s. It runs where the table says.
-
-None of the fourteen figures in the Harnesses and Covers columns is kept by hand, and
-neither are `kani.sh`'s `FLOOR_*`/`COVERS_*`. `scripts/kani_gate.py` counts the
-tree's `#[kani::proof]` and `kani::cover!` per tier — comments stripped, since two
-`*_kani.rs` files discuss `kani::cover!` in prose — and fails the merge gate on
-any of the four copies that disagrees, in either direction. They *had* been kept
-by the instruction "raise it in the commit that adds one", and `FLOOR_all` drifted
-to 64 against a tree of 65: one harness could have gone missing under a floor that
-still passed.
-
-`pr` passes `--harness-timeout 5m`, seven times its slowest harness. That cap is
-the tripwire on the tier assignment: a fast-tier harness that grows past it
-fails the pull request instead of quietly making every one of them wait, and the
-answer is to move its crate to the slow list, never to raise the cap.
-
-A harness that trips its cap ends the whole row, and it ends it *above* the floor
-checks: `cargo kani` exits 1, `pipefail` makes that the pipeline's, and the script
-stops at the `tee`. Both measured on kani 0.67.0, 2026-08-13. That is why `all`
-and the four weekly tiers now cap at `6h`, the runner's own ceiling: there a cap
-that fires costs the row its floors, so it reports nothing rather than reporting
-a slow proof. The 30-minute cap it replaced had an 8% margin over
-`serialize_parse_roundtrip` at 27 m 42 s and none at all against the ~80 min a
-hosted runner once recorded; the harness takes 18 m 35 s on the machine above.
-
-Pin the version — a verdict belongs to the tool that gave it, and an unpinned
-install is not the one CI runs. `--harness-timeout` is experimental (hence the
-`-Z`) and applies per harness, not per run: one that stops converging is failed
-after half an hour and the rest still run, so a verdict comes back at all
-instead of the run hanging on it.
-
-The proofs are bounded, and the bound is the honest fine print. A 16- to
-20-byte symbolic buffer reaches every branch of the TLV/APDU parsers; bigger
-inputs are the fuzzers' job. Big loops (a full modexp, Baillie–PSW) are out of
-CBMC's reach by design and stay covered by the differential tests and on-device
-KATs.
-
-For a sequence proof the bound is the sequence, and three more walls stand behind
-it. **Cost:** one HMAC-SHA-256 evaluation over concrete bytes costs CBMC ~130 s,
-so a harness that drives a real MAC-checking gate can afford it once at the end,
-never once per step. **Codegen:** a harness that reaches p256's field arithmetic
-aborts in codegen — Kani 0.67.0 panics on `crypto-bigint 0.7.5`'s
-`UintRef::lowest_u64` (*"BinaryOperation Expression does not typecheck Plus …
-FlexibleArray"*), upstream
-[kani#2683](https://github.com/model-checking/kani/issues/2683) — whose
-`ConstantIndex` path `main` fixed in
-[#4681](https://github.com/model-checking/kani/pull/4681), in no release, and
-without closing the issue. It is the *build profile* that selects that path, not
-the dependency: the crash needs a MIR `ConstantIndex`, which every `opt-level`
-but `0` produces (swept 0/1/2/3/s/z), so
-`[profile.dev.package.crypto-bigint] opt-level = 0` removes it — measured, and
-**this tree deliberately does not carry that override**, because the wall behind
-it stands anyway. Merely *holding* a `Ctx` never triggers it either: Kani
-codegens what a harness reaches, not what its types mention. **Reach:** behind
-the ICE sits `cmov 0.5.4`'s `asm!` backend, reached via `ctutils`, which Kani
-cannot model on either host target — it answers `VERIFICATION: FAILED` on an
-unsupported reachable construct (measured), so the path is closed loudly, never
-by a silent pass. Hence three of the four token gates are represented by the
-state predicates they read rather than invoked. Each harness names what it does
-not prove.
-
-The sharpest bound is on *functional division* specs. Proving
-`mod_small == v % m` makes the solver equate two division circuits
-(`mod_small`'s byte-wise Horner reduction against one wide `%`), which is the
-shape resolution-based SAT handles worst: it discharges in ~100 s at a 2-byte
-dividend, but the cost climbs steeply per added byte and a full `u32` dividend
-(4 bytes) does not converge (it ran ~30 min without a verdict; the early
-`SATISFIABLE` lines are Kani's reachability covers, not the property). So
-`mod_small`'s exact value is pinned exhaustively at 2 bytes
-(`mod_small_matches_value`), its panic-freedom and range over the full 8
-(`mod_small_in_range`), and the full-width semantics by the 32-byte BigUint
-differential test plus the division-free `IncrementalSieve` proof. The earlier
-instinct, "never spec a division functionally", was half right: avoid it at
-*wide* dividends; at a narrow width it is the strongest evidence there is.
-House rule: a small total helper in a parsing or arithmetic hot path gets a
-proof harness sized to what CBMC can swallow: functional where it converges,
-structural (`< m`, panic-free) where it doesn't, or relational against a
-division-free reformulation. Anything bigger gets a fuzz target.
-
-CI runs the tiers above, from this same script (rustup-based, version pinned,
-`~/.kani` cached — Kani is the one tool outside the nix shell). `ci.yml`'s
-`proofs` job runs `pr` on any change under `crates/`, and adds `state` when the
-diff reaches `rsk-fido`, `rsk-fs`, `rsk-store` or `rsk-wipe` — the surface those
-sequence proofs are about (`scripts/ci-scope.sh`, `PROOFS` / `PROOFS_STATE`,
-both covered by its `--self-test`). `deep-checks.yml`'s weekly `kani` job runs the
-three `light*` shards and `heavy`, one runner each, which together are `all`.
-
-`scripts/kani_gate.py` is in the merge gate and holds the tiers to their word:
-the `all` tier must be exactly the crates carrying a `#[kani::proof]` less the
-exclusion below, every other tier a non-empty subset of it, every tier both run
-by a CI row and written on this page, and no workflow or page may hand-write a
-`cargo kani … -p …` roster of its own. That guard exists because the row named
-"prove every harness" was running 29 of 49, and because commenting the `run:`
-line out once left the file's other copies agreeing with each other over a job
-that proved nothing. Its own mutation table is `scripts/test_kani_gate.py`.
-
-One crate is deliberately off the tiers. `rsk-bench`'s `summarize` sorts
-`samples[warmup..]`, whose length is symbolic, so CBMC unwinds it unbounded and
-returns no verdict — not in 5 minutes, and not with `--default-unwind 5`. The
-exclusion and its reason live in that guard, next to the roster it belongs to.
-
-## The security-state model (TLA+)
-
-`formal/RSKeySecurityState.tla` models the authenticator's security state
-machine — PIN retries, the pinUvAuthToken and its permissions, which transport
-owns the touch, which channel owns a stateful walk, the reset window, the
-persistent gate records, and the position at which power is lost inside a
-multi-write flash sequence. TLC checks eight security invariants exhaustively at
-the firmware's own PIN-retry constants — `Shipped.cfg`'s INVARIANTS block names
-nine, and `TypeOK` is the one no mutant targets. Four of the eight are also Kani
-harness names — three in `rsk-fido`, `NoCrossTransportTouchConsumption` in
-`rsk-device` — so those four read model → code → harness by grep.
-
-It exists because Kani proves a property over *one call* and RS-Key's dangerous
-defects have lived in *orderings*. It is a **design artefact, not a proof of the
-firmware**: a green run is a statement about the model. `formal/README.md` is
-its scope statement — what it covers, where it departs from the firmware **and
-in which direction**, the mutation experiment that keeps its invariants
-falsifiable, and the counterexamples it has produced on the shipped tree. Read
-that before quoting a result from it.
-
-```sh
-nix develop            # exports TLA2TOOLS_JAR; the JVM comes with it
-cd formal && ./gen-configs.sh && ./run-tlc.sh safety   # the tier CI runs
-```
-
-<!-- run-count-tlc-roster:start -->
-<!-- Generated by scripts/run_count_gate.py --write; do not edit. -->
-`safety` is the nine shipped models, the 90 mutation switches that have a
-configuration family of their own (92 `Bug*` switches exist;
-`BugDeadTokenAuthorized`, `BugRecordWriteBeforeRearm` have none), floors and
-the vacuity check.
-<!-- run-count-tlc-roster:end -->
-
-That tier is `deep-checks.yml`'s weekly `formal` row, which also fires on any
-push touching `formal/`. `liveness` is the temporal half and is not in CI: it
-needs a 12g heap. `all` is both. Tier membership lives in `formal/run-tlc.sh`.
-
-<!-- run-count-tlc-measured:start -->
-<!-- Generated by scripts/run_count_gate.py --write; do not edit. -->
-Both tiers are measured runs, not sums. On 2026-09-19, on the Apple M5 Pro (18
-cores) of the Kani table above at the default `WORKERS=2`, `safety` came back
-over **224 configurations in 8683 s — 25 GREEN, 199 RED, and not one row that
-missed what `floors.txt` asks of it**; `liveness` took **2616 s** for its 4, at
-the heap that file gives each of them.
-<!-- run-count-tlc-measured:end -->
-
-Every number in that paragraph is counted out of `formal/runs.toml`, which keeps
-the runner's own matrix per tier; `scripts/run_count_gate.py` writes the
-paragraph and refuses a run-count typed anywhere else on this page. CI has the
-`safety` half: `deep-checks.yml` run 32684551258 discharged it in 1 h 14 m 47 s
-against a 120-minute cap.
-
-> **That cap is the thing to watch, and the margin shrank once already.**
-> `safety` was 2003 s here before the token-less `makeCredential` widening, and
-> `Shipped.cfg` alone went 48 679 968 distinct to the count the generated
-> paragraph above prints — which is why what it costs now is not typed here.
-> The CI figure was measured on that older tree, so scaling it by the ratio
-> between the two local readings is the only projection available, and it
-> leaves the row minutes of headroom rather than the three quarters of an hour
-> it used to have. Nothing has timed out — that is a projection off one local
-> ratio, not a measurement of the runner — but the next model widening should
-> re-measure the CI row before assuming it fits. `liveness` has no CI row and is
-> the maintainer's, and
-`Liveness_Full.cfg` is nobody's yet — `floors.txt` reserves it a 24 GB heap that
-no run has asked for.
-
-The emulator CI also records raw security-state snapshots from the real
-`21_pin_webauthn` suite and replays them against `RSKeySecurityState`. R4a
-independently computes β from the raw fields; R4b compares the implementation's
-untrusted `abstract_token()` hint with the canonical TLA+ γ. The gate floors the
-trace at 10 commands, 20 B steps and 12 distinct actions, reports model actions
-not reached by traffic, and keeps one β mutation plus one α-only mutation RED.
-See `formal/README.md` for the exact boundary and claim.
-
-Phase 5 adds a narrower but connected refinement pilot for the token lifecycle.
-Its A relation and domains are exported by computation into Rust, TLC checks
-B→A, Kani checks bounded C→A obligations, and the emulator carries raw outcomes
-through a consensus validator. See [Token refinement pilot](token-refinement.md)
-for the exact InitC/wf boundary and the reset evidence table.
-
-Phase 6 closes that pilot's reset/reboot seam for
-`ResetNeverWeakensSurvivingState`. The bounded C→B projection uses the shipped
-reset classifier, the existing `rsk-fs` torn-delete rules compose underneath
-it, the `power_cut` target runs the real reset over byte-cuttable flash, and a
-destructive HIL script performs the same check across physical USB power loss.
-See [Cross-reset refinement pilot](reset-refinement.md) for the abstraction
-boundary, measurements, and the still-required per-board HIL witness.
-
-The companion co-refutation run asks whether production tests reject those
-same semantic defects.
-
-<!-- run-count-comutate-roster:start -->
-<!-- Generated by scripts/run_count_gate.py --write; do not edit. -->
-The original phase-2 baseline is fixed at 31 rows, and the full 85-entry live
-roster runs weekly.
-<!-- run-count-comutate-roster:end -->
-
-Which of those rows a code-level harness kills, and which are unreachable by
-construction, is the generated table in `formal/README.md` and is not restated
-here; ordinary `check.sh` rejects a stale copy of it.
-
-```sh
-python scripts/comutate.py --lint
-python scripts/comutate.py run
-python scripts/comutate.py run --write-readme  # full run, then refresh its table
-```
-
-## Formal claims — what is and is not verified
-
-This is the paragraph to quote, and it is deliberately narrow. Everything in it
-is measured; nothing in it is an aspiration.
-
-> **RS-Key is not formally verified.** Two narrow, bounded layers exist. With
-> **Kani** (a bounded model checker) the tree proves specific properties of
-> parsers, codecs, file metadata and arithmetic helpers — over all inputs *up to
-> a stated bound*, not over all inputs — and three proofs about short
-> *sequences* of security-state transitions on the real `FidoState`: a
-> `pinUvAuthToken` retired by `stopUsingPinUvAuthToken`, a reroll, an
-> `authenticatorReset`, a power cycle or its own usage timer never authorizes
-> again, and a `credentialManagement` enumerate walk is servable only to the
-> channel whose *Begin* opened it. Those hold for every four- or five-operation
-> sequence from one starting state; longer sequences, other starting states and
-> the flash-backed persistent grant are outside them. Four more harnesses prove
-> initialization and one-step preservation of a finite reset projection across
-> reset phases, abort and reboot; the complete `FidoState` and byte-level flash
-> are linked by unit tests and sampled power-cut fuzz, not by that proof. On top
-> of that sits a
-> **TLA+ model** of the authenticator's security state.
-> <!-- run-count-shipped-row:start -->
-> <!-- Generated by scripts/run_count_gate.py --write; do not edit. -->
-> TLC checks 11 named invariants exhaustively over 108 618 956 distinct states at
-> the firmware's own PIN-retry constants.
-> <!-- run-count-shipped-row:end -->
-> **That is a result about the model, not about the
-> firmware binary**: it is only as good as the model's fidelity to the code.
-> Citations and co-refutation are maintained by hand; a bounded emulator trace
-> also checks raw C-state → B and α(C) = γ(B) at recorded boundaries, but says
-> nothing about unrecorded runs. Every
-> invariant has been shown to be breakable by an injected defect, so none of
-> them is a check that cannot fail — and the model has already produced two
-> counterexamples on the shipped tree, both fixed and co-refuted since.
-
-The hedging is load-bearing, and the tree's own history is why. The model's
-green run once rested on an abstraction that made it **narrower** than the
-firmware — a power cut left the device permanently seedless, where the real one
-regenerates the seed on every boot — so a class of reachable states was never
-explored at all. A green result over an unfaithful model proves nothing, and
-only a hand review found it. Hand-maintained fidelity is the weak link here, and
-saying so is part of the claim rather than a footnote to it.
-
-## On-device tests
-
-Numbered, self-contained scripts under `tests/`, run from the dev shell
-against a flashed board:
-
-```sh
-nix develop -c python tests/10_fido_getinfo.py
-nix develop -c python tests/80_piv.py
-nix develop -c python tests/75_seed_backup.py --pin <your PIN>
-```
-
-- Most need the **no-touch build** (`--features no-touch`): they cannot
-  press the button. If the board runs secure boot, sign the test build too.
-- **One key attached, or name the one you mean.** A board built `VIDPID=Yubikey5`
-  answers on the same `1050:0407` as a real YubiKey, so a first match over the HID
-  enumeration can run the suite against the wrong device and report its answers as
-  your failures. `tests/_device.py` breaks the tie on the `RSK` marker, in the HID
-  product string and in the PC/SC reader name alike, and stops the run instead of
-  guessing when that is not enough. Name a target with `RSK_TEST_SERIAL=rs-key-0001`
-  (or `RSK_TEST_PATH`, when two boards answer to the same serial), and over CCID with
-  `RSK_TEST_READER=<part of the reader name>`; every run prints the device it picked.
-- **The destructive and reboot-polling suites want that marker.** `80` and `90`
-  rewrite the card, and `14`, `51` and `76` ask "is the board back yet?" of a reader
-  a real YubiKey would answer just as well (`51` probes Yubico's own management AID).
-  Those five refuse an unmarked reader rather than accept a lone stranger, so a build
-  whose `USB_PRODUCT` drops the marker has to name its reader with `RSK_TEST_READER`.
-- Version assertions follow `FW_VERSION` (default 5.8.0, [build.md](build.md)). An
-  image built with an override needs the same value in the test environment:
-  `FW_VERSION=1.4.0 python tests/31_openpgp_select.py`.
-- Numbering: `0x` transport smoke, `1x` FIDO basics, `2x` FIDO full,
-  `3x/4x/5x` OpenPGP, `6x` PQC, `7x` management/OATH/OTP/backup/lock,
-  `8x` PIV/rescue, `9x` OTP-fuse migration.
-- Tests that reboot the device do it hands-free over CCID and wait for
-  re-enumeration; tests are idempotent where the applet allows it and say so
-  in their docstring when they are destructive (resets).
-- **A factory reset needs you at the desk.** On a screenless build the firmware
-  honours `authenticatorReset` only within 10 s of a USB attach, and a warm reboot
-  does not reopen that window ([protocol.md](protocol.md)). So the eleven suites
-  that reset (`22`–`27`, `60`, `61`, `63`–`65`) prompt for a physical
-  unplug/replug and send the reset the moment the key re-enumerates. The prompt
-  lives in `tests/replug.py`, shared by both transports (`reset` for the
-  raw-CTAPHID scripts, `reset_fido2` for the python-fido2 ones); its docstring is
-  the reference. On a trusted-display build the prompt is redundant — that build
-  is exempt from the window.
-- `tests/27_reset_window.py` exercises the window itself: reset immediately after
-  the replug (expects `CTAP2_OK`), then again past 10 s (expects
-  `0x30 NOT_ALLOWED`). It needs the `no-touch`, non-`display` image and it wipes
-  FIDO state.
-- `tests/28_ctap_spec_alignment.py` covers the CTAP 2.1 spec-alignment surface the
-  per-command suites do not reach: CTAPHID channel allocation and `CTAPHID_LOCK`,
-  the `uv`/`pinUvAuthParam` precedence rule, `makeCredUvNotRqd`, the largeBlobs
-  parameter validation, `setMinPINLength` overflow, the rpId-scoped
-  `credentialManagement` token, and the U2F gate under `alwaysUv`. It neither resets
-  nor replugs, but it does need `--pin`, and it toggles `alwaysUv` on and back off —
-  so start it with `alwaysUv` off, which it checks.
-- `tests/54_sram_residue.py` measures what the reboot scrub is *for*, in two steps.
-  `control` asks whether this board's SRAM can be read back at all: it drops to
-  BOOTSEL through the presence-gated reboot, reads a window of `.text` (which both
-  proves `picotool save -r` works and pins the ELF to the image actually running),
-  then checks main SRAM for the RAM-resident asm and `SMALL_PRIMES` table that live
-  in `.data` — known byte-for-byte from the file, so the control is *a priori* and
-  needs no key. `residue` then generates an RSA key on-card and hunts a factor of
-  its modulus, reported per region (the main stack between `_stack_end` and
-  `_stack_start`, core1's stack, `.bss`, `.data`) with a zero assertion on each
-  static the reboot claims to scrub. Neither reports "clean" from a dump that
-  proves nothing: an all-zero read is equally consistent with a working scrub, with
-  the platform clearing SRAM, and with picoboot refusing to serve it. The last two
-  are separated by writing a pattern through picoboot and reading it back, so the
-  exit code says which — `0` as expected, `1` expectation or setup failed, `2`
-  INCONCLUSIVE, `3` settled without the scan. Run `residue` on a build *without*
-  the scrub (`--expect present`) before trusting an `absent` result; a lone
-  `absent` run is how audit run-34 #3 found a "HW-VERIFIED" claim resting on
-  520 KiB of zeros. Measured 2026-08-05 on RP2350 A4 (secure boot off): the
-  platform clears main SRAM across the drop, so there is nothing to recover.
-  Both subcommands leave the board in BOOTSEL, so reflash afterwards, and
-  `residue` overwrites the OpenPGP signature key.
-- The FIDO PIN is never guessed: destructive PIN tests take `--pin`
-  explicitly.
-
-## The vendored upstream suites
-
-Two other ecosystems' own conformance suites live in
-[third_party/](https://github.com/TheMaxMur/RS-Key/tree/main/third_party) —
-pico-fido's and pico-openpgp/Gnuk's — and `tests/third_party.py` runs them against
-RS-Key:
-
-```sh
-nix develop -c python tests/third_party.py openpgp   # over the emulator's card socket
-nix develop -c python tests/third_party.py fido      # needs a board, or --usbip
-```
-
-No assertion in those directories is edited. The run is steered from outside by a
-pytest plugin that supplies the power cycle the CTAP 2.1 §6.6 reset window needs,
-names every deliberate divergence as a strict `xfail`, and deselects the modules
-that exercise a vendor extension RS-Key does not implement. Both lists carry a
-spec citation per entry, and `strict` means a divergence that gets fixed *fails*
-the run instead of staying listed for ever — which is how the last refresh caught
-one that upstream had corrected.
-
-The one thing repaired in place is a suite's own harness: a test that raises in
-its own Python before a byte reaches the device measures nothing, so listing it
-would record only that it is broken. Those edits are marked at the site and in
-[third_party/README.md](https://github.com/TheMaxMur/RS-Key/blob/main/third_party/README.md).
-
-Running an upstream corpus shows conformance on the cases it covers; it is not a
-security audit.
+Feature sets change behavior. For example, `always-uv` changes which FIDO
+requests require user verification, `fips` filters algorithms, and storage
+profiles change which records can appear on flash. The gate exercises the
+declared host configurations and builds firmware for multiple flash sizes
+and a display board. See [Build options](build.md) for feature constraints
+and the [configuration matrix](assurance-matrix.md) for assurance scope.
+
+### Boundary values and regression tests
+
+Tests cover empty and truncated requests, exact buffer limits, excessive
+lengths, wrong tags, invalid enum values and counter boundaries. The
+stateful cases follow a command across retries, cancellation, applet
+changes, reboot or interrupted writes. For an authorization bug, the
+expected result includes what did and did not change. A rejection status
+is insufficient if the device also consumes a retry, retains a token or
+leaves a partially updated record.
+
+Regression tests use the narrowest harness that can reproduce the fault.
+Host tests can fix the order of a read failure and a retry. Image tests
+can place a reset between dispatch and reply. USB tests check observable
+protocol behavior such as framing and status words through the ordinary
+client path.
 
 ## Without a board — the emulator
 
-`tools/emu` runs the applet crates on the host and serves CTAPHID and APDUs over
-TCP, so the suites above can run with no hardware attached:
-
-```sh
-nix develop -c cargo run --manifest-path tools/emu/Cargo.toml \
-  --target "$HOST" -- --store ./emu.store
-nix develop -c python tests/emu.py tests/11_fido_makecredential.py
-```
-
-`tests/emu.py` puts a fake `hid` module and a fake `smartcard` package in front of
-the target script and points the power-cycle helper at the emulator's replug
-opcode, so no test file changes and neither hidapi nor pyscard need be installed.
-**42 of the 52 suites pass**, FIDO and card alike (two want `--pin`, one wants
-`--yubico`; a 43rd needs an enrolled `ed25519-sk` key and skips without one); the
-other 9 are refused by name with their reason and exit 77 — they need raw USB,
-python-fido2, or hardware, and `tools/emu/README.md` lists which is which. The
-store underneath is the device's own (`crates/rsk-store`) over a mock NOR flash
-with the board's geometry, so the suites run against a log-structured ring that
-migrates and reclaims — not a map that overwrites in place. A harness that cannot
-tell "does not apply here" from "broken" hides the second one, which is the whole
-reason the refused suites are named rather than left to fail somewhere in the
-middle — and the reason the two that want `--pin` are refused the same way when it
-is not given, rather than dying in argparse where a sweep reads them as broken.
-`--touch` prompts for every presence on the terminal (and prints what a
-trusted display would have shown); `--trace` logs each command and its status.
-
-One command runs everything that needs no board — the suites above plus the
-vendored OpenPGP conformance suite, each against a fresh flash image:
+The default `rsk-emu` backend runs the real applet and store crates on the
+host. Its NOR model uses the same flash geometry and storage code as the
+device. It has its own worker sequencing and device hooks. CTAPHID and
+CCID travel over sockets. `tests/emu.py` supplies compatible HID and
+smart-card modules to the numbered Python tests and can request an emulator
+replug. It refuses tests that need raw USB or physical effects, with a reason
+and exit status 77.
 
 ```sh
 nix develop -c ./scripts/emu-suites.sh
 ```
 
-That is what CI runs (`.github/workflows/emulator.yml`), on pull requests and
-nightly. It is the answer to the oldest gap in this table: `tests/*.py` were
-hand-run against a flashed key, so nothing caught a *test* that had rotted — and
-several had.
+That runner starts clean stores for separate sessions, runs applicable
+numbered suites, runs upstream card tests, and compares selected public
+descriptors and capabilities against the checked-in YubiKey baseline.
+For single-test commands and emulator options, see the
+[emulator README](https://github.com/TheMaxMur/RS-Key/blob/main/tools/emu/README.md).
 
-`--usbip` goes further: it serves the USB/IP protocol, so a Linux host's
-`vhci_hcd` attaches the emulator as a genuine USB device — `/dev/hidraw*`, a
-PC/SC reader, something a browser can talk to. What enumerates there is the
-device's own stack (the same `embassy_usb::Builder`, the same `rsk-usb`
-transports, over a driver written against URBs), so the descriptors and the
-interface order are the real ones. The suites this shim refuses for wanting raw
-USB — `02_usb_interfaces`, `61`/`65` (python-fido2's own transport),
-`73_otp_keyboard`, `77_otp_touch_wait` — run there instead, as ordinary hardware
-suites with nothing faked, and so does the pico-fido conformance suite. Needs
-Linux and root; the emulator itself can stay on a Mac, because USB/IP is
-network-transparent. See `tools/emu/README.md`.
+### picoem model tests
 
-`scripts/usbip-suites.sh` is that run in one command, and it is what CI calls:
+The picoem fork supplies the RP2350 model for the image backend.
+`tools/emu/Cargo.toml` pins its revision.
+`check.sh` runs rustfmt, Clippy and the library tests for `rp2350-emu` and
+`picoem-common` at that revision. These tests check the model itself,
+including instruction execution, interrupts and peripheral behavior.
+[picoem fork](https://github.com/TheMaxMur/picoem)
+
+### The image itself — `--image`
+
+The image backend uses picoem to boot the combined Secure/Non-secure ELF
+through the RP2350 boot ROM. Firmware talks to models of the USB controller,
+OTP, flash, SHA-256, TRNG and other peripherals. Its USB host controller
+enumerates the firmware and sends endpoint traffic. These tests execute
+the linked worker, its applets, the NS transports, interrupt routing and
+the gateway ABI. Loading an ELF this way leaves production signature
+enforcement and physical bus behavior for board tests.
 
 ```sh
-nix develop -c ./scripts/usbip-suites.sh   # Linux only
+nix develop -c ./scripts/image-suites.sh
 ```
 
-A GitHub-hosted runner cannot supply `vhci_hcd` — it cannot load a module, and
-has no reliable `/dev/kvm` either — so the script boots a QEMU guest that can
-(`nix build .#usbip-vm`, defined in `nix/usbip-vm.nix`) and attaches the
-emulator to it over the network. The emulator itself stays outside the guest:
-it is a TCP peer, not a device, which keeps the guest a fixed appliance —
-kernel, `usbip`, `pcscd`, Python — that a firmware change cannot invalidate.
-There is no KVM, so everything inside runs on software emulation; budget minutes,
-not seconds.
+The runner builds an ordinary no-touch image and separately builds
+diagnostic images. It keeps their logs and reports apart. Its checks
+include startup, crypto keepalives, gateway spans and tickets, hostile NS
+loads and stores, reset and reconfiguration, presence, core1 failure,
+and recovery after a Secure or Non-secure fault. The inspection port gives
+selected tests access to modeled SRAM, stack pointers and power cuts.
 
-What it buys is the run these suites otherwise never get: they are hand-run
-against a flashed board, so nothing catches a *test* that has rotted. What it
-cannot stand in for is the hardware under the applet layer — no secure boot, no
-OTP, no fuses — and the flash is a mock: the log structure and the `--power-cut`
-injector are real, the medium's wear and partial-erase physics are not. The USB
-stack is real under `--usbip` and absent otherwise, so a plain run proves nothing
-about enumeration or interface order. The applet wiring
-*is* shared (`crates/rsk-device`), so a routing or gating bug does show up here;
-what is still written twice is the worker's sequencing and the board's own
-`firmware/src/{main,worker,presence,led}.rs`
-([tools/emu/README.md](https://github.com/TheMaxMur/RS-Key/tree/main/tools/emu)
-lists the gaps). A green emulator run is a protocol result, not a device result.
+The image tools in
+[`tools/emu`](https://github.com/TheMaxMur/RS-Key/tree/main/tools/emu)
+also drive operation and persistence matrices. They verify signatures,
+inspect per-command stack high-water marks, search for known secret bytes
+after an operation, and cut power with writes in flight. Dedicated runners
+exercise backup and restore, RSA key generation, OTP provisioning and
+BOOTSEL/PICOBOOT traffic.
+
+Run an individual image scenario after the full runner has built its inputs,
+using a fresh output directory. The example below reruns power cuts. Set
+`emu` to the native emulator binary and `elf` to the runner's ordinary
+partitioned ELF.
+
+```sh
+python tools/emu/image_assurance.py --emulator "$emu" --image "$elf" \
+  --work target/image-cuts --only cuts
+```
+
+`basic` covers startup and the boundary probes with the corresponding
+diagnostic ELFs. `stack` exercises stack-heavy operations, including
+ML-DSA and RSA. `operations` checks the command matrix against the
+applet and image backends. In CI, `operations-core` includes PIV key
+generation, and OpenPGP RSA generation runs in `rsa-openpgp` (2048/3072)
+and `rsa-openpgp-4096`, each with its own emulator sessions and time budget.
+The separate `upgrade` scenario needs an older release image and checks
+persistence across the firmware change.
+Reports identify the emulator and images by hash.
+
+### USB/IP
+
+`rsk-emu --usbip` exports a USB device to Linux. A guest using `vhci_hcd`
+can run libusb, HID and PC/SC clients through the normal OS stack.
+`scripts/usbip-suites.sh` runs the USB-dependent suites in that setup.
+This covers host enumeration and client binding that the socket shim
+bypasses. The controller and link are still modeled. Use a physical
+device for electrical behavior, real power cycles and on-device timing.
+
+### Display image testing
+
+`tools/emu/image_display.py` runs a CST328 (V1) or CST3530 (V2) display
+image with the modeled panel and touch input. Its ceremony cases check approve, deny,
+cancel, and a hold too short to approve. Other cases exercise stale touch,
+press and release behavior, deadlines, and on-device PIN entry for FIDO
+and CCID. The driver checks both the visible prompt and the host reply.
+The PIN cases distinguish digits shown on the device from the result
+returned through the transport.
+
+| Selector | Assertion |
+|---|---|
+| `ceremonies` | Deny and cancel produce their host statuses. A short hold cannot approve sign-in. Approval returns a usable credential or assertion. |
+| `stale` | A queued touch from an earlier prompt cannot approve a new one. |
+| `physical` | A slide, lift or cancel from another channel does not authorize the pending request. |
+| `timeout` | The image clock expires the prompt and the host receives the terminal response. |
+| `pin` | Device PIN setup, mismatch, cancellation, retries and recovery across reboot follow policy. |
+| `fido-pin` | ClientPIN obtains a token via the display and uses it in an authenticated command. |
+| `ccid-pin` | CCID Secure PIN operations reach the applet with the expected PIN handling. |
+
+Run a single case from the Nix shell with a combined image built for the
+display board and a native `rsk-emu` binary. For example, for a denial:
+
+```sh
+python tools/emu/image_display.py --emulator "$emu" --image "$elf" \
+  --work target/display-deny --only ceremonies --case deny
+```
+
+The headless test feeds events to the emulator's input queue. A physical
+panel run still checks its controller, touch alignment, hold timing and
+the browser's behavior after the authenticator answers.
+
+## Storage and failure injection
+
+The unit-test store and the emulated NOR flash let the suite choose where
+a write fails. Tests exercise the same storage invariants from different
+places.
+
+| Failure | What the test looks for |
+|---|---|
+| Read, program or erase error | The operation reports the right error. An unreadable record does not silently become an empty slot or a default authorization state. |
+| Silent lost or torn write | Recovery recognizes what actually reached flash, including an incomplete record or a write that returned success without persisting. |
+| Corrupt, truncated or substituted record | Length checks and record authentication reject the data. A record for another key or role cannot stand in for the requested one. |
+| Reset during mutation | On reopen, committed data is coherent and any accepted pre- or post-operation result satisfies the operation's recovery contract. |
+| Second failure during recovery | The next mount can recover again. Interrupted cleanup cannot make a deleted credential or an old authorization usable. |
+| Full store, wrap or reclamation | Capacity errors and compaction preserve live records and counter ordering. |
+
+The stateful `fs_ops` fuzzer compares sequences of storage operations with
+an independent model. `power_cut` adds cuts and remounts across record and
+recovery boundaries. The image tests take the same question to the
+delivered ELF by interrupting a modeled program or erase and rebooting
+with the flash left behind. Each result is tied to the fault positions and
+profile exercised. Endurance, brownouts and the XIP behavior of real
+flash during an erase need hardware measurements.
+
+## Independent result checks
+
+A round trip can preserve the same error in its writer and reader. Crypto
+tests include known-answer vectors from ACVP and Wycheproof, and command
+tests verify outputs with host implementations where possible. The
+ML-DSA tests include independent client or cross-verification paths.
+Signature checks verify the message and the key as well as the return
+status. Storage tests compare with an independent state model or reopen
+persisted bytes and query through the normal command path.
+
+| Applet | Examples exercised through commands |
+|---|---|
+| FIDO2 and U2F | Registration, assertions, PIN/UV token scope, retries, resident credentials, extensions, reset and attestation |
+| PIV and OpenPGP | PIN and management authentication, private operations, key and certificate lifecycle, command chaining and reset |
+| OATH and OTP | TOTP/HOTP calculations, counters, authorization, HID and keyboard reports, touch waiting and cancellation |
+| Management and recovery | Settings, soft lock, backup and restore, OTP migration and factory reset |
+
+## On-device tests
+
+Numbered scripts under `tests/` drive a key over USB. Use a disposable
+board or a dedicated test state. Some suites change credentials, counters
+and configuration or request reset. Read the script's arguments before
+selecting a board. Most automation uses a test build with `no-touch`.
+Presence, trusted-display and timing tests need their stated hardware
+and build settings.
+
+```sh
+nix develop -c python tests/10_fido_getinfo.py
+nix develop -c python tests/80_piv.py
+```
+
+The test groups cover CTAPHID and CCID transport, applet lifecycles,
+persistence, PIN pad and button behavior, and hardware-related TrustZone
+checks. The USB reset suites use the real host stack when they require raw
+USB. A software reboot is a separate case from removing power, particularly
+for the CTAP Reset window and tests that require cold boot.
+
+### TrustZone on hardware
+
+`tests/108_trustzone_hardware.py` builds disposable diagnostics in a
+separate checkout and runs a model or physical case against the matching
+image. It checks that a hostile NS access faults with the expected status,
+that the fault fences USB and clears pending work, and that PIV is usable
+after recovery. Read and write matrices cover selected protected resources.
+The board runner identifies the image and board and records the observed
+fault rather than treating a lost USB connection as success. A positive
+control must complete an ordinary NS access. For a protected peripheral
+load or store, the diagnostic compares the captured fault address and
+status with the expected access and checks that USB has been fenced.
+Removing the fence in a control image must fail the latter check.
+
+```sh
+nix develop -c python tests/108_trustzone_hardware.py build --work target/tz-hw-image
+```
+
+After the maintainer loads the matching diagnostic onto a test board,
+the `physical` subcommand takes `--image-dir`, `--serial` and a fresh
+`--work` directory. Pass `--matrix read` or `--matrix write` to select
+a resource sweep. `verify-record` checks a saved capture. These images
+are laboratory artifacts.
+
+`tests/101_trustzone_otp_status.py` checks the public OTP-status protocol
+and access policy through the host paths it exercises. A privileged NS
+load from page 58 is a separate test from reading OTP in BOOTSEL. Its
+negative result needs a positive control, such as a successful read of
+ordinary NS RAM. Results before and after sealing, and results with
+enforced Secure Boot, describe distinct configurations. The
+[TrustZone verification record](https://github.com/TheMaxMur/RS-Key/blob/main/assurance/reports/trustzone-verification.md)
+and [board evidence](https://github.com/TheMaxMur/RS-Key/tree/main/assurance/board)
+give the scope of recorded runs.
+
+## The vendored upstream suites
+
+`tests/third_party.py` runs upstream tests using the client's own stack.
+The OpenPGP suites exercise card commands and status words. Yubico's
+`ykman` tests cover PIV, OATH, OTP, OpenPGP and management. Over the card
+socket they can see CCID only. The pico-fido suite and selected
+`python-fido2` suites use an appropriate USB path. A runner records cases
+outside the interface or advertised feature set separately.
+
+```sh
+nix develop -c python tests/third_party.py openpgp
+nix develop -c python tests/third_party.py ykman
+```
+
+### FIDO conformance
+
+The FIDO Alliance tools, the vendored pico-fido tests and the native Rust
+conformance tests have different case lists. Compare case IDs under the
+same tool, profile, attestation fixture and presence policy. Keep failures
+and pending reasons with the pass count. In particular, optional extension
+advertisement, enterprise credentials and HID behavior affect applicability.
+Recorded runs are in the
+[testing evidence](https://github.com/TheMaxMur/RS-Key/blob/main/assurance/reports/testing-evidence.md#fido-conformance).
+
+### Real-world interop
+
+The [interop report](https://github.com/TheMaxMur/RS-Key/blob/main/assurance/reports/interop.md)
+records the clients, operations and results on real hosts. The emulator
+sweep checks getInfo, ATR and management DeviceInfo against a frozen
+YubiKey baseline. Two-device differential tests and browser, desktop, or
+touch ceremonies need the actual clients and devices. The comparison rules
+record accepted differences explicitly.
+
+## Fuzzing
+
+`fuzz/` uses libFuzzer with the pinned nightly. Some targets feed bytes to
+a parser or record decoder. Stateful targets generate related operations
+over one session or one flash image. These can find a bad transition after
+several individually valid commands. Oracles check properties such as
+whether a rejected command changed state or recovery exposed an object
+that had already been removed.
+
+```sh
+nix develop .#fuzz -c ./scripts/fuzz-all.sh
+nix develop .#fuzz -c ./scripts/miri-all.sh --smoke
+nix develop .#fuzz -c ./scripts/miri-all.sh
+```
+
+The `fuzz` workflow runs every target for 30 seconds on each push to
+`develop`. Four shards run in parallel for each of the `default` and
+`flavours` builds. Daily `deep-checks` uses the same runner with 120 seconds
+per target. Failing jobs upload crash inputs as artifacts.
+
+The `miri-smoke` job on each `develop` push runs the APDU framing tests
+under a single Miri seed. Daily `deep-checks` runs the full multi-seed matrix.
+
+Committed seeds, generated dictionaries and external corpora reach inputs
+that random bytes seldom produce. For example, a seed can get through
+CTAPHID reassembly, CBOR decoding and PIN authorization before a
+mutation changes a later operation. A frame fuzzer and a session fuzzer
+reach different classes of bugs.
+
+| Target or group | Input and oracle |
+|---|---|
+| `apdu_frame`, `ccid_frame`, `ctaphid_roundtrip` | Frames and reassembly. Check bounds, length handling and valid round trips. |
+| `fido_cbor`, `fido_session`, `fido_session_token` | Request bytes and command sequences. Check dispatch, authorization and state after refusals. |
+| `cross_applet` and OATH variants | Switch applets between commands. Check that one applet's authentication and capabilities do not authorize another. |
+| `fs_ops`, `power_cut`, `authenticated_store_v2` | Mutations and damaged or partially written media. Check recovered state and authenticated record handling. |
+| `otp_hid`, `ccid_secure_pin`, `display_label` | Host reports and display input. Exercise length, copy and presentation boundaries. |
+| Crypto targets | Valid and malformed encodings, known invariants and implementation comparisons where available. |
+
+For a focused run use `cargo fuzz run power_cut -- -max_total_time=60`
+from `nix develop .#fuzz`. `fuzz-coverage.sh` reports source
+coverage from corpus replay. `fuzz-dimensions.py` reports which fault and
+operation ranges a corpus actually visits. A coverage report describes the
+inputs retained for that run. Minimized failing inputs can be replayed,
+then pinned as regression tests when the expected behavior is known.
+
+## Branch and condition measurements
+
+Line coverage counts executed source lines. Branch coverage counts the
+control-flow outcomes recorded by the compiler. Condition coverage counts
+the true and false outcomes of individual Boolean conditions.
+
+### Recorded coverage
+
+These are recorded measurements. The source reports identify the revisions,
+toolchains and feature configurations. The host unit-test totals cover the
+host workspace without the embedded firmware and wipe images. Keep the
+denominators separate across runs and instrumentation modes.
+
+| Suite | Metric | Measured | Scope and evidence |
+|---|---|---:|---|
+| Host unit tests | Lines | **42,688 / 43,370 (98.43%)** | Default host profile. [Host-profile audit](https://github.com/TheMaxMur/RS-Key/blob/main/assurance/reports/coverage-current.md) |
+| Host unit tests | Function groups | **3,607 / 3,609 (99.94%)** | Same default profile and run. [Host-profile audit](https://github.com/TheMaxMur/RS-Key/blob/main/assurance/reports/coverage-current.md) |
+| Host unit tests | Branch outcomes | **6,509 / 7,646 (85.13%)** | Default host profile in a separate, earlier LLVM branch run. [Branch measurement](https://github.com/TheMaxMur/RS-Key/blob/main/assurance/reports/testing-evidence.md#host-tests) |
+| Host unit tests | Condition outcomes | **8,207 / 8,723 (94.08%)** | Default host profile with LLVM condition instrumentation. [Host-profile audit](https://github.com/TheMaxMur/RS-Key/blob/main/assurance/reports/coverage-current.md) |
+| Fuzz corpus replay, `default` | Source lines | **23,062 / 36,301 (63.53%)** | Union across 53 targets. Crates alone reached 21,490 / 32,983 (65.15%). [Fuzzing report](https://github.com/TheMaxMur/RS-Key/blob/main/assurance/reports/testing-evidence.md#fuzzing) |
+| Fuzz corpus replay, `flavours` | Source lines | **22,699 / 36,182 (62.74%)** | Separate union across 53 targets. Crates alone reached 21,127 / 32,864 (64.29%). [Fuzzing report](https://github.com/TheMaxMur/RS-Key/blob/main/assurance/reports/testing-evidence.md#fuzzing) |
+| Host MC/DC campaign | Conditions with witness pairs | **4,806 / 5,029 (95.57%)** | Default host profile with the extended Supercov frontend and lab adapters. 223 measured conditions remain unpaired. [Source-decision report](https://github.com/TheMaxMur/RS-Key/blob/main/assurance/reports/mcdc-source-decisions.md#host-measurement) |
+| MC/DC CI recipe | Conditions with witness pairs | **201 / 371 (54.18%)** | Local run of the CI command. 400 tests and seven instrumented source files, targeting six security decision groups. [Decision selection](https://github.com/TheMaxMur/RS-Key/blob/main/assurance/reports/mcdc-independence.md#measured-decisions) |
+
+Across the 18 audited host profiles, unit-test coverage ranged from
+98.34–98.43% of lines, 99.86–99.94% of function groups and 93.90–94.09% of
+condition outcomes. The separate [18-profile MC/DC matrix](https://github.com/TheMaxMur/RS-Key/blob/main/assurance/reports/mcdc-source-decisions.md#fresh-feature-matrix)
+recorded 95.31–95.57% of measured conditions with pairs. Both reports retain
+the counts and missing conditions for each profile.
+
+The fuzz union counts each repository source line once when any target
+reaches it. The denominator includes vendored code. With the reports from
+one profile in `fuzz/coverage/`, run `python scripts/fuzz-union.py` to
+recompute it. Individual target reports also record region coverage.
+
+#### Firmware and native components
+
+These measurements have their own build and input scopes. The firmware
+source inventory contains 675 conditions across configurations. Each
+runtime result below comes from its own measured component or image.
+
+| Component | Measured result | Evidence |
+|---|---|---|
+| Secure worker, button and Non-secure ABI image | **29 / 31** compiled conditions with pairs | [ARM worker measurements](https://github.com/TheMaxMur/RS-Key/blob/main/assurance/reports/mcdc-expansion.md#arm-worker-measurements) |
+| Secure USB and display PIN worker | **62 / 71** Secure USB conditions and **8 / 9** in a separate display worker image | [Secure USB campaign](https://github.com/TheMaxMur/RS-Key/blob/main/assurance/reports/mcdc-expansion.md#firmware-component-follow-up), [display and bench decisions](https://github.com/TheMaxMur/RS-Key/blob/main/assurance/reports/mcdc-source-decisions.md#remaining-display-and-bench-decisions) |
+| Display panel and WS2812 driver | **39 / 40** panel conditions and **32 / 44** LED conditions in separate component images | [Firmware component report](https://github.com/TheMaxMur/RS-Key/blob/main/assurance/reports/mcdc-expansion.md#firmware-component-follow-up) |
+| Runtime PIN codec and diagnostics | **5 / 5** PIN codec conditions, **4 / 4** stack sweep and **3 / 3** vendor benchmark conditions in separate images | [PIN codec](https://github.com/TheMaxMur/RS-Key/blob/main/assurance/reports/mcdc-source-decisions.md#pin-codec-adapter), [display and bench decisions](https://github.com/TheMaxMur/RS-Key/blob/main/assurance/reports/mcdc-source-decisions.md#remaining-display-and-bench-decisions) |
+| Native C | **8 / 8** RSA and **4 / 4** gateway compound conditions with pairs. Both outcomes observed for **31 / 31** C predicates in the measured revision, before exponentiation and CRT moved to Rust | [C and assembly correspondence](https://github.com/TheMaxMur/RS-Key/blob/main/assurance/reports/mcdc-source-decisions.md#owned-c-and-assembly-correspondence) |
+| Native assembly | Both outcomes observed for **19 / 19** compiled predicates | [C and assembly correspondence](https://github.com/TheMaxMur/RS-Key/blob/main/assurance/reports/mcdc-source-decisions.md#owned-c-and-assembly-correspondence) |
+
+#### Host tools
+
+The [host-tool campaign](https://github.com/TheMaxMur/RS-Key/blob/main/assurance/reports/testing-campaigns.md)
+measured these separately from the firmware crates.
+
+| Tool | Lines or statements | Decision outcomes |
+|---|---:|---:|
+| Rust TUI | 1,637 / 3,424 lines (47.81%) | 192 / 302 condition outcomes (63.58%) |
+| Rust emulator | 3,882 / 6,878 lines (56.44%) | 690 / 1,216 condition outcomes (56.74%) |
+| Python `rsk` CLI | 3,640 / 4,618 statements (78.82%) | 560 / 1,012 branch outcomes (55.34%) |
+| Python test runners under `scripts/` | 13,007 / 28,171 statements (46.17%) | 2,001 / 6,988 branch outcomes (28.63%) |
+
+### Coverage in CI
+
+| Measurement | Scope and schedule | What CI enforces | Where to read it |
+|---|---|---|---|
+| Line coverage | Default host workspace in `deep-checks / coverage`, daily and on full runs | At least **80%** aggregate line coverage. `firmware`, `firmware-ns` and `rsk-wipe` are excluded | `cargo llvm-cov` summary in the job log |
+| Condition outcomes | Default host profile daily, every declared host profile on full runs | Tests and coverage export must succeed and produce evidence. No percentage floor | `unit-coverage-*` artifacts with JSON, LCOV and resolved features |
+| MC/DC | Selected security decisions in the default host profile in `deep-checks / mcdc`, on full runs | Tests must pass and the report must contain valid, current witness evidence. No percentage floor | Job summary and `mcdc-*` artifact with the raw evidence and logs |
+| Fuzz corpus coverage | Per-target corpus replay in `deep-checks / fuzz-coverage`, daily, on dispatch and on matching pushes | Advisory measurement | Job summary and per-target coverage artifacts |
+
+Full runs include the Sunday schedule, manual dispatch and pushes to `main`
+that match the workflow's path filters. The 80% line floor applies to the
+default host workspace as a whole. The individual crates and alternate
+profiles have their own results in the reports.
+
+Run the line floor locally from `nix develop`.
+
+```sh
+host_target="$(rustc -vV | sed -n 's/^host: //p')"
+cargo llvm-cov --summary-only --fail-under-lines 80 \
+  --target "$host_target" --workspace \
+  --exclude firmware --exclude firmware-ns --exclude rsk-wipe
+```
+
+Use the nightly shell for a separate branch report.
+
+```sh
+nix develop .#fuzz
+host_target="$(rustc -vV | sed -n 's/^host: //p')"
+CARGO_TARGET_DIR=target/coverage-branch cargo llvm-cov --branch \
+  --target "$host_target" --workspace \
+  --exclude firmware --exclude firmware-ns --exclude rsk-wipe
+```
+
+For condition outcomes, run
+`nix develop .#fuzz -c ./scripts/metrics.sh --coverage`. Set
+`COVERAGE_PROFILE` to a declared feature profile for a separate report.
+The [host-profile audit](https://github.com/TheMaxMur/RS-Key/blob/main/assurance/reports/coverage-current.md)
+records measured counts and accounts for uncovered outcomes, lines and
+functions.
+
+### MC/DC
+
+Modified condition/decision coverage asks whether each Boolean condition can
+independently change the enclosing decision. For `pin_valid && presence`,
+`(true, true)` and `(true, false)` form a witness pair for `presence`. With
+an invalid PIN, short-circuiting skips `presence`. A skipped operand gives
+no observed value for that operand.
+
+```sh
+nix develop -c ./scripts/mcdc.sh
+```
+
+The script builds the pinned, patched Supercov in a fresh source copy and
+runs the tests for six groups of decisions. They cover FIDO assertion
+authorization and token expiry, PIV signing policy, OpenPGP DEK selection,
+presence and cancellation, and flash read and verification failures.
+The scoped run keeps the per-test traces within the CI runner's disk budget.
+The denominator includes all instrumentable conditions compiled from the
+seven selected files, including conditions outside those six groups.
+Logs, the JSON summary and raw evidence go under `target/mcdc.*/`.
+
+The source reviews explain coupled conditions where an invariant constrains
+possible pairs. The wider profile experiments, const and macro adapters,
+worker image measurements, C and assembly have separately recorded scope.
+See the [witness review](https://github.com/TheMaxMur/RS-Key/blob/main/assurance/reports/mcdc-independence.md)
+and [source-decision report](https://github.com/TheMaxMur/RS-Key/blob/main/assurance/reports/mcdc-source-decisions.md).
+
+### Mutation and negative controls
+
+A mutation deliberately changes a condition or removes a check. A surviving
+mutation prompts a review of whether the changed behavior is observable,
+whether a case is missing, and whether the relevant target even ran.
+`scripts/mutants-container.sh` runs the host mutation suite. For a crate
+change, `--in-diff HEAD` limits the run to the working diff. CI divides large
+diffs into round-robin shards over the same candidate list. Completed diff
+shards report survivors and mutation timeouts as warnings in CI. The deep
+workflow compares the broad run with the accepted survivor list.
+
+A recorded in-diff mutation run caught **20 / 20** mutants in the storage
+oracle and USB changes. Each verdict applies to that diff's mutation set.
+The [mutation report](https://github.com/TheMaxMur/RS-Key/blob/main/assurance/reports/mcdc-independence.md#verification)
+also records the separate manual fault controls.
+
+Image tests also use deliberate faults, for example an NS attempt to write
+USBCTRL or DMA registers. The corresponding normal operation serves as a
+positive control. Gate tests make an invalid change and check that the row
+which runs in CI rejects it. A build error, an unrelated assertion or a
+skipped test gives no evidence about the intended defect.
+
+## Kani proofs
+
+Kani checks bounded Rust harnesses for specific properties such as codec
+round trips, buffer bounds, arithmetic or allowed transitions. The
+harness fixes the input domain and unwind limits. The proof applies
+within that domain. The tier runner checks the proof roster and tracks
+the checks and covers each tier is expected to execute.
+
+Install the Kani version pinned in [CI](https://github.com/TheMaxMur/RS-Key/blob/main/.github/workflows/ci.yml)
+with `cargo install --locked kani-verifier --version <pin>`, then run
+`cargo kani setup` outside the Nix shell. Setup fetches the model checker
+bundle. Run the pull-request tiers from the repository root.
+
+```sh
+./scripts/kani.sh pr
+./scripts/kani.sh state
+```
+
+A harness for the APDU dispatcher checks pairs of short APDUs for
+command-chaining isolation. Crypto and record helpers check properties
+such as modular reduction and encoded-length bounds. Some harnesses
+use smaller buffers under `cfg(kani)`. See the
+[proof roster](https://github.com/TheMaxMur/RS-Key/blob/main/assurance/reports/testing-evidence.md#kani-proofs)
+for those bounds and the weekly tiers. Cover statements exercise
+required paths so a proof cannot pass simply because its setup excludes
+the interesting inputs.
+
+## The security-state model (TLA+)
+
+TLC explores finite models of authentication, reset and storage state.
+Safety checks look for forbidden states. Liveness checks ask whether
+modeled progress eventually occurs under the stated assumptions. The
+checked-in runners apply deliberate model mutations. A model mutant must
+violate the expected property. Co-refutation carries selected defects
+into Rust and expects a named test to fail for the matching reason.
+
+```sh
+nix develop -c ./formal/run-tlc.sh safety
+nix develop -c ./formal/run-tlc.sh liveness
+nix develop -c python scripts/comutate.py run
+```
+
+### Formal claims — what is and is not verified
+
+The [formal model](formal.md) explains what each model abstracts.
+[Platform assumptions](platform-assumptions.md) covers dependencies the
+models take as inputs, including hardware behavior and tool fidelity.
+A Kani proof of a codec and a TLC result about a session apply to their
+specified scopes. Trace and refinement checks connect some of those
+scopes to Rust. RS-Key has no whole-firmware proof.
+
+## Dynamic analysis and resource limits
+
+Miri replays supported host code to find Rust undefined behavior,
+including invalid memory accesses and aliasing. The image suite samples
+embedded stack use and searches SRAM for known test secrets after
+commands and reset. These tests can find leftover state at the points
+they inspect. The [unsafe audit](unsafe.md) and the
+[constant-time audit](ct-audit.md) cover implementation details outside
+those observations.
+
+Host and image cases exercise maximum frames, APDU chaining, crypto
+scratch space and concurrent activity such as USB keepalives during RSA.
+Most buffers have fixed bounds. The RSA path also uses a bounded heap
+that wipes freed blocks.
+The build checks the final section placements, flash fences and declared
+resource limits. The board-only residue diagnostics and latency harness
+measure the physical device.
+
+### Optimized and unoptimized images
+
+Run the ordinary release ELF for firmware behavior, timing and layout
+checks. The separate Rust `opt-level=0` image campaign checks that selected
+operations also complete and fit when Rust optimization is disabled.
+The campaign uses domain-specific build settings, and C and assembly
+remain separately compiled. The
+[image campaign record](https://github.com/TheMaxMur/RS-Key/blob/main/assurance/reports/testing-campaigns.md)
+lists the exact profiles and observed outcomes.
+
+## Host tools
+
+The Python `rsk` CLI and Rust TUI have their own tests. They cover command
+arguments, status parsing and presentation, and transport behavior.
+The TUI is a separate Cargo workspace and has a separate Nix shell. The
+gate runs its format, lint and test rows alongside the firmware and
+emulator checks.
 
 ## Latency harness
 
-Timing a crypto primitive from the host is noisy. On the RP2350 the hot working
-set (the variable-base P-256 scalar multiply is ~34 KB) overflows the 16 KB XIP
-cache, so which cache lines evict depends on where the linker placed the code.
-Steady-state EC latency then swings ±~30 ms from an innocent code move, and a
-host-timed mean over a few USB round-trips reports that swing as a regression.
-
-`rsk bench` measures on the device instead. The `bench` firmware feature adds a
-vendor command (like `keygen-bench`, never shipped) that times a primitive with
-the RP2350's own timer, so there is no USB jitter, and returns a robust summary:
-a `median` and `MAD` over the warm samples plus a separate `cold` first sample
-(the ~1.4x cold-cache op right after a power-cycle). The summary is computed
-on-device by the Kani-proved `rsk-bench` crate, so the number is not re-derived
-host-side.
-
-```sh
-# build + flash a bench image (it is a --features bench build, so never ship it)
-cargo build --release -p firmware --features bench,no-touch
-# then, from the dev shell or the venv that has pyscard:
-rsk bench ecdh                 # variable-base P-256 ECDH (the layout-sensitive one)
-rsk bench sign                 # P-256 comb sign (the getAssertion hot path)
-rsk bench ratchet              # the HKDF-SHA512 key-derivation ratchet
-```
-
-To A/B two builds without the cross-session trap that faked a "-33%" during the
-0.14 EC migration: measure one build with `--save a.json`, flash the other,
-measure with `--save b.json`, then `rsk bench --compare a.json b.json` prints
-whether the median moved by more than the pooled noise. Always compare in one
-sitting; comparing raw numbers across sessions or builds reads cache-layout luck
-as a real change.
-
-## FIDO conformance
-
-RS-Key is run against the **FIDO Alliance Conformance Tools** (v1.8.5.1), the
-same protocol test suites the FIDO certification programs are built on, and
-passes them clean:
-
-| Suite | Result |
-|---|---|
-| CTAP2.3 (`profile_featureful` — the strictest profile) | **235 / 0** |
-| U2F 1.1 / 1.2 | **55 / 0** |
-
-A green run exercises the full CTAP2/U2F wire surface: makeCredential /
-getAssertion validation and `up`/`uv` privacy, clientPIN protocols 1 and 2
-(including the force-PIN-change and PIN-policy edge cases), credential
-management, large blobs, `authenticatorConfig` (`alwaysUv`, `setMinPINLength`,
-enterprise attestation), CTAPHID framing + `CANCEL`, and U2F register /
-authenticate with batch attestation.
-
-Two honest caveats:
-
-- **This is a self-run pass, not a "FIDO Certified" mark.** Those are the
-  publicly available conformance tools (the same ones a lab uses), so a clean
-  result is strong evidence the protocol behaviour is spec-correct, but RS-Key
-  is not listed in the FIDO Metadata Service and claims no certification. That
-  is a deliberate non-goal (membership + a lab + fees, not a code change). See
-  [AAGUID & metadata](guides/aaguid-metadata.md).
-- **The full enterprise-attestation suite needs a conformance-only build.** It
-  asserts against the suite's own test RP ID, which a build flag
-  (`ea-conformance-rpid`) whitelists; the shipping build does **not** bake it in
-  ([build options](build.md)). Everything else runs on the normal firmware.
-
-As with any corpus, this shows conformance on the cases the tools cover. It is
-not a security audit.
-
-## Real-world interop
-
-Protocol conformance is necessary but not sufficient: a response can be
-spec-arguable yet still trip a strict third-party parser. The layer above
-drives the *real* consumer software (`gpg`, `ssh`, libfido2, `ykman`,
-OpenSC, browsers) and records whether the device works end to end. The
-`ykman` and Yubico Authenticator cells gate on the "Yubico YubiKey" reader
-name, so they run against the opt-in `VIDPID=Yubikey5` interop flavor (never
-distributed); the default RS-Key build (0x1209:0x0001) does not expose itself
-to them. The sweep `tests/interop/run.py` automates the read-only CLI cells;
-the full matrix (including the GUI/ceremony cells) lives in
-[interop.md](interop.md). It is how the `ykman openpgp info` GET DATA `6E`
-wrapper bug was caught: every protocol test passed, only the real ykman
-parser rejected the reply.
-
-For the same reason, the matrix carries an untested row for
-[Telesma](https://github.com/go-ctap/app) and its `go-ctap/ctap` client stack:
-every FIDO cell above reads the device through libfido2 or python-fido2, so a
-divergence both of them tolerate is invisible here. It is the cheapest available
-third reader of our CTAP replies, and the only one that claims 2.3.
+`rsk bench` uses a diagnostic firmware feature to time operations with
+the RP2350 timer, excluding USB round trips. It reports a cold sample,
+warm median and median absolute deviation. Save both runs and use
+`rsk bench --compare` to compare builds in the same setup. A linker layout
+change can move hot code relative to the XIP cache. The image backend
+does not model physical cache misses, so suite 105 measures getInfo on
+a board.
 
 ## CI parity
 
-`check.sh` is plain bash over the Nix dev shell. A CI job is
-`nix develop -c ./scripts/check.sh` plus the `proofs` job — `scripts/kani.sh`,
-which cannot join `check.sh` because Kani is not in the dev shell — plus, on a
-runner with the board attached, the `tests/` scripts. The scheduled
-`deep-checks` workflow runs on two cadences. Daily: the Miri and fuzz commands
-from this page, both sharded across runners, a `repro` job that builds the
-hermetic firmware twice and requires bit-identical outputs
-([build.md](build.md#nix-build-hermetic-no-dev-shell)), and an `llvm-cov` job
-that floors host-crate line coverage. Weekly, on Sunday: the full Kani roster,
-one runner per tier, an advisory `cargo-mutants` sweep, the semantic
-co-refutation roster and TLC's formal safety tier. No hidden state.
+| When | What runs |
+|---|---|
+| Per commit locally | `check.sh`, including builds, host tests, static checks and picoem library tests |
+| Pull request | The gate and assurance jobs, bounded proofs, and emulator jobs that include firmware image tests on picoem |
+| Scheduled | Line and condition coverage, MC/DC, longer proof and TLC tiers, fuzzing and corpus reports, Miri, mutation and reproducibility checks |
+| Release | Clean build and reproducibility checks, artifact manifests, signing and verification. Board runs have separate records. |
 
-```mermaid
-flowchart TB
-    a["Merge gate — every commit / PR<br/>check.sh: fmt · clippy · host tests · firmware builds · size ratchet · audit · deny · vet · gitleaks<br/>proofs: Kani pr tier (+ state tier when the diff reaches it)"]
-    b["Daily — deep-checks<br/>Miri (3 shards) · timed libFuzzer (4 shards) · repro (bit-identical build) · llvm-cov (coverage floor)"]
-    c["Weekly — deep-checks<br/>Kani all roster · cargo-mutants (advisory)<br/>semantic co-refutation · TLC safety tier"]
-    a ~~~ b ~~~ c
-```
+Static checks include Clippy, dependency and supply-chain checks, an
+audit of executable sections, image composition and storage boundaries,
+and constant-time and owner-binding checks on the built code. Read
+[`ci.yml`](https://github.com/TheMaxMur/RS-Key/blob/main/.github/workflows/ci.yml),
+[`emulator.yml`](https://github.com/TheMaxMur/RS-Key/blob/main/.github/workflows/emulator.yml)
+and [`deep-checks.yml`](https://github.com/TheMaxMur/RS-Key/blob/main/.github/workflows/deep-checks.yml)
+for the current triggers and profiles.
 
-One more workflow reports on a pull request and is deliberately absent from
-that diagram. `codeql.yml` runs GitHub's CodeQL over the Rust and Python
-sources — buildless (`build-mode: none`), since `firmware/` does not build on a
-host runner at all. It is advisory, not a gate: `check.sh` is still the whole
-bar. It runs on pull requests and on demand only, so there is no default-branch
-baseline and findings surface on the PR itself.
+## Reproducing a result
 
-Not over *all* of them: `.github/codeql/codeql-config.yml` keeps the test
-suites, the Kani siblings, `fuzz/`, `tests/` and `third_party/` out. Those are
-where the KATs and fixtures live, and a hard-coded-key query cannot tell a test
-vector from a secret — measured, they were 229 of 289 first-run alerts. The
-exclusion is at extraction, so a defect in a test helper is not found rather
-than found and filtered.
+Use [Reproducing the evidence](reproducing.md) to choose a tier. For a
+result you intend to compare, keep the commit, image hash, feature and
+board configuration, tool versions, exact command and outcome. For
+a failure-injection result, keep the failing phase and fault position.
+For a fuzz result, keep the minimized input and the oracle that failed.
+Keep skipped and refused cases with their reasons. A board report also
+needs the silicon stepping, boot policy and whether the run started from
+cold power.
 
-## Refactor metrics (advisory)
-
-`scripts/metrics.sh` is reconnaissance, **not** a gate. Run it to decide
-*where* to refactor. It reports the heaviest functions by cognitive/cyclomatic
-complexity (rust-code-analysis), firmware size by crate and function
-(cargo-bloat), and generic monomorphization (cargo-llvm-lines). The tools are
-pulled ad-hoc via `nix shell nixpkgs#…`, so they never join the pinned dev
-shell or a shipping build:
-
-```sh
-nix develop -c ./scripts/metrics.sh            # applet handlers by default
-nix develop -c ./scripts/metrics.sh crates/rsk-piv/src
-```
-
-Read the cognitive column, not cyclomatic: a high cyclomatic with a low
-cognitive is a flat serializer (a long `match` that just encodes), not a
-refactor target.
-
-The same signal has a ratcheted, automated sibling. `scripts/complexity_gate.sh`
-runs inside `check.sh`, on every pull request, and fails if any crate-library
-function crosses a
-cognitive-complexity ceiling (`COGNITIVE_CEILING`), catching a new hotspot the
-day it lands. Lower the ceiling as the peak falls; raise it only for a justified
-growth, in the same commit. `firmware/` is out of scope: it is embedded glue plus
-the trusted-display UI state machines, whose complexity is a separate concern.
+Long run logs, coverage catalogues, mutation reviews and hardware scope
+records live under
+[`assurance/reports`](https://github.com/TheMaxMur/RS-Key/tree/main/assurance/reports).

@@ -74,6 +74,141 @@ fn blend_has_exact_endpoints_and_intermediate_coverage() {
 }
 
 #[test]
+fn narrow_and_empty_rounded_shapes_match_the_sample_oracle() {
+    for width in 0..9 {
+        for height in 0..9 {
+            let rect = Rect::new(2, 2, width, height);
+            for diameter in [0, 1, 4, 8, 11, 33] {
+                for y in 1..12 {
+                    for x in 1..12 {
+                        assert_eq!(
+                            rounded_coverage(rect, diameter, x, y),
+                            rounded_coverage_slow(rect, diameter, x, y),
+                            "{rect:?} diameter {diameter} pixel ({x},{y})"
+                        );
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn fully_consuming_borders_match_geometry_and_empty_height_writes_nothing() {
+    for (width, height) in [(6, 6), (8, 6)] {
+        let rect = Rect::new(2, 2, width, height);
+        let mut expected = Rec::new(16, Rgb565::BLUE);
+        legacy_rounded_rect(
+            &mut expected,
+            rect,
+            6,
+            None,
+            Some((Rgb565::WHITE, 3)),
+            Rgb565::BLACK,
+        );
+        let mut actual = Rec::new(16, Rgb565::BLUE);
+        rounded_rect(
+            &mut actual,
+            rect,
+            6,
+            None,
+            Some((Rgb565::WHITE, 3)),
+            Rgb565::BLACK,
+        )
+        .unwrap();
+        assert_eq!(actual.pixels, expected.pixels);
+        assert!(!actual.oob);
+    }
+    let mut empty = Rec::new(16, Rgb565::BLUE);
+    rounded_rect(
+        &mut empty,
+        Rect::new(2, 2, 4, 0),
+        6,
+        Some(Rgb565::WHITE),
+        None,
+        Rgb565::BLACK,
+    )
+    .unwrap();
+    assert!(empty.pixels.iter().all(|color| *color == Rgb565::BLUE));
+    assert!(!empty.oob);
+}
+
+#[test]
+fn cardinal_angles_and_the_origin_have_their_geometric_values() {
+    for (x, y, expected) in [(0, 0, 0), (7, 0, 0), (0, 7, 90), (-7, 0, 180), (0, -7, 270)] {
+        assert_eq!(angle_deg(x, y), expected);
+    }
+}
+
+#[test]
+fn wide_strokes_and_small_rectangles_match_the_original_renderer() {
+    for rect in [
+        Rect::new(2, 2, 3, 9),
+        Rect::new(2, 2, 9, 3),
+        Rect::new(2, 2, 9, 9),
+    ] {
+        for diameter in [0, 4, 8, 11, 33] {
+            for border in [
+                None,
+                Some((Rgb565::RED, 0)),
+                Some((Rgb565::RED, 1)),
+                Some((Rgb565::RED, 5)),
+                Some((Rgb565::RED, 12)),
+            ] {
+                for fill in [None, Some(Rgb565::WHITE)] {
+                    let mut actual = Rec::new(16, Rgb565::BLACK);
+                    let mut expected = Rec::new(16, Rgb565::BLACK);
+                    rounded_rect(&mut actual, rect, diameter, fill, border, Rgb565::BLACK).unwrap();
+                    legacy_rounded_rect(&mut expected, rect, diameter, fill, border, Rgb565::BLACK);
+                    assert_eq!(
+                        actual.pixels, expected.pixels,
+                        "{rect:?} diameter {diameter} border {border:?} fill {fill:?}"
+                    );
+                    assert!(!actual.oob);
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn uncached_and_overswept_arcs_obey_circle_geometry() {
+    for (diameter, width) in [(0, 3), (12, 0), (14, 2), (12, 13), (50, 4)] {
+        let mut arc = Rec::new(64, Rgb565::BLACK);
+        let mut reference = Rec::new(64, Rgb565::BLACK);
+        ring_arc(
+            &mut arc,
+            EgPoint::new(32, 32),
+            diameter,
+            width,
+            17,
+            361,
+            Rgb565::RED,
+            Rgb565::WHITE,
+            Rgb565::BLACK,
+        )
+        .unwrap();
+        circle(
+            &mut reference,
+            EgPoint::new(32 - diameter as i32 / 2, 32 - diameter as i32 / 2),
+            diameter,
+            width,
+            Rgb565::WHITE,
+            Rgb565::BLACK,
+        )
+        .unwrap();
+        assert_eq!(
+            arc.pixels, reference.pixels,
+            "diameter {diameter} width {width}"
+        );
+        assert!(!arc.oob);
+    }
+    assert_eq!(angle_deg(0, 0), 0);
+    assert!(!angle_in_arc(0, 0, 0, 0));
+    assert!(angle_in_arc(0, 0, 0, 361));
+}
+
+#[test]
 fn circle_and_rounded_rect_have_aa_edges_inside_their_boxes() {
     let mut circle_target = Rec::new(24, Rgb565::BLACK);
     filled_circle(
@@ -215,6 +350,7 @@ fn rounded_rect_spans_match_the_original_pixels_exactly() {
 
 #[test]
 fn status_ring_mask_matches_all_distance_samples() {
+    let generated = std::hint::black_box(ring_sample_mask::<50, 3, 2500>());
     let diameter = 50;
     let width = 3;
     let center = diameter as i32 * SAMPLE_SCALE / 2;
@@ -233,12 +369,22 @@ fn status_ring_mask_matches_all_distance_samples() {
                 }
             }
             assert_eq!(fixed_ring_samples(diameter, width, x, y), Some(expected));
+            assert_eq!(generated[y * diameter as usize + x], expected);
         }
     }
 }
 
 #[test]
+fn the_home_status_arc_starts_on_a_cached_phase() {
+    assert!(
+        fixed_ring_arc_coverage(50, 3, crate::render::STATUS_ARC_START, 270, 0, 0).is_some(),
+        "the public Home start angle must use cached coverage"
+    );
+}
+
+#[test]
 fn status_arc_phase_table_matches_every_sample() {
+    let generated = std::hint::black_box(status_arc_coverages());
     let center = 50 * SAMPLE_SCALE / 2;
     for phase in 0..STATUS_ARC_PHASES {
         let start = STATUS_ARC_BASE_DEG + phase as i32 * STATUS_ARC_STEP_DEG;
@@ -262,10 +408,99 @@ fn status_arc_phase_table_matches_every_sample() {
                     fixed_ring_arc_coverage(50, 3, start, 270, x, y),
                     Some((min_coverage(arc), min_coverage(ring)))
                 );
+                assert_eq!(
+                    generated[phase * STATUS_ARC_PIXELS + y * 50 + x],
+                    (min_coverage(ring) << 4) | min_coverage(arc)
+                );
             }
         }
     }
     assert_eq!(fixed_ring_arc_coverage(50, 3, -89, 270, 0, 0), None);
+}
+
+#[test]
+fn generated_round_masks_and_spans_match_the_geometry_oracle() {
+    let masks = std::hint::black_box(rounded_masks());
+    let spans = std::hint::black_box(rounded_spans());
+    for diameter in 1..=ROUND_MASK_SIDE {
+        let rect = Rect::new(0, 0, diameter as u16, diameter as u16);
+        for y in 0..diameter {
+            for x in 0..diameter {
+                let expected = circle_coverage(
+                    x as i32,
+                    y as i32,
+                    diameter as i32 * SAMPLE_SCALE / 2,
+                    diameter as i32 * SAMPLE_SCALE / 2,
+                    diameter as i32 * SAMPLE_SCALE / 2,
+                );
+                assert_eq!(
+                    masks[diameter * ROUND_MASK_SIDE * ROUND_MASK_SIDE + y * ROUND_MASK_SIDE + x],
+                    expected
+                );
+            }
+            if y < diameter.div_ceil(2) {
+                let expected = (0..diameter.div_ceil(2))
+                    .find(|&x| {
+                        rounded_coverage_slow(rect, diameter as u32, x as i32, y as i32) == 16
+                    })
+                    .unwrap_or(diameter.div_ceil(2));
+                assert_eq!(usize::from(spans[diameter * ROUND_MASK_SIDE + y]), expected);
+            }
+        }
+    }
+}
+
+#[test]
+fn generated_circle_masks_match_supersampled_geometry() {
+    let mask = std::hint::black_box(circle_mask::<12, 144>());
+    for y in 0..12 {
+        for x in 0..12 {
+            assert_eq!(
+                mask[y * 12 + x],
+                circle_coverage(x as i32, y as i32, 48, 48, 48)
+            );
+        }
+    }
+}
+
+#[test]
+fn zero_sized_shapes_write_nothing_and_zero_radius_rectangles_are_solid() {
+    let mut target = Rec::new(24, Rgb565::BLACK);
+    rounded_rect(
+        &mut target,
+        Rect::new(0, 0, 0, 10),
+        0,
+        Some(Rgb565::WHITE),
+        None,
+        Rgb565::BLACK,
+    )
+    .unwrap();
+    fill_rect(&mut target, Rect::new(0, 0, 10, 0), Rgb565::WHITE).unwrap();
+    filled_circle(
+        &mut target,
+        EgPoint::new(0, 0),
+        0,
+        Rgb565::WHITE,
+        Rgb565::BLACK,
+    )
+    .unwrap();
+    assert!(target.pixels.iter().all(|&pixel| pixel == Rgb565::BLACK));
+    rounded_rect(
+        &mut target,
+        Rect::new(2, 2, 10, 10),
+        0,
+        Some(Rgb565::WHITE),
+        None,
+        Rgb565::BLACK,
+    )
+    .unwrap();
+    assert_eq!(target.at(2, 2), Rgb565::WHITE);
+    assert_eq!(target.at(11, 11), Rgb565::WHITE);
+    assert_eq!(target.at(12, 12), Rgb565::BLACK);
+    assert!(!rounded_sample(Rect::new(0, 0, 0, 0), 0, 0, 0));
+    assert!(rounded_sample(Rect::new(0, 0, 1, 1), 0, 1, 1));
+    assert_eq!(rounded_coverage(Rect::new(0, 0, 0, 0), 0, 0, 0), 0);
+    assert_eq!(fixed_rounded_coverage(Rect::new(0, 0, 1, 1), 0, 0, 0), 16);
 }
 
 #[test]
@@ -425,3 +660,130 @@ fn shapes_use_contiguous_masks_and_solid_spans() {
     assert_eq!(target.contiguous, 5);
     assert_eq!(target.solid, 1);
 }
+
+#[test]
+fn circular_strokes_remain_symmetric_for_uncached_inner_diameters() {
+    for diameter in [12u32, 17, 39, 58] {
+        for width in [1, 3, 7] {
+            let side = diameter as usize + 4;
+            let mut target = Rec::new(side, Rgb565::BLACK);
+            circle(
+                &mut target,
+                EgPoint::new(2, 2),
+                diameter,
+                width,
+                Rgb565::WHITE,
+                Rgb565::BLACK,
+            )
+            .unwrap();
+            assert!(!target.oob);
+            assert_eq!(target.at(0, 0), Rgb565::BLACK);
+            let d = diameter as usize;
+            for y in 0..d {
+                for x in 0..d {
+                    let pixel = target.at(x + 2, y + 2);
+                    assert_eq!(pixel, target.at(d - 1 - x + 2, y + 2));
+                    assert_eq!(pixel, target.at(x + 2, d - 1 - y + 2));
+                    assert_eq!(pixel, target.at(y + 2, x + 2));
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn a_complete_arc_matches_its_circle_at_every_rotation() {
+    for diameter in [24u32, 50] {
+        let side = diameter as usize + 4;
+        let top_left = EgPoint::new(2, 2);
+        let center = EgPoint::new(2 + diameter as i32 / 2, 2 + diameter as i32 / 2);
+        let mut expected = Rec::new(side, Rgb565::BLACK);
+        circle(
+            &mut expected,
+            top_left,
+            diameter,
+            3,
+            Rgb565::WHITE,
+            Rgb565::BLACK,
+        )
+        .unwrap();
+        for start in [-90, -89, 0, 13, 360] {
+            let mut target = Rec::new(side, Rgb565::BLACK);
+            ring_arc(
+                &mut target,
+                center,
+                diameter,
+                3,
+                start,
+                360,
+                Rgb565::RED,
+                Rgb565::WHITE,
+                Rgb565::BLACK,
+            )
+            .unwrap();
+            assert!(!target.oob);
+            assert_eq!(
+                target.pixels, expected.pixels,
+                "diameter={diameter}, start={start}"
+            );
+        }
+    }
+}
+
+#[test]
+fn direct_central_strip_and_unfilled_color_queries_keep_the_background_contract() {
+    let rect = Rect::new(0, 0, 20, 20);
+    for (x, y) in [(10, 1), (1, 10), (10, 10)] {
+        assert_eq!(
+            fixed_rounded_coverage(rect, 10, x, y),
+            (SAMPLES * SAMPLES) as u8
+        );
+    }
+    assert_eq!(
+        rounded_color(rect, 10, None, None, Rgb565::BLUE, 1, 1),
+        Rgb565::BLUE
+    );
+    for inside in [false, true] {
+        assert_eq!(
+            straight_color(None, None, Rgb565::BLUE, inside),
+            Rgb565::BLUE
+        );
+        assert_eq!(
+            straight_color(Some(Rgb565::WHITE), None, Rgb565::BLUE, inside),
+            Rgb565::WHITE
+        );
+    }
+}
+
+#[test]
+fn direct_fixed_strips_handle_a_border_wider_than_the_corner_band() {
+    let rect = Rect::new(2, 2, 20, 20);
+    let mut target = Rec::new(24, Rgb565::BLUE);
+    fill_fixed_strips(
+        &mut target,
+        rect,
+        8,
+        Some(Rgb565::WHITE),
+        Some((Rgb565::RED, 5)),
+        Rgb565::BLUE,
+    )
+    .unwrap();
+    assert!(!target.oob);
+    for y in (2..6).chain(18..22) {
+        for x in 2..22 {
+            assert_eq!(
+                target.at(x, y),
+                blend_coverage(
+                    Rgb565::RED,
+                    Rgb565::BLUE,
+                    rounded_coverage_slow(rect, 8, x as i32, y as i32)
+                ),
+                "strip pixel ({x}, {y})"
+            );
+        }
+    }
+    assert_eq!(target.at(12, 12), Rgb565::BLUE);
+}
+
+#[path = "aa_contract_tests.rs"]
+mod contracts;

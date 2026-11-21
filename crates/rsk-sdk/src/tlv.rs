@@ -4,6 +4,15 @@
 //! BER-TLV walk/find. Tags are 1 or 2 bytes (the 2-byte form when the low 5 bits
 //! are `0x1f`); lengths are short (`< 0x80`), `0x81 + 1 byte`, or `0x82 + 2 bytes`.
 
+// Host bytes: a panic here is a board that answers nothing until unplugged.
+#![deny(
+    clippy::indexing_slicing,
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::cast_possible_truncation
+)]
+
 /// Iterator over the TLV objects in a byte slice. Yields `(tag, value)`.
 /// Malformed/overrunning input simply ends iteration.
 pub struct Tlv<'a> {
@@ -47,11 +56,8 @@ impl<'a> Iterator for Tlv<'a> {
             n => n as usize,
         };
         let end = p.checked_add(len)?;
-        if end > b.len() {
-            return None;
-        }
-        let value = &b[p..end];
-        self.rest = &b[end..];
+        let value = b.get(p..end)?;
+        self.rest = b.get(end..)?;
         Some((tag, value))
     }
 }
@@ -73,18 +79,19 @@ pub const fn format_len_size(len: u16) -> usize {
 }
 
 /// Encode `len` into `out`, returning the number of bytes written.
-pub fn format_len(len: u16, out: &mut [u8]) -> usize {
+pub fn format_len(len: u16, out: &mut [u8; 3]) -> usize {
+    let [hi, lo] = len.to_be_bytes();
     if len < 128 {
-        out[0] = len as u8;
+        out[0] = lo;
         1
     } else if len < 256 {
         out[0] = 0x81;
-        out[1] = len as u8;
+        out[1] = lo;
         2
     } else {
         out[0] = 0x82;
-        out[1] = (len >> 8) as u8;
-        out[2] = len as u8;
+        out[1] = hi;
+        out[2] = lo;
         3
     }
 }
@@ -102,5 +109,13 @@ pub const fn len_tag(tag: u16, len: u16) -> usize {
 mod proofs;
 
 #[cfg(test)]
+#[allow(
+    clippy::indexing_slicing,
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::cast_possible_truncation,
+    reason = "a test's fixture is its own bound, and a panic is its failure report"
+)]
 #[path = "tlv_tests.rs"]
 mod tests;

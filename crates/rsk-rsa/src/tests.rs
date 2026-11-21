@@ -2,6 +2,173 @@
 // Copyright (C) 2026 RS-Key contributors
 
 use super::*;
+
+#[test]
+#[should_panic(expected = "(2..=MAX_MOD).contains(&half)")]
+fn a_sieve_refuses_a_one_byte_prime_before_indexing_the_seed() {
+    IncrementalSieve::new().reseed(1, &[0]);
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum DropSite {
+    Key,
+    Params,
+    Crt,
+    Search,
+}
+
+std::thread_local! {
+    static DROP_WIPED: core::cell::Cell<Option<(DropSite, bool)>> = const {
+        core::cell::Cell::new(None)
+    };
+}
+
+fn observe_drop(site: DropSite, wiped: bool) {
+    DROP_WIPED.with(|observed| {
+        if observed.get().is_some_and(|(expected, _)| expected == site) {
+            observed.set(Some((site, wiped)));
+        }
+    });
+}
+
+fn bignum_wiped(value: &num_bigint_dig::BigUint) -> bool {
+    // Zeroize leaves zero limbs without normalizing the integer for arithmetic.
+    let bytes = rsk_secret::Secret::new(value.to_bytes_le());
+    bytes.expose().iter().all(|&byte| byte == 0)
+}
+
+pub(crate) fn observe_bignum_drop(site: DropSite, values: &[&num_bigint_dig::BigUint]) {
+    observe_drop(site, values.iter().all(|value| bignum_wiped(value)));
+}
+
+pub(crate) fn observe_crt_drop(fields: &[&[u8]]) {
+    observe_drop(
+        DropSite::Crt,
+        fields
+            .iter()
+            .all(|field| field.iter().all(|&byte| byte == 0)),
+    );
+}
+
+pub(crate) fn observe_search_drop(prime: Option<&num_bigint_dig::BigUint>) {
+    observe_drop(DropSite::Search, prime.is_none_or(bignum_wiped));
+}
+
+#[test]
+fn dropping_keys_crt_parameters_and_an_abandoned_search_wipes_live_secrets() {
+    for site in [
+        DropSite::Key,
+        DropSite::Params,
+        DropSite::Crt,
+        DropSite::Search,
+    ] {
+        let key = crate::fixtures::test_key();
+        let crt = crate::fixtures::crt_of(&key);
+        let mut search = RsaKeygen::new(2048);
+        let prime =
+            num_bigint_dig::BigUint::from_bytes_be(&crate::fixtures::hex(crate::fixtures::P_HEX));
+        assert!(matches!(search.offer(prime), RsaStep::More));
+        DROP_WIPED.with(|observed| observed.set(Some((site, false))));
+        match site {
+            DropSite::Key | DropSite::Params => drop(key),
+            DropSite::Crt => drop(crt),
+            DropSite::Search => drop(search),
+        }
+        DROP_WIPED.with(|observed| {
+            assert_eq!(
+                observed.replace(None),
+                Some((site, true)),
+                "{site:?} survived Drop"
+            );
+        });
+    }
+}
+
+#[test]
+fn device_word_adapters_match_integer_byte_order_and_preserve_the_tail() {
+    for words in [0, 1, 2, 8, 16, 128] {
+        let expected: Vec<u32> = (0..words)
+            .map(|i| 0x89abcdef ^ (i as u32 * 0x01020304))
+            .collect();
+        let le: Vec<_> = expected
+            .iter()
+            .flat_map(|word| word.to_le_bytes())
+            .collect();
+        let be: Vec<_> = expected
+            .iter()
+            .rev()
+            .flat_map(|word| word.to_be_bytes())
+            .collect();
+        let mut output = vec![0xa5a5a5a5; words + 1];
+        bytes_to_words_le(&le, &mut output[..words]);
+        assert_eq!(&output[..words], &expected);
+        assert_eq!(output[words], 0xa5a5a5a5);
+        output.fill(0xa5a5a5a5);
+        be_bytes_to_words_le(&be, &mut output[..words]);
+        assert_eq!(&output[..words], &expected);
+        assert_eq!(output[words], 0xa5a5a5a5);
+        let mut bytes = vec![0xa5; le.len() + 1];
+        words_to_bytes_le(&expected, &mut bytes[..le.len()]);
+        assert_eq!(&bytes[..le.len()], &le);
+        assert_eq!(bytes[le.len()], 0xa5);
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum PrimalityGate {
+    Fermat,
+    StrongMr,
+}
+
+std::thread_local! {
+    static PRIMALITY_FAULT: core::cell::Cell<Option<(PrimalityGate, bool)>> = const {
+        core::cell::Cell::new(None)
+    };
+}
+
+pub(crate) fn inject_primality_fault(gate: PrimalityGate, modulus: &[u8]) -> Option<bool> {
+    PRIMALITY_FAULT.with(|fault| {
+        let (expected, prime) = fault.get()?;
+        let wanted = if prime {
+            &KAT_PRIME_LE
+        } else {
+            &KAT_COMPOSITE_LE
+        };
+        if gate != expected || modulus != wanted {
+            return None;
+        }
+        fault.set(None);
+        Some(!prime)
+    })
+}
+
+#[test]
+fn every_failed_primality_self_test_disables_key_generation() {
+    assert!(self_test());
+    for gate in [PrimalityGate::Fermat, PrimalityGate::StrongMr] {
+        for prime in [false, true] {
+            PRIMALITY_FAULT.with(|fault| fault.set(Some((gate, prime))));
+            assert!(!self_test(), "self-test accepted {gate:?}, prime={prime}");
+            PRIMALITY_FAULT.with(|fault| assert!(fault.get().is_none()));
+            assert!(self_test());
+            PRIMALITY_FAULT.with(|fault| fault.set(Some((gate, prime))));
+            assert!(
+                !RsaKeygen::new(2048).usable(),
+                "keygen accepted {gate:?}, prime={prime}"
+            );
+            PRIMALITY_FAULT.with(|fault| assert!(fault.get().is_none()));
+            assert!(RsaKeygen::new(2048).usable());
+        }
+    }
+}
+
+#[test]
+fn a_maximum_width_sieve_carry_exhausts_the_window_without_running_past_it() {
+    let mut sieve = IncrementalSieve::new();
+    sieve.reseed(MAX_RSA_BYTES / 2, &[0xff; MAX_RSA_BYTES / 2]);
+    assert_eq!(sieve.step(), None);
+    assert_eq!(sieve.step(), None);
+}
 use num_bigint_dig::BigUint;
 
 #[test]
@@ -55,9 +222,8 @@ fn small_factor_detection() {
 #[test]
 fn incremental_matches_flat() {
     // The running sieve's verdict must equal the flat has_small_factor on
-    // the exact same candidate, every step, across reseeds — for both the
-    // 1024-bit (128 B) and 2048-bit (256 B) candidate lengths.
-    for half in [128usize, 256] {
+    // the exact same candidate at every step, across all sieve depths.
+    for half in [64usize, 128, 192, 256] {
         let mut sieve = IncrementalSieve::new();
         let mut seed = vec![0u8; half];
         let mut state = 0x9E3779B97F4A7C15u64 ^ (half as u64);
@@ -124,17 +290,118 @@ fn sieve_depth_scales_with_length() {
 }
 
 #[test]
+fn runtime_prime_table_matches_an_independent_sieve() {
+    let actual = core::hint::black_box(build_small_primes());
+    let limit = actual[N_SMALL - 1] as usize;
+    let mut prime = vec![true; limit + 1];
+    for p in 2..=limit {
+        if prime[p] {
+            for multiple in (p * 2..=limit).step_by(p) {
+                prime[multiple] = false;
+            }
+        }
+    }
+    let expected: Vec<_> = (3..=limit)
+        .filter(|&p| prime[p])
+        .map(|p| p as u32)
+        .collect();
+    assert_eq!(actual.as_slice(), expected);
+}
+
+#[test]
+fn scrubbing_a_sieve_erases_candidates_and_residues_and_allows_reuse() {
+    let mut sieve = IncrementalSieve::default();
+    assert!(sieve.needs_seed());
+    assert_eq!(sieve.step(), None);
+    sieve.reseed(128, &[0xA5; 128]);
+    assert!(sieve.cand.iter().any(|&b| b != 0));
+    assert!(sieve.res.iter().any(|&r| r != 0));
+    sieve.scrub();
+    assert!(sieve.cand.iter().all(|&b| b == 0));
+    assert!(sieve.res.iter().all(|&r| r == 0));
+    assert!(sieve.needs_seed());
+    assert_eq!(sieve.step(), None);
+    sieve.reseed(192, &[0x33; 192]);
+    let verdict = sieve.step().unwrap();
+    assert_eq!(verdict, !has_small_factor(sieve.candidate()));
+}
+
+#[test]
+fn overflow_and_the_window_limit_require_a_new_seed() {
+    let mut sieve = IncrementalSieve::new();
+    assert!(sieve.needs_seed());
+    assert_eq!(sieve.step(), None);
+    sieve.reseed(128, &[0xFF; 128]);
+    assert!(!sieve.needs_seed());
+    assert_eq!(sieve.step(), None);
+    assert!(sieve.needs_seed());
+    sieve.reseed(128, &[0x11; 128]);
+    assert!(!sieve.needs_seed());
+    assert!(sieve.step().is_some());
+    for _ in 2..SIEVE_WINDOW {
+        assert!(sieve.step().is_some());
+    }
+    assert_eq!(sieve.step(), None);
+    assert!(sieve.needs_seed());
+    assert_eq!(sieve.step(), None);
+}
+
+#[test]
+fn trailing_zero_counts_cover_zero_and_byte_boundaries() {
+    for (bytes, bits) in [
+        (&[][..], 0),
+        (&[0][..], 8),
+        (&[0, 0][..], 16),
+        (&[2][..], 1),
+        (&[0, 0x10][..], 12),
+        (&[0, 0, 0x80][..], 23),
+    ] {
+        assert_eq!(trailing_zeros_le(bytes), bits);
+    }
+}
+
+#[test]
 fn modexp_matches_biguint() {
     let modulus = le32("e3a1b5c70000000000000000000000000000000000000000000000000000be25");
     let base = [7u8]; // little-endian 7
     let exp_be = [0x01u8, 0x00, 0x01]; // 65537, big-endian
     let mut out = [0u8; 32];
-    modexp_priv(&base, &exp_be, &modulus, &mut out);
+    assert!(modexp_priv(&base, &exp_be, &modulus, &mut out));
     let expect =
         BigUint::from(7u32).modpow(&BigUint::from(65537u32), &BigUint::from_bytes_le(&modulus));
     let mut want = expect.to_bytes_le();
     want.resize(32, 0);
     assert_eq!(&out[..], &want[..]);
+
+    let mut small = [0; 32];
+    small[0] = 3;
+    assert!(modexp_priv(&[2], &[0, 0], &small, &mut out));
+    assert_eq!(BigUint::from_bytes_le(&out), BigUint::from(1u8));
+    assert!(modexp_priv(&[2], &[0, 0xa5], &small, &mut out));
+    assert_eq!(BigUint::from_bytes_le(&out), BigUint::from(2u8));
+    out.fill(0xa5);
+    assert!(!modexp_priv(&[3], &[0xa5], &small, &mut out));
+    assert!(!modexp_priv(&[4], &[0xa5], &small, &mut out));
+    assert_eq!(out, [0xa5; 32]);
+    assert!(!modexp_priv(&[], &[], &[], &mut []));
+    assert!(!modexp_priv(&[1], &[1], &small[..31], &mut out[..31]));
+    assert!(!modexp_priv(&[1], &[1], &small, &mut out[..31]));
+    assert!(!modexp_priv(&[0; 33], &[1], &small, &mut out));
+    assert_eq!(out, [0xa5; 32]);
+    let oversized = [3; MAX_MOD + 32];
+    let mut oversized_out = [0xa5; MAX_MOD + 32];
+    assert!(!modexp_priv(&[1], &[1], &oversized, &mut oversized_out));
+    assert_eq!(oversized_out, [0xa5; MAX_MOD + 32]);
+    let mut invalid = [0; 32];
+    for low in [0, 1, 2] {
+        invalid[0] = low;
+        assert!(!modexp_priv(&[0], &[1], &invalid, &mut out));
+        assert_eq!(out, [0xa5; 32]);
+    }
+    invalid[1..3].fill(0x02);
+    invalid[0] = 1;
+    assert!(modexp_priv(&[2], &[1], &invalid, &mut out));
+    assert_eq!(BigUint::from_bytes_le(&out), BigUint::from(2u8));
 }
 
 #[test]
@@ -269,7 +536,7 @@ fn sign_crt_matches_biguint() {
     let mb = m.to_bytes_le();
     base_le[..mb.len()].copy_from_slice(&mb);
     let mut out = vec![0u8; 2 * half];
-    sign_crt(
+    assert!(crate::privexp::sign_crt(
         &base_le,
         &dp.to_bytes_be(),
         &dq.to_bytes_be(),
@@ -277,28 +544,93 @@ fn sign_crt_matches_biguint() {
         &to_be_fixed(&q, half),
         &to_be_fixed(&qinv, half),
         &mut out,
-    );
+    ));
     assert_eq!(
         BigUint::from_bytes_le(&out),
         s_ref,
         "CRT sign must equal m^d mod n"
     );
+    for m in [&n - 1u8, p.clone(), q.clone(), BigUint::from(1u8)] {
+        let mut base = m.to_bytes_le();
+        base.resize(2 * half, 0);
+        assert!(crate::privexp::sign_crt(
+            &base,
+            &dp.to_bytes_be(),
+            &dq.to_bytes_be(),
+            &to_be_fixed(&p, half),
+            &to_be_fixed(&q, half),
+            &to_be_fixed(&qinv, half),
+            &mut out,
+        ));
+        assert_eq!(BigUint::from_bytes_le(&out), m.modpow(&d, &n));
+    }
+    let p = to_be_fixed(&p, half);
+    let q = to_be_fixed(&q, half);
+    let qinv = to_be_fixed(&qinv, half);
+    let zero = [0; 32];
+    let mut one = zero;
+    one[31] = 1;
+    out.fill(0xa5);
+    for (base, p, q, qinv, out_width) in [
+        (&base_le[..], &p[..31], &q[..31], &qinv[..31], 64),
+        (&base_le[..], &p[..], &q[..31], &qinv[..], 64),
+        (&base_le[..], &p[..], &q[..], &qinv[..31], 64),
+        (&base_le[..63], &p[..], &q[..], &qinv[..], 64),
+        (&base_le[..], &p[..], &q[..], &qinv[..], 63),
+        (&base_le[..], &zero[..], &q[..], &qinv[..], 64),
+        (&base_le[..], &p[..], &zero[..], &qinv[..], 64),
+        (&base_le[..], &one[..], &q[..], &qinv[..], 64),
+        (&base_le[..], &p[..], &one[..], &qinv[..], 64),
+    ] {
+        assert!(!crate::privexp::sign_crt(
+            base,
+            &[1],
+            &[1],
+            p,
+            q,
+            qinv,
+            &mut out[..out_width],
+        ));
+        assert_eq!(out, [0xa5; 64]);
+    }
 }
 
 #[test]
-fn modexp_pub_matches_biguint() {
-    // base^65537 mod n over a 512-bit odd modulus (a two-prime product).
-    let n = BigUint::from_bytes_le(&a_prime_le()) * BigUint::from_bytes_le(&another_prime_le());
-    let mlen = 64;
-    let base = BigUint::from_bytes_be(b"public-exponent modexp round-trip check!") % &n;
-    let want = base.modpow(&BigUint::from(65_537u32), &n);
-    let mut base_le = vec![0u8; mlen];
-    let bb = base.to_bytes_le();
-    base_le[..bb.len()].copy_from_slice(&bb);
-    let mut n_le = vec![0u8; mlen];
-    let nb = n.to_bytes_le();
-    n_le[..nb.len()].copy_from_slice(&nb);
-    let mut out = vec![0u8; mlen];
-    assert!(modexp_pub(&base_le, &[0x01, 0x00, 0x01], &n_le, &mut out));
-    assert_eq!(BigUint::from_bytes_le(&out), want, "base^e mod n mismatch");
+fn a_fermat_residue_with_a_one_low_byte_is_still_composite() {
+    let n =
+        crate::fixtures::hex("e5110000000000000000000000000000000000000000000000000000000000c0");
+    let modulus = BigUint::from_bytes_le(&n);
+    assert_eq!(&modulus % BigUint::from(3u8), BigUint::from(0u8));
+    let residue = BigUint::from(2u8).modpow(&(&modulus - BigUint::from(1u8)), &modulus);
+    assert!(residue > BigUint::from(1u8));
+    assert_eq!(residue.to_bytes_le()[0], 1);
+    assert!(!passes_fermat_base2(&n));
+}
+
+#[cfg(debug_assertions)]
+#[test]
+#[should_panic(expected = "m != 0 && m < (1 << 23)")]
+fn a_zero_small_modulus_is_refused_before_division() {
+    let _ = mod_small(&[1], 0);
+}
+
+#[cfg(debug_assertions)]
+#[test]
+#[should_panic(expected = "m != 0 && m < (1 << 23)")]
+fn a_small_modulus_outside_the_horner_bound_is_refused() {
+    let _ = mod_small(&[1], 1 << 23);
+}
+
+#[cfg(debug_assertions)]
+#[test]
+#[should_panic(expected = "len >= 2 && n_le[0] & 1 == 1")]
+fn a_short_miller_rabin_candidate_is_refused_before_indexing() {
+    let _ = passes_strong_mr_base2(&[]);
+}
+
+#[cfg(debug_assertions)]
+#[test]
+#[should_panic(expected = "len >= 2 && n_le[0] & 1 == 1")]
+fn an_even_miller_rabin_candidate_is_refused_before_the_odd_number_algorithm() {
+    let _ = passes_strong_mr_base2(&[2, 0]);
 }

@@ -3,6 +3,50 @@
 
 use super::*;
 
+#[test]
+fn mac_widths_are_the_ctap_wire_lengths() {
+    let shared = [0x5a; 64];
+    let data = b"pin protocol length";
+    let expected = hmac_sha256(&shared[..32], data);
+    for (proto, width) in [(PinProto::One, 16), (PinProto::Two, 32)] {
+        assert_eq!(proto.mac_len(), width);
+        let mut out = [0xa5; 33];
+        assert_eq!(authenticate(proto, &shared, data, &mut out), Ok(width));
+        assert_eq!(&out[..width], &expected[..width]);
+        assert_eq!(&out[width..], &std::vec![0xa5; out.len() - width]);
+        assert!(verify(proto, &shared, data, &out[..width]));
+        for length in 0..=33 {
+            if length != width {
+                assert!(!verify(proto, &shared, data, &out[..length]));
+            }
+        }
+    }
+}
+
+#[test]
+fn empty_cbc_plaintext_has_only_the_protocol_two_iv() {
+    let shared = [0x5a; 64];
+    let iv = [0x44; IV_SIZE];
+    for (proto, width) in [(PinProto::One, 0), (PinProto::Two, IV_SIZE)] {
+        let mut encrypted = [0xa5; IV_SIZE + 1];
+        assert_eq!(encrypt(proto, &shared, &iv, &[], &mut encrypted), Ok(width));
+        if width != 0 {
+            assert_eq!(&encrypted[..width], &iv);
+        }
+        assert_eq!(
+            &encrypted[width..],
+            &std::vec![0xa5; encrypted.len() - width]
+        );
+        let mut output = [0xa5; 1];
+        assert_eq!(
+            decrypt(proto, &shared, &encrypted[..width], &mut output),
+            Ok(0)
+        );
+        assert_eq!(output, [0xa5; 1]);
+        assert_eq!(decrypt(proto, &shared, &encrypted[..width], &mut []), Ok(0));
+    }
+}
+
 // A deterministic scalar known to be in range (low value, far below n).
 fn scalar(seed: u8) -> [u8; 32] {
     let mut s = [0u8; 32];
@@ -121,4 +165,153 @@ fn ecdh_rejects_off_curve_point() {
     y[31] = 1;
     let mut out = [0u8; 64];
     assert_eq!(ecdh(PinProto::Two, &a, &x, &y, &mut out), Err(Error::Ecdh));
+}
+
+#[test]
+fn invalid_private_scalars_cannot_produce_a_point_or_shared_secret() {
+    let (x, y) = public_xy(&scalar(0x22)).unwrap();
+    for invalid in [[0u8; 32], [0xFF; 32]] {
+        assert_eq!(public_xy(&invalid), None);
+        assert_eq!(ecdh_raw(&invalid, &x, &y).err(), Some(Error::Ecdh));
+        for proto in [PinProto::One, PinProto::Two] {
+            let mut out = [0xA5; 64];
+            assert_eq!(ecdh(proto, &invalid, &x, &y, &mut out), Err(Error::Ecdh));
+            assert_eq!(out, [0xA5; 64]);
+        }
+    }
+}
+
+#[test]
+fn incomplete_cbc_blocks_cannot_report_success_with_sufficient_output() {
+    let shared = [0x5A; 64];
+    let iv = [0x77; IV_SIZE];
+    let plain = [0xAB; IV_SIZE - 1];
+    for proto in [PinProto::One, PinProto::Two] {
+        let n = proto.iv_overhead() + plain.len();
+        let mut encrypted = [0xA5; IV_SIZE * 2];
+        assert_eq!(
+            encrypt(proto, &shared, &iv, &plain, &mut encrypted),
+            Err(Error::BadLength)
+        );
+        assert!(encrypted[n..].iter().all(|&b| b == 0xA5));
+        let mut decrypted = [0xA5; IV_SIZE];
+        assert_eq!(
+            decrypt(proto, &shared, &encrypted[..n], &mut decrypted),
+            Err(Error::BadLength)
+        );
+        assert_eq!(decrypted[plain.len()], 0xA5);
+    }
+}
+
+#[test]
+fn only_the_two_defined_wire_protocol_versions_are_supported() {
+    for wire in 0..=u64::from(u8::MAX) {
+        assert_eq!(
+            PinProto::from_u64(wire),
+            match wire {
+                1 => Some(PinProto::One),
+                2 => Some(PinProto::Two),
+                _ => None,
+            }
+        );
+    }
+    assert_eq!(PinProto::from_u64(u64::MAX), None);
+}
+
+#[test]
+fn short_ecdh_outputs_preserve_the_entire_buffer() {
+    let a = scalar(0x11);
+    let (bx, by) = public_xy(&scalar(0x22)).unwrap();
+    for proto in [PinProto::One, PinProto::Two] {
+        let mut reference = [0u8; 64];
+        let n = ecdh(proto, &a, &bx, &by, &mut reference).unwrap();
+        for capacity in 0..=n + 1 {
+            let mut out = [0xA5; 65];
+            let result = ecdh(proto, &a, &bx, &by, &mut out[..capacity]);
+            if capacity < n {
+                assert_eq!(result, Err(Error::BadLength));
+                assert_eq!(out, [0xA5; 65]);
+            } else {
+                assert_eq!(result, Ok(n));
+                assert_eq!(&out[..n], &reference[..n]);
+                assert!(out[n..].iter().all(|&b| b == 0xA5));
+            }
+        }
+    }
+}
+
+#[test]
+fn short_encrypt_outputs_preserve_the_entire_buffer() {
+    let shared = [0x5A; 64];
+    let iv = [0x77; IV_SIZE];
+    let plain = [0xAB; 32];
+    for proto in [PinProto::One, PinProto::Two] {
+        let mut reference = [0u8; IV_SIZE + 32];
+        let n = encrypt(proto, &shared, &iv, &plain, &mut reference).unwrap();
+        for capacity in 0..=n + 1 {
+            let mut out = [0xA5; IV_SIZE + 33];
+            let result = encrypt(proto, &shared, &iv, &plain, &mut out[..capacity]);
+            if capacity < n {
+                assert_eq!(result, Err(Error::BadLength));
+                assert_eq!(out, [0xA5; IV_SIZE + 33]);
+            } else {
+                assert_eq!(result, Ok(n));
+                assert_eq!(&out[..n], &reference[..n]);
+                assert!(out[n..].iter().all(|&b| b == 0xA5));
+            }
+        }
+    }
+}
+
+#[test]
+fn short_decrypt_inputs_and_outputs_preserve_the_entire_buffer() {
+    let shared = [0x5A; 64];
+    let iv = [0x77; IV_SIZE];
+    let plain = [0xAB; 32];
+    for proto in [PinProto::One, PinProto::Two] {
+        let mut encrypted = [0u8; IV_SIZE + 32];
+        let n = encrypt(proto, &shared, &iv, &plain, &mut encrypted).unwrap();
+        for input_len in 0..proto.iv_overhead() {
+            let mut out = [0xA5; 33];
+            assert_eq!(
+                decrypt(proto, &shared, &encrypted[..input_len], &mut out),
+                Err(Error::BadLength)
+            );
+            assert_eq!(out, [0xA5; 33]);
+        }
+        for capacity in 0..=plain.len() + 1 {
+            let mut out = [0xA5; 33];
+            let result = decrypt(proto, &shared, &encrypted[..n], &mut out[..capacity]);
+            if capacity < plain.len() {
+                assert_eq!(result, Err(Error::BadLength));
+                assert_eq!(out, [0xA5; 33]);
+            } else {
+                assert_eq!(result, Ok(plain.len()));
+                assert_eq!(&out[..plain.len()], &plain);
+                assert!(out[plain.len()..].iter().all(|&b| b == 0xA5));
+            }
+        }
+    }
+}
+
+#[test]
+fn short_authentication_outputs_preserve_the_entire_buffer() {
+    let shared = [0x5A; 64];
+    let data = b"pinUvAuthToken material";
+    let reference = hmac_sha256(&shared[..32], data);
+    for proto in [PinProto::One, PinProto::Two] {
+        let n = proto.mac_len();
+        for capacity in 0..=n + 1 {
+            let mut out = [0xA5; 33];
+            let result = authenticate(proto, &shared, data, &mut out[..capacity]);
+            if capacity < n {
+                assert_eq!(result, Err(Error::BadLength));
+                assert_eq!(out, [0xA5; 33]);
+            } else {
+                assert_eq!(result, Ok(n));
+                assert_eq!(&out[..n], &reference[..n]);
+                assert!(out[n..].iter().all(|&b| b == 0xA5));
+            }
+        }
+    }
 }

@@ -8,8 +8,8 @@
 //! cost is a few HMAC-SHA256 ops — microseconds, uniform.
 
 use hmac::{Hmac, Mac};
-use sha2::Sha256;
-use zeroize::Zeroize;
+use rsk_secret::Secret;
+use rsk_sha256::Sha256;
 
 /// HMAC-SHA256 output / DRBG state size.
 const SEEDLEN: usize = 32;
@@ -17,8 +17,8 @@ const SEEDLEN: usize = 32;
 /// HMAC-DRBG over HMAC-SHA256. Instantiate with [`HmacDrbg::new`], draw with
 /// [`HmacDrbg::fill`], refresh entropy with [`HmacDrbg::reseed`].
 pub struct HmacDrbg {
-    k: [u8; SEEDLEN],
-    v: [u8; SEEDLEN],
+    k: Secret<[u8; SEEDLEN]>,
+    v: Secret<[u8; SEEDLEN]>,
 }
 
 impl HmacDrbg {
@@ -26,8 +26,8 @@ impl HmacDrbg {
     /// personalization (SP 800-90A 10.1.2.3).
     pub fn new(seed: &[u8]) -> Self {
         let mut d = Self {
-            k: [0x00; SEEDLEN],
-            v: [0x01; SEEDLEN],
+            k: Secret::new([0x00; SEEDLEN]),
+            v: Secret::new([0x01; SEEDLEN]),
         };
         d.update(seed);
         d
@@ -47,12 +47,12 @@ impl HmacDrbg {
     /// SP 800-90A 10.1.2.2 Update; an empty `provided` is the no-data form.
     fn update(&mut self, provided: &[u8]) {
         // K = HMAC(K, V ‖ 0x00 ‖ provided); V = HMAC(K, V)
-        self.k = Self::hmac(&self.k, &self.v, &[0x00], provided);
-        self.v = Self::hmac(&self.k, &self.v, &[], &[]);
+        *self.k.expose_mut() = Self::hmac(self.k.expose(), self.v.expose(), &[0x00], provided);
+        *self.v.expose_mut() = Self::hmac(self.k.expose(), self.v.expose(), &[], &[]);
         if !provided.is_empty() {
             // K = HMAC(K, V ‖ 0x01 ‖ provided); V = HMAC(K, V)
-            self.k = Self::hmac(&self.k, &self.v, &[0x01], provided);
-            self.v = Self::hmac(&self.k, &self.v, &[], &[]);
+            *self.k.expose_mut() = Self::hmac(self.k.expose(), self.v.expose(), &[0x01], provided);
+            *self.v.expose_mut() = Self::hmac(self.k.expose(), self.v.expose(), &[], &[]);
         }
     }
 
@@ -62,9 +62,9 @@ impl HmacDrbg {
     pub fn fill(&mut self, out: &mut [u8]) {
         let mut i = 0;
         while i < out.len() {
-            self.v = Self::hmac(&self.k, &self.v, &[], &[]);
+            *self.v.expose_mut() = Self::hmac(self.k.expose(), self.v.expose(), &[], &[]);
             let n = (out.len() - i).min(SEEDLEN);
-            out[i..i + n].copy_from_slice(&self.v[..n]);
+            out[i..i + n].copy_from_slice(&self.v.expose()[..n]);
             i += n;
         }
         self.update(&[]);
@@ -78,16 +78,41 @@ impl HmacDrbg {
     /// Wipe the internal state — for a secure reboot, destroy the live keystream
     /// before handing control to the bootloader. Unusable until re-seeded.
     pub fn scrub(&mut self) {
-        self.k.zeroize();
-        self.v.zeroize();
+        // Assigning drops the old state, which wipes it; the fresh one is zeros.
+        let Self { k, v } = self;
+        *k = Secret::zeroed();
+        *v = Secret::zeroed();
     }
 }
 
-impl Drop for HmacDrbg {
-    fn drop(&mut self) {
-        self.k.zeroize();
-        self.v.zeroize();
+/// How many draws [`draw_entropy`] takes before it gives up. A working source answers
+/// an all-zero block with probability 2^-(8·len), so each one is a fault, and a fault
+/// that outlasts three draws is not a passing one.
+pub const ENTROPY_TRIES: usize = 3;
+
+/// An entropy source that answered only draws with an all-zero block.
+#[derive(Debug, PartialEq, Eq)]
+pub struct EntropyFault;
+
+/// Fill `buf` from `source`, refusing a draw with an all-zero `block`-byte block (the
+/// last may be shorter): a DRBG seeded from one is seeded from a constant. At most
+/// [`ENTROPY_TRIES`] draws; then [`EntropyFault`], `buf` holding the last, to wipe.
+pub fn draw_entropy(
+    buf: &mut [u8],
+    block: usize,
+    mut source: impl FnMut(&mut [u8]),
+) -> Result<(), EntropyFault> {
+    for _ in 0..ENTROPY_TRIES {
+        source(buf);
+        // Folded, not searched: these bytes are the seed.
+        if buf
+            .chunks(block.max(1))
+            .all(|c| c.iter().fold(0, |acc, &b| acc | b) != 0)
+        {
+            return Ok(());
+        }
     }
+    Err(EntropyFault)
 }
 
 #[cfg(test)]

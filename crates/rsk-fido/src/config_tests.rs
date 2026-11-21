@@ -3,6 +3,8 @@
 
 use super::*;
 use crate::FidoState;
+use crate::consts::MIN_PIN_LENGTH;
+use crate::tests::journals;
 use minicbor::Encoder;
 use minicbor::encode::write::Cursor;
 use rsk_crypto::Device;
@@ -26,10 +28,268 @@ fn dev() -> Device<'static> {
         serial_hash: &[0xAB; 32],
         serial_id: &[1, 2, 3, 4, 5, 6, 7, 8],
         otp_key: None,
+        latched: false,
     }
 }
 
 const TOKEN: [u8; 32] = [0x99; 32];
+
+#[test]
+fn unknown_nested_configuration_fields_preserve_following_fields_and_mac_bytes() {
+    for command in [CONFIG_SET_MIN_PIN, CONFIG_VENDOR] {
+        let mut buffer = [0; 64];
+        let mut e = Encoder::new(Cursor::new(&mut buffer[..]));
+        e.map(4)
+            .unwrap()
+            .u8(1)
+            .unwrap()
+            .u64(command)
+            .unwrap()
+            .u8(2)
+            .unwrap();
+        let start = e.writer().position();
+        e.map(2)
+            .unwrap()
+            .u8(99)
+            .unwrap()
+            .array(2)
+            .unwrap()
+            .map(0)
+            .unwrap()
+            .null()
+            .unwrap();
+        e.u8(1).unwrap().u8(6).unwrap();
+        let end = e.writer().position();
+        e.u8(5)
+            .unwrap()
+            .array(2)
+            .unwrap()
+            .map(0)
+            .unwrap()
+            .null()
+            .unwrap()
+            .u8(6)
+            .unwrap()
+            .null()
+            .unwrap();
+        let n = e.writer().position();
+        let req = parse(&buffer[..n]).unwrap();
+        assert_eq!(req.subcommand, command);
+        assert_eq!(req.raw_subpara, &buffer[start..end]);
+        if command == CONFIG_SET_MIN_PIN {
+            assert_eq!(req.new_min_pin, 6);
+        } else {
+            assert_eq!(req.vendor_id, 6);
+        }
+        let mut bad = [0; 32];
+        let mut e = Encoder::new(Cursor::new(&mut bad[..]));
+        e.map(2)
+            .unwrap()
+            .u8(1)
+            .unwrap()
+            .u64(command)
+            .unwrap()
+            .u8(2)
+            .unwrap();
+        e.map(1)
+            .unwrap()
+            .u8(99)
+            .unwrap()
+            .array(2)
+            .unwrap()
+            .null()
+            .unwrap();
+        let n = e.writer().position();
+        assert!(matches!(parse(&bad[..n]), Err(CtapError::InvalidCbor)));
+    }
+    assert!(matches!(
+        parse(&[0xa2, 1, 1, 5, 0x82, 0xf6]),
+        Err(CtapError::InvalidCbor)
+    ));
+}
+
+#[test]
+fn malformed_configuration_keys_do_not_change_policy_or_token() {
+    for (request, error) in [
+        (&[0xa1, 2, 0xa0][..], CtapError::MissingParameter),
+        (&[0xa2, 1, 1, 1, 1][..], CtapError::InvalidCbor),
+        (&[0xa3, 1, 1, 3, 1, 2, 0xa0][..], CtapError::InvalidCbor),
+    ] {
+        let mut fs = Fs::new(RamStorage::new());
+        let mut state = armed(PERM_ACFG);
+        let generation = fs.write_gen();
+        assert_eq!(run_fs(&mut fs, &mut state, request), Err(error));
+        assert_eq!(fs.write_gen(), generation);
+        assert!(state.paut.in_use);
+        assert_eq!(state.paut.token, TOKEN);
+    }
+}
+
+#[test]
+fn a_legacy_policy_and_short_pin_do_not_invent_a_pin_length() {
+    for policy in [&[][..], &[MIN_PIN_LENGTH][..]] {
+        let mut fs = Fs::new(RamStorage::new());
+        fs.put(EF_MINPINLEN, policy).unwrap();
+        fs.put(EF_PIN, &[1]).unwrap();
+        let mut state = armed(PERM_ACFG);
+        assert_eq!(
+            run_fs(
+                &mut fs,
+                &mut state,
+                &config_request(3, &[0xa1, 1, 6], &TOKEN)
+            ),
+            Ok(0)
+        );
+        let mut after = [0; 2];
+        assert_eq!(fs.read(EF_MINPINLEN, &mut after), Some(2));
+        assert_eq!(
+            after,
+            [
+                6,
+                if crate::consts::PIN_COMPLEXITY_POLICY {
+                    crate::pinpolicy::COMPLEXITY
+                } else {
+                    0
+                }
+            ]
+        );
+        assert!(state.paut.in_use);
+    }
+}
+
+#[test]
+fn a_persisted_force_flag_survives_a_policy_update_and_revokes_the_token() {
+    let mut fs = Fs::new(RamStorage::new());
+    fs.put(
+        EF_MINPINLEN,
+        &[MIN_PIN_LENGTH, crate::pinpolicy::FORCE_CHANGE],
+    )
+    .unwrap();
+    let mut state = armed(PERM_ACFG);
+    assert_eq!(
+        run_fs(
+            &mut fs,
+            &mut state,
+            &config_request(3, &[0xa1, 1, 6], &TOKEN)
+        ),
+        Ok(0)
+    );
+    assert!(!state.paut.in_use);
+    assert!(crate::pinpolicy::Policy::read(&mut fs).unwrap().force);
+}
+
+#[test]
+fn raw_configuration_parameters_accept_the_limit_and_refuse_the_next_byte() {
+    let mut fs = Fs::new(RamStorage::new());
+    fs.put(EF_ALWAYS_UV, &[0]).unwrap();
+    for length in [MAX_RAW_SUBPARA, MAX_RAW_SUBPARA + 1] {
+        let mut params = vec![0; length];
+        let mut encoder = Encoder::new(Cursor::new(params.as_mut_slice()));
+        encoder
+            .map(1)
+            .unwrap()
+            .u8(8)
+            .unwrap()
+            .bytes(&vec![0; length - 5])
+            .unwrap();
+        assert_eq!(encoder.writer().position(), length);
+        let mut before = [0; 1];
+        let stored = fs.read(EF_ALWAYS_UV, &mut before);
+        let generation = fs.write_gen();
+        let result = run_fs(
+            &mut fs,
+            &mut armed(PERM_ACFG),
+            &config_request(CONFIG_TOGGLE_ALWAYS_UV as u8, &params, &TOKEN),
+        );
+        if length == MAX_RAW_SUBPARA {
+            assert_eq!(result, Ok(0));
+            assert!(always_uv_enabled(&mut fs));
+        } else {
+            assert_eq!(result, Err(CtapError::RequestTooLarge));
+            let mut after = [0; 1];
+            assert_eq!(fs.read(EF_ALWAYS_UV, &mut after), stored);
+            assert_eq!(after, before);
+            assert_eq!(fs.write_gen(), generation);
+            assert!(always_uv_enabled(&mut fs));
+        }
+    }
+}
+
+#[test]
+fn complexity_update_preserves_a_full_rp_list() {
+    let mut fs = Fs::new(RamStorage::new());
+    let mut policy = vec![MIN_PIN_LENGTH, 0];
+    for i in 0..MAX_MIN_PIN_RPIDS {
+        policy.extend_from_slice(&sha256(&[i as u8]));
+    }
+    fs.put(EF_MINPINLEN, &policy).unwrap();
+    assert_eq!(
+        run_fs(
+            &mut fs,
+            &mut armed(PERM_ACFG),
+            &config_request(3, &[0xa1, 4, 0xf5], &TOKEN),
+        ),
+        Ok(0)
+    );
+    policy[1] = crate::pinpolicy::COMPLEXITY;
+    let mut after = vec![0; policy.len()];
+    assert_eq!(fs.read(EF_MINPINLEN, &mut after), Some(policy.len()));
+    assert_eq!(after, policy);
+}
+
+#[test]
+fn complexity_update_refuses_to_truncate_an_older_wider_rp_list() {
+    let mut fs = Fs::new(RamStorage::new());
+    let mut policy = vec![MIN_PIN_LENGTH, 0];
+    for i in 0..=MAX_MIN_PIN_RPIDS {
+        policy.extend_from_slice(&sha256(&[i as u8]));
+    }
+    fs.put(EF_MINPINLEN, &policy).unwrap();
+    assert_eq!(
+        run_fs(
+            &mut fs,
+            &mut armed(PERM_ACFG),
+            &config_request(3, &[0xa1, 4, 0xf5], &TOKEN),
+        ),
+        Err(CtapError::KeyStoreFull)
+    );
+    let mut after = vec![0; policy.len()];
+    assert_eq!(fs.read(EF_MINPINLEN, &mut after), Some(policy.len()));
+    assert_eq!(after, policy);
+}
+
+#[test]
+fn enabling_complexity_survives_every_flash_cut_without_losing_the_rp_list() {
+    assert!(!rsk_fs::cut::sweep_restarts(
+        || {
+            let (cut, medium) = rsk_fs::storage::faults::Cut::new();
+            let mut fs = Fs::new(cut);
+            let mut policy = vec![MIN_PIN_LENGTH, 0];
+            policy.extend_from_slice(&sha256(b"policy.example"));
+            fs.put(EF_MINPINLEN, &policy).unwrap();
+            (fs, medium)
+        },
+        |fs| {
+            run_fs(
+                fs,
+                &mut armed(PERM_ACFG),
+                &config_request(3, &[0xa1, 4, 0xf5], &TOKEN),
+            )
+            .is_ok()
+        },
+        |_| {},
+        |fs, budget, _second, completed, _medium| {
+            let mut record = [0u8; 34];
+            assert_eq!(fs.read(EF_MINPINLEN, &mut record), Some(34), "cut {budget}");
+            assert_eq!(record[0], MIN_PIN_LENGTH);
+            assert_eq!(&record[2..], &sha256(b"policy.example"));
+            assert!(record[1] == 0 || record[1] == crate::pinpolicy::COMPLEXITY);
+            if completed {
+                assert_eq!(record[1], crate::pinpolicy::COMPLEXITY);
+            }
+        },
+    ));
+}
 
 fn armed(perms: u8) -> FidoState {
     let mut s = FidoState::new();
@@ -130,7 +390,24 @@ fn set_min_pin_length_stores_policy() {
     assert_eq!(run_fs(&mut fs, &mut state, &req), Ok(0));
     let mut buf = [0u8; 2];
     assert_eq!(fs.read(EF_MINPINLEN, &mut buf), Some(2));
-    assert_eq!(buf, [6, 0]); // minPINLength 6, no forced change
+    assert_eq!(
+        buf,
+        [
+            6,
+            u8::from(crate::consts::PIN_COMPLEXITY_POLICY) * crate::pinpolicy::COMPLEXITY
+        ]
+    ); // minPINLength 6, no forced change
+}
+
+#[test]
+fn the_maximum_host_pin_length_is_an_allowed_policy_floor() {
+    let mut fs = Fs::new(RamStorage::new());
+    let mut state = armed(PERM_ACFG);
+    let request = config_request(0x03, &subpara_min_pin(63), &TOKEN);
+    assert_eq!(run_fs(&mut fs, &mut state, &request), Ok(0));
+    let mut policy = [0; 2];
+    assert_eq!(fs.read(EF_MINPINLEN, &mut policy), Some(2));
+    assert_eq!(policy[0], 63);
 }
 
 #[test]
@@ -187,8 +464,32 @@ fn always_uv_read_prefers_explicit_override() {
     assert!(always_uv_enabled(&mut fs));
     fs.put(EF_ALWAYS_UV, &[0]).unwrap();
     assert!(!always_uv_enabled(&mut fs));
+    fs.put(EF_ALWAYS_UV, &[]).unwrap();
+    assert!(always_uv_enabled(&mut fs));
     fs.delete(EF_ALWAYS_UV).unwrap();
     assert_eq!(always_uv_enabled(&mut fs), DEFAULT_ALWAYS_UV);
+}
+
+#[test]
+fn malformed_always_uv_records_keep_the_gate_and_cannot_be_toggled() {
+    for malformed in [&[][..], &[2][..], &[1, 0][..]] {
+        let mut fs = Fs::new(RamStorage::new());
+        fs.put(EF_ALWAYS_UV, malformed).unwrap();
+        assert!(always_uv_enabled(&mut fs));
+        let generation = fs.write_gen();
+        assert_eq!(
+            run_fs(
+                &mut fs,
+                &mut armed(PERM_ACFG),
+                &config_request(CONFIG_TOGGLE_ALWAYS_UV as u8, &[0xa0], &TOKEN)
+            ),
+            Err(CtapError::Other)
+        );
+        assert_eq!(fs.write_gen(), generation);
+        let mut after = [0; 2];
+        assert_eq!(fs.read(EF_ALWAYS_UV, &mut after), Some(malformed.len()));
+        assert_eq!(&after[..malformed.len()], malformed);
+    }
 }
 
 #[test]
@@ -390,7 +691,14 @@ fn set_min_pin_forces_change_when_pin_too_short() {
     .unwrap();
     let mut buf = [0u8; 2];
     fs.read(EF_MINPINLEN, &mut buf).unwrap();
-    assert_eq!(buf, [6, 1]); // forceChangePin set
+    assert_eq!(
+        buf,
+        [
+            6,
+            crate::pinpolicy::FORCE_CHANGE
+                | (u8::from(crate::consts::PIN_COMPLEXITY_POLICY) * crate::pinpolicy::COMPLEXITY)
+        ]
+    ); // forceChangePin set
     assert_ne!(state.paut.token, TOKEN); // token regenerated
 }
 
@@ -756,4 +1064,430 @@ fn a_faulted_min_pin_probe_does_not_lower_the_floor() {
         Err(CtapError::Other),
         "a setMinPINLength that could not read the floor it must not lower has to refuse"
     );
+}
+
+/// setMinPINLength over a PIN too short for the new floor, cut at every mutation.
+/// The floor never comes back lower than it was — it is monotonic across a power cut
+/// too — and the record that lands with `forceChangePin` never stands over the grant
+/// the old PIN's holder had: `clear_ppuat` runs before the put, so no cut point can
+/// leave a token minted under a PIN the owner is now required to change.
+#[test]
+fn a_torn_set_min_pin_length_never_lowers_the_floor_or_keeps_the_grant() {
+    use crate::consts::EF_PAUTHTOKEN;
+    let old_token = std::cell::RefCell::new(None);
+    let seed_record = std::cell::RefCell::new(None);
+
+    assert!(rsk_fs::cut::sweep_restarts(
+        || {
+            let (cut, medium) = rsk_fs::storage::faults::Cut::new();
+            let mut fs = Fs::new(cut);
+            fs.scan();
+            crate::clientpin::store_local_pin(&dev(), &mut fs, crate::test_pins::PIN).unwrap();
+            fs.put(EF_MINPINLEN, &[6, 0]).unwrap();
+            // The grant the old PIN's holder carries, minted as provisioning mints it.
+            crate::seed::ensure_seed(&dev(), &mut fs, &mut SeqRng(3)).unwrap();
+            *old_token.borrow_mut() = medium.value(EF_PAUTHTOKEN.get());
+            *seed_record.borrow_mut() = medium.value(crate::consts::EF_KEY_DEV.get());
+            (fs, medium)
+        },
+        |fs| {
+            let mut state = armed(PERM_ACFG);
+            let req = config_request(0x03, &subpara_min_pin(8), &TOKEN);
+            run_fs(fs, &mut state, &req).is_ok()
+        },
+        |fs| {
+            let mut policy = [0; 2];
+            fs.read(EF_MINPINLEN, &mut policy).unwrap();
+            if policy[1] & crate::pinpolicy::FORCE_CHANGE != 0 {
+                let mut record = [0; 64];
+                let current = fs
+                    .read_key(EF_PAUTHTOKEN, &mut record)
+                    .map(|n| record[..n].to_vec());
+                assert_ne!(current, *old_token.borrow());
+            }
+            let _ = crate::seed::ensure_seed(&dev(), fs, &mut SeqRng(91));
+        },
+        |fs, budget, _second, completed, medium| {
+            assert!(crate::seed::load_ppuat(&dev(), fs).is_some());
+            assert_eq!(
+                medium.value(crate::consts::EF_KEY_DEV.get()),
+                *seed_record.borrow()
+            );
+            let mut buf = [0u8; 2];
+            let n = fs
+                .read(EF_MINPINLEN, &mut buf)
+                .unwrap_or_else(|| panic!("budget {budget}: the policy record is gone"));
+            assert_eq!(
+                n, 2,
+                "budget {budget}: the record that landed is not a policy record"
+            );
+            assert!(
+                buf[0] == 6 || buf[0] == 8,
+                "budget {budget}: the floor is neither the old one (6) nor the new one (8): {} — {:?}",
+                buf[0],
+                medium.ops()
+            );
+            if buf[1] & crate::pinpolicy::FORCE_CHANGE != 0 {
+                assert!(
+                    medium.value(EF_PAUTHTOKEN.get()) != *old_token.borrow(),
+                    "budget {budget}: a forced PIN change landed over the old holder's grant — {:?}",
+                    medium.ops()
+                );
+            }
+            if completed {
+                assert_eq!(
+                    buf,
+                    [
+                        8,
+                        crate::pinpolicy::FORCE_CHANGE
+                            | (u8::from(crate::consts::PIN_COMPLEXITY_POLICY)
+                                * crate::pinpolicy::COMPLEXITY)
+                    ],
+                    "budget {budget}: the command reported success"
+                );
+            }
+        },
+    ));
+}
+
+/// A present-but-empty `EF_MINPINLEN` sets no policy, so the floor the monotonic
+/// guard holds is the build's `MIN_PIN_LENGTH` — not the zero an unread byte of the
+/// buffer holds, under which setMinPINLength could lower it.
+#[test]
+fn an_empty_min_pin_record_holds_the_build_floor() {
+    let mut fs = Fs::new(RamStorage::new());
+    fs.put(EF_MINPINLEN, &[]).unwrap();
+    let mut state = armed(PERM_ACFG);
+    let under = u64::from(MIN_PIN_LENGTH) - 1;
+    assert_eq!(
+        run_fs(
+            &mut fs,
+            &mut state,
+            &config_request(0x03, &subpara_min_pin(under), &TOKEN)
+        ),
+        Err(CtapError::PinPolicyViolation),
+        "setMinPINLength went under the build floor over an empty policy record"
+    );
+}
+
+// The setMinPINLength subCommandParams map `{1: new_min, 3: forceChangePin = true}`.
+fn subpara_min_pin_force(new_min: u64) -> std::vec::Vec<u8> {
+    let mut buf = [0u8; 32];
+    let n = {
+        let mut e = Encoder::new(Cursor::new(&mut buf[..]));
+        e.map(2).unwrap().u8(1).unwrap().u64(new_min).unwrap();
+        e.u8(3).unwrap().bool(true).unwrap();
+        e.writer().position()
+    };
+    buf[..n].to_vec()
+}
+
+/// `forceChangePin` (CTAP 2.1 §6.11.4) demands a change of a PIN the new floor does
+/// not itself condemn, so it is honoured over a PIN long enough — and with no PIN to
+/// change it is PIN_NOT_SET, with no policy stored. No test sent the key before.
+#[test]
+fn force_change_pin_is_honoured_and_needs_a_pin() {
+    let mut fs = Fs::new(RamStorage::new());
+    let mut state = armed(PERM_ACFG);
+    let req = config_request(0x03, &subpara_min_pin_force(6), &TOKEN);
+    assert_eq!(run_fs(&mut fs, &mut state, &req), Err(CtapError::PinNotSet));
+    assert!(
+        !fs.has_data(EF_MINPINLEN),
+        "a forced change with no PIN stored a policy"
+    );
+
+    // An 8-character PIN: the floor of 6 does not force a change, the request does.
+    let mut pin_file = [0u8; crate::clientpin::PIN_FILE_LEN];
+    pin_file[..3].copy_from_slice(&[8, 8, 1]);
+    fs.put(EF_PIN, &pin_file).unwrap();
+    assert_eq!(run_fs(&mut fs, &mut state, &req), Ok(0));
+    let mut buf = [0u8; 2];
+    assert_eq!(fs.read(EF_MINPINLEN, &mut buf), Some(2));
+    assert_eq!(
+        buf,
+        [
+            6,
+            crate::pinpolicy::FORCE_CHANGE
+                | (u8::from(crate::consts::PIN_COMPLEXITY_POLICY) * crate::pinpolicy::COMPLEXITY)
+        ],
+        "forceChangePin was not stored"
+    );
+    assert_ne!(
+        state.paut.token, TOKEN,
+        "a forced change left the token alive"
+    );
+}
+
+/// A PIN exactly as long as the new floor meets it: no change is forced, and the
+/// token that set the floor stands.
+#[test]
+fn a_pin_at_the_new_floor_is_not_forced_to_change() {
+    let mut fs = Fs::new(RamStorage::new());
+    let mut pin_file = [0u8; crate::clientpin::PIN_FILE_LEN];
+    pin_file[..3].copy_from_slice(&[8, 6, 1]);
+    fs.put(EF_PIN, &pin_file).unwrap();
+    let mut state = armed(PERM_ACFG);
+    assert_eq!(
+        run_fs(
+            &mut fs,
+            &mut state,
+            &config_request(0x03, &subpara_min_pin(6), &TOKEN)
+        ),
+        Ok(0)
+    );
+    let mut buf = [0u8; 2];
+    assert_eq!(fs.read(EF_MINPINLEN, &mut buf), Some(2));
+    assert_eq!(
+        buf,
+        [
+            6,
+            u8::from(crate::consts::PIN_COMPLEXITY_POLICY) * crate::pinpolicy::COMPLEXITY
+        ],
+        "a PIN at the floor was forced to change"
+    );
+    assert_eq!(state.paut.token, TOKEN, "a PIN at the floor lost its token");
+}
+
+/// With newMinPINLength absent the floor stays where it is (CTAP 2.1 §6.11.4), so a
+/// request that only sets forceChangePin must not read the absence as a floor of 0.
+#[test]
+fn force_change_pin_alone_keeps_the_floor() {
+    let mut fs = Fs::new(RamStorage::new());
+    let mut pin_file = [0u8; crate::clientpin::PIN_FILE_LEN];
+    pin_file[..3].copy_from_slice(&[8, 8, 1]);
+    fs.put(EF_PIN, &pin_file).unwrap();
+    let mut state = armed(PERM_ACFG);
+    let mut sub = [0u8; 8];
+    let n = {
+        let mut e = Encoder::new(Cursor::new(&mut sub[..]));
+        e.map(1).unwrap().u8(3).unwrap().bool(true).unwrap();
+        e.writer().position()
+    };
+    assert_eq!(
+        run_fs(
+            &mut fs,
+            &mut state,
+            &config_request(0x03, &sub[..n], &TOKEN)
+        ),
+        Ok(0),
+        "a forceChangePin with no newMinPINLength was read as lowering the floor"
+    );
+    let mut buf = [0u8; 2];
+    assert_eq!(fs.read(EF_MINPINLEN, &mut buf), Some(2));
+    assert_eq!(
+        buf,
+        [
+            MIN_PIN_LENGTH,
+            crate::pinpolicy::FORCE_CHANGE
+                | (u8::from(crate::consts::PIN_COMPLEXITY_POLICY) * crate::pinpolicy::COMPLEXITY)
+        ]
+    );
+}
+
+/// The one-record config commands, cut at every mutation with the audit journal on:
+/// enableEnterpriseAttestation, the enterprise RP list set and cleared, and
+/// toggleAlwaysUv both ways. Each record is written before its journal entry, so a
+/// cut leaves the old record or the new one, and the journal never records a change
+/// whose record did not land. The journal swallows its own write failures, so a
+/// command counts as done only once its entry is in the window.
+#[test]
+fn a_torn_one_record_config_write_never_journals_a_change_that_did_not_land() {
+    let kept = sha256(b"kept.example").to_vec();
+    let flipped = std::vec![u8::from(!DEFAULT_ALWAYS_UV)];
+    let toggle = config_request(CONFIG_TOGGLE_ALWAYS_UV as u8, &[], &TOKEN);
+    let cases = [
+        (
+            "enableEnterpriseAttestation",
+            EF_EA_ENABLED,
+            None,
+            config_request(CONFIG_ENABLE_EA as u8, &[], &TOKEN),
+            journal::EV_CFG_EA,
+        ),
+        (
+            "set the enterprise RP list",
+            EF_EA_RPIDS,
+            None,
+            vendor_req(&subpara_ea_rpids(&["corp.example.com"]), &TOKEN),
+            journal::EV_CFG_EA_RPIDS,
+        ),
+        (
+            "clear the enterprise RP list",
+            EF_EA_RPIDS,
+            Some(kept),
+            vendor_req(&subpara_ea_rpids(&[]), &TOKEN),
+            journal::EV_CFG_EA_RPIDS,
+        ),
+        (
+            "toggleAlwaysUv",
+            EF_ALWAYS_UV,
+            None,
+            toggle.clone(),
+            journal::EV_CFG_ALWAYS_UV,
+        ),
+        (
+            "toggleAlwaysUv back",
+            EF_ALWAYS_UV,
+            Some(flipped),
+            toggle,
+            journal::EV_CFG_ALWAYS_UV,
+        ),
+    ];
+    for (name, fid, before, req, ev) in cases {
+        let provision = || {
+            let (cut, medium) = rsk_fs::storage::faults::Cut::new();
+            let mut fs = Fs::new(cut);
+            journal::set_enabled(&mut fs, true).unwrap();
+            if let Some(v) = &before {
+                fs.put(fid, v).unwrap();
+            }
+            (fs, medium)
+        };
+        let (mut healthy, _) = provision();
+        assert_eq!(
+            run_fs(&mut healthy, &mut armed(PERM_ACFG), &req),
+            Ok(0),
+            "{name}"
+        );
+        let after = read_record(&mut healthy, fid);
+        assert_ne!(
+            after, before,
+            "{name}: the command changes nothing to sweep"
+        );
+        assert!(!rsk_fs::cut::sweep_restarts(
+            provision,
+            |fs| run_fs(fs, &mut armed(PERM_ACFG), &req).is_ok() && journals(&dev(), fs, ev),
+            |_| {},
+            |fs, budget, _second, completed, medium| {
+                let now = read_record(fs, fid);
+                assert!(
+                    now == before || now == after,
+                    "{name}, budget {budget}: {now:02x?} is neither record — {:?}",
+                    medium.ops()
+                );
+                if journals(&dev(), fs, ev) {
+                    assert_eq!(
+                        now,
+                        after,
+                        "{name}, budget {budget}: journalled a change that did not land — {:?}",
+                        medium.ops()
+                    );
+                }
+                if completed {
+                    assert_eq!(now, after, "{name}, budget {budget}: reported done, is not");
+                }
+            },
+        ));
+    }
+}
+
+fn read_record<S: Storage>(fs: &mut Fs<S>, fid: u16) -> Option<std::vec::Vec<u8>> {
+    let mut buf = [0u8; 32 * MAX_EA_RPIDS];
+    fs.read(fid, &mut buf).map(|n| buf[..n].to_vec())
+}
+
+// The read-fault sweep lives in its own file; it needs this module's fixtures.
+#[path = "config_reads_tests.rs"]
+mod reads;
+
+/// The PicoForge phy ids write the record the configuration lock covers, and are
+/// refused under it as CONFIG_WRITE's phy target is: `NOT_ALLOWED`, nothing stored.
+#[test]
+fn picoforge_config_is_refused_while_a_configuration_lock_is_set() {
+    let mut fs = Fs::new(RamStorage::new());
+    let mut code = std::vec![0x0A, 16];
+    code.extend_from_slice(&[0xA5; 16]);
+    rsk_devconf::persist_touched(&[0; 4], &mut fs, &code).unwrap();
+    for (id, val) in [
+        (CONFIG_PHY_VIDPID, 0x1050_0407),
+        (CONFIG_PHY_LED_GPIO, 22),
+        (CONFIG_PHY_LED_BRIGHTNESS, 64),
+        (CONFIG_PHY_OPTIONS, 0x0A),
+    ] {
+        let mut st = armed(PERM_ACFG);
+        let sub = subpara_vendor_int(id, val);
+        assert_eq!(
+            run_fs(&mut fs, &mut st, &vendor_req(&sub, &TOKEN)),
+            Err(CtapError::NotAllowed),
+            "vendor id {id:#x}"
+        );
+    }
+    assert!(
+        !fs.has_data(rsk_phy::EF_PHY),
+        "a refused write stored the record"
+    );
+}
+
+/// `VENDOR_PROTOTYPE_CONFIG_COMMANDS` is what `0x41`/`0x0F` tells a host this build
+/// serves, so every id on it must reach a handler: none may answer the unknown-id
+/// INVALID_SUBCOMMAND.
+#[test]
+fn every_listed_vendor_config_id_is_served() {
+    for id in crate::consts::VENDOR_PROTOTYPE_CONFIG_COMMANDS {
+        let mut fs = Fs::new(RamStorage::new());
+        let mut st = armed(PERM_ACFG);
+        let sub = subpara_vendor_int(id, 1);
+        let r = run_fs(&mut fs, &mut st, &vendor_req(&sub, &TOKEN));
+        assert_ne!(r, Err(CtapError::InvalidSubcommand), "{id:#018x}");
+    }
+}
+
+#[test]
+fn raising_a_policy_with_no_pin_record_does_not_invent_a_force_change() {
+    let mut fs = Fs::new(RamStorage::new());
+    let mut state = armed(PERM_ACFG);
+    assert_eq!(
+        run_fs(
+            &mut fs,
+            &mut state,
+            &config_request(3, &[0xa1, 1, 6], &TOKEN)
+        ),
+        Ok(0)
+    );
+    let policy = crate::pinpolicy::Policy::read(&mut fs).unwrap();
+    assert_eq!(policy.min, 6);
+    assert!(!policy.force);
+    assert!(state.paut.in_use);
+    assert!(fs.read(EF_PIN, &mut [0; 2]).is_none());
+}
+
+#[test]
+fn a_pin_record_missing_after_its_presence_probe_does_not_invent_its_length() {
+    let (backend, control) = rsk_fs::read_change::ChangingRead::new();
+    let mut fs = Fs::new(backend);
+    fs.scan();
+    fs.put(EF_MINPINLEN, &[4, 0]).unwrap();
+    fs.put(EF_PIN, &[1, 8]).unwrap();
+    control.replace_on_read(EF_PIN, 0, None);
+    let mut state = armed(PERM_ACFG);
+    assert_eq!(
+        run_fs(
+            &mut fs,
+            &mut state,
+            &config_request(3, &[0xa1, 1, 6], &TOKEN)
+        ),
+        Ok(0)
+    );
+    assert!(control.served());
+    assert!(!crate::pinpolicy::Policy::read(&mut fs).unwrap().force);
+    let mut retained = [0; 2];
+    assert_eq!(fs.into_storage().value(EF_PIN, &mut retained), Some(2));
+    assert_eq!(retained, [1, 8]);
+    assert!(state.paut.in_use);
+}
+
+#[test]
+fn directly_constructed_policy_flags_encode_each_boolean_in_every_profile() {
+    for (force, complexity, expected) in [
+        (false, false, 0),
+        (true, false, 1),
+        (false, true, 2),
+        (true, true, 3),
+    ] {
+        let policy = crate::pinpolicy::Policy {
+            min: MIN_PIN_LENGTH,
+            force,
+            complexity,
+        };
+        assert_eq!(policy.flags(), expected);
+    }
 }

@@ -13,6 +13,72 @@ fn e65537() -> BigUint {
     big(crate::RSA_E)
 }
 
+#[test]
+fn public_exponent_refusals_are_not_masked_by_a_missing_inverse() {
+    for (p, q, e) in [
+        (big(11), big(13), big(1)),
+        (
+            (big(1) << 64) + big(3),
+            big(5),
+            BigUint::from(*PUB_EXP_RANGE.end() + 6),
+        ),
+        (big(3), big(5), big(17)),
+        (big(4), big(7), big(5)),
+    ] {
+        let lambda = (&p - big(1)).lcm(&(&q - big(1)));
+        assert_eq!(e.gcd(&lambda), big(1));
+        assert!(RsaKey::from_p_q(p, q, e).is_none());
+    }
+}
+
+#[test]
+fn the_largest_supported_public_exponent_is_still_accepted() {
+    let exponent = BigUint::from(*PUB_EXP_RANGE.end());
+    let mut seen = 0;
+    for prime in [p(), q()] {
+        if exponent.gcd(&(&prime - big(1))) != big(1) {
+            continue;
+        }
+        let key = RsaKey::from_p_q(prime, big(5), exponent.clone()).unwrap();
+        assert_eq!(key.e_be(), exponent.to_bytes_be());
+        seen += 1;
+    }
+    assert!(seen > 0, "no coprime exponent-boundary fixture ran");
+}
+
+#[test]
+fn private_operations_refuse_each_output_width_before_drawing_a_blind() {
+    let oversized = RsaKey::from_p_q(
+        (BigUint::from(1u8) << (MAX_RSA_BYTES * 8)) + big(1),
+        big(17),
+        big(3),
+    )
+    .unwrap();
+    assert!(oversized.size() > MAX_RSA_BYTES);
+    let mut rng = SeqRng(9);
+    let mut out = [0xa5; MAX_RSA_BYTES];
+    assert_eq!(
+        crate::pkcs1v15::rsa_decrypt(&oversized, &[1], &mut rng, &mut out),
+        Err(RsaError::BadWidth)
+    );
+    assert_eq!(out, [0xa5; MAX_RSA_BYTES]);
+    assert_eq!(rng.0, 9);
+    let ordinary = test_key();
+    for (key, room) in [
+        (&oversized, MAX_RSA_BYTES),
+        (&ordinary, ordinary.size() - 1),
+    ] {
+        let mut rng = SeqRng(9);
+        let mut out = vec![0xa5; room];
+        assert_eq!(
+            key.private_op(&[1], &mut rng, &mut out),
+            Err(RsaError::BadWidth)
+        );
+        assert_eq!(out, vec![0xa5; room]);
+        assert_eq!(rng.0, 9);
+    }
+}
+
 fn p() -> BigUint {
     BigUint::from_bytes_be(&hex(P_HEX))
 }
@@ -38,11 +104,11 @@ fn crt_parameters_are_the_carmichael_ones() {
     // against a second copy of the same derivation.
     let k = test_key();
     let (dp, dq, qinv) = k.crt().unwrap();
-    assert_eq!(*dp, k.d() % (p() - big(1)));
-    assert_eq!(*dq, k.d() % (q() - big(1)));
+    assert_eq!(*dp, &k.d % (p() - big(1)));
+    assert_eq!(*dq, &k.d % (q() - big(1)));
     assert_eq!((qinv * q()) % p(), big(1));
     // And d is the Carmichael exponent, not Euler's: d < λ(n) = lcm(p−1, q−1).
-    assert!(*k.d() < (p() - big(1)).lcm(&(q() - big(1))));
+    assert!(k.d < (p() - big(1)).lcm(&(q() - big(1))));
 }
 
 #[test]
@@ -92,12 +158,12 @@ fn private_op_reproduces_openssl_signatures() {
     for (i, (digest, want)) in SIGN_SHA256.iter().enumerate() {
         let hash = hex(digest);
         let mlen = k.size();
-        let dlen = crate::pkcs1v15::DI_SHA256.len() + hash.len();
+        let dlen = crate::fixtures::DI_SHA256.len() + hash.len();
         let mut em = [0xffu8; MAX_RSA_BYTES];
         em[0] = 0x00;
         em[1] = 0x01;
         em[mlen - dlen - 1] = 0x00;
-        em[mlen - dlen..mlen - hash.len()].copy_from_slice(crate::pkcs1v15::DI_SHA256);
+        em[mlen - dlen..mlen - hash.len()].copy_from_slice(crate::fixtures::DI_SHA256);
         em[mlen - hash.len()..mlen].copy_from_slice(&hash);
         let mut out = [0u8; MAX_RSA_BYTES];
         let n = k
@@ -113,7 +179,7 @@ fn private_op_takes_the_non_crt_branch_to_the_same_answer() {
     // one operation; a key with no CRT form exercises the second, so a bug in
     // either shows up as the two disagreeing on the same input.
     let k = test_key();
-    let (n, e, d) = (k.n().clone(), k.e().clone(), k.d().clone());
+    let (n, e, d) = (k.n.clone(), k.e.clone(), k.d.clone());
     let plain = RsaKey {
         n,
         e,
@@ -125,12 +191,12 @@ fn private_op_takes_the_non_crt_branch_to_the_same_answer() {
     let (digest, want) = SIGN_SHA256[1];
     let hash = hex(digest);
     let mlen = plain.size();
-    let dlen = crate::pkcs1v15::DI_SHA256.len() + hash.len();
+    let dlen = crate::fixtures::DI_SHA256.len() + hash.len();
     let mut em = [0xffu8; MAX_RSA_BYTES];
     em[0] = 0x00;
     em[1] = 0x01;
     em[mlen - dlen - 1] = 0x00;
-    em[mlen - dlen..mlen - hash.len()].copy_from_slice(crate::pkcs1v15::DI_SHA256);
+    em[mlen - dlen..mlen - hash.len()].copy_from_slice(crate::fixtures::DI_SHA256);
     em[mlen - hash.len()..mlen].copy_from_slice(&hash);
     let mut out = [0u8; MAX_RSA_BYTES];
     let n = plain
@@ -156,10 +222,12 @@ fn private_op_refuses_a_faulted_crt_intermediate() {
     );
 
     k.crt.as_mut().unwrap().dp += big(1);
+    out.fill(0xa5);
     assert_eq!(
         k.private_op(&em[..mlen], &mut SeqRng(5), &mut out),
         Err(RsaError::Failed)
     );
+    assert_eq!(out, [0xa5; MAX_RSA_BYTES], "faulted CRT published output");
 }
 
 #[test]
@@ -184,7 +252,7 @@ fn private_op_refuses_a_block_that_is_not_below_the_modulus() {
 
 #[test]
 fn private_op_round_trips_an_openssl_ciphertext() {
-    // The other direction of the same operation, on a key too narrow for the asm
+    // The other direction of the same operation, on a key too narrow for the fixed-width
     // core — so this is the software arm PSO:DECIPHER falls back to.
     let k = test_key();
     for (i, (msg, ct)) in ENCRYPT.iter().enumerate() {
@@ -219,4 +287,54 @@ fn size_is_the_modulus_width_not_the_prime_width() {
     // must be the 80-byte modulus, or a signature is written short.
     assert_eq!(test_key_640().size(), 80);
     assert_eq!(test_key_640().n_be().len(), 80);
+}
+
+#[test]
+fn a_non_coprime_blind_is_discarded_before_an_invertible_pair() {
+    struct Scripted(usize);
+    impl Rng for Scripted {
+        fn fill(&mut self, output: &mut [u8]) {
+            assert_eq!(output.len(), 1);
+            output[0] = match self.0 {
+                0 => 3,
+                1 => 2,
+                _ => panic!("unexpected draw"),
+            };
+            self.0 += 1;
+        }
+    }
+    let mut rng = Scripted(0);
+    let (r, inverse) = blind_pair(&big(15), 1, &mut rng);
+    assert_eq!(rng.0, 2);
+    assert_eq!(r.expose(), &big(2));
+    assert_eq!(inverse.expose(), &big(8));
+    assert_eq!((r.expose() * inverse.expose()) % big(15), big(1));
+}
+
+#[test]
+fn private_operation_requests_one_modulus_width_blind() {
+    struct Blind;
+    impl Rng for Blind {
+        fn fill(&mut self, output: &mut [u8]) {
+            assert_eq!(
+                output.len(),
+                hex(N_HEX).len(),
+                "blinding draw has the wrong width"
+            );
+            output.fill(0);
+            *output.last_mut().unwrap() = 1;
+        }
+    }
+    let key = test_key();
+    let mut ciphertext = [0; 256];
+    ciphertext[255] = 42;
+    let mut output = [0xa5; MAX_RSA_BYTES];
+    assert_eq!(
+        key.private_op(&ciphertext, &mut Blind, &mut output),
+        Ok(256)
+    );
+    assert_eq!(&output[256..], &[0xa5; MAX_RSA_BYTES - 256]);
+    let recovered = BigUint::from_bytes_be(&output[..256])
+        .modpow(&e65537(), &BigUint::from_bytes_be(&hex(N_HEX)));
+    assert_eq!(recovered, big(42));
 }

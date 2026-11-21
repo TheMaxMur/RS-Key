@@ -69,7 +69,6 @@
 - [Host protocol](protocol.md)
 - [Testing](testing.md)
 - [Reproducing the evidence](reproducing.md)
-- [Interop matrix](interop.md)
 - [Versions](versioning.md)
 - [Motivation](motivation.md)
 - [Roadmap](roadmap.md)

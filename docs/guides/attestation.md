@@ -71,18 +71,29 @@ firmware:
 | Limit | Value |
 |---|---|
 | Curve | P-256 only |
-| Chain size | ≤ 2048 bytes total |
+| Chain size | ≤ 2132 bytes total |
 | Certs in chain | ≤ 4 |
 
+**Give each device its own key.** The key is sealed like the master seed, so an
+attack that reads a device's OTP ([threat model](../threat-model.md)) opens it,
+and a key the whole fleet shares would then attest any authenticator as one of
+yours. Issue every device its own leaf under your CA.
+
 `status` is ungated and prints whether a chain is installed plus the
-SHA-256 of the packed chain (so you can confirm a fleet is on the right CA
-without moving any secret):
+SHA-256 of the packed chain (so you can confirm a device carries the chain you
+issued it, without moving any secret):
 
 ```sh
 $ rsk fido attestation status
 org attestation : installed
 chain hash      : 9f2c…
 ```
+
+A chain the device cannot read back whole has no hash to show. `status` then
+says the chain is missing, unreadable or over the cap. Enterprise registrations
+fall back to the device certificate
+([below](#what-changes-once-a-chain-is-installed)), or fail while the chain
+cannot be read. Re-import the key and chain, or clear the key, to repair it.
 
 To roll back to the factory self-signed cert:
 
@@ -106,6 +117,24 @@ rsk fido attestation clear [--pin …]
   device's own certificate, no org chain. EA fires only when the platform sets
   the `enterpriseAttestation` request field *and* `enableEnterpriseAttestation`
   is on (below).
+
+The chain has to read back whole to be used for enterprise attestation. A build
+before 0.4.11 could store one past the cap above, and it now reads back cut. An
+EA request over such a chain gets the per-device basic attestation and no `ep`
+flag, since the org attestation is the one the device cannot give. Re-import the
+chain within the cap to restore it. Up to bcdDevice `0x0A69` that registration
+failed with `CTAP1_ERR_OTHER`.
+
+The org key itself is held to the same rule. One that is stored but will not open
+on this device (sealed on another) gives the same per-device attestation and no
+`ep`. A key the flash could not read fails the registration with
+`CTAP1_ERR_OTHER` for the host to retry, as an unreadable chain does. Up to
+bcdDevice `0x0A78` both got the per-device attestation *with* `ep`, as if no org
+key were installed. U2F registration holds its batch attestation to the same
+rule: an unreadable org key answers `6581` (`MEMORY_FAILURE`, what an unreadable
+signature counter answers there) for the host to retry, and one that will not
+open gives the device certificate. Up to bcdDevice `0x0A87` an unreadable key
+gave the device certificate too, a registration attested by the wrong key for good.
 
 ### Without an org chain (the default)
 
@@ -242,7 +271,7 @@ on explicit EA requests.
 
 - `attestation key must be P-256 (got …)`: the `--key` PEM is the wrong curve.
   RS-Key attests with ECDSA P-256 only. Re-issue the org key on secp256r1.
-- `chain too large (… B, max 2048)`: trim the bundle. You rarely need the root
+- `chain too large (… B, max 2132)`: trim the bundle. You rarely need the root
   CA in `x5c`; leaf + one intermediate is usually enough, and the leaf alone is
   all U2F can carry.
 - `device requires a PIN — pass --pin` (status `0x36`): import/clear are gated;

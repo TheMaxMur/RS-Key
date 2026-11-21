@@ -12,19 +12,29 @@
 //! credential, which `makeCredUvNotRqd` lets through on presence alone. Request
 //! extensions are sealed into the box and echoed in the authData extension
 //! output (ED flag); excludeList is credProtect-aware. Enterprise attestation
-//! (request field 0x0A): level 2 emits a full attestation signed by the device
-//! key with its x5c cert and the `ep` response flag; level 1 is accepted but
-//! stays self-attestation.
+//! (request field 0x0A: level 2, or level 1 for an RP on the stored list) signs
+//! with the org key and its chain and returns the `ep` flag; with no org key the
+//! device key attests, still with `ep`, and over an org chain that is not whole
+//! the device key attests without it.
+
+// Host bytes: a panic here is a board that answers nothing until unplugged.
+#![deny(
+    clippy::indexing_slicing,
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::cast_possible_truncation
+)]
 
 use minicbor::encode::Write;
 use minicbor::encode::write::Cursor;
 use minicbor::{Decoder, Encoder};
-use zeroize::Zeroize;
 
 use rsk_crypto::MLDSA87_PK_LEN;
 use rsk_crypto::pinproto::PinProto;
 use rsk_crypto::sha256;
 use rsk_fs::{Fs, Storage};
+use rsk_secret::Secret;
 
 use crate::cbordec::{cbor, def_arr, def_map, parse_credential_descriptors, skip_value};
 use crate::cert;
@@ -34,9 +44,9 @@ use crate::consts::{
     ALG_ESP384, ALG_ESP512, ALG_MLDSA44, ALG_MLDSA65, ALG_MLDSA87, ATT_FMT_NONE, ATT_FMT_PACKED,
     CRED_PROT_UV_OPTIONAL, CRED_PROT_UV_REQUIRED, CURVE_ED25519, CURVE_MLDSA44, CURVE_MLDSA65,
     CURVE_MLDSA87, CURVE_P256, CURVE_P256K1, CURVE_P384, CURVE_P521, EF_ATT_CHAIN, EF_EA_ENABLED,
-    EF_EA_RPIDS, EF_EE_DEV, EF_MINPINLEN, EF_PIN, FLAG_AT, FLAG_ED, FLAG_UP, FLAG_UV,
-    LARGE_BLOB_EXT, MAX_CREDBLOB_LENGTH, MAX_CREDENTIAL_COUNT_IN_LIST, MAX_EA_RPIDS,
-    MAX_MIN_PIN_RPIDS, MAX_RESIDENT_CREDENTIALS,
+    EF_EA_RPIDS, EF_EE_DEV, EF_MINPINLEN, EF_PIN, FLAG_AT, FLAG_ED, FLAG_UV, LARGE_BLOB_EXT,
+    MAX_CREDBLOB_LENGTH, MAX_CREDENTIAL_LIST_LEN, MAX_EA_RPIDS, MAX_MIN_PIN_RPIDS,
+    MAX_RESIDENT_CREDENTIALS,
 };
 use crate::credential::{
     CRED_BOX_MAX, CRED_PUBKEY_MAX, CRED_REC_MAX, CRED_RESIDENT_LEN, CredExt, CredInput, Credential,
@@ -50,17 +60,22 @@ use crate::hmacsecret::{self, HmacSecretReq, SALT_ENC_MAX};
 use crate::journal;
 use crate::keyderiv::fido_load_key;
 use crate::largeblobext::{self, McInput};
-use crate::seed::load_att_key;
+#[cfg(feature = "preview-sign")]
+use crate::previewsign;
+use crate::seed::{AttKey, read_att_key};
 use crate::state::PERM_MC;
 use crate::{Ctx, Rng};
 
-const MAX_EXCLUDE: usize = MAX_CREDENTIAL_COUNT_IN_LIST as usize;
+const MAX_EXCLUDE: usize = MAX_CREDENTIAL_LIST_LEN;
 
 /// authData fixed prefix: rpIdHash(32) ‖ flags(1) ‖ signCount(4) ‖ aaguid(16) ‖
 /// credIdLen(2).
 const AUTH_DATA_HEADER: usize = 32 + 1 + 4 + 16 + 2;
 /// Ceiling of `encode_mc_extensions`' output (its scratch buffer, below).
+#[cfg(not(feature = "preview-sign"))]
 const MC_EXT_MAX: usize = 192;
+#[cfg(feature = "preview-sign")]
+const MC_EXT_MAX: usize = 192 + previewsign::MC_EXT_MAX;
 /// Largest AKP COSE public key `cose_public` emits — the ML-DSA-87 case: a
 /// 3-entry map (1) with kty (1+1), alg −50 (1+2) and the 2592-byte pk wrapped as
 /// key −1 (1) + a >255-byte CBOR byte-string header (3) → 10 + pk = 2602.
@@ -117,7 +132,7 @@ fn alg_to_curve(alg: i64) -> Option<(i64, u8)> {
     }
 }
 
-struct Request<'a> {
+pub(crate) struct Request<'a> {
     client_data_hash: &'a [u8],
     rp_id: &'a str,
     /// Whether `rp.id` / `user.id` were sent AT ALL. The value alone cannot say:
@@ -130,8 +145,8 @@ struct Request<'a> {
     user_id_present: bool,
     user_name: &'a str,
     user_display_name: &'a str,
-    has_pubkey_param: bool,
-    /// First supported algorithm + its curve (`0` / unset = none supported).
+    /// First supported algorithm + its curve (`0` / unset = none supported, which is
+    /// also what an absent or empty `pubKeyCredParams` leaves).
     sel_alg: i64,
     sel_curve: i64,
     exclude: [&'a [u8]; MAX_EXCLUDE],
@@ -149,11 +164,16 @@ struct Request<'a> {
     ext_cred_protect: Option<u64>,
     ext_cred_blob: &'a [u8],
     ext_min_pin_length: bool,
+    ext_pin_complexity: bool,
+    ext_uvm: bool,
     ext_third_party_payment: bool,
     ext_hmac_secret: bool,
     ext_large_blob_key: Option<bool>,
     /// The CTAP 2.3 `largeBlob` extension input, on a `largeblob-ext` build.
     ext_large_blob: McInput,
+    /// The `previewSign` extension input, on a `preview-sign` build.
+    #[cfg(feature = "preview-sign")]
+    ext_preview_sign: previewsign::McInput<'a>,
     hmac_secret_mc: HmacSecretReq<'a>,
     /// enterpriseAttestation (request field 0x0A): 1 vendor-facilitated, 2
     /// platform-managed (full attestation by the device key). §6.1.2 step 9 keys
@@ -184,7 +204,6 @@ fn parse(data: &[u8]) -> Result<Request<'_>, CtapError> {
         user_id_present: false,
         user_name: "",
         user_display_name: "",
-        has_pubkey_param: false,
         sel_alg: 0,
         sel_curve: 0,
         exclude: [&[]; MAX_EXCLUDE],
@@ -197,10 +216,14 @@ fn parse(data: &[u8]) -> Result<Request<'_>, CtapError> {
         ext_cred_protect: None,
         ext_cred_blob: &[],
         ext_min_pin_length: false,
+        ext_pin_complexity: false,
+        ext_uvm: false,
         ext_third_party_payment: false,
         ext_hmac_secret: false,
         ext_large_blob_key: None,
         ext_large_blob: McInput::Absent,
+        #[cfg(feature = "preview-sign")]
+        ext_preview_sign: previewsign::McInput::default(),
         hmac_secret_mc: HmacSecretReq::default(),
         enterprise_attestation: None,
         att_fmt_pref: AttFmtPref::Packed,
@@ -210,8 +233,10 @@ fn parse(data: &[u8]) -> Result<Request<'_>, CtapError> {
     let mut expected = 1u64;
     for _ in 0..n {
         let key = cbor(d.u32())? as u64;
-        // Keys 1..=4 are mandatory and must appear first, in order.
-        if expected <= 4 && key != expected {
+        // Keys 1..=3 are mandatory and must appear first, in order. So is key 4, but a
+        // YubiKey 5.8.0 answers its absence as it answers an empty or unusable list, so
+        // `make_credential` does: UNSUPPORTED_ALGORITHM, after its rp and user checks.
+        if expected <= 3 && key != expected {
             return Err(CtapError::MissingParameter);
         }
         if key < expected {
@@ -234,11 +259,11 @@ fn parse(data: &[u8]) -> Result<Request<'_>, CtapError> {
         }
     }
     // The twin of `get_assertion`'s: the ordered check needs a LATER key to compare
-    // against, so `{}`, `{1}`, `{1,2}` and `{1,2,3}` all walked out unjudged and were
-    // answered downstream by the empty values they left. Those answers happened to
-    // read `MissingParameter` too, which is why nothing showed — until the guard
-    // below stopped saying it for every shape at once.
-    if expected <= 4 {
+    // against, so `{}`, `{1}` and `{1,2}` walked out unjudged and were answered
+    // downstream by the empty values they left. Those answers happened to read
+    // `MissingParameter` too, which is why nothing showed — until the guard below
+    // stopped saying it for every shape at once. `{1,2,3}` is key 4's absence (above).
+    if expected <= 3 {
         return Err(CtapError::MissingParameter);
     }
     Ok(req)
@@ -302,12 +327,11 @@ fn parse_user_entity<'a>(d: &mut Decoder<'a>, req: &mut Request<'a>) -> Result<(
 }
 
 /// Parse `pubKeyCredParams` (request key 4), selecting the first supported
-/// algorithm — §6.1.2 step 4: the platform's list order IS its preference order,
+/// algorithm — §6.1.2 step 3: the platform's list order IS its preference order,
 /// and every element is still validated after one is chosen.
 fn parse_pubkey_params(d: &mut Decoder<'_>, req: &mut Request<'_>) -> Result<(), CtapError> {
     let a = def_arr(d)?;
     for _ in 0..a {
-        req.has_pubkey_param = true;
         let m = def_map(d)?;
         let (mut ty, mut alg, mut ty_present, mut alg_present) = ("", 0i64, false, false);
         for _ in 0..m {
@@ -347,6 +371,8 @@ fn parse_extensions<'a>(d: &mut Decoder<'a>, req: &mut Request<'a>) -> Result<()
             "credProtect" => req.ext_cred_protect = Some(cbor(d.u32())? as u64),
             "credBlob" => req.ext_cred_blob = cbor(d.bytes())?,
             "minPinLength" => req.ext_min_pin_length = cbor(d.bool())?,
+            "pinComplexityPolicy" => req.ext_pin_complexity = cbor(d.bool())?,
+            "uvm" => req.ext_uvm = cbor(d.bool())?,
             "thirdPartyPayment" => req.ext_third_party_payment = cbor(d.bool())?,
             "hmac-secret" => req.ext_hmac_secret = cbor(d.bool())?,
             "hmac-secret-mc" => req.hmac_secret_mc = hmacsecret::parse(d)?,
@@ -355,6 +381,8 @@ fn parse_extensions<'a>(d: &mut Decoder<'a>, req: &mut Request<'a>) -> Result<()
             // any unknown one, so its downstream checks stay inert.
             "largeBlobKey" if !LARGE_BLOB_EXT => req.ext_large_blob_key = Some(cbor(d.bool())?),
             "largeBlob" if LARGE_BLOB_EXT => req.ext_large_blob = largeblobext::parse_mc(d)?,
+            #[cfg(feature = "preview-sign")]
+            previewsign::NAME => req.ext_preview_sign = previewsign::parse_mc(d)?,
             _ => skip_value(d)?,
         }
     }
@@ -444,7 +472,7 @@ pub fn make_credential<S: Storage, R: Rng>(
     if req.up == Some(false) {
         return Err(CtapError::InvalidOption);
     }
-    if req.uv && !builtin_uv_enabled(ctx) {
+    if req.uv && !builtin_uv_enabled(ctx.fs, ctx.presence) {
         return Err(CtapError::InvalidOption);
     }
     // §6.1.2 step 2 ahead of every check below — where the oracle puts it: a
@@ -452,9 +480,9 @@ pub fn make_credential<S: Storage, R: Rng>(
     // `pubKeyCredParams`, the remaining options and the selection gesture. An
     // absent one is `enforce_pin`'s business.
     let proto = crate::clientpin::checked_proto(req.pin_uv_auth_protocol)?;
-    if !req.has_pubkey_param {
-        return Err(CtapError::MissingParameter);
-    }
+    // §6.1.2 step 3 chose nothing: no algorithm this build supports was offered, or
+    // `pubKeyCredParams` is absent or empty. A YubiKey 5.8.0 (measured 2026-09-30)
+    // answers all three UNSUPPORTED_ALGORITHM, after the rp and user checks above.
     if req.sel_alg == 0 {
         return Err(CtapError::UnsupportedAlgorithm);
     }
@@ -482,6 +510,10 @@ pub fn make_credential<S: Storage, R: Rng>(
     {
         return Err(CtapError::InvalidParameter);
     }
+    // previewSign is judged with the other extensions: ahead of the PIN/UV gate and
+    // the touch, which is where a YubiKey 5.8.0 refuses it.
+    #[cfg(feature = "preview-sign")]
+    let preview = previewsign::negotiate(&req.ext_preview_sign, req.sel_curve)?;
     // Enterprise attestation (§6.1.2 step 9) keys on the field being PRESENT: with
     // EA disabled every present value is INVALID_PARAMETER — `0` included, measured
     // — and with it enabled only 1/2 pass. Whether attestation is actually performed
@@ -500,8 +532,17 @@ pub fn make_credential<S: Storage, R: Rng>(
     let verified = enforce_pin(ctx, &req, &rp_id_hash, proto)?;
 
     let mut seed = ctx.load_keydev().ok_or(CtapError::Other)?;
-    let result = make_credential_inner(ctx, &req, &rp_id_hash, &seed, verified, out);
-    seed.zeroize();
+    let result = make_credential_inner(
+        ctx,
+        &req,
+        &rp_id_hash,
+        seed.expose(),
+        verified,
+        #[cfg(feature = "preview-sign")]
+        preview,
+        out,
+    );
+    seed.wipe();
     result
 }
 
@@ -521,8 +562,13 @@ fn rp_eligible_for_vendor_ea<S: Storage>(fs: &mut Fs<S>, rp_id_hash: &[u8; 32]) 
     // `Fs::read` answers the record's FULL length; a list written under a wider
     // `MAX_EA_RPIDS` reads back longer than this buffer. Clamped rather than
     // refused, because a shorter allowlist only ever DECLINES type-1 EA.
-    let n = fs.read(EF_EA_RPIDS, &mut buf).unwrap_or(0).min(buf.len());
-    buf[..n].chunks_exact(32).any(|h| h == rp_id_hash)
+    let n = fs.read(EF_EA_RPIDS, &mut buf).unwrap_or(0);
+    buf.get(..n)
+        .unwrap_or(&buf)
+        .as_chunks::<32>()
+        .0
+        .iter()
+        .any(|h| h == rp_id_hash)
 }
 
 /// The FIDO Conformance Tool's fixed Enterprise-Attestation RPID.
@@ -539,7 +585,7 @@ fn enforce_pin<S: Storage, R: Rng>(
 ) -> Result<UvOutcome, CtapError> {
     // A probe the flash could not serve must not read as "no PIN configured": that
     // is the arm that makes a discoverable credential on user presence alone.
-    let pin_set = ctx.fs.try_has_data(EF_PIN).map_err(|_| CtapError::Other)?;
+    let pin_set = ctx.fs.try_exists(EF_PIN).map_err(|_| CtapError::Other)?;
     match req.pin_uv_auth_param {
         // Zero-length probe: a selection gesture — wait for a touch, then report
         // the PIN state. With no button configured this confirms instantly. CTAP 2.1
@@ -568,14 +614,14 @@ fn enforce_pin<S: Storage, R: Rng>(
                 ctx.state.paut.rp_id_hash = *rp_id_hash;
                 ctx.state.paut.has_rp_id = true;
             }
-            Ok(UvOutcome::TOKEN)
+            Ok(UvOutcome::token(ctx.state.paut.uv_method))
         }
         None => {
             let always_uv = crate::config::always_uv_enabled(ctx.fs);
             // §6.1.2 step 6.3: with alwaysUv on and a configured pad, a token-less
             // request is UPGRADED to built-in UV rather than refused. Step 11.2 then
             // runs the ceremony for either route.
-            if req.uv || (always_uv && builtin_uv_enabled(ctx)) {
+            if req.uv || (always_uv && builtin_uv_enabled(ctx.fs, ctx.presence)) {
                 return builtin_uv_step(ctx);
             }
             // alwaysUv without a way to verify (§6.1.2 steps 6.2/6.4): clientPin is
@@ -600,27 +646,36 @@ fn make_credential_inner<S: Storage, R: Rng>(
     rp_id_hash: &[u8; 32],
     seed: &[u8; 32],
     verified: UvOutcome,
+    #[cfg(feature = "preview-sign")] preview: Option<previewsign::KeyRequest>,
     out: &mut [u8],
 ) -> CtapResult {
     let uv = verified.uv;
+    // A count past the array is the parser's own refusal of a list that long.
+    let exclude = req
+        .exclude
+        .get(..req.exclude_len)
+        .ok_or(CtapError::LimitExceeded)?;
     // excludeList: refuse if any listed credential is already ours and visible
     // (a UV-required credProtect credential is invisible without UV — §12.1).
-    for &id in &req.exclude[..req.exclude_len] {
-        if exclude_hit(ctx.fs, seed, rp_id_hash, id, uv) {
-            // §6.1.2 step 12 requires a user-presence gesture BEFORE disclosing the
-            // match, so the device isn't a silent credential-existence oracle
-            // (matches the getAssertion no-match poll and a real YubiKey) — unless
-            // built-in UV already provided it, and step 12 then terminates without
-            // waiting. No `needs_confirm` here: this card is title-only, so unlike
-            // the registration card below it names nothing a display would owe the
-            // user. `up` is implicit; spend the token on that touch too, so acfg
-            // can't ride it (GHSA-wqjm class).
-            if !verified.up_collected {
-                ctx.require_presence(crate::Confirm::titled("Use this key?"))?;
-            }
-            ctx.state.consume_after_user_presence();
-            return Err(CtapError::CredentialExcluded);
-        }
+    for &id in exclude {
+        let refusal = match exclude_hit(ctx.fs, seed, rp_id_hash, id, uv) {
+            Ok(false) => continue,
+            Ok(true) => CtapError::CredentialExcluded,
+            // A record the flash would not serve may be the match: answered after the
+            // same touch, or the fault would sort stored ids from others without one.
+            Err(e) => e,
+        };
+        // §6.1.2 step 12 requires a user-presence gesture BEFORE disclosing the
+        // match, so the device isn't a silent credential-existence oracle
+        // (matches the getAssertion no-match poll and a real YubiKey) — unless
+        // built-in UV already provided it, and step 12 then terminates without
+        // waiting. No `needs_confirm` here: this card is title-only, so unlike
+        // the registration card below it names nothing a display would owe the
+        // user. `up` is implicit, so the test spends the token here too and acfg
+        // can't ride it (GHSA-wqjm class).
+        let ask = (!verified.up_collected).then(|| crate::Confirm::titled("Use this key?"));
+        let _up = ctx.user_presence_test(req, ask)?;
+        return Err(refusal);
     }
 
     // Seal the credential.
@@ -647,6 +702,7 @@ fn make_credential_inner<S: Storage, R: Rng>(
     let mut cred_box = [0u8; CRED_BOX_MAX];
     let box_len = credential_create(seed, &ctx.dev, &input, rp_id_hash, &iv, &mut cred_box)
         .map_err(|_| CtapError::Other)?;
+    let cred_box = cred_box.get(..box_len).ok_or(CtapError::Other)?;
 
     // Compute the resident id up front (resident keys only): the signing key,
     // hmac-secret and largeBlobKey all derive from `key_input` — the STABLE
@@ -654,21 +710,29 @@ fn make_credential_inner<S: Storage, R: Rng>(
     // they survive an updateUserInformation reseal (see `resident_key_input`). It
     // must be the same input the assertion / enumeration paths use, and the same
     // id echoed into authData below.
-    let resident = req
-        .rk
-        .then(|| derive_resident(&cred_box[..box_len], &ctx.dev));
-    let key_input = resident_key_input(&cred_box[..box_len], resident.as_ref().map(|r| &r[..]));
+    let resident = req.rk.then(|| derive_resident(cred_box, &ctx.dev));
+    let key_input = resident_key_input(cred_box, resident.as_ref().map(|r| &r[..]));
 
     // Derive the credential keypair for the selected curve.
     let mut raw = fido_load_key(seed, key_input).ok_or(CtapError::Other)?;
-    let key = CredKey::from_raw(req.sel_curve, &raw).ok_or(CtapError::Other)?;
-    raw.zeroize();
+    let key = CredKey::from_raw(req.sel_curve, raw.expose()).ok_or(CtapError::Other)?;
+    raw.wipe();
 
     // Cache the public point in the resident record so enumeration emits it
     // instead of recomputing d·G per call. `key` already holds it (it is the
     // point encoded into authData below); empty for an uncacheable curve.
     let mut cached_pubkey = [0u8; CRED_PUBKEY_MAX];
     let cached_pubkey_len = key.public_point(&mut cached_pubkey).unwrap_or(0);
+
+    // previewSign's signing key keys off `key_input` like every per-credential key,
+    // so a resident credential's survives an updateUserInformation reseal.
+    #[cfg(feature = "preview-sign")]
+    let preview_key = match preview {
+        Some(request) => Some(previewsign::generate(
+            seed, key_input, rp_id_hash, request, ctx.rng,
+        )?),
+        None => None,
+    };
 
     // hmac-secret-mc output (an hmac-secret evaluation at registration time).
     let mut hs = [0u8; SALT_ENC_MAX];
@@ -687,11 +751,6 @@ fn make_credential_inner<S: Storage, R: Rng>(
         0
     };
 
-    // authData extension output (credBlob / credProtect / hmac-secret / minPinLength / hmac-secret-mc).
-    let mut ext = [0u8; MC_EXT_MAX];
-    let ext_len = encode_mc_extensions(ctx.fs, req, rp_id_hash, &hs[..hs_len], &mut ext)?;
-    let ed = if ext_len > 0 { FLAG_ED } else { 0 };
-
     // §6.1.2 user presence: makeCredential's `up` is implicitly true and cannot
     // be disabled, so a configured button is ALWAYS polled before creating the
     // credential — matching getAssertion — even on the no-PIN path (e.g. an SSH
@@ -703,18 +762,28 @@ fn make_credential_inner<S: Storage, R: Rng>(
     // the `Register` kind picks the "Save new passkey?" layout. §6.1.2 step 13: a
     // built-in UV ceremony IS the evidence of user interaction, so it sets `up`
     // without asking a second time — except where that card is the only screen
-    // naming the rp being registered ([`needs_confirm`]).
-    if verified.needs_confirm(ctx.presence.shows_confirm()) {
-        ctx.require_presence(crate::Confirm::register(
-            req.rp_id.as_bytes(),
-            req.user_name.as_bytes(),
-        ))?;
-    }
+    // naming the rp being registered ([`needs_confirm`]). The test spends the
+    // pinUvAuthToken ([`crate::up`]); on the no-PIN path none is in use.
+    let ask = verified
+        .needs_confirm(ctx.presence.shows_confirm())
+        .then(|| crate::Confirm::register(req.rp_id.as_bytes(), req.user_name.as_bytes()));
+    let up = ctx.user_presence_test(req, ask)?;
 
-    // Spend the pinUvAuthToken now the presence test passed (CTAP 2.1 §6.5.5.7
-    // triad; GHSA-wqjm-653g-hgw3). makeCredential's `up` is implicitly true; on the
-    // no-PIN path no token is in use so this is a no-op.
-    ctx.state.consume_after_user_presence();
+    // authData extension output (credBlob / credProtect / hmac-secret / minPinLength / hmac-secret-mc).
+    let mut ext = [0u8; MC_EXT_MAX];
+    let hmac_mc = hs.get(..hs_len).ok_or(CtapError::Other)?;
+    let ext_len = encode_mc_extensions(
+        ctx.fs,
+        req,
+        rp_id_hash,
+        hmac_mc,
+        verified.method,
+        up.bits() != 0,
+        #[cfg(feature = "preview-sign")]
+        preview_key.as_ref(),
+        &mut ext,
+    )?;
+    let ed = if ext_len > 0 { FLAG_ED } else { 0 };
 
     // authData = rpIdHash | flags | counter | aaguid | credIdLen | credId | COSEpubkey | ext.
     // Worst case (ML-DSA-65): AUTH_DATA_HEADER(55) + CRED_BOX_MAX(748) +
@@ -727,45 +796,48 @@ fn make_credential_inner<S: Storage, R: Rng>(
     let ctr = 0u32;
     let mut ad = [0u8; AD_BUF];
     let mut p = 0;
-    ad[p..p + 32].copy_from_slice(rp_id_hash);
-    p += 32;
-    ad[p] = FLAG_AT | FLAG_UP | ed | if uv { FLAG_UV } else { 0 };
-    p += 1;
-    ad[p..p + 4].copy_from_slice(&ctr.to_be_bytes());
-    p += 4;
-    ad[p..p + 16].copy_from_slice(&AAGUID);
-    p += 16;
+    let flags = FLAG_AT | up.bits() | ed | if uv { FLAG_UV } else { 0 };
+    copy_at(&mut ad, &mut p, rp_id_hash)?;
+    copy_at(&mut ad, &mut p, &[flags])?;
+    copy_at(&mut ad, &mut p, &ctr.to_be_bytes())?;
+    copy_at(&mut ad, &mut p, &AAGUID)?;
     if let Some(rid) = &resident {
-        ad[p..p + 2].copy_from_slice(&(rid.len() as u16).to_be_bytes());
-        p += 2;
-        ad[p..p + rid.len()].copy_from_slice(rid);
-        p += rid.len();
+        let id_len = u16::try_from(rid.len()).map_err(|_| CtapError::Other)?;
+        copy_at(&mut ad, &mut p, &id_len.to_be_bytes())?;
+        copy_at(&mut ad, &mut p, rid)?;
     } else {
-        ad[p..p + 2].copy_from_slice(&(box_len as u16).to_be_bytes());
-        p += 2;
-        ad[p..p + box_len].copy_from_slice(&cred_box[..box_len]);
-        p += box_len;
+        let id_len = u16::try_from(box_len).map_err(|_| CtapError::Other)?;
+        copy_at(&mut ad, &mut p, &id_len.to_be_bytes())?;
+        copy_at(&mut ad, &mut p, cred_box)?;
     }
     let cose_len = {
-        let mut enc = Encoder::new(Cursor::new(&mut ad[p..]));
+        let mut enc = Encoder::new(Cursor::new(ad.get_mut(p..).ok_or(CtapError::Other)?));
         key.cose_public(req.sel_alg, &mut enc)
             .map_err(|_| CtapError::Other)?;
         enc.writer().position()
     };
     p += cose_len;
-    ad[p..p + ext_len].copy_from_slice(&ext[..ext_len]);
-    p += ext_len;
+    copy_at(&mut ad, &mut p, ext.get(..ext_len).ok_or(CtapError::Other)?)?;
     let ad_len = p;
 
     // Attestation over authData ‖ clientDataHash.
-    ad[ad_len..ad_len + 32].copy_from_slice(req.client_data_hash);
-    // `ea_performed` — platform-managed (type 2), or vendor-facilitated (type 1)
-    // for an RP on the stored enterprise list (`EF_EA_RPIDS`, empty until written) —
-    // presents the org/EP cert and sets the `ep` flag. A type-1 request for a
-    // non-listed RP is NOT enterprise: full attestation with the device's own
-    // cert and no `ep` (CTAP2.1 §6.1.3, conformance Enterprise-Attestation F-6).
-    let ea_performed = req.enterprise_attestation == Some(2)
+    ad.get_mut(ad_len..ad_len + 32)
+        .ok_or(CtapError::Other)?
+        .copy_from_slice(req.client_data_hash);
+    // Platform-managed (type 2), or vendor-facilitated (type 1) for an RP on the
+    // stored list (`EF_EA_RPIDS`); type 1 for any other RP is not enterprise (CTAP2.1
+    // §6.1.3, conformance Enterprise-Attestation F-6).
+    let ea_requested = req.enterprise_attestation == Some(2)
         || (req.enterprise_attestation == Some(1) && rp_eligible_for_vendor_ea(ctx.fs, rp_id_hash));
+    let mut att = AttBufs::new();
+    let mut org = if ea_requested {
+        org_attestation(ctx, &mut att)?
+    } else {
+        OrgAtt::None
+    };
+    // An org key whose chain does not read back whole cannot give the enterprise
+    // attestation it was installed for: the device's own stands in, with no `ep`.
+    let ea_performed = ea_requested && !matches!(org, OrgAtt::Cut);
     // Every credential ships packed **basic** attestation: the device key signs and
     // the x5c leaf is its cert. Both alternatives break clients — an empty
     // `fmt:"none"` statement is rejected by OpenSSH < 10.0, which verifies any
@@ -778,12 +850,33 @@ fn make_credential_inner<S: Storage, R: Rng>(
     // wins when it was actually performed: it is explicitly configured and strictly
     // stronger, and answering it with an empty statement would discard it.
     let omit_att = req.att_fmt_pref == AttFmtPref::NoneOnly && !ea_performed;
-    let mut att = AttBufs::new();
     let (sig_len, chain_len, certs) = if omit_att {
         (0, 0, 0)
     } else {
-        make_attestation(ctx, seed, &ad[..ad_len + 32], ea_performed, &mut att)?
+        let signed = ad.get(..ad_len + 32).ok_or(CtapError::Other)?;
+        make_attestation(ctx, seed, signed, &org, &mut att)?
     };
+    // The signing key's attestation object is `none`, as a YubiKey 5.8.0 answers it,
+    // unless enterprise attestation was performed: then the credential's signer and chain.
+    #[cfg(feature = "preview-sign")]
+    let preview_att = match &preview_key {
+        Some(key) => {
+            let signer = if ea_performed {
+                Some(attestation_key(seed, &org)?)
+            } else {
+                None
+            };
+            Some(previewsign::attest(
+                key,
+                rp_id_hash,
+                flags,
+                req.client_data_hash,
+                signer.as_ref(),
+            )?)
+        }
+        None => None,
+    };
+    org.wipe();
 
     // largeBlobKey response field (0x05) — resident credentials only.
     let large_blob_key = if req.ext_large_blob_key == Some(true) && req.rk {
@@ -807,7 +900,7 @@ fn make_credential_inner<S: Storage, R: Rng>(
 
     let resp_len = encode_mc_response(
         out,
-        &ad[..ad_len],
+        ad.get(..ad_len).ok_or(CtapError::Other)?,
         &att,
         AttShape {
             sig_len,
@@ -818,6 +911,8 @@ fn make_credential_inner<S: Storage, R: Rng>(
         },
         large_blob_key,
         large_blob_supported,
+        #[cfg(feature = "preview-sign")]
+        preview_att.as_ref(),
     )?;
 
     if req.rk
@@ -825,11 +920,14 @@ fn make_credential_inner<S: Storage, R: Rng>(
             seed,
             &ctx.dev,
             ctx.fs,
-            &cred_box[..box_len],
+            ctx.rng,
+            cred_box,
             rp_id_hash,
             req.rp_id,
             req.user_id,
-            &cached_pubkey[..cached_pubkey_len],
+            cached_pubkey
+                .get(..cached_pubkey_len)
+                .ok_or(CtapError::Other)?,
         )
     {
         // A full store and a medium that would not answer are different answers to
@@ -842,6 +940,17 @@ fn make_credential_inner<S: Storage, R: Rng>(
     }
     journal::append(ctx, journal::EV_MAKE_CRED, 0, &rp_id_hash[..8]);
     Ok(resp_len)
+}
+
+/// Copy `bytes` into `buf` at `*p` and advance `p` past them: the authData writer.
+/// No room is `Other`, as it is for the COSE key encoded into the same buffer.
+fn copy_at(buf: &mut [u8], p: &mut usize, bytes: &[u8]) -> Result<(), CtapError> {
+    let end = *p + bytes.len();
+    buf.get_mut(*p..end)
+        .ok_or(CtapError::Other)?
+        .copy_from_slice(bytes);
+    *p = end;
+    Ok(())
 }
 
 /// What shape the attestation statement takes, so the response encoder does not
@@ -867,7 +976,8 @@ struct AttShape {
 /// an incomplete attestation object rather than a none-format one. The three keys
 /// are already in CTAP2 canonical order. `ep` appears only when EA was actually
 /// performed. Fields 5 and 6 are the two mutually exclusive large-blob
-/// designs, so at most one of them is ever present.
+/// designs, so at most one of them is ever present — except that a
+/// `preview-sign` build also carries previewSign's attestation in field 6.
 fn encode_mc_response(
     out: &mut [u8],
     ad: &[u8],
@@ -875,12 +985,17 @@ fn encode_mc_response(
     shape: AttShape,
     large_blob_key: Option<[u8; 32]>,
     large_blob_supported: bool,
+    #[cfg(feature = "preview-sign")] preview: Option<&previewsign::Attested<'_>>,
 ) -> CtapResult {
+    #[cfg(feature = "preview-sign")]
+    let unsigned_outputs = large_blob_supported || preview.is_some();
+    #[cfg(not(feature = "preview-sign"))]
+    let unsigned_outputs = large_blob_supported;
     let mut enc = Encoder::new(Cursor::new(out));
     enc.map(
         3 + u64::from(shape.ea_performed)
             + u64::from(large_blob_key.is_some())
-            + u64::from(large_blob_supported),
+            + u64::from(unsigned_outputs),
     )
     .and_then(|e| {
         e.u8(1)?.str(if shape.omitted {
@@ -895,11 +1010,13 @@ fn encode_mc_response(
     if shape.omitted {
         enc.map(0).map_err(|_| CtapError::Other)?;
     } else {
+        let sig = att.sig.get(..shape.sig_len).ok_or(CtapError::Other)?;
         enc.map(3)
             .and_then(|e| e.str("alg")?.i64(ALG_ES256))
-            .and_then(|e| e.str("sig")?.bytes(&att.sig[..shape.sig_len]))
+            .and_then(|e| e.str("sig")?.bytes(sig))
             .map_err(|_| CtapError::Other)?;
-        encode_x5c(&mut enc, &att.chain[..shape.chain_len], shape.certs)?;
+        let chain = att.chain.get(..shape.chain_len).ok_or(CtapError::Other)?;
+        encode_x5c(&mut enc, chain, shape.certs)?;
     }
     if shape.ea_performed {
         enc.u8(4)
@@ -911,12 +1028,111 @@ fn encode_mc_response(
             .and_then(|e| e.bytes(&lbk))
             .map_err(|_| CtapError::Other)?;
     }
+    #[cfg(not(feature = "preview-sign"))]
     if large_blob_supported {
         enc.u8(6).map_err(|_| CtapError::Other)?;
         largeblobext::write_mc_output(&mut enc).map_err(|_| CtapError::Other)?;
     }
+    #[cfg(feature = "preview-sign")]
+    if unsigned_outputs {
+        encode_unsigned_outputs(&mut enc, large_blob_supported, preview, att, &shape)?;
+    }
     Ok(enc.writer().position())
 }
+
+/// Field 6, `unsignedExtensionOutputs`, on a `preview-sign` build: largeBlob's
+/// entry, then previewSign's — canonical, the shorter key first.
+#[cfg(feature = "preview-sign")]
+fn encode_unsigned_outputs<W: Write>(
+    enc: &mut Encoder<W>,
+    large_blob_supported: bool,
+    preview: Option<&previewsign::Attested<'_>>,
+    att: &AttBufs,
+    shape: &AttShape,
+) -> Result<(), CtapError> {
+    let entries = u64::from(large_blob_supported) + u64::from(preview.is_some());
+    enc.u8(6)
+        .and_then(|e| e.map(entries))
+        .map_err(|_| CtapError::Other)?;
+    if large_blob_supported {
+        largeblobext::write_mc_entry(enc).map_err(|_| CtapError::Other)?;
+    }
+    if let Some(preview) = preview {
+        let chain = att.chain.get(..shape.chain_len).ok_or(CtapError::Other)?;
+        let len =
+            previewsign::encoded_len(|e| encode_preview_att_obj(e, preview, chain, shape.certs))?;
+        previewsign::write_unsigned_head(enc, len)?;
+        encode_preview_att_obj(enc, preview, chain, shape.certs)?;
+    }
+    Ok(())
+}
+
+/// The signing key's attestation object as previewSign carries it: `{1: fmt, 2:
+/// authData, 3: attStmt}` with integer keys (v4 CDDL), `packed` with the same
+/// ES256 statement and chain as the credential's, or `none` and an empty one.
+#[cfg(feature = "preview-sign")]
+fn encode_preview_att_obj<W: Write>(
+    enc: &mut Encoder<W>,
+    preview: &previewsign::Attested<'_>,
+    chain: &[u8],
+    certs: u8,
+) -> Result<(), CtapError> {
+    let sig = previewsign::attestation_sig(preview)?;
+    let fmt = if sig.is_some() {
+        ATT_FMT_PACKED
+    } else {
+        ATT_FMT_NONE
+    };
+    enc.map(3)
+        .and_then(|e| e.u8(1)?.str(fmt)?.u8(2))
+        .map_err(|_| CtapError::Other)?;
+    previewsign::write_attested_auth_data(enc, preview)?;
+    enc.u8(3).map_err(|_| CtapError::Other)?;
+    match sig {
+        None => {
+            enc.map(0).map_err(|_| CtapError::Other)?;
+        }
+        Some(sig) => {
+            enc.map(3)
+                .and_then(|e| e.str("alg")?.i64(ALG_ES256))
+                .and_then(|e| e.str("sig")?.bytes(sig))
+                .map_err(|_| CtapError::Other)?;
+            encode_x5c(enc, chain, certs)?;
+        }
+    }
+    Ok(())
+}
+
+/// The key [`make_attestation`] signs with, off the same [`OrgAtt`]: the org key
+/// when its chain was read whole, else the device key.
+#[cfg(feature = "preview-sign")]
+fn attestation_key(seed: &[u8; 32], org: &OrgAtt) -> Result<P256Key, CtapError> {
+    let key = match org {
+        OrgAtt::Chain { key, .. } => P256Key::from_scalar(key.expose()),
+        OrgAtt::None | OrgAtt::Cut => P256Key::from_scalar(seed),
+    };
+    key.ok_or(CtapError::Other)
+}
+
+/// The fields that can ride beside the attestation: `ep` (4), largeBlobKey (5), and
+/// largeBlob's `{"supported": true}` entry in field 6.
+#[cfg(feature = "preview-sign")]
+const MC_OPTIONAL_FIELDS_MAX: usize = (1 + 1) + (1 + 2 + 32) + (10 + 1 + 10 + 1);
+
+/// With previewSign, the response carries a second attestation object on the
+/// same chain — room only a classic credential leaves, which is why an ML-DSA
+/// one refuses the extension (`previewsign::negotiate`).
+#[cfg(feature = "preview-sign")]
+const _: () = assert!(
+    (MC_RESPONSE_SANS_CHAIN - COSE_AKP_MLDSA87_MAX
+        + previewsign::COSE_EC2_MAX
+        + cert::ATT_CHAIN_MAX
+        + MC_OPTIONAL_FIELDS_MAX
+        + previewsign::UNSIGNED_SANS_CHAIN_MAX
+        + cert::ATT_CHAIN_MAX) as u64
+        <= crate::consts::MAX_MSG_SIZE,
+    "a classic credential with previewSign no longer fits the CTAPHID message ceiling",
+);
 
 /// The `x5c` array of the packed attestation statement, sliced out of the stored
 /// chain record one DER cert at a time.
@@ -947,41 +1163,61 @@ impl AttBufs {
     }
 }
 
-/// Sign `signed` (authData ‖ clientDataHash) into `att` and shape the attestation
-/// statement — always basic or enterprise, so always ES256 with an x5c chain. When
-/// enterprise attestation was performed and an org key is installed it signs with
-/// that key + the EF_ATT_CHAIN chain; otherwise with the device key (the seed
-/// scalar) + its self-signed EF_EE_DEV cert (the pair U2F register uses). Returns
-/// `(sig_len, chain_len, cert_count)`.
+/// What an enterprise request is attested with: the installed org key, its chain
+/// already read into the [`AttBufs`]; no org key; or one that will not open or whose
+/// chain is missing or not whole, which the device's own attestation stands in for.
+enum OrgAtt {
+    None,
+    Chain { key: Secret<[u8; 32]>, len: usize },
+    Cut,
+}
+
+impl OrgAtt {
+    fn wipe(&mut self) {
+        match self {
+            OrgAtt::Chain { key, len: _ } => key.wipe(),
+            OrgAtt::None | OrgAtt::Cut => {}
+        }
+    }
+}
+
+/// Read the org key and its chain into `att` for an enterprise request. Whole, not
+/// merely present: a chain an older build stored over this build's cap does not fit
+/// the buffer. A key or chain read the flash failed stays an error the host can retry.
+fn org_attestation<S: Storage, R: Rng>(
+    ctx: &mut Ctx<S, R>,
+    att: &mut AttBufs,
+) -> Result<OrgAtt, CtapError> {
+    let key = match read_att_key(&ctx.dev, ctx.fs).map_err(|_| CtapError::Other)? {
+        AttKey::Loaded(key) => key,
+        AttKey::Absent => return Ok(OrgAtt::None),
+        // Installed and not openable here: nothing to attest with, so no `ep` either.
+        AttKey::Unopenable => return Ok(OrgAtt::Cut),
+    };
+    let read = ctx.fs.try_read(EF_ATT_CHAIN, &mut att.chain[..]);
+    Ok(match read.map_err(|_| CtapError::Other)? {
+        Some(len) if att.chain.get(..len).is_some_and(cert::att_chain_intact) => {
+            OrgAtt::Chain { key, len }
+        }
+        _ => OrgAtt::Cut,
+    })
+}
+
+/// Sign `signed` (authData ‖ clientDataHash) into `att`: the org key and its chain
+/// for [`OrgAtt::Chain`], else the device key and its self-signed EF_EE_DEV cert
+/// (the pair U2F register uses). Returns `(sig_len, chain_len, cert_count)`.
 fn make_attestation<S: Storage, R: Rng>(
     ctx: &mut Ctx<S, R>,
     seed: &[u8; 32],
     signed: &[u8],
-    ea_performed: bool,
+    org: &OrgAtt,
     att: &mut AttBufs,
 ) -> Result<(usize, usize, u8), CtapError> {
-    let org_key = if ea_performed {
-        load_att_key(&ctx.dev, ctx.fs)
-    } else {
-        None
-    };
-    if let Some(mut scalar) = org_key {
-        let k = P256Key::from_scalar(&scalar);
-        scalar.zeroize();
-        let k = k.ok_or(CtapError::Other)?;
+    if let OrgAtt::Chain { key, len } = org {
+        let k = P256Key::from_scalar(key.expose()).ok_or(CtapError::Other)?;
         let sl = k.sign_der(signed, &mut att.sig);
-        let cl = ctx
-            .fs
-            .read(EF_ATT_CHAIN, &mut att.chain[..])
-            .map(|n| n.min(att.chain.len()))
-            // Intact, not merely non-empty: a chain stored under an older, larger
-            // cap reads back truncated with its count intact, and emitting it would
-            // fail the whole registration. Falling through here attests with the
-            // device key instead, so an upgraded device still registers.
-            .filter(|&n| cert::att_chain_intact(&att.chain[..n]))
-            .ok_or(CtapError::Other)?;
-        let count = cert::att_chain_count(&att.chain[..cl]);
-        Ok((sl, cl, count))
+        let count = cert::att_chain_count(att.chain.get(..*len).ok_or(CtapError::Other)?);
+        Ok((sl, *len, count))
     } else {
         let device_key = P256Key::from_scalar(seed).ok_or(CtapError::Other)?;
         let sl = device_key.sign_der(signed, &mut att.sig);
@@ -996,21 +1232,23 @@ fn make_attestation<S: Storage, R: Rng>(
         // Wrap the single self-signed cert in the packed-chain layout so the
         // x5c encode has one shape.
         att.chain[0] = 1;
-        att.chain[1..3].copy_from_slice(&(cl as u16).to_le_bytes());
+        let len = u16::try_from(cl).map_err(|_| CtapError::Other)?;
+        att.chain[1..3].copy_from_slice(&len.to_le_bytes());
         Ok((sl, 3 + cl, 1))
     }
 }
 
 /// Is `id` an existing credential for this rp that is *visible* now? A
 /// UV-required credProtect credential is hidden without UV, so it does not
-/// count as an excludeList hit (§12.1).
+/// count as an excludeList hit (§12.1). `Err` when a record the flash would not
+/// serve could be it: a miss would let a resident request replace that passkey.
 fn exclude_hit<S: Storage>(
     fs: &mut Fs<S>,
     seed: &[u8; 32],
     rp_id_hash: &[u8; 32],
     id: &[u8],
     uv: bool,
-) -> bool {
+) -> Result<bool, CtapError> {
     let visible = |c: &Credential| c.ext.cred_protect != CRED_PROT_UV_REQUIRED || uv;
     let mut scratch = [0u8; CRED_REC_MAX];
     // A resident id is exactly 42 bytes, matched against the stored records; fall
@@ -1018,54 +1256,103 @@ fn exclude_hit<S: Storage>(
     // not stored as a resident — so no cleartext marker is needed.
     if id.len() == CRED_RESIDENT_LEN {
         let mut rec = [0u8; CRED_REC_MAX];
+        let mut unread = false;
+        let mut same_rp = 0usize;
         let mut occupied = [false; MAX_RESIDENT_CREDENTIALS as usize];
         slot_map(fs, crate::consts::EF_CRED, &mut occupied);
-        for i in 0..MAX_RESIDENT_CREDENTIALS {
-            if !occupied[i as usize] {
+        for (i, used) in (0..MAX_RESIDENT_CREDENTIALS).zip(occupied) {
+            if !used {
                 continue;
             }
-            let Some(n) = fs.read(crate::consts::EF_CRED + i, &mut rec) else {
-                continue;
+            let n = match fs.try_read(crate::consts::EF_CRED + i, &mut rec) {
+                Ok(Some(n)) => n.min(rec.len()),
+                Ok(None) => continue,
+                Err(_) => {
+                    unread = true;
+                    continue;
+                }
             };
-            let n = n.min(rec.len());
-            if n >= RECORD_PREFIX && rec[..32] == *rp_id_hash && rec[32..RECORD_PREFIX] == *id {
-                return credential_load(seed, cred_record_box(&rec[..n]), rp_id_hash, &mut scratch)
-                    .map(|c| visible(&c))
-                    .unwrap_or(false);
+            if n < RECORD_PREFIX || rec[..32] != *rp_id_hash {
+                continue;
+            }
+            same_rp += 1;
+            if rec[32..RECORD_PREFIX] == *id {
+                // Unloadable, as a record whose box does not open.
+                let Some(record) = rec.get(..n) else {
+                    return Ok(false);
+                };
+                return Ok(credential_load(
+                    seed,
+                    cred_record_box(record),
+                    rp_id_hash,
+                    &mut scratch,
+                )
+                .map(|c| visible(&c))
+                .unwrap_or(false));
             }
         }
+        // As for the store's refusal: an unread record is this rp's only if its
+        // EF_RP count says more credentials than the walk found.
+        if unread
+            && crate::credential::rp_count(fs, rp_id_hash).map_err(|_| CtapError::Other)? > same_rp
+        {
+            return Err(CtapError::Other);
+        }
     }
-    credential_load(seed, id, rp_id_hash, &mut scratch)
+    Ok(credential_load(seed, id, rp_id_hash, &mut scratch)
         .map(|c| visible(&c))
-        .unwrap_or(false)
+        .unwrap_or(false))
 }
 
 /// Build the makeCredential authData extension map (credBlob bool / credProtect /
 /// hmac-secret / minPinLength / hmac-secret-mc) into `out`; returns its length
 /// (0 if none apply). `hmac_mc` is the already-evaluated hmac-secret-mc output.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "extension output binds the requested inputs to the actual ceremony factors"
+)]
 fn encode_mc_extensions<S: Storage>(
     fs: &mut Fs<S>,
     req: &Request,
     rp_id_hash: &[u8; 32],
     hmac_mc: &[u8],
+    method: crate::uvm::Method,
+    up: bool,
+    #[cfg(feature = "preview-sign")] preview: Option<&previewsign::GeneratedKey>,
     out: &mut [u8],
 ) -> Result<usize, CtapError> {
     let blob_present = !req.ext_cred_blob.is_empty();
-    let min_pin = if req.ext_min_pin_length {
+    let min_pin = if req.ext_min_pin_length || req.ext_pin_complexity {
         rp_min_pin_len(fs, rp_id_hash)
     } else {
         0
     };
-    let l = u64::from(blob_present)
+    let complexity = if req.ext_pin_complexity && min_pin > 0 {
+        Some(
+            crate::pinpolicy::Policy::read(fs)
+                .map_err(|_| CtapError::Other)?
+                .complexity,
+        )
+    } else {
+        None
+    };
+    let l = u64::from(req.ext_uvm)
+        + u64::from(complexity.is_some())
+        + u64::from(blob_present)
         + u64::from(req.ext_cred_protect.is_some())
         + u64::from(req.ext_hmac_secret)
-        + u64::from(min_pin > 0)
+        + u64::from(req.ext_min_pin_length && min_pin > 0)
         + u64::from(!hmac_mc.is_empty());
+    #[cfg(feature = "preview-sign")]
+    let l = l + u64::from(preview.is_some());
     if l == 0 {
         return Ok(0);
     }
     let mut enc = Encoder::new(Cursor::new(out));
     enc.map(l).map_err(|_| CtapError::Other)?;
+    if req.ext_uvm {
+        crate::uvm::write(&mut enc, method, up).map_err(|_| CtapError::Other)?;
+    }
     if blob_present {
         // The flag reports whether the blob was short enough to seal — inclusive of
         // the advertised maxCredBlobLength, matching `CredExt::cred_blob_ok`.
@@ -1083,7 +1370,12 @@ fn encode_mc_extensions<S: Storage>(
             .and_then(|e| e.bool(true))
             .map_err(|_| CtapError::Other)?;
     }
-    if min_pin > 0 {
+    // Canonical: "previewSign" sorts after "hmac-secret", its length's other key.
+    #[cfg(feature = "preview-sign")]
+    if let Some(key) = preview {
+        previewsign::write_mc_ext(&mut enc, key).map_err(|_| CtapError::Other)?;
+    }
+    if req.ext_min_pin_length && min_pin > 0 {
         enc.str("minPinLength")
             .and_then(|e| e.u8(min_pin))
             .map_err(|_| CtapError::Other)?;
@@ -1093,10 +1385,15 @@ fn encode_mc_extensions<S: Storage>(
             .and_then(|e| e.bytes(hmac_mc))
             .map_err(|_| CtapError::Other)?;
     }
+    if let Some(enabled) = complexity {
+        enc.str("pinComplexityPolicy")
+            .and_then(|e| e.bool(enabled))
+            .map_err(|_| CtapError::Other)?;
+    }
     Ok(enc.writer().position())
 }
 
-/// The per-RP minimum PIN length from EF_MINPINLEN (`[len, force, rpIdHash…]`), or
+/// The per-RP minimum PIN length from EF_MINPINLEN (`[len, flags, rpIdHash…]`), or
 /// 0 if this rp is not in the authorised list (set via authenticatorConfig).
 fn rp_min_pin_len<S: Storage>(fs: &mut Fs<S>, rp_id_hash: &[u8; 32]) -> u8 {
     let mut buf = [0u8; 2 + 32 * MAX_MIN_PIN_RPIDS];
@@ -1104,14 +1401,11 @@ fn rp_min_pin_len<S: Storage>(fs: &mut Fs<S>, rp_id_hash: &[u8; 32]) -> u8 {
         return 0;
     };
     let n = n.min(buf.len());
-    let mut o = 2;
-    while o + 32 <= n {
-        if buf[o..o + 32] == *rp_id_hash {
-            return buf[0];
-        }
-        o += 32;
-    }
-    0
+    // A record too short to hold the `[len, force]` head lists no rp.
+    let listed = buf
+        .get(2..n)
+        .is_some_and(|rps| rps.as_chunks::<32>().0.iter().any(|h| h == rp_id_hash));
+    if listed { buf[0] } else { 0 }
 }
 
 /// The phase-4 trace reader (`formal/TraceSecurity.tla`).
@@ -1120,5 +1414,13 @@ fn rp_min_pin_len<S: Storage>(fs: &mut Fs<S>, rp_id_hash: &[u8; 32]) -> u8 {
 pub mod assurance;
 
 #[cfg(test)]
+#[allow(
+    clippy::indexing_slicing,
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::cast_possible_truncation,
+    reason = "a test's fixture is its own bound, and a panic is its failure report"
+)]
 #[path = "makecredential_tests.rs"]
 mod tests;

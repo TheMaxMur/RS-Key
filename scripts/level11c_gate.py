@@ -29,6 +29,7 @@ on the run, so the page cannot be repaired by editing this file.
 import pathlib
 import re
 import sys
+import tomllib
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 PAGE = pathlib.Path("docs/verified-compilation.md")
@@ -84,17 +85,13 @@ def fido_functions() -> tuple[int, int, int]:
 
 
 def boundaries() -> tuple[int, int]:
-    """(every `[[boundary]]` row, the linker-symbol ones).
-
-    Read off the registry's own `id =` lines rather than through a TOML parse: the
-    kinds are a prefix of the id (`import:` / `unit:`) and the linker half is the
-    one whose importing file is the firmware binary, which is what makes it a
-    symbol's ADDRESS rather than a function a compiler could be verified about.
-    """
-    text = (ROOT / "assurance/toolchain.toml").read_text()
-    ids = re.findall(r'^id = "((?:import|export|unit):[^"]+)"', text, re.M)
-    linker = [i for i in ids if i.startswith("import:firmware/src/main.rs:")]
-    return len(ids), len(linker)
+    """Count every crossing and imports whose producer is the linker."""
+    registry = tomllib.loads((ROOT / "assurance/toolchain.toml").read_text())
+    rows = registry["boundary"]
+    producers = {tool["name"] for tool in registry["tool"] if tool["role"] == "linker"}
+    linker = [row for row in rows if row["id"].startswith("import:")
+              and row["provider"] in producers]
+    return len(rows), len(linker)
 
 
 def roster() -> tuple[int, int, int, int]:
@@ -161,8 +158,7 @@ def derived() -> list[tuple[str, int, re.Pattern]]:
     second place to rot, which is the rule `run_count_gate.py` calls "not said
     twice" and the reason this list holds a COUNT of matches rather than a hit.
     """
-    c = lines("crates/rsk-rsa/csrc/bignum_high_level.c")
-    asm = lines("crates/rsk-rsa/csrc/bignum_asm.S")
+    rsa = lines("crates/rsk-rsa/src/montgomery.rs")
     generic, total, bound = fido_functions()
     every, linker = boundaries()
     total_rows, cargo, python, other, blind, clippy, rustdoc, fmt, tests = rows()
@@ -174,14 +170,12 @@ def derived() -> list[tuple[str, int, re.Pattern]]:
     return [
         ("rsk-fido/src/state.rs", lines("crates/rsk-fido/src/state.rs"),
          re.compile(r"(\d+) lines in `state\.rs` alone")),
-        # The Rust and asm halves stand INSIDE the pattern rather than in a hole
-        # of their own: one sentence states all three, so a drift in either of
-        # them stops the pattern matching and is reported as the sentence going
-        # away — which is the same finding, arrived at from the other side.
-        ("the RSA wrapper's C half", c,
-         re.compile(rf"{lines('crates/rsk-rsa/src/lib.rs')} Rust, (\d+) C, {asm} asm")),
-        ("the assembly's share", round(100 * asm / (asm + c)),
-         re.compile(r"(\d+)% of the foreign half by line")),
+        ("RSA Montgomery arithmetic", rsa,
+         re.compile(r"(\d+) lines in `montgomery\.rs`")),
+        ("RSA native imports", sum(
+            row["id"].startswith("import:crates/rsk-rsa/")
+            for row in tomllib.loads((ROOT / "assurance/toolchain.toml").read_text())["boundary"]
+         ), re.compile(r"(\d+) RSA native imports")),
         ("the ML-DSA reduction kernel", reduction,
          re.compile(r"(\d+) lines, no generic function")),
         ("generic functions in rsk-fido", generic,
@@ -190,17 +184,15 @@ def derived() -> list[tuple[str, int, re.Pattern]]:
          re.compile(r"\d+ of (\d+) functions are generic")),
         ("`<S: Storage` sites", bound,
          re.compile(r"(\d+) of those carry\s+`<S: Storage`")),
-        ("the header's contract", lines("crates/rsk-rsa/csrc/bignum_high_level.h"),
-         re.compile(r"(\d+) lines of widths")),
         ("registered tools", tools, re.compile(r"(\d+) registered tools")),
         ("distinct roles", roles, re.compile(r"carrying (\d+) distinct roles")),
         ("tools with a pin file", held, re.compile(r"which (\d+) name a file that pins them")),
         ("unpinned tools", unpinned, re.compile(r"and (\d+) is\s+unpinned")),
         ("TCB categories reached", reached,
          re.compile(r"the registry reaches (\d+) and\s+says\s+why")),
-        ("`[[boundary]]` rows", every, re.compile(r"five of the (\w+) `\[\[boundary\]\]` rows")),
+        ("`[[boundary]]` rows", every, re.compile(r"\w+ of the (\w+) `\[\[boundary\]\]` rows")),
         ("linker-symbol boundaries", linker,
-         re.compile(r"(\w+) of the ten `\[\[boundary\]\]` rows")),
+         re.compile(r"(\w+) of the \w+ `\[\[boundary\]\]` rows")),
         ("check.sh rows", total_rows, re.compile(r"runs (\d+) rows")),
         ("cargo rows", cargo, re.compile(r"(\d+) invoke `cargo`")),
         ("python rows", python, re.compile(r"(\d+) are Python")),

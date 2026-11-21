@@ -11,6 +11,7 @@
 // the firmware provides a heap. Only the RSA path allocates, the rest does not.
 extern crate alloc;
 
+pub mod attest;
 pub mod consts;
 pub mod dobj;
 pub mod files;
@@ -34,6 +35,7 @@ use core::cell::RefCell;
 
 use rsk_crypto::{Device, FusedKey, read_fused};
 use rsk_fs::{Fs, KeyFid, Storage};
+use rsk_secret::WipeGuard;
 // The randomness and the UIF (touch-policy) check are `rsk-sdk`'s seams, shared
 // with every sibling applet; `rsk-rsa` declares its own identical `Rng` two tiers
 // down, so the private-key calls bridge the two through [`keys::RsaRng`].
@@ -43,7 +45,7 @@ use rsk_sdk::{Apdu, Applet, ResBuf, Sw};
 pub use init::{Error, scan_files};
 pub use pin::Session;
 
-/// If the UIF DO `fid` (`0xD6/D7/D8`) is present with a non-zero first byte,
+/// If the UIF DO `fid` (`0xD6`–`0xD9`) is present with a non-zero first byte,
 /// require a touch; a non-confirmation maps to `SECURE_MESSAGE_EXEC_ERROR`
 /// (0x6600). With UIF off (or no button) this is a no-op.
 ///
@@ -58,8 +60,9 @@ pub(crate) fn check_uif<S: Storage>(
 ) -> Result<(), Sw> {
     let mut buf = [0u8; 2];
     let on = match fs.try_read(fid, &mut buf) {
-        Ok(stored) => matches!(stored, Some(n) if n >= 1 && buf[0] > 0),
-        Err(_) => true,
+        Ok(Some(2)) => buf[0] > 0,
+        Ok(None) => false,
+        Ok(Some(_)) | Err(_) => true,
     };
     if on {
         // The trusted screen names which key operation the UIF is gating (the
@@ -68,6 +71,7 @@ pub(crate) fn check_uif<S: Storage>(
             consts::EF_UIF_SIG => "Sign data?",
             consts::EF_UIF_DEC => "Decrypt data?",
             consts::EF_UIF_AUT => "Authenticate?",
+            consts::EF_UIF_ATT => "Attest key?",
             _ => "Confirm?",
         };
         if presence.request(Confirm::titled(title)) != Presence::Confirmed {
@@ -77,16 +81,16 @@ pub(crate) fn check_uif<S: Storage>(
     Ok(())
 }
 
-/// Scratch buffer for the SELECT FCI and the PSO results. **Not** for GET DATA,
+/// Scratch buffer for the PSO results. **Not** for GET DATA or GET CHALLENGE,
 /// which builds into the caller's response buffer: a stored DO can be as long as
 /// DO C0 announces, and giving the applet private RAM that size costs more than
 /// the stack floor has. The largest thing built here is the `0xFA` algorithm
 /// information at ~370 bytes.
 const SCRATCH: usize = 1024;
 
-/// GET CHALLENGE fills the scratch, so what DO C0 announces cannot exceed it —
-/// the two used to drift, C0 saying 128 while the command served up to 1024.
-const _: () = assert!(files::MAX_CHALLENGE_BYTES <= SCRATCH);
+/// GET CHALLENGE fills the response in place, one frame's body at most: DO C0 says so.
+#[cfg(not(kani))]
+const _: () = assert!(files::MAX_CHALLENGE_BYTES == rsk_sdk::applet::FRAME_BODY);
 
 /// The OpenPGP applet. Holds the per-power-cycle session state (`has_pw1/2/3`
 /// and the session keys via [`Session`], the currently selected DO); the
@@ -105,6 +109,7 @@ pub struct OpenpgpApplet<'a> {
     /// Physical user presence for the UIF DOs, shared with the FIDO applet through
     /// a `RefCell` (the firmware's one BOOTSEL); borrowed only for a touch wait.
     presence: &'a RefCell<dyn UserPresence>,
+    /// Where the arms build their answers; one whose answer is secret holds it through a `WipeGuard`.
     scratch: [u8; SCRATCH],
 }
 
@@ -176,10 +181,8 @@ impl<'a> OpenpgpApplet<'a> {
         out: &mut [u8],
     ) -> (usize, Sw) {
         let mkek = read_fused(self.mkek_source);
-        let dev = Device {
-            serial_hash: &self.serial_hash,
-            serial_id: &self.serial_id,
-            otp_key: mkek.as_deref(),
+        let Some(dev) = Device::fused(&self.serial_hash, &self.serial_id, &mkek) else {
+            return (0, Sw::FUSED_KEY_UNREAD);
         };
         keypairgen::rsa_generate_finish(&dev, fs, &self.sess, rng, fid, key, out)
     }
@@ -191,12 +194,9 @@ impl<'a> OpenpgpApplet<'a> {
         let room = res.capacity() - res.len();
         let stor = consts::EF_CH_1 + self.sess.cert_occ as u16;
         if let Some(n) = fs.read(stor, res.spare_mut()) {
-            // `fs.read` reports the value's FULL stored length while the
-            // backend copies only what fit. PUT DATA now bounds every write
-            // at MAX_DO_BYTES, so this can only be a value an older build
-            // wrote through the chaining path, which delivers one byte more
-            // than fits. Say so instead of handing back a short body with
-            // `9000`, which is the whole defect this rule exists to end.
+            // `fs.read` reports the FULL stored length and copies what fit; no PUT
+            // DATA of any build wrote past this room, so only a damaged or restored
+            // record gets here. A short body under `9000` would read as a whole one.
             if n > room {
                 return Sw::MEMORY_FAILURE;
             }
@@ -220,14 +220,10 @@ impl<'a> OpenpgpApplet<'a> {
         // that, and why the announcement was the thing that had to be wrong.
         let room = res.capacity() - res.len();
         if fid == consts::EF_CH_CERT {
-            let sw = self.read_cert_occurrence(fs, res);
-            if sw.is_ok() {
-                // The anchor GET NEXT DATA walks from — set here as well as in
-                // `get_data`, which this arm never reaches, and only on a read
-                // that produced an occurrence.
-                self.current_ef = Some(fid);
-            }
-            return sw;
+            // The anchor GET NEXT DATA walks from, set here as well as in
+            // `get_data`, which this arm never reaches.
+            self.current_ef = Some(fid);
+            return self.read_cert_occurrence(fs, res);
         }
         let (n, sw) = getdata::get_data(
             fid,
@@ -253,6 +249,9 @@ impl<'a> OpenpgpApplet<'a> {
     /// status files and the PW verifiers, and route to their own handlers; every
     /// other DO is a generic write.
     fn handle_put_data<S: Storage>(&mut self, fid: u16, apdu: &Apdu, fs: &mut Fs<S>) -> Sw {
+        // A YubiKey 5.8.0 ends a 7F21 walk at a PUT DATA of any other DO, even
+        // one it refuses, and walks on after a write of 7F21 itself.
+        self.current_ef = Some(fid);
         // The password outranks the body's length as well as its tag: a YubiKey
         // 5.7.4 answers `6982` to a PUT DATA it is not authorised for at every
         // tag AND every length (10 to 3000 bytes over ten tags, 3 runs). E81
@@ -293,29 +292,23 @@ impl<'a> OpenpgpApplet<'a> {
             }
         } else if fid == consts::EF_RESET_CODE {
             let mkek = read_fused(self.mkek_source);
-            let dev = Device {
-                serial_hash: &self.serial_hash,
-                serial_id: &self.serial_id,
-                otp_key: mkek.as_deref(),
+            let Some(dev) = Device::fused(&self.serial_hash, &self.serial_id, &mkek) else {
+                return Sw::FUSED_KEY_UNREAD;
             };
             let mut rng = self.rng.borrow_mut();
             pin::put_reset_code(&dev, fs, &mut self.sess, &mut *rng, apdu.data)
         } else if fid == consts::EF_AES_KEY.get() {
             let mkek = read_fused(self.mkek_source);
-            let dev = Device {
-                serial_hash: &self.serial_hash,
-                serial_id: &self.serial_id,
-                otp_key: mkek.as_deref(),
+            let Some(dev) = Device::fused(&self.serial_hash, &self.serial_id, &mkek) else {
+                return Sw::FUSED_KEY_UNREAD;
             };
             putdata::put_aes_key(&dev, fs, &self.sess, apdu.data)
         } else if fid == consts::EF_PW_STATUS {
             putdata::put_pw_status(fs, &self.sess, apdu.data)
         } else if fid == consts::EF_KDF {
             let mkek = read_fused(self.mkek_source);
-            let dev = Device {
-                serial_hash: &self.serial_hash,
-                serial_id: &self.serial_id,
-                otp_key: mkek.as_deref(),
+            let Some(dev) = Device::fused(&self.serial_hash, &self.serial_id, &mkek) else {
+                return Sw::FUSED_KEY_UNREAD;
             };
             let mut rng = self.rng.borrow_mut();
             kdf::put_kdf(&dev, fs, &mut self.sess, &mut *rng, apdu.data)
@@ -345,6 +338,9 @@ impl<S: Storage> Applet<Fs<S>> for OpenpgpApplet<'_> {
         true
     }
 
+    /// No FCI, as a YubiKey 5.8.0 answers, and every other SELECT form reaching
+    /// `process` is `6D00` there too: the application has no SELECT of its own.
+    ///
     /// §4.2 spends its one sentence on which SELECT clears the access status —
     /// "a SELECT to a **different** DF" — and §7.2.2 repeats it for PW1 82. A
     /// SELECT that lands back here is not a state transition at all, so nothing
@@ -352,16 +348,20 @@ impl<S: Storage> Applet<Fs<S>> for OpenpgpApplet<'_> {
     /// occurrence. Measured on a YubiKey 5.7.4, 3/3: re-SELECT of the bare AID
     /// and of a 5-byte truncation both keep all three PWs, while a different
     /// valid AID and an ICC power cycle clear them (the dispatcher's `deselect`).
-    fn select(&mut self, reselect: bool, _fs: &mut Fs<S>, res: &mut ResBuf) -> Sw {
+    fn select(&mut self, reselect: bool, fs: &mut Fs<S>, _res: &mut ResBuf) -> Sw {
         if !reselect {
             self.reset_session();
         }
-        let n = select::build_fci(&mut self.scratch);
-        res.extend(&self.scratch[..n]);
-        Sw::OK
+        // TERMINATE DF's marker outlives every reset: a terminated applet answers its
+        // SELECT `6285`, as a YubiKey 5.8.0 does, and stays selected for ACTIVATE FILE.
+        terminate::lifecycle(fs).refusal().unwrap_or(Sw::OK)
     }
 
     fn process(&mut self, apdu: &Apdu, fs: &mut Fs<S>, res: &mut ResBuf) -> Sw {
+        // After TERMINATE DF only ACTIVATE FILE is served, until it has run.
+        if let Some(sw) = self.lifecycle_gate(apdu, fs) {
+            return sw;
+        }
         let fid = ((apdu.p1 as u16) << 8) | apdu.p2 as u16;
         match apdu.ins {
             consts::INS_GET_DATA => self.handle_get_data(fid, fs, res),
@@ -369,12 +369,9 @@ impl<S: Storage> Applet<Fs<S>> for OpenpgpApplet<'_> {
                 if apdu.nc > 0 {
                     return Sw::WRONG_DATA;
                 }
-                // OpenPGP 3.4 §7.2.7 gives GET NEXT DATA exactly one use: walking
-                // the 7F21 occurrences after a GET DATA of that DO anchored the
-                // walk. Any other tag, no anchor, or a walk past the last
-                // occurrence is wrong data — measured on a YubiKey 5.7.4, which
-                // answers 6A80 to all three and leaves the occurrence pointer
-                // where the walk ended.
+                // §7.2.7's one use: walking the 7F21 occurrences once a GET or PUT DATA of
+                // that DO, or SELECT DATA, anchored it. Another tag, no anchor or a step past
+                // the last is 6A80, the pointer left where the walk ended (a YubiKey's words).
                 if fid != consts::EF_CH_CERT
                     || self.current_ef != Some(consts::EF_CH_CERT)
                     || self.sess.cert_occ + 1 >= consts::CERT_OCCURRENCES
@@ -384,21 +381,15 @@ impl<S: Storage> Applet<Fs<S>> for OpenpgpApplet<'_> {
                 self.sess.cert_occ += 1;
                 self.read_cert_occurrence(fs, res)
             }
-            consts::INS_SELECT => {
-                let (n, sw) = select::cmd_select(apdu, &mut self.scratch);
-                if sw.is_ok() && n > 0 {
-                    res.extend(&self.scratch[..n]);
-                }
-                sw
+            consts::INS_VERIFY if apdu.p1 == 0xFF => {
+                pin::logout(&mut self.sess, apdu.p2, apdu.data)
             }
             consts::INS_VERIFY => {
                 // Device is built inline (a `&self` helper would borrow all of
                 // self and conflict with `&mut self.sess`).
                 let mkek = read_fused(self.mkek_source);
-                let dev = Device {
-                    serial_hash: &self.serial_hash,
-                    serial_id: &self.serial_id,
-                    otp_key: mkek.as_deref(),
+                let Some(dev) = Device::fused(&self.serial_hash, &self.serial_id, &mkek) else {
+                    return Sw::FUSED_KEY_UNREAD;
                 };
                 let mut rng = self.rng.borrow_mut();
                 pin::verify(
@@ -413,10 +404,8 @@ impl<S: Storage> Applet<Fs<S>> for OpenpgpApplet<'_> {
             }
             consts::INS_CHANGE_PIN => {
                 let mkek = read_fused(self.mkek_source);
-                let dev = Device {
-                    serial_hash: &self.serial_hash,
-                    serial_id: &self.serial_id,
-                    otp_key: mkek.as_deref(),
+                let Some(dev) = Device::fused(&self.serial_hash, &self.serial_id, &mkek) else {
+                    return Sw::FUSED_KEY_UNREAD;
                 };
                 let mut rng = self.rng.borrow_mut();
                 pin::change_pin(
@@ -431,10 +420,8 @@ impl<S: Storage> Applet<Fs<S>> for OpenpgpApplet<'_> {
             }
             consts::INS_RESET_RETRY => {
                 let mkek = read_fused(self.mkek_source);
-                let dev = Device {
-                    serial_hash: &self.serial_hash,
-                    serial_id: &self.serial_id,
-                    otp_key: mkek.as_deref(),
+                let Some(dev) = Device::fused(&self.serial_hash, &self.serial_id, &mkek) else {
+                    return Sw::FUSED_KEY_UNREAD;
                 };
                 let mut rng = self.rng.borrow_mut();
                 pin::reset_retry(
@@ -449,25 +436,27 @@ impl<S: Storage> Applet<Fs<S>> for OpenpgpApplet<'_> {
             }
             consts::INS_PUT_DATA => self.handle_put_data(fid, apdu, fs),
             consts::INS_PUT_DATA_ODD => {
-                // IMPORT (extended header list). Public-key derivation is
-                // deterministic, so no RNG is needed here.
+                // IMPORT (extended header list). An RSA key signs one trial block,
+                // blinded like any other, before it replaces the slot's.
                 let mkek = read_fused(self.mkek_source);
-                let dev = Device {
-                    serial_hash: &self.serial_hash,
-                    serial_id: &self.serial_id,
-                    otp_key: mkek.as_deref(),
+                let Some(dev) = Device::fused(&self.serial_hash, &self.serial_id, &mkek) else {
+                    return Sw::FUSED_KEY_UNREAD;
                 };
-                importdata::import_data(&dev, fs, &self.sess, apdu.p1, apdu.p2, apdu.data)
+                let mut rng = self.rng.borrow_mut();
+                importdata::import_data(
+                    &dev, fs, &self.sess, &mut *rng, apdu.p1, apdu.p2, apdu.data,
+                )
             }
             consts::INS_PSO => {
                 let mkek = read_fused(self.mkek_source);
-                let dev = Device {
-                    serial_hash: &self.serial_hash,
-                    serial_id: &self.serial_id,
-                    otp_key: mkek.as_deref(),
+                let Some(dev) = Device::fused(&self.serial_hash, &self.serial_id, &mkek) else {
+                    return Sw::FUSED_KEY_UNREAD;
                 };
                 let mut rng = self.rng.borrow_mut();
                 let mut presence = self.presence.borrow_mut();
+                // A decipher's plaintext is built here before `res` takes it, and the
+                // scratch outlives the command: the guard wipes it on the way out.
+                let mut out = WipeGuard::new(&mut self.scratch);
                 let (n, sw) = pso::pso(
                     &dev,
                     fs,
@@ -475,21 +464,19 @@ impl<S: Storage> Applet<Fs<S>> for OpenpgpApplet<'_> {
                     &mut *rng,
                     &mut *presence,
                     apdu,
-                    &mut self.scratch,
+                    &mut out,
                 );
                 drop(presence);
                 drop(rng);
                 if sw.is_ok() && n > 0 {
-                    res.extend(&self.scratch[..n]);
+                    res.extend(&out[..n]);
                 }
                 sw
             }
             consts::INS_INTERNAL_AUT => {
                 let mkek = read_fused(self.mkek_source);
-                let dev = Device {
-                    serial_hash: &self.serial_hash,
-                    serial_id: &self.serial_id,
-                    otp_key: mkek.as_deref(),
+                let Some(dev) = Device::fused(&self.serial_hash, &self.serial_id, &mkek) else {
+                    return Sw::FUSED_KEY_UNREAD;
                 };
                 let mut rng = self.rng.borrow_mut();
                 let mut presence = self.presence.borrow_mut();
@@ -511,10 +498,8 @@ impl<S: Storage> Applet<Fs<S>> for OpenpgpApplet<'_> {
             }
             consts::INS_KEYPAIR_GEN => {
                 let mkek = read_fused(self.mkek_source);
-                let dev = Device {
-                    serial_hash: &self.serial_hash,
-                    serial_id: &self.serial_id,
-                    otp_key: mkek.as_deref(),
+                let Some(dev) = Device::fused(&self.serial_hash, &self.serial_id, &mkek) else {
+                    return Sw::FUSED_KEY_UNREAD;
                 };
                 let mut rng = self.rng.borrow_mut();
                 let (n, sw) = keypairgen::keypair_gen(
@@ -541,6 +526,23 @@ impl<S: Storage> Applet<Fs<S>> for OpenpgpApplet<'_> {
                 Sw::OK
             }
             consts::INS_MSE => mse::mse(&mut self.sess, apdu),
+            consts::INS_ATTEST => {
+                let mkek = read_fused(self.mkek_source);
+                let Some(dev) = Device::fused(&self.serial_hash, &self.serial_id, &mkek) else {
+                    return Sw::FUSED_KEY_UNREAD;
+                };
+                let mut rng = self.rng.borrow_mut();
+                let mut presence = self.presence.borrow_mut();
+                attest::attest(
+                    &dev,
+                    fs,
+                    &mut self.sess,
+                    &mut *rng,
+                    &mut *presence,
+                    apdu,
+                    rsk_sdk::serial4(self.serial_id),
+                )
+            }
             consts::INS_CHALLENGE => {
                 // §7.2.15 fixes P1 = P2 = 00. Stricter than a YubiKey 5.7.4, which
                 // refuses only when BOTH are non-zero — so this refuses everything
@@ -566,17 +568,20 @@ impl<S: Storage> Applet<Fs<S>> for OpenpgpApplet<'_> {
                     // its CCID interface four past that. ISO 7816-4 decides.
                     return Sw::WRONG_LENGTH;
                 }
-                self.rng.borrow_mut().fill(&mut self.scratch[..ne]);
-                res.extend(&self.scratch[..ne]);
+                // Straight into the response: no applet buffer holds a whole frame.
+                let Some(out) = res.spare_mut().get_mut(..ne) else {
+                    return Sw::WRONG_LENGTH;
+                };
+                self.rng.borrow_mut().fill(out);
+                res.commit(ne);
                 Sw::OK
             }
+            consts::INS_SET_RETRIES => retries::set_pin_retries(fs, &self.sess, apdu.data),
             consts::INS_ACTIVATE_FILE => Sw::OK,
             consts::INS_TERMINATE_DF => {
                 let mkek = read_fused(self.mkek_source);
-                let dev = Device {
-                    serial_hash: &self.serial_hash,
-                    serial_id: &self.serial_id,
-                    otp_key: mkek.as_deref(),
+                let Some(dev) = Device::fused(&self.serial_hash, &self.serial_id, &mkek) else {
+                    return Sw::FUSED_KEY_UNREAD;
                 };
                 let mut rng = self.rng.borrow_mut();
                 terminate::terminate_df(&dev, fs, &mut *rng, self.sess.has_pw3, apdu)
@@ -600,6 +605,35 @@ impl<S: Storage> Applet<Fs<S>> for OpenpgpApplet<'_> {
     }
 }
 
+impl OpenpgpApplet<'_> {
+    /// TERMINATE DF's lifecycle, ahead of every command: `Some` answers for the applet
+    /// (ACTIVATE FILE run over a terminated one, `6285` or `6581` for the rest), `None`
+    /// lets the command through. Its own function so `process` stays one dispatch.
+    fn lifecycle_gate<S: Storage>(&mut self, apdu: &Apdu, fs: &mut Fs<S>) -> Option<Sw> {
+        let lifecycle = terminate::lifecycle(fs);
+        if lifecycle != terminate::Lifecycle::Terminated || apdu.ins != consts::INS_ACTIVATE_FILE {
+            return lifecycle.refusal();
+        }
+        let mkek = read_fused(self.mkek_source);
+        let Some(dev) = Device::fused(&self.serial_hash, &self.serial_id, &mkek) else {
+            return Some(Sw::FUSED_KEY_UNREAD);
+        };
+        let sw = terminate::activate(&dev, fs, &mut *self.rng.borrow_mut());
+        if sw.is_ok() {
+            // The statuses stand, as on a YubiKey 5.8.0, and the keys they carry are
+            // the factory passwords' now: nothing else opens the new DEK.
+            let pw1 = dev.pin_derive_session(consts::PW1_DEFAULT);
+            let pw3 = dev.pin_derive_session(consts::PW3_DEFAULT);
+            self.sess.adopt_reseeded(&pw1, &pw3);
+            self.sess.has_rc = false;
+        }
+        Some(sw)
+    }
+}
+
+// Declared below the dispatch, whose lines formal/ and assurance/ cite by number.
+pub mod retries;
+
 #[cfg(test)]
 mod tests;
 
@@ -612,9 +646,21 @@ mod serial_identity_tests;
 mod dying_storage;
 
 #[cfg(test)]
+#[path = "test_tlv.rs"]
+mod test_tlv;
+
+#[cfg(test)]
 #[path = "dispatch_getdata_tests.rs"]
 mod dispatch_getdata_tests;
 
 #[cfg(test)]
 #[path = "reselect_tests.rs"]
 mod reselect_tests;
+
+#[cfg(test)]
+#[path = "lifecycle_tests.rs"]
+mod lifecycle_tests;
+
+#[cfg(test)]
+#[path = "retries_tests.rs"]
+mod retries_tests;

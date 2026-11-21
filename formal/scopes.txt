@@ -86,11 +86,13 @@ RSKeyTransport         Cap                    2   NoBufferOverrun
 
 \* --- RSKeyAppletPolicies ----------------------------------------------------
 \* The Yubico OTP position is a PAIR over a SET of slots, and each half has its
-\* own witness. Every one of the four OTP mutants still falls with the use
-\* counter reduced to one, which is why that row does not move.
-RSKeyAppletPolicies    CounterMax             1   OtpCounterNeverRepeats
-\* The session has to be able to WRAP, because the wrap is the only place the
-\* persisted half moves and the only thing a cold boot rewinds. Measured, one
+\* own witness. A boot's first press takes a step of the counter before it types,
+\* so at one only BugOtpBootKeepsPosition falls: measured, the other three explore
+\* their whole space with no counterexample there, and all four fall at two.
+RSKeyAppletPolicies    CounterMax             2   OtpCounterNeverRepeats
+\* The session has to be able to WRAP, because the wrap is the only place a
+\* press past a boot's first moves the persisted half, and the only thing a boot
+\* rewinds. Measured, one
 \* below the shipped value: both BugOtpBootKeepsPosition and
 \* BugOtpSwapKeepsSession explore their whole space without a counterexample
 \* when the session cannot roll, and fall as soon as it can.
@@ -101,11 +103,18 @@ RSKeyAppletPolicies    SessionMax             1   OtpCounterNeverRepeats
 \* whole space with no counterexample there and falls at two.
 RSKeyAppletPolicies    Slots                  2   OtpCounterNeverRepeats
 
+\* --- RSKeyRetryLattice ----------------------------------------------------
+\* SET PIN RETRIES resetting a count to the maximum it replaces is only a defect
+\* where there are two maxima to tell apart. The witness,
+\* BugSetRetriesRefillsOldMaximum, explores its whole space at `Max = 1` with no
+\* counterexample and falls at two. BugSetRetriesKeepsCount likewise needs two
+\* maxima to lower a bound below the count it leaves unchanged.
+RSKeyRetryLattice      Max                    2   CountWithinMaximum
+
 \* --- where a single element is enough ---------------------------------------
-\* Every mutant of these three fires over one element; the shipped values are the
+\* Every mutant of these two fires over one element; the shipped values are the
 \* domain's real vocabulary, not a measurement.
 RSKeyAdminSurface      Caps                   1   DisabledAppletNeverDispatches
-RSKeyRetryLattice      Max                    1   NoAuthWhenBlocked
 RSKeyBootHardening     MaxWeak                1   MarkerNeverLies
 \* Not a size. The open RP2350 question (M7-Q1) is a standing assumption now,
 \* two-armed and registered: `assurance/assumptions.toml` carries it and

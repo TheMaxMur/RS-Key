@@ -37,9 +37,12 @@ mod largeblobs;
 mod makecredential;
 mod multialg;
 mod pin;
+mod policy;
 mod reset;
 mod selection;
 mod stateful;
+#[path = "token_tests.rs"]
+mod token;
 mod u2f;
 
 /// Deterministic RNG (copied per test file, matching the repo convention).
@@ -58,6 +61,7 @@ fn dev() -> Device<'static> {
         serial_hash: &[0xAB; 32],
         serial_id: &[1, 2, 3, 4, 5, 6, 7, 8],
         otp_key: None,
+        latched: false,
     }
 }
 
@@ -89,8 +93,16 @@ struct Authr {
 }
 
 impl Authr {
-    /// A freshly-provisioned authenticator: seed ensured, no PIN, no credentials.
+    /// A freshly-provisioned authenticator: seed ensured, no PIN, no credentials, and
+    /// alwaysUv off whatever the build's default (`tests::uv_optional`).
     fn fresh() -> Self {
+        let mut a = Self::at_build_default();
+        crate::tests::uv_optional(&mut a.fs);
+        a
+    }
+
+    /// [`fresh`](Self::fresh) with alwaysUv left at the build's compiled default.
+    fn at_build_default() -> Self {
         let mut fs = Fs::new(RamStorage::new());
         let mut rng = SeqRng(1);
         crate::seed::ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
@@ -148,7 +160,7 @@ impl Authr {
     fn set_pin_file(&mut self) {
         let mut pin_file = [0u8; crate::clientpin::PIN_FILE_LEN];
         pin_file[0] = 8; // retries
-        pin_file[1] = 4; // min length
+        pin_file[1] = 4; // the PIN's own length, in code points
         pin_file[2] = 1;
         self.fs.put(consts::EF_PIN, &pin_file).unwrap();
     }

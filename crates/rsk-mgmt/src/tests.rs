@@ -4,15 +4,49 @@
 use super::*;
 use rsk_devconf::SUPPORTED_CAPS;
 use rsk_devconf::raw::{
-    EF_DEV_CONF, EF_DEV_CONF_MAX, TAG_AUTO_EJECT_TIMEOUT, TAG_CHALRESP_TIMEOUT, TAG_CONFIG_LOCK,
-    TAG_CONFIG_UNLOCK, TAG_DEVICE_FLAGS, TAG_FORM_FACTOR, TAG_NFC_ENABLED, TAG_NFC_RESTRICTED,
-    TAG_REBOOT, TAG_SERIAL, TAG_USB_ENABLED, TAG_USB_SUPPORTED, TAG_VERSION,
+    EF_DEV_CONF, EF_DEV_CONF_MAX, EF_DEV_LOCK, TAG_AUTO_EJECT_TIMEOUT, TAG_CHALRESP_TIMEOUT,
+    TAG_CONFIG_LOCK, TAG_CONFIG_UNLOCK, TAG_DEVICE_FLAGS, TAG_FORM_FACTOR, TAG_NFC_ENABLED,
+    TAG_NFC_RESTRICTED, TAG_REBOOT, TAG_SERIAL, TAG_USB_ENABLED, TAG_USB_SUPPORTED, TAG_VERSION,
 };
 use rsk_fs::Fs;
 use rsk_fs::storage::ram::RamStorage;
 use rsk_sdk::Apdu;
 
+#[path = "restart_tests.rs"]
+mod restarts;
+
 struct DenyPresence;
+
+#[test]
+fn decimal_version_fields_cover_every_u8_without_padding() {
+    for value in 0..=u8::MAX {
+        let mut out = [0; 3];
+        let mut response = ResBuf::new(&mut out);
+        push_dec(&mut response, value);
+        assert_eq!(response.as_slice(), value.to_string().as_bytes());
+    }
+}
+
+#[test]
+fn malformed_configuration_lengths_preserve_the_record() {
+    let presence = RefCell::new(AlwaysConfirm);
+    let mut app = ManagementApplet::new([0; 8], &presence);
+    let mut fs = fs();
+    fs.put(EF_DEV_CONF, &[TAG_DEVICE_FLAGS, 1, 0x20]).unwrap();
+    let generation = fs.write_gen();
+    for raw in [
+        vec![0, INS_WRITE_CONFIG, 0, 0],
+        vec![0, INS_WRITE_CONFIG, 0, 0, 2, 2, 0],
+        [
+            vec![0, INS_WRITE_CONFIG, 0, 0, 0, 0, 0xe2, 0xe1],
+            vec![0; 225],
+        ]
+        .concat(),
+    ] {
+        assert_eq!(process(&mut app, &mut fs, &raw).0, Sw::WRONG_DATA);
+        assert_eq!(fs.write_gen(), generation);
+    }
+}
 impl UserPresence for DenyPresence {
     fn request(&mut self, _c: Confirm<'_>) -> Presence {
         Presence::Declined
@@ -36,6 +70,20 @@ fn process(app: &mut ManagementApplet<'_>, fs: &mut Fs<RamStorage>, raw: &[u8]) 
     let apdu = Apdu::parse(raw).unwrap();
     let sw = Applet::process(app, &apdu, fs, &mut res);
     (sw, res.as_slice().to_vec())
+}
+
+/// WRITE CONFIG of `blob` behind its inner length byte, as ykman frames it.
+fn write_config(app: &mut ManagementApplet<'_>, fs: &mut Fs<RamStorage>, blob: &[u8]) -> Sw {
+    let mut cmd = std::vec![
+        0x00,
+        INS_WRITE_CONFIG,
+        0,
+        0,
+        (blob.len() + 1) as u8,
+        blob.len() as u8
+    ];
+    cmd.extend_from_slice(blob);
+    process(app, fs, &cmd).0
 }
 
 /// Walk a TLV blob, returning the value for `tag`.
@@ -62,7 +110,7 @@ fn select_returns_version_string() {
     let mut fs = fs();
     let (sw, body) = select(&mut app, &mut fs);
     assert_eq!(sw, Sw::OK);
-    assert_eq!(&body, b"5.8.0");
+    assert_eq!(&body, b"Virtual mgr - FW version 5.8.0");
 }
 
 #[test]
@@ -138,10 +186,10 @@ fn write_then_read_config_roundtrips() {
 
 #[test]
 fn config_lock_code_is_stripped_and_not_echoed() {
-    // ykman `config set-lock-code` sends a 16-byte code under tag 0x0A. We do not
-    // implement the lock, and READ CONFIG echoes to any unauthenticated host over
-    // three transports, so the code must never be stored or returned — otherwise a
-    // secret the user typed leaks in cleartext (audit run-30).
+    // ykman `config set-lock-code` sends a 16-byte code under tag 0x0A. READ CONFIG
+    // echoes to any unauthenticated host over three transports, so the code must never
+    // be stored or returned — otherwise a secret the user typed leaks in cleartext
+    // (audit run-30). The lock keeps a verifier, and READ CONFIG says only that it is set.
     let presence = RefCell::new(AlwaysConfirm);
     let mut app = ManagementApplet::new([0; 8], &presence);
     let mut fs = fs();
@@ -161,18 +209,85 @@ fn config_lock_code_is_stripped_and_not_echoed() {
     let (sw, _) = process(&mut app, &mut fs, &cmd);
     assert_eq!(sw, Sw::OK);
 
-    // Nothing carrying the code is retained in flash.
-    let mut stored = [0u8; EF_DEV_CONF_MAX];
-    let n = fs.read(EF_DEV_CONF, &mut stored).unwrap_or(0);
-    assert!(!stored[..n].windows(16).any(|w| w == [0xAB; 16]));
+    // Nothing carrying the code is retained in flash, in the record or the lock.
+    for fid in [EF_DEV_CONF, EF_DEV_LOCK] {
+        let mut stored = [0u8; 64];
+        let n = fs.read(fid, &mut stored).unwrap_or(0);
+        assert!(
+            !stored[..n].windows(16).any(|w| w == [0xAB; 16]),
+            "{fid:#06x}"
+        );
+    }
 
     let (sw, body) = process(&mut app, &mut fs, &[0x00, INS_READ_CONFIG, 0, 0, 0x00]);
     assert_eq!(sw, Sw::OK);
     let tlv = &body[1..];
-    // The USB_ENABLED tag survives; the lock reads back unset; the raw code is gone.
+    // The USB_ENABLED tag survives; the lock reads back set; the raw code is gone.
     assert_eq!(tlv_get(tlv, TAG_USB_ENABLED), Some(&[0x02, 0x02][..]));
-    assert_eq!(tlv_get(tlv, TAG_CONFIG_LOCK), Some(&[0x00][..]));
+    assert_eq!(tlv_get(tlv, TAG_CONFIG_LOCK), Some(&[0x01][..]));
     assert!(!body.windows(16).any(|w| w == [0xAB; 16]));
+}
+
+/// Once a code is set, WRITE CONFIG answers as a YubiKey 5.8.0 does: `6986` without
+/// the code, `63C0` with another, and the write itself with the right one.
+#[test]
+fn a_locked_write_config_answers_as_a_yubikey() {
+    let presence = RefCell::new(AlwaysConfirm);
+    let mut app = ManagementApplet::new([0; 8], &presence);
+    let mut fs = fs();
+    let code = [0xA5; 16];
+    let mut set = std::vec![TAG_CONFIG_LOCK, 0x10];
+    set.extend_from_slice(&code);
+    assert_eq!(write_config(&mut app, &mut fs, &set), Sw::OK);
+
+    let fido_only = [TAG_USB_ENABLED, 0x02, 0x02, 0x00];
+    assert_eq!(
+        write_config(&mut app, &mut fs, &fido_only),
+        Sw::COMMAND_NOT_ALLOWED
+    );
+    for (unlock, want) in [([0x5A; 16], Sw::new(0x63, 0xC0)), (code, Sw::OK)] {
+        let mut blob = std::vec![TAG_CONFIG_UNLOCK, 0x10];
+        blob.extend_from_slice(&unlock);
+        blob.extend_from_slice(&fido_only);
+        assert_eq!(
+            write_config(&mut app, &mut fs, &blob),
+            want,
+            "{unlock:02x?}"
+        );
+    }
+    let (_, body) = process(&mut app, &mut fs, &[0x00, INS_READ_CONFIG, 0, 0, 0x00]);
+    assert_eq!(
+        tlv_get(&body[1..], TAG_USB_ENABLED),
+        Some(&[0x02, 0x00][..])
+    );
+}
+
+/// A lock set where none is takes the operator's touch on both of this applet's
+/// writers, CCID WRITE CONFIG and the CTAPHID one; declined, neither stores it.
+#[test]
+fn a_lock_set_where_none_is_takes_a_touch() {
+    let presence = RefCell::new(DenyPresence);
+    let mut app = ManagementApplet::new([0; 8], &presence);
+    let mut fs = fs();
+    let mut set = std::vec![TAG_CONFIG_LOCK, 0x10];
+    set.extend_from_slice(&[0xA5; 16]);
+    assert_eq!(
+        write_config(&mut app, &mut fs, &set),
+        Sw::CONDITIONS_NOT_SATISFIED
+    );
+    assert_eq!(
+        app.persist_config(&mut fs, &set),
+        Err(DevConfError::NotConfirmed)
+    );
+    assert!(
+        fs.read(EF_DEV_LOCK, &mut [0u8; 64]).is_none(),
+        "a declined touch set the lock"
+    );
+
+    let presence = RefCell::new(AlwaysConfirm);
+    let mut app = ManagementApplet::new([0; 8], &presence);
+    assert_eq!(write_config(&mut app, &mut fs, &set), Sw::OK);
+    assert!(fs.read(EF_DEV_LOCK, &mut [0u8; 64]).is_some());
 }
 
 #[test]
@@ -350,8 +465,14 @@ fn set_lock_code_sized_request_is_accepted() {
     let mut stored = [0u8; EF_DEV_CONF_MAX];
     let n = fs.read(EF_DEV_CONF, &mut stored).unwrap();
     assert!(n <= EF_DEV_CONF_MAX);
+    let mut lock = [0u8; 64];
+    let l = fs.read(EF_DEV_LOCK, &mut lock).unwrap();
     assert!(
         !stored[..n]
+            .iter()
+            .chain(&lock[..l])
+            .copied()
+            .collect::<Vec<u8>>()
             .windows(16)
             .any(|w| w == [0x11; 16] || w == [0x22; 16]),
         "neither lock code may reach flash"
@@ -420,6 +541,30 @@ fn write_config_requires_user_presence() {
     );
 }
 
+/// …and the touch it takes covers a lock the write arms: one ask, not two.
+#[cfg(feature = "strict-config")]
+#[test]
+fn a_strict_lock_write_asks_for_one_touch() {
+    struct Count(usize);
+    impl UserPresence for Count {
+        fn request(&mut self, _c: Confirm<'_>) -> Presence {
+            self.0 += 1;
+            Presence::Confirmed
+        }
+    }
+    let presence = RefCell::new(Count(0));
+    let mut app = ManagementApplet::new([0; 8], &presence);
+    let mut fs = fs();
+    let mut set = std::vec![TAG_CONFIG_LOCK, 0x10];
+    set.extend_from_slice(&[0xA5; 16]);
+    assert_eq!(write_config(&mut app, &mut fs, &set), Sw::OK);
+    assert_eq!(
+        presence.borrow().0,
+        1,
+        "a strict lock write asked for a second touch"
+    );
+}
+
 #[cfg(not(feature = "strict-config"))]
 #[test]
 fn write_config_default_is_ungated_and_persists() {
@@ -457,45 +602,62 @@ fn bad_cla_and_ins_rejected() {
     assert_eq!(sw, Sw::CLA_NOT_SUPPORTED);
     let (sw, _) = process(&mut app, &mut fs, &[0x00, 0xEE, 0, 0, 0x00]);
     assert_eq!(sw, Sw::INS_NOT_SUPPORTED);
-    // RESET stays unsupported under strict-config; on the default build it is a
-    // (presence-gated) device-wide reset, exercised by its own tests below.
-    #[cfg(feature = "strict-config")]
-    {
-        let (sw, _) = process(&mut app, &mut fs, &[0x00, INS_RESET, 0, 0, 0x00]);
-        assert_eq!(sw, Sw::INS_NOT_SUPPORTED);
-    }
 }
 
-#[cfg(not(feature = "strict-config"))]
+/// INS `1E` and `1F` as a YubiKey 5.8.0 answers them, read twice under class `00`
+/// and `80`: `1E` is `9000` with no body whatever the P1-P2 or data, and changes
+/// nothing; `1F` is `6D00`. Both were a presence-gated factory reset here.
 #[test]
-fn device_reset_denied_without_presence() {
-    // Even ungated everywhere else, a device-wide reset is presence-gated
-    // (irreversible). A declined touch refuses it and queues nothing — and does
-    // not touch the process-global reset flag.
-    let presence = RefCell::new(DenyPresence);
-    let mut app = ManagementApplet::new([0; 8], &presence);
-    let mut fs = fs();
-    for ins in [INS_RESET, 0x1F] {
-        let (sw, _) = process(&mut app, &mut fs, &[0x00, ins, 0, 0, 0x00]);
-        assert_eq!(sw, Sw::CONDITIONS_NOT_SATISFIED);
+fn ins_1e_and_1f_answer_as_a_yubikey_does_and_reset_nothing() {
+    struct NeverAsked;
+    impl UserPresence for NeverAsked {
+        fn request(&mut self, _c: Confirm<'_>) -> Presence {
+            panic!("a command that does nothing asked for the operator's touch");
+        }
     }
-}
-
-#[cfg(not(feature = "strict-config"))]
-#[test]
-fn device_reset_signals_the_firmware_on_presence() {
-    // The only test that touches the process-global DEVICE_RESET flag, so it can
-    // drain/observe it without racing a sibling. ykman sends 0x1F; RS-Key's own
-    // 0x1E is honoured too.
-    let _ = take_device_reset(); // clear any stale value
-    let presence = RefCell::new(AlwaysConfirm);
+    let presence = RefCell::new(NeverAsked);
     let mut app = ManagementApplet::new([0; 8], &presence);
     let mut fs = fs();
-    let (sw, _) = process(&mut app, &mut fs, &[0x00, 0x1F, 0, 0, 0x00]);
-    assert_eq!(sw, Sw::OK);
-    assert!(
-        take_device_reset(),
-        "a presence-confirmed RESET queues the wipe"
+    let stored = [TAG_USB_ENABLED, 0x02, 0x02, 0x00];
+    fs.put(EF_DEV_CONF, &stored).unwrap();
+    let before = process(&mut app, &mut fs, &[0x00, INS_READ_CONFIG, 0, 0, 0x00]);
+    for cla in [0x00, 0x80] {
+        for (p1, p2, data) in [
+            (0x00, 0x00, &[][..]),
+            (0x01, 0x00, &[]),
+            (0x00, 0x01, &[]),
+            (0x00, 0x00, &[0x00]),
+            (0x00, 0x00, &[1, 2, 3, 4, 5]),
+        ] {
+            let mut apdu = vec![cla, 0x1E, p1, p2];
+            if !data.is_empty() {
+                apdu.push(data.len() as u8);
+                apdu.extend_from_slice(data);
+            }
+            assert_eq!(
+                process(&mut app, &mut fs, &apdu),
+                (Sw::OK, vec![]),
+                "{apdu:02X?}"
+            );
+            apdu[1] = 0x1F;
+            assert_eq!(
+                process(&mut app, &mut fs, &apdu).0,
+                Sw::INS_NOT_SUPPORTED,
+                "{apdu:02X?}"
+            );
+        }
+    }
+    assert_eq!(
+        process(&mut app, &mut fs, &[0x00, INS_READ_CONFIG, 0, 0, 0x00]),
+        before
     );
-    assert!(!take_device_reset(), "take clears the flag");
+    let mut got = [0u8; 8];
+    let n = fs
+        .read(EF_DEV_CONF, &mut got)
+        .expect("the stored config stays");
+    assert_eq!(&got[..n], &stored);
 }
+
+#[cfg(feature = "strict-config")]
+#[path = "mutation_tests.rs"]
+mod mutation;

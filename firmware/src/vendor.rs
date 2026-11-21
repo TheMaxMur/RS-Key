@@ -10,8 +10,7 @@
 //! reboot-to-BOOTSEL gate) lives in `crates/rsk-vendor`, where it is host-tested
 //! and where `tools/emu` can reach it.
 
-use core::sync::atomic::{AtomicU8, Ordering};
-
+use rsk_device::reboot::RebootSlot;
 use rsk_fs::{Fs, Storage};
 // Only the measurement builds answer a bench APDU, so only they name a status
 // word here; the shipped image has no use for either import.
@@ -32,35 +31,54 @@ const SEL_OTP_READ: u8 = 3;
 /// the host divides the sample by this.
 #[cfg(feature = "bench")]
 const OTP_READ_REPS: u32 = 100;
+/// The residue probe's selectors, and the pattern lengths it takes: short enough
+/// to say where a secret came from, long enough not to match by chance.
+#[cfg(feature = "bench")]
+const RESIDUE_SCAN: u8 = 0;
+#[cfg(feature = "bench")]
+const RESIDUE_STOP: u8 = 1;
+#[cfg(feature = "bench")]
+const RESIDUE_RESTART: u8 = 2;
+#[cfg(feature = "bench")]
+const RESIDUE_PATTERN_MIN: usize = 8;
+#[cfg(feature = "bench")]
+const RESIDUE_PATTERN_MAX: usize = 64;
 
-/// Pending reboot request: 0 = none, 1 = warm reboot,
-/// 2 = secure reboot to the BOOTSEL bootloader. Set by the applet's REBOOT and
-/// consumed by the worker once the SW_OK response has been sent — the reset can't
-/// run inline or the host never sees the reply.
-static REBOOT: AtomicU8 = AtomicU8::new(0);
+/// The pending reboot. Set by the applet's REBOOT and consumed by the worker once
+/// the SW_OK response has been sent — the reset can't run inline or the host never
+/// sees the reply.
+static REBOOT: RebootSlot = RebootSlot::new();
 
-/// Take and clear any pending reboot request (the worker, after the response
-/// flushes). `Some(1)` = warm reboot, `Some(2)` = secure reboot to BOOTSEL.
+/// Take any pending reboot request (the worker, after the response flushes).
+/// `Some(1)` = warm reboot, `Some(2)` = secure reboot to BOOTSEL.
 pub fn take_reboot() -> Option<u8> {
-    match REBOOT.swap(0, Ordering::Relaxed) {
-        0 => None,
-        m => Some(m),
-    }
+    REBOOT.take()
 }
 
 /// Queue a reboot (also used by the rescue applet's REBOOT_BOOTSEL command).
 pub fn request_reboot(bootsel: bool) {
-    REBOOT.store(if bootsel { 2 } else { 1 }, Ordering::Relaxed);
+    REBOOT.queue(bootsel);
 }
 
-/// Whether a reboot is queued but not yet serviced (peek, does not clear). The display's
+/// Queue a warm reboot unless one is queued or under way already (the TRNG's reseed fault:
+/// it needs `Worker::reboot`'s scrub and a reset, and a queued BOOTSEL drop gives both).
+pub fn request_reboot_unless_pending() {
+    REBOOT.queue_warm_unless_pending();
+}
+
+/// The worker has begun a reset, whether or not a request queued it.
+pub fn begin_reset() {
+    REBOOT.begin_reset();
+}
+
+/// Whether a reboot is queued or under way, from the request until the reset. The display's
 /// ambient loop reads this to park itself once a Settings → Firmware update is requested —
 /// it must stop busy-waiting and yield so the worker (same thread-mode executor) gets
-/// scheduled to scrub the live secrets and reset. Display-only: the standard key never
-/// queues a reboot off-transport (the worker services those inline after the SW_OK).
+/// scheduled to scrub the live secrets and reset. Display-only: on the standard key every
+/// request comes from the worker's own dispatches, and the worker services it after them.
 #[cfg(feature = "display")]
 pub fn reboot_pending() -> bool {
-    REBOOT.load(Ordering::Relaxed) != 0
+    REBOOT.pending()
 }
 
 /// This board's hardware, handed to the applet. A ZST: every capability it
@@ -178,6 +196,30 @@ impl rsk_vendor::Platform for VendorPlatform {
             res.extend(&OTP_READ_REPS.to_le_bytes());
         }
         Sw::OK
+    }
+
+    /// P1 selects: 0 = count `data` (the pattern) in core0's dead stack, answering
+    /// matches ‖ non-zero bytes ‖ bytes scanned, each a little-endian u32; 1 = stop
+    /// the sweep on both cores; 2 = restart it. Behind `bench`: it reads dead stack.
+    #[cfg(feature = "bench")]
+    fn stack_residue(&mut self, p1: u8, data: &[u8], res: &mut ResBuf) -> Sw {
+        match p1 {
+            RESIDUE_SCAN => {
+                if !(RESIDUE_PATTERN_MIN..=RESIDUE_PATTERN_MAX).contains(&data.len()) {
+                    return Sw::WRONG_LENGTH;
+                }
+                let found = crate::sweep::residue(data);
+                res.extend(&found.matches.to_le_bytes());
+                res.extend(&found.nonzero.to_le_bytes());
+                res.extend(&found.scanned.to_le_bytes());
+                Sw::OK
+            }
+            RESIDUE_STOP | RESIDUE_RESTART => {
+                crate::sweep::pause(p1 == RESIDUE_STOP);
+                Sw::OK
+            }
+            _ => Sw::INCORRECT_P1P2,
+        }
     }
 }
 

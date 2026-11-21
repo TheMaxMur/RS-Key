@@ -9,7 +9,7 @@ runs nothing but that signed image: a policy you cannot toggle off at
 runtime, because there is no runtime knob to toggle.
 
 ```sh
-cargo build --release -p firmware --features fips-profile
+bash scripts/build.sh --features fips-profile
 # or the reproducible Nix target (same flag):
 nix build .#firmware-fips
 # then sign + flash as usual (production.md)
@@ -44,8 +44,8 @@ Two things worth reading carefully:
   asks for `-47` anyway, `makeCredential` maps it to "unsupported" and
   declines. There is no path to a *new* secp256k1 FIDO credential.
 - **RSA-1024 is blocked on two independent gates**: the generation template
-  parser (`crates/rsk-piv/src/keygen.rs:47-50`) and the separate import path
-  (`crates/rsk-piv/src/keygen.rs:596-598`), which does not go through that parser. So neither
+  parser (`crates/rsk-piv/src/keygen.rs:48-51`) and the separate import path
+  (`crates/rsk-piv/src/keygen.rs:610-612`), which does not go through that parser. So neither
   `ykman piv keys generate ... RSA1024` nor importing an external 1024-bit
   key onto a slot succeeds. Both return `6A 80` (incorrect data).
 
@@ -84,13 +84,15 @@ mechanical:
 # 2. replace any non-approved long-lived keys:
 ykman piv access change-management-key --algorithm AES256 --generate --protect
 ykman piv keys generate 9a pub.pem            # re-issue any RSA-1024 slots as
-                                              # ECC P-256 or RSA-2048
+                                              # ECC P-256 or RSA-2048, then give
+ykman piv certificates generate --subject "CN=me" 9a pub.pem  # the new key its
+                                              # own certificate (or import a CA's)
 # 3. FIDO: re-register any sites that hold a secp256k1 credential with an
 #    ES256 / EdDSA passkey; the old credential keeps working until you do.
 ```
 
 > **`ykman` needs the opt-in `VIDPID=Yubikey5` build.** It gates on the "Yubico
-> YubiKey" reader name, which the default RS-Key build (`0x1209:0x0001`) does not
+> YubiKey" reader name, which the default RS-Key build (`0x1209:0xF1D2`) does not
 > present. Build that flavor for the `ykman` commands here and under *Verifying*
 > below, or drive the device with `rsk` / `rsk-tui` on the default build.
 

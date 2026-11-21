@@ -102,6 +102,23 @@ fn a_sleep_mid_ceremony_falls_back_to_the_cached_pin_bit() {
 }
 
 #[test]
+fn a_sleep_the_device_raises_reads_the_pin_bit_afresh() {
+    // The cached bit is for a host ceremony, whose dispatch holds the store. A sleep
+    // the device's own screens raise reads it: a PIN a host set after the cache was
+    // filled must still lock the walked-away panel.
+    let env = Env::new();
+    let mut ui = env.ui(Pad::idle());
+    assert!(!ui.home_pin_set);
+    env.set_device_pin(PIN);
+    ui.locked = false;
+    ui.enter_sleep();
+    assert!(ui.locked);
+    ui.locked = false;
+    assert!(ui.lock_now(), "the auto-lock reads it afresh too");
+    assert!(ui.locked);
+}
+
+#[test]
 fn the_auto_lock_is_a_no_op_without_a_device_pin() {
     let env = Env::new();
     let mut ui = env.ui(Pad::idle());
@@ -147,4 +164,23 @@ fn an_unpressed_wake_button_costs_a_modal_nothing() {
     assert!(!ui.sleep_button_pressed());
     assert!(!ui.asleep);
     assert!(start.elapsed() < Duration::from_millis(500));
+}
+
+#[test]
+fn a_held_wake_button_is_consumed_or_bounded_without_oscillating_sleep() {
+    for held in [3, u32::MAX] {
+        let env = Env::new();
+        let mut ui = env.ui(Pad::idle());
+        ui.hooks.press_wake(held);
+        let start = Instant::now();
+        assert!(ui.sleep_button_pressed());
+        assert!(ui.asleep);
+        if held == u32::MAX {
+            assert!(start.elapsed() >= Duration::from_millis(WAKE_RELEASE_TIMEOUT_MS));
+            assert!(start.elapsed() < Duration::from_secs(10));
+            assert!(ui.wake_pressed());
+        } else {
+            assert!(!ui.wake_pressed());
+        }
+    }
 }

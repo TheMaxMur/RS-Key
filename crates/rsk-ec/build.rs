@@ -1,25 +1,46 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 RS-Key contributors
 
-//! Generates the width-4 Lim–Lee fixed-base comb tables `lib.rs` uses for
-//! `k·G` / `d·G` — one per curve (P-256, P-384, P-521, secp256k1). Each entry is
-//! `T[i] = Σ_{j ∈ set-bits(i)} 2^{j·D}·G` (`D = ceil(bits/4)`) as affine
-//! big-endian bytes; `T[0]` is an identity sentinel the runtime comb never adds.
-//! Each table is KAT-checked at runtime against `mul_by_generator` (see tests).
+//! Generates fixed-base tables; P-384 and P-521 use centered signed comb groups.
+//! P-256/secp256k1 use `T[i] = Σ_{j ∈ set-bits(i)} 2^{j·D}·G`, with identity at zero.
+//! Differential tests compare the comb with generator multiplication.
 
 use std::env;
 use std::fs;
 use std::path::Path;
 
+mod build_p521;
+#[path = "src/comb_p384_params.rs"]
+mod comb_p384_params;
+#[path = "src/comb_p521_params.rs"]
+mod comb_p521_params;
+
 const W: usize = 4;
 
+mod brainpool256 {
+    pub use bp256::elliptic_curve;
+    pub use bp256::r1::ProjectivePoint;
+}
+
+mod brainpool384 {
+    pub use bp384::elliptic_curve;
+    pub use bp384::r1::ProjectivePoint;
+}
+
 macro_rules! gen_comb {
-    ($curve:ident, $d:expr, $coord:expr, $constname:literal, $file:literal) => {{
+    ($curve:ident, $d:expr, $coord:expr, $constname:literal, $file:literal) => {
+        gen_comb!($curve, $d, $coord, $constname, $file, 0);
+    };
+    ($curve:ident, $d:expr, $coord:expr, $constname:literal, $file:literal, $shift:expr) => {{
         use $curve::ProjectivePoint;
         use $curve::elliptic_curve::sec1::ToSec1Point;
 
-        // base[j] = 2^{j·D}·G, by repeated doubling of the generator.
-        let mut base = [ProjectivePoint::GENERATOR; W];
+        // base[j] = 2^{shift+j·D}·G, by repeated doubling of the generator.
+        let mut first = ProjectivePoint::GENERATOR;
+        for _ in std::iter::repeat_n((), $shift) {
+            first += first;
+        }
+        let mut base = [first; W];
         for j in 1..W {
             let mut p = base[j - 1];
             for _ in 0..$d {
@@ -63,10 +84,65 @@ macro_rules! gen_comb {
     }};
 }
 
+fn gen_signed_p384() {
+    use comb_p384_params::{ENTRIES, GROUPS, ROUNDS, STRIDE, WIDTH};
+    use p384::elliptic_curve::sec1::ToSec1Point;
+    use p384::{ProjectivePoint, Scalar};
+    let inv_two = Scalar::from(2u32).invert().unwrap();
+    let mut body = String::new();
+    let mut bias = ProjectivePoint::IDENTITY;
+    // Centering makes complementary width-WIDTH digits opposite points.
+    for group in 0..GROUPS {
+        let mut base = [ProjectivePoint::GENERATOR; WIDTH];
+        for (j, point) in base.iter_mut().enumerate() {
+            for _ in 0..(group * ROUNDS + j * STRIDE) {
+                *point += *point;
+            }
+        }
+        let center = base.iter().copied().sum::<ProjectivePoint>() * inv_two;
+        bias += center;
+        body.push_str("[\n");
+        for i in 0..ENTRIES {
+            let mut point = -center;
+            for (j, term) in base.iter().enumerate() {
+                if i & (1 << j) != 0 {
+                    point += term;
+                }
+            }
+            let ep = point.to_affine().to_sec1_point(false);
+            let x: [u8; 48] = ep.x().unwrap().as_slice().try_into().unwrap();
+            let y: [u8; 48] = ep.y().unwrap().as_slice().try_into().unwrap();
+            body.push_str(&format!("({x:?}, {y:?}),\n"));
+        }
+        body.push_str("],\n");
+    }
+    let mut correction = bias;
+    for _ in 0..ROUNDS {
+        correction += correction;
+    }
+    correction -= bias;
+    let ep = correction.to_affine().to_sec1_point(false);
+    let x: [u8; 48] = ep.x().unwrap().as_slice().try_into().unwrap();
+    let y: [u8; 48] = ep.y().unwrap().as_slice().try_into().unwrap();
+    let src = format!(
+        "pub(crate) const SIGNED_P384: [[([u8;48],[u8;48]);{ENTRIES}];{GROUPS}] = [\n{body}];\npub(crate) const P384_CORRECTION: ([u8;48],[u8;48]) = ({x:?},{y:?});\n"
+    );
+    fs::write(
+        Path::new(&env::var("OUT_DIR").unwrap()).join("gen_signed_p384.rs"),
+        src,
+    )
+    .unwrap();
+}
+
 fn main() {
-    gen_comb!(p521, 131, 66, "GEN_COMB", "gen_comb_p521.rs"); // ceil(521/4) = 131
+    build_p521::generate();
     gen_comb!(p256, 64, 32, "GEN_COMB_P256", "gen_comb_p256.rs"); // ceil(256/4) = 64
-    gen_comb!(p384, 96, 48, "GEN_COMB_P384", "gen_comb_p384.rs"); // ceil(384/4) = 96
+    gen_signed_p384();
     gen_comb!(k256, 64, 32, "GEN_COMB_K256", "gen_comb_k256.rs"); // ceil(256/4) = 64
+    gen_comb!(brainpool256, 64, 32, "TABLE", "gen_comb_bp256.rs");
+    gen_comb!(brainpool384, 96, 48, "TABLE", "gen_comb_bp384.rs");
     println!("cargo:rerun-if-changed=build.rs");
+    println!("cargo:rerun-if-changed=src/comb_p384_params.rs");
+    println!("cargo:rerun-if-changed=src/comb_p521_params.rs");
+    println!("cargo:rerun-if-changed=build_p521.rs");
 }

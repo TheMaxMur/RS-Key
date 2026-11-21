@@ -412,8 +412,6 @@ checksum = "460fbee9c2c2f33933d720630a6a0bac33ba7053db5344fac858d4b8952d77d5"
 [[package]]
 name = "crypto-bigint"
 version = "0.7.10"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9c035cb64cba03dad2fb921f3e218785e8cf9a41790da5eb3a1400f62fa2be11"
 dependencies = [
  "cpubits",
  "ctutils",
@@ -523,7 +521,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a69dedd701da44b0536442edf09c81a64b0ab97a7a4a5e3d1971f00027cbc63d"
 dependencies = [
  "const-oid",
- "pem-rfc7468",
  "zeroize",
 ]
 
@@ -631,7 +628,6 @@ dependencies = [
  "group",
  "hkdf 0.13.0",
  "hybrid-array",
- "pem-rfc7468",
  "pkcs8",
  "rand_core 0.10.1",
  "sec1",
@@ -1307,8 +1303,6 @@ dependencies = [
 [[package]]
 name = "p256"
 version = "0.14.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d2c9239b2dbc807adbbe147e8cf72ea7450c3a0aabe62cb8e75ff4ec22e1f72a"
 dependencies = [
  "ecdsa",
  "elliptic-curve",
@@ -1381,15 +1375,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e14ef017e15d2e5592a9e39a346c1dbaea5120bab7ed7106b210ef58ebd97003"
 dependencies = [
  "pkg-config",
-]
-
-[[package]]
-name = "pem-rfc7468"
-version = "1.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a6305423e0e7738146434843d1694d621cce767262b2a86910beab705e4493d9"
-dependencies = [
- "base64ct",
 ]
 
 [[package]]
@@ -1788,18 +1773,35 @@ dependencies = [
  "ml-kem",
  "p256",
  "rsk-mldsa",
+ "rsk-secret",
+ "rsk-sha256",
  "rsk-sha512",
  "sha1",
  "sha2 0.10.9",
- "zeroize",
 ]
 
 [[package]]
 name = "rsk-mldsa"
 version = "0.1.0"
 dependencies = [
+ "rsk-secret",
  "sha3 0.10.9",
  "zeroize",
+]
+
+[[package]]
+name = "rsk-secret"
+version = "0.1.0"
+dependencies = [
+ "zeroize",
+]
+
+[[package]]
+name = "rsk-sha256"
+version = "0.1.0"
+dependencies = [
+ "rsk-secret",
+ "sha2 0.10.9",
 ]
 
 [[package]]
@@ -1814,12 +1816,12 @@ name = "rsk-slip39"
 version = "0.1.0"
 dependencies = [
  "rsk-crypto",
- "zeroize",
+ "rsk-secret",
 ]
 
 [[package]]
 name = "rsk-tui"
-version = "0.3.12"
+version = "0.3.20"
 dependencies = [
  "aes",
  "bip39",
@@ -1836,6 +1838,7 @@ dependencies = [
  "rand_core 0.6.4",
  "ratatui",
  "rsk-slip39",
+ "serde_json",
  "sha2 0.10.9",
  "zeroize",
 ]

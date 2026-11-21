@@ -55,15 +55,13 @@ deps from `flake.nix`.
 
 ```sh
 nix develop                                  # first run downloads the toolchain
-cargo build --release -p firmware
-scripts/pt.sh target/thumbv8m.main-none-eabihf/release/firmware firmware-pt.elf
-picotool uf2 convert firmware-pt.elf -t elf firmware.uf2
+bash scripts/build.sh
+cp target/trustzone/combined.uf2 firmware.uf2
 ```
 
-`pt.sh` embeds the partition table that keeps the USB bootloader out of the key's
-storage — `cargo build` cannot, since it is added after linking
-([build.md](build.md#the-partition-table)). `nix build .#firmware` does it for
-you.
+The builder embeds the partition table that keeps the USB
+bootloader out of the key's storage. `nix build .#firmware` includes the same
+step ([build.md](build.md#the-partition-table)).
 
 Set `PRESENCE_PIN=<gpio>` for a dedicated presence button instead of BOOTSEL.
 For a no-touch build (needed by the automated test suites, or if your board is
@@ -83,6 +81,17 @@ To flash the firmware manually:
      the mounted drive on Linux.
    - **picotool (more reliable: it verifies and skips the mass-storage layer):**
      `picotool load -v firmware.uf2 && picotool reboot`.
+   - **`rsk flash` (checks a release image first):** put `SHA256SUMS` and
+     `SHA256SUMS.sigstore.json` from the same release next to the image, and run
+
+     ```sh
+     rsk flash rs-key-<version>-default.uf2
+     ```
+
+     It checks the signature (it needs [cosign](https://docs.sigstore.dev/)), the
+     checksum and, with the GitHub CLI installed, the build provenance. Only then
+     does it run the `picotool` command above. What each check proves is in
+     [supply-chain.md](supply-chain.md#verifying-a-download).
 
    The `RP2350` drive is a *fake* FAT volume the bootrom emulates. It only
    understands the UF2 blocks written to it, not a real filesystem. On some
@@ -93,7 +102,7 @@ To flash the firmware manually:
    it whenever the drive never appears or the copy fails.
 3. The board reboots itself and enumerates as `RS-Key Security Key`. (The
    default build uses the project's own USB identity, VID:PID
-   `0x1209:0x0001` from pid.codes; the PC/SC reader name contains "RS-Key".
+   `0x1209:0xF1D2` from pid.codes; the PC/SC reader name contains "RS-Key".
    For a build that presents the YubiKey USB identity so `ykman`/Yubico
    Authenticator auto-recognize it, build the opt-in `VIDPID=Yubikey5`
    flavor; see [build.md](build.md).)
@@ -121,8 +130,8 @@ of this repo and ships on its own schedule.
 
 ![PicoForge on its Device Overview page, reading a freshly flashed RS-Key: a sidebar of sections (Home, Passkeys, Accounts, Slots, PIV, OpenPGP, Audit, Backup, Lock, Attestation, Configuration, Security, Offboard) and four cards — Device Information (serial number, firmware "RS-Key build 0x0872", VID:PID 1209:0001, manufacturer and product name "RS-Key Security Key", storage 2 of 1536 KB, 4 MB flash chip), FIDO2 Information (AAGUID, U2F_V2 and FIDO 2.0 / 2.1 / 2.3, PIN "Not Set", resident keys supported, minimum PIN length 4, 256 remaining credentials), LED Configuration (GPIO 16, 30 s presence touch timeout) and Security Status (boot mode Development, debug enabled, secure lock pending)](images/picoforge-overview.png)
 
-That is a board straight out of step 2, so the screen reads the way yours will:
-the identity is the default `1209:0001`, no PIN is set yet (that is step 3), and
+This screenshot predates the allocated `1209:F1D2` identity and shows the former
+`1209:0001` test PID. No PIN is set yet (that is step 3), and
 the boot mode is still `Development`. [production.md](production.md) is what turns
 the last one into a locked-down key — irreversibly, so read it first.
 

@@ -16,7 +16,7 @@ silent stutter, because a mapper that skips what it does not understand is a
 checker that stopped checking. The one piece of state the mapper keeps is the
 current selection: the wire says only "SELECT piv", and whether that is the
 model's `Reselect` or `SelectOther` depends on what was selected before — the
-same `reselect` flag the Dispatcher computes (crates/rsk-sdk/src/applet.rs:387).
+same `reselect` flag the Dispatcher computes (crates/rsk-sdk/src/applet.rs:449).
 
 The default mode is the gate's: re-map the committed trace and hold the result
 against the committed `TraceSeamsData.tla`, so the two cannot drift apart
@@ -59,13 +59,19 @@ HEADER = """---- MODULE TraceSeamsData ----
 FOOTER = "====\n"
 
 
-def sw_ok(sw: str, where: str, problems: list[str]) -> bool | None:
-    """9000 -> True, 63Cx -> False, anything else -> a problem (strict)."""
+def sw_ok(sw: str, app: str, where: str, problems: list[str]) -> bool | None:
+    """9000 -> True, a wrong-password answer -> False, anything else -> a problem.
+
+    PIV answers a wrong PIN 63Cx; OpenPGP answers 6982, as a YubiKey 5.8.0 does,
+    and keeps 63Cx for the empty VERIFY that reads the count. Strict per applet.
+    """
     if sw == "9000":
         return True
-    if sw.startswith("63C") and len(sw) == 4:
+    if app == "piv" and sw.startswith("63C") and len(sw) == 4:
         return False
-    problems.append(f"{where}: status word {sw} is neither success nor a retry count")
+    if app == "pgp" and sw == "6982":
+        return False
+    problems.append(f"{where}: status word {sw} is neither success nor a wrong password on {app}")
     return None
 
 
@@ -99,7 +105,7 @@ def map_events(events: list[dict]) -> tuple[list[str], list[str]]:
                     f"{where}: verify on {app} while the tracker says {sel!r} is selected"
                 )
                 continue
-            ok = sw_ok(e.get("sw", ""), where, problems)
+            ok = sw_ok(e.get("sw", ""), app, where, problems)
             if ok is None:
                 continue
             flag = "TRUE" if ok else "FALSE"

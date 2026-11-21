@@ -48,6 +48,55 @@ fn select_apdu(aid: &[u8]) -> Vec<u8> {
     v
 }
 
+#[test]
+fn an_object_response_drains_through_the_dispatchers_get_response() {
+    let mut fs = Fs::new(RamStorage::new());
+    fs.scan();
+    let rng = RefCell::new(TestRng(7));
+    let presence = RefCell::new(AlwaysConfirm);
+    let mut piv = PivApplet::new(SERIAL, HASH, None, &rng, &presence);
+    let mut applets: [&mut dyn Applet<Fs<RamStorage>>; 1] = [&mut piv];
+    let mut dispatcher = Dispatcher::new();
+    assert_eq!(
+        go(
+            &mut dispatcher,
+            &mut applets,
+            &mut fs,
+            &select_apdu(PIV_AID)
+        )
+        .0,
+        Sw::OK
+    );
+    objects::write(&mut fs, 0x5f1234, &[0xa5; 300]).unwrap();
+    let mut expected = vec![TAG_DATA_OBJECT, 0x82, 0x01, 0x2c];
+    expected.extend([0xa5; 300]);
+    let command = [
+        0,
+        INS_GET_DATA,
+        0x3f,
+        0xff,
+        5,
+        TAG_DATA_PATH,
+        3,
+        0x5f,
+        0x12,
+        0x34,
+        0,
+    ];
+    let (sw, first) = go(&mut dispatcher, &mut applets, &mut fs, &command);
+    assert_eq!(sw, Sw::new(0x61, 48));
+    assert_eq!(first, expected[..256]);
+    let followup = [0, rsk_sdk::apdu::INS_GET_RESPONSE, 0, 0, 0];
+    assert_eq!(
+        go(&mut dispatcher, &mut applets, &mut fs, &followup),
+        (Sw::OK, expected[256..].to_vec())
+    );
+    assert_eq!(
+        go(&mut dispatcher, &mut applets, &mut fs, &followup),
+        (Sw::WRONG_DATA, vec![])
+    );
+}
+
 /// A second applet, so "SELECT a different valid AID" is expressible.
 struct Other;
 impl Applet<Fs<RamStorage>> for Other {

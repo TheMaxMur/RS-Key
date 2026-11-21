@@ -34,7 +34,8 @@ use embassy_usb::driver::{
     EndpointError, EndpointIn, EndpointInfo, EndpointOut, EndpointType, Event, Unsupported,
 };
 
-use crate::usbip::{Ret, Urb, UrbSink};
+use crate::usbip::{Ret, Urb};
+use crate::usbip_server::UrbSink;
 
 /// A USB endpoint number is four bits wide, and 0 is the control pipe.
 const MAX_EP: usize = 16;

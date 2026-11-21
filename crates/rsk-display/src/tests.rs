@@ -16,6 +16,7 @@
 //! reading that source, the way `rsk_ui`'s ceremony-title census reads the tree.
 
 use std::collections::VecDeque;
+use std::rc::Rc;
 use std::sync::{Mutex, MutexGuard};
 use std::vec;
 use std::vec::Vec;
@@ -25,6 +26,17 @@ use rsk_fs::Storage;
 use rsk_fs::storage::ram::RamStorage;
 
 use super::*;
+
+#[path = "timed_holds_tests.rs"]
+mod timed_holds;
+pub use timed_holds::TimedHolds;
+
+#[path = "event_pad.rs"]
+mod event_pad;
+pub use event_pad::SignalAfterTouches;
+
+#[path = "draw_failure_tests.rs"]
+pub(crate) mod draw_failure;
 
 /// The pad's key cells, indexed the way [`rsk_ui::pin_grid_key`] indexes them
 /// (`row * PIN_COLS + col`), so cell 9 is Del, cell 10 the `0` key and cell 11 OK.
@@ -52,9 +64,15 @@ pub struct Panel {
     pub damage_presentations: usize,
     /// Exact panel windows used by retained semantic presentation.
     pub damage_rects: Vec<rsk_ui::Rect>,
+    pub contiguous_blits: Vec<(Rectangle, usize)>,
+    pub frame_hashes: Vec<u64>,
 }
 
 impl Panel {
+    pub fn pixels(&self) -> &[Rgb565] {
+        &self.px
+    }
+
     fn new() -> Self {
         Self {
             px: vec![Rgb565::BLACK; rsk_ui::PANEL_W as usize * rsk_ui::PANEL_H as usize],
@@ -64,7 +82,31 @@ impl Panel {
             grids: Vec::new(),
             damage_presentations: 0,
             damage_rects: Vec::new(),
+            contiguous_blits: Vec::new(),
+            frame_hashes: Vec::new(),
         }
+    }
+
+    pub fn area_pixels(&self, rect: rsk_ui::Rect) -> Vec<Rgb565> {
+        (rect.y..rect.y + rect.h)
+            .flat_map(|y| {
+                (rect.x..rect.x + rect.w).map(move |x| {
+                    self.px[usize::from(y) * usize::from(rsk_ui::PANEL_W) + usize::from(x)]
+                })
+            })
+            .collect()
+    }
+
+    pub fn raster_hash(&self) -> u64 {
+        let mut hash = 0xcbf2_9ce4_8422_2325u64;
+        for pixel in &self.px {
+            let packed =
+                (u16::from(pixel.r()) << 11) | (u16::from(pixel.g()) << 5) | u16::from(pixel.b());
+            for byte in packed.to_le_bytes() {
+                hash = (hash ^ u64::from(byte)).wrapping_mul(0x0000_0100_0000_01b3);
+            }
+        }
+        hash
     }
 
     /// FNV-1a per key rect, over that rect's pixels alone. Every key is the same size
@@ -129,6 +171,22 @@ impl DrawTarget for Panel {
     type Color = Rgb565;
     type Error = core::convert::Infallible;
 
+    fn fill_contiguous<I: IntoIterator<Item = Rgb565>>(
+        &mut self,
+        area: &Rectangle,
+        colors: I,
+    ) -> Result<(), Self::Error> {
+        use embedded_graphics::primitives::PointsIter;
+        let pixels = area.size.width as usize * area.size.height as usize;
+        let colors: Vec<_> = colors.into_iter().take(pixels).collect();
+        self.contiguous_blits.push((*area, colors.len()));
+        self.draw_iter(
+            area.points()
+                .zip(colors)
+                .map(|(point, color)| Pixel(point, color)),
+        )
+    }
+
     fn draw_iter<I: IntoIterator<Item = Pixel<Rgb565>>>(
         &mut self,
         pixels: I,
@@ -168,7 +226,9 @@ impl rsk_ui::scene::FrameTarget for Panel {
         // empty and `pin_pads_painted` sees only the last screen of a whole flow.
         self.grids.push(self.pin_cell_hashes());
         self.frames += 1;
-        scene.replay(self).is_ok()
+        let painted = scene.replay(self).is_ok();
+        self.frame_hashes.push(self.raster_hash());
+        painted
     }
 
     fn present_damage(&mut self, scene: &rsk_ui::scene::Scene, rects: &[rsk_ui::Rect]) -> bool {
@@ -242,6 +302,16 @@ impl Pad {
         Self::from(vec![None], Some(p))
     }
 
+    /// [`Self::taps`], then a finger down on `p` for three times the polls a hold needs to
+    /// commit, then lifted: the hold a confirm screen at the end of those taps waits for. A
+    /// flow that never commits, or reads on past it, sees the finger go instead of hanging.
+    pub fn taps_then_hold(points: &[rsk_ui::Point], p: rsk_ui::Point) -> Self {
+        let mut pad = Self::taps(points);
+        let polls = 3 * (HOLD_MS / TOUCH_POLL_MS) as usize;
+        pad.script.extend(vec![Some(p); polls]);
+        pad
+    }
+
     /// The exact sample sequence, for a case the shapes above do not describe.
     pub fn script(samples: &[Option<rsk_ui::Point>]) -> Self {
         Self::from(samples.to_vec(), None)
@@ -273,6 +343,13 @@ impl TouchPad for DeadlinePad {
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum PanelSignal {
+    None,
+    Wake,
+    HostRequest,
+}
+
 /// The board verbs and firmware globals, as recorded state a test can set before a
 /// flow and read after it.
 pub struct Board {
@@ -290,7 +367,11 @@ pub struct Board {
     pub cancel_in: core::cell::Cell<Option<u32>>,
     /// A host command is queued — what makes a modal yield the executor.
     pub host_pending: bool,
+    /// The last reboot the flow asked for, as a record a test can assert.
     pub reboot: Option<bool>,
+    /// The device's reboot slot that request goes into, which a test takes from the way
+    /// `firmware/src/worker.rs` does.
+    pub slot: rsk_device::reboot::RebootSlot,
     pub presence_ms: u32,
     pub secure_boot: bool,
     pub attach_ms: u64,
@@ -298,6 +379,12 @@ pub struct Board {
     pub pin_changed: usize,
     /// …and how many times a failed clientPIN comparison at the pad did.
     pub pin_failed: usize,
+    /// How many times a returned panel flow asked for the dead stack to be swept.
+    pub sweeps: usize,
+    pub rsa_key: Option<Box<rsk_openpgp::keys::RsaKey>>,
+    pub rsa_requests: Vec<usize>,
+    pub rsa_late_tick_only: bool,
+    pub signal: Rc<core::cell::Cell<PanelSignal>>,
 }
 
 impl Board {
@@ -311,6 +398,7 @@ impl Board {
             cancel_in: core::cell::Cell::new(None),
             host_pending: false,
             reboot: None,
+            slot: rsk_device::reboot::RebootSlot::new(),
             // Short enough that a flow which blocks to its presence timeout ends
             // inside a test rather than the device's 30 s.
             presence_ms: 400,
@@ -318,6 +406,11 @@ impl Board {
             attach_ms: 0,
             pin_changed: 0,
             pin_failed: 0,
+            sweeps: 0,
+            rsa_key: None,
+            rsa_requests: Vec::new(),
+            rsa_late_tick_only: false,
+            signal: Rc::new(core::cell::Cell::new(PanelSignal::None)),
         }
     }
 
@@ -332,6 +425,10 @@ impl Hooks for Board {
         self.backlight = duty;
     }
     fn wake_pressed(&self) -> bool {
+        if self.signal.get() == PanelSignal::Wake {
+            self.signal.set(PanelSignal::None);
+            return true;
+        }
         let left = self.wake_polls.get();
         self.wake_polls.set(left.saturating_sub(1));
         left > 0
@@ -346,22 +443,26 @@ impl Hooks for Board {
         self.attach_ms
     }
     fn host_request_pending_after(&self, _since: Instant) -> bool {
-        self.host_pending
+        self.host_request_pending()
     }
     fn host_request_pending(&self) -> bool {
-        self.host_pending
+        self.host_pending || self.signal.get() == PanelSignal::HostRequest
     }
     fn request_reboot(&mut self, bootsel: bool) {
         self.reboot = Some(bootsel);
+        self.slot.queue(bootsel);
     }
     fn reboot_pending(&self) -> bool {
-        self.reboot.is_some()
+        self.slot.pending()
     }
     fn note_local_pin_changed(&mut self) {
         self.pin_changed += 1;
     }
     fn note_local_pin_failed(&mut self) {
         self.pin_failed += 1;
+    }
+    fn sweep_dead_stack(&mut self) {
+        self.sweeps += 1;
     }
     fn secure_boot_enabled(&self) -> bool {
         self.secure_boot
@@ -387,6 +488,25 @@ impl Hooks for Board {
     }
     fn set_presence_timeout_ms(&mut self, ms: u32) {
         self.presence_ms = ms;
+    }
+    fn rsa_search_progress(
+        &mut self,
+        nbits: usize,
+        _rng: &mut dyn rsk_sdk::Rng,
+        on_tick: &mut dyn FnMut(),
+    ) -> Option<Box<rsk_openpgp::keys::RsaKey>> {
+        self.rsa_requests.push(nbits);
+        if self.rsa_late_tick_only {
+            block_for(Duration::from_millis(status::KEYGEN_SPIN_MS + 1));
+            on_tick();
+            return self.rsa_key.take();
+        }
+        on_tick();
+        if self.rsa_key.is_some() {
+            block_for(Duration::from_millis(status::KEYGEN_SPIN_MS + 1));
+            on_tick();
+        }
+        self.rsa_key.take()
     }
 }
 
@@ -461,6 +581,7 @@ pub fn dev() -> rsk_crypto::Device<'static> {
         serial_hash: &SERIAL_HASH,
         serial_id: &SERIAL_ID,
         otp_key: None,
+        latched: false,
     }
 }
 
@@ -496,6 +617,7 @@ static GLOBALS: Mutex<()> = Mutex::new(());
 pub struct Env<S: Storage = RamStorage> {
     pub fs: RefCell<Fs<S>>,
     pub rng: RefCell<TestRng>,
+    pub keys: DeviceKeys,
     // A failed assertion unwinds while this is held, which poisons the mutex; the
     // guard is taken with the poison ignored, so one failing case reports its own
     // failure instead of turning every later one into a `PoisonError`.
@@ -527,6 +649,7 @@ impl<S: Storage> Env<S> {
         Self {
             fs: RefCell::new(Fs::new(storage)),
             rng: RefCell::new(TestRng::new(0x0DDB_A11C_0FFE_E1E5)),
+            keys: keys(),
             _globals: guard,
         }
     }
@@ -538,8 +661,13 @@ impl<S: Storage> Env<S> {
             .expect("the fixture PIN must satisfy the build's floor");
     }
 
+    /// The cells the device's own screens borrow, as `status_loop` is handed them.
+    pub fn cells(&self) -> Parked<'_, S, TestRng> {
+        Parked::new(&self.fs, &self.keys, &self.rng)
+    }
+
     /// The flow, wired to `pad` — panel, board and store as a fresh boot sees them.
-    pub fn ui(&self, pad: Pad) -> Ui<'_, Panel, Pad, Board, S, TestRng> {
+    pub fn ui<T: TouchPad>(&self, pad: T) -> Ui<'_, Panel, T, Board> {
         Ui::new(
             Panel::new(),
             pad,
@@ -548,14 +676,40 @@ impl<S: Storage> Env<S> {
                 version: 0x0875,
                 chipid: 0x0123_4567_89AB_CDEF,
             },
-            &self.fs,
-            keys(),
-            &self.rng,
+            self.cells(),
         )
+    }
+
+    /// `ui` as a screen the device raises, with the cells beside it.
+    pub fn local<'u, 'a, T: TouchPad>(
+        &'a self,
+        ui: &'u mut Ui<'a, Panel, T, Board>,
+    ) -> Local<'u, 'a, Panel, T, Board, S, TestRng> {
+        Local::new(ui, self.cells())
     }
 }
 
-pub type TestUi<'a> = Ui<'a, Panel, Pad, Board, RamStorage, TestRng>;
+pub type TestUi<'a> = Ui<'a, Panel, Pad, Board>;
+
+pub fn with_isolated_ui(
+    flow: impl for<'a> FnOnce(&mut TestUi<'a>, Parked<'a, RamStorage, TestRng>),
+) {
+    let fs = RefCell::new(Fs::new(RamStorage::new()));
+    let rng = RefCell::new(TestRng::new(0x0DDB_A11C_0FFE_E1E5));
+    let keys = keys();
+    let cells = Parked::new(&fs, &keys, &rng);
+    let mut ui = Ui::new(
+        Panel::new(),
+        Pad::idle(),
+        Board::new(),
+        DeviceInfo {
+            version: 0x0875,
+            chipid: 1,
+        },
+        cells,
+    );
+    flow(&mut ui, Parked::new(&fs, &keys, &rng));
+}
 
 /// The middle of a control, so a tap is expressed as the thing it lands on rather
 /// than as a pair of numbers that have to be kept in step with `rsk-ui`.
@@ -567,6 +721,19 @@ pub fn center(r: rsk_ui::Rect) -> rsk_ui::Point {
 /// controls and clear of the nav bar, so a tap that must be a miss is one.
 pub fn nowhere() -> rsk_ui::Point {
     rsk_ui::Point::new(rsk_ui::PANEL_W - 1, 0)
+}
+
+/// The row of a settings list that `hit` reads as `want`, found through `rsk-ui`'s own
+/// hit test so a reordered list moves the tap with it.
+pub fn settings_row<E: PartialEq>(
+    rows: u16,
+    hit: impl Fn(rsk_ui::Point) -> Option<E>,
+    want: E,
+) -> rsk_ui::Point {
+    (0..rows)
+        .map(|i| center(rsk_ui::settings_row_rect(i)))
+        .find(|&p| hit(p).as_ref() == Some(&want))
+        .expect("the list has that row")
 }
 
 /// The cell that *paints* `key` under `layout`, found through `rsk-ui`'s own grid —
@@ -664,6 +831,25 @@ pub fn backdate_local(ms: u32) {
 // --- the crate root's own logic --------------------------------------------
 
 #[test]
+fn cloned_parked_cells_share_the_host_borrows_and_pin_state() {
+    let env = Env::new();
+    let original = env.cells();
+    #[expect(clippy::clone_on_copy, reason = "exercise the Clone implementation")]
+    let cloned = Clone::clone(&original);
+    assert!(core::ptr::eq(original.keys, cloned.keys));
+    assert_eq!(cloned.fs.try_pin_set(), Some(false));
+    {
+        let _host_store = original.fs.borrow_mut();
+        let _host_rng = original.rng.borrow_mut();
+        assert_eq!(cloned.fs.try_pin_set(), None);
+        assert!(cloned.rng.try_borrow_mut().is_err());
+    }
+    env.set_device_pin(PIN);
+    assert_eq!(cloned.fs.try_pin_set(), Some(true));
+    assert!(cloned.rng.try_borrow_mut().is_ok());
+}
+
+#[test]
 fn every_brightness_level_lights_the_panel() {
     // Level 0 does not exist; the clamp must not let it through as a 0 duty, which
     // is what `sleep` uses to blank the glass.
@@ -710,6 +896,45 @@ fn the_marquee_buffer_preserves_partial_coverage() {
 }
 
 #[test]
+fn the_marquee_buffer_packs_and_overwrites_both_nibbles() {
+    let mut coverage = [0xff; 2];
+    {
+        let mut target = BandCoverage::new(&mut coverage, rsk_ui::Rect::new(0, 0, 4, 1));
+        for (index, value) in [1, 15, 8, 2].into_iter().enumerate() {
+            target.set(index, value);
+        }
+        assert_eq!(target.coverage, &[0xf1, 0x28]);
+        target.set(1, 3);
+        target.set(0, 12);
+    }
+    assert_eq!(coverage, [0x3c, 0x28]);
+    for (index, value) in [12, 3, 8, 2].into_iter().enumerate() {
+        assert_eq!(packed_coverage(&coverage, index), value);
+    }
+}
+
+#[test]
+fn the_marquee_draw_target_places_each_row_and_clips_all_four_edges() {
+    let mut coverage = [0; 4];
+    let mut target = BandCoverage::new(&mut coverage, rsk_ui::Rect::new(10, 20, 4, 2));
+    target
+        .draw_iter(
+            [(11, 20), (10, 21), (13, 21)]
+                .into_iter()
+                .map(|(x, y)| Pixel(EgPoint::new(x, y), rsk_ui::theme::TEXT)),
+        )
+        .unwrap();
+    target
+        .draw_iter(
+            [(9, 20), (10, 19), (14, 20), (10, 22)]
+                .into_iter()
+                .map(|(x, y)| Pixel(EgPoint::new(x, y), rsk_ui::theme::PANEL_BG)),
+        )
+        .unwrap();
+    assert_eq!(coverage, [0xf0, 0, 0x0f, 0xf0]);
+}
+
+#[test]
 fn the_marquee_buffer_keeps_antialiased_title_edges() {
     let band = rsk_ui::PIN_TITLE_BAND;
     let mut coverage = [0u8; MARQUEE_COVERAGE_BYTES];
@@ -751,6 +976,39 @@ fn an_off_ramp_colour_lands_as_ink_rather_than_refusing_the_frame() {
 fn the_band_target_has_no_way_to_fail() {
     fn infallible<D: DrawTarget<Error = core::convert::Infallible>>() {}
     infallible::<BandCoverage<'static>>();
+}
+
+#[test]
+fn a_board_without_optional_hooks_reports_no_hardware_or_side_effects() {
+    struct NoBoard;
+    impl Hooks for NoBoard {}
+    let env = Env::new();
+    let mut board = NoBoard;
+    board.set_backlight(100);
+    board.set_led_status(rsk_led::STATUS_TOUCH);
+    board.request_reboot(true);
+    board.note_local_pin_changed();
+    board.note_local_pin_failed();
+    board.set_up_pending(true);
+    board.set_cancel_requested(true);
+    board.set_presence_timeout_ms(100);
+    board.sweep_dead_stack();
+    assert!(!board.wake_pressed());
+    assert_eq!(board.led_status(), rsk_led::STATUS_IDLE);
+    assert_eq!(board.attach_elapsed_ms(), 0);
+    assert!(!board.host_request_pending_after(Instant::now()));
+    assert!(!board.host_request_pending());
+    assert!(!board.reboot_pending());
+    assert!(!board.secure_boot_enabled());
+    assert!(!board.cancel_requested());
+    assert_eq!(board.presence_timeout_ms(), 30000);
+    let mut ticks = 0;
+    assert!(
+        board
+            .rsa_search_progress(2048, &mut *env.rng.borrow_mut(), &mut || ticks += 1)
+            .is_none()
+    );
+    assert_eq!(ticks, 0);
 }
 
 #[test]
@@ -860,6 +1118,41 @@ fn a_host_ceremony_does_not_postpone_the_lock() {
     assert_eq!(LAST_LOCAL_MS.load(Ordering::Relaxed), local_before);
     note_local_activity();
     assert_ne!(LAST_LOCAL_MS.load(Ordering::Relaxed), local_before);
+}
+
+/// `firmware/src/worker.rs` around a queued reboot, for the tests that stand in for it:
+/// the idle tick that takes the request, and the wait `Worker::reboot` spends before its
+/// scrub and reset. Held to that source by [`the_worker_latches_the_reboot_slot_before_its_wait`].
+pub const WORKER_TICK_MS: u64 = 16;
+pub const WORKER_RESET_WAIT_MS: u64 = 200;
+
+/// The panel parks on the reboot slot only while the board latches it before the wait
+/// that yields to the panel — and the stand-in worker `status_tests.rs` drives it with
+/// proves that about the board only while it keeps the board's tick and wait.
+#[test]
+fn the_worker_latches_the_reboot_slot_before_its_wait() {
+    let raw = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../firmware/src/worker.rs"),
+    )
+    .expect("firmware/src/worker.rs");
+    let worker = strip_line_comments(&raw);
+    let reboot = fn_body(&worker, "async fn reboot(&mut self, mode: u8) -> !");
+    let latch = reboot.find("crate::vendor::begin_reset();");
+    let wait = reboot.find(".await");
+    assert!(
+        matches!((latch, wait), (Some(latch), Some(wait)) if latch < wait),
+        "`Worker::reboot` no longer latches the slot before its first await"
+    );
+    assert!(
+        reboot.contains(&format!(
+            "Timer::after(Duration::from_millis({WORKER_RESET_WAIT_MS})).await"
+        )),
+        "`Worker::reboot`'s wait moved away from the stand-in's"
+    );
+    assert!(
+        worker.contains(&format!("const BTN_POLL_MS: u64 = {WORKER_TICK_MS};")),
+        "the worker's idle tick moved away from the stand-in's"
+    );
 }
 
 /// `Worker::run` races several wake sources and `host_request_pending` decides

@@ -407,6 +407,7 @@ fn calculate_all_never_emits_a_truncated_response_tlv() {
         serial_hash: &[0x22; 32],
         serial_id: &SERIAL,
         otp_key: None,
+        latched: false,
     };
     let mut blob = tlv(TAG_NAME, b"legacy");
     let mut key = vec![0x2Fu8, 6];

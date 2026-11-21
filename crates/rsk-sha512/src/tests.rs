@@ -53,6 +53,53 @@ fn sha384_nist_vectors() {
 }
 
 #[test]
+fn reset_and_finalize_reset_remove_both_partial_and_complete_blocks() {
+    for length in [0, 1, 111, 112, 127, 128, 129, 256] {
+        let message = vec![0xA5; length];
+        let mut sha512 = Sha512::new();
+        let mut sha384 = Sha384::new();
+        sha512.update(&message);
+        sha384.update(&message);
+        assert_eq!(
+            sha512.finalize_reset()[..],
+            sha2::Sha512::digest(&message)[..]
+        );
+        assert_eq!(
+            sha384.finalize_reset()[..],
+            sha2::Sha384::digest(&message)[..]
+        );
+        assert_eq!(sha512.finalize_reset()[..], sha2::Sha512::digest([])[..]);
+        assert_eq!(sha384.finalize_reset()[..], sha2::Sha384::digest([])[..]);
+        sha512.update(&message);
+        sha384.update(&message);
+        Digest::reset(&mut sha512);
+        Digest::reset(&mut sha384);
+        sha512.update(b"abc");
+        sha384.update(b"abc");
+        assert_eq!(sha512.finalize()[..], sha2::Sha512::digest(b"abc")[..]);
+        assert_eq!(sha384.finalize()[..], sha2::Sha384::digest(b"abc")[..]);
+    }
+}
+
+#[test]
+fn debug_output_does_not_disclose_the_chaining_state() {
+    let mut sha512 = Sha512Core::default();
+    let mut sha384 = Sha384Core::default();
+    sha512.state.fill(0x0123_4567_89AB_CDEF);
+    sha384.state.fill(0x0123_4567_89AB_CDEF);
+    for text in [
+        format!("{sha512:?}"),
+        format!("{sha384:?}"),
+        format!("{:?}", Sha512::new()),
+        format!("{:?}", Sha384::new()),
+    ] {
+        assert!(text.starts_with("Sha"));
+        assert!(!text.contains("0123456789"));
+        assert!(!text.contains("81985529216486895"));
+    }
+}
+
+#[test]
 fn hmac_sha512_rfc4231() {
     // RFC 4231 test case 2 (short key) and case 6 (131-byte key > block size, so
     // the key is itself hashed first — exercises the HMAC key-reduction path).

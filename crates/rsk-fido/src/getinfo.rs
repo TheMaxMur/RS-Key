@@ -23,10 +23,14 @@ use crate::consts::{
     AAGUID, ALG_EDDSA, ALG_ES256, ALG_ES384, ALG_ES512, ALG_MLDSA44, ALG_MLDSA65, ALG_MLDSA87,
     ATT_FMT_PACKED, ENC_GETINFO_MEMBER_LEN, FIRMWARE_VERSION, LARGE_BLOB_EXT, MAX_CRED_ID_LENGTH,
     MAX_CREDBLOB_LENGTH, MAX_CREDENTIAL_COUNT_IN_LIST, MAX_LARGE_BLOB_SIZE, MAX_MIN_PIN_RPIDS,
-    MAX_MSG_SIZE, PIN_COMPLEXITY_POLICY, TRANSPORTS,
+    MAX_MSG_SIZE, TRANSPORTS,
 };
 use crate::cose::cose_public_key;
 use crate::error::{CtapError, CtapResult};
+use crate::u2f::U2fGate;
+
+/// How many extensions getInfo names (0x02).
+const EXTENSIONS: u64 = 9 + if cfg!(feature = "preview-sign") { 1 } else { 0 };
 
 /// Encode the getInfo response map into `out`; returns the byte length.
 /// `pin_set` reflects whether a PIN is configured (`options.clientPin`);
@@ -50,6 +54,7 @@ pub fn get_info(
     pin_set: bool,
     min_pin_len: u8,
     force_change: bool,
+    pin_complexity: bool,
     ea_enabled: bool,
     always_uv: bool,
     builtin_uv: bool,
@@ -64,6 +69,7 @@ pub fn get_info(
         pin_set,
         min_pin_len,
         force_change,
+        pin_complexity,
         ea_enabled,
         always_uv,
         builtin_uv,
@@ -81,6 +87,7 @@ fn write_info<W: Write>(
     pin_set: bool,
     min_pin_len: u8,
     force_change: bool,
+    pin_complexity: bool,
     ea_enabled: bool,
     always_uv: bool,
     builtin_uv: bool,
@@ -112,15 +119,10 @@ fn write_info<W: Write>(
     // CTAP 2.3 §6.4 spells it out — "MUST not be present in versions member". The
     // 2.2 surface is advertised through its option IDs and getInfo members instead.
     //
-    // U2F_V2 (CTAP1) drops off while alwaysUv is on: §7.2.4 disables the CTAP1/U2F
-    // interface (`process_u2f` refuses REGISTER/AUTHENTICATE), so getInfo must stop
-    // claiming it. The conformance run is alwaysUv-off, so the list stays all five.
-    // The same clause carves out the one case where it survives — "unless the
-    // CTAP1/U2F authenticator is protected by a built-in user verification method",
-    // i.e. a configured PIN pad, which `process_u2f` then runs on every REGISTER /
-    // AUTHENTICATE. Capability alone is not enough: with no PIN set there is nothing
-    // to verify against, so U2F goes away as on any screenless build.
-    let u2f = !always_uv || (builtin_uv && pin_set);
+    // U2F_V2 goes while alwaysUv has CTAP1/U2F off (§7.2.4), unless a pad with a PIN set
+    // protects it; `U2fGate::of` decides that for every U2F answer. The conformance run is
+    // alwaysUv-off, so there the list stays all five.
+    let u2f = U2fGate::of(always_uv, builtin_uv && pin_set) != U2fGate::Disabled;
     enc.u8(0x01)?.array(3 + u64::from(u2f))?;
     if u2f {
         enc.str("U2F_V2")?;
@@ -128,9 +130,10 @@ fn write_info<W: Write>(
     enc.str("FIDO_2_0")?.str("FIDO_2_1")?.str("FIDO_2_3")?;
 
     // 0x02 extensions — exactly one of the two large-blob designs (CTAP 2.3
-    // §12.4 forbids both), so the list length does not change either way.
+    // §12.4 forbids both), so the list length does not change either way; only a
+    // `preview-sign` build lengthens it, by previewSign.
     enc.u8(0x02)?
-        .array(7)?
+        .array(EXTENSIONS)?
         .str("credBlob")?
         .str("credProtect")?
         .str("hmac-secret")?
@@ -141,7 +144,11 @@ fn write_info<W: Write>(
         })?
         .str("minPinLength")?
         .str("hmac-secret-mc")?
-        .str("thirdPartyPayment")?;
+        .str("thirdPartyPayment")?
+        .str("uvm")?
+        .str("pinComplexityPolicy")?;
+    #[cfg(feature = "preview-sign")]
+    enc.str(crate::previewsign::NAME)?;
 
     // 0x03 aaguid
     enc.u8(0x03)?.bytes(&AAGUID)?;
@@ -259,7 +266,7 @@ fn write_info<W: Write>(
         enc.u8(0x0B)?.u64(MAX_LARGE_BLOB_SIZE as u64)?;
     }
 
-    // 0x0C forceChangePin (EF_MINPINLEN[1]); enforced at token issuance (clientpin).
+    // 0x0C forceChangePin (EF_MINPINLEN[1] bit 0); enforced at token issuance (clientpin).
     enc.u8(0x0C)?.bool(force_change)?;
 
     // 0x0D minPINLength (EF_MINPINLEN[0], default MIN_PIN_LENGTH)
@@ -317,7 +324,7 @@ fn write_info<W: Write>(
     // 0x1B pinComplexityPolicy — a PIN rule BEYOND minPINLength, which 0x0D already
     // reports; a raised floor alone is length, not complexity. Its optional URL
     // companion (0x1C) stays absent — a docs link that rots is worse than none.
-    enc.u8(0x1B)?.bool(PIN_COMPLEXITY_POLICY)?;
+    enc.u8(0x1B)?.bool(pin_complexity)?;
 
     // 0x1D maxPINLength — max PIN length in Unicode code points. The PIN is padded
     // to 64 bytes on the wire, so the content is at most 63. A 2-byte CBOR key

@@ -35,8 +35,9 @@ use rsk_usb::ctaphid::{CtapHid, FIDO_REPORT_DESCRIPTOR, HID_RPT_SIZE, MsgHandler
 
 use crate::device::{Job, Jobs, Unplug};
 use crate::signals::Signals;
-use crate::usbip::{Ret, Urb, UrbSink, UsbDeviceInfo};
+use crate::usbip::{Ret, Urb, UsbDeviceInfo};
 use crate::usbip_driver::UsbIpDriver;
+use crate::usbip_server::{Backend, UrbSink};
 
 /// The USB identity a default firmware build carries (`VIDPID=RSKey`), because
 /// the point of this path is that a host treats the emulator the way it treats a
@@ -44,7 +45,7 @@ use crate::usbip_driver::UsbIpDriver;
 /// product string says which it is, and the serial (`RSKEMU\0\1`) already makes
 /// every value derived from it recognisably the emulator's.
 const VID: u16 = 0x1209;
-const PID: u16 = 0x0001;
+const PID: u16 = 0xF1D2;
 const MANUFACTURER: &str = "RS-Key";
 /// Deliberately not a board serial: everything derived from it is the
 /// emulator's, and the Yubico identity keeps it so a masquerade still says which
@@ -165,8 +166,15 @@ impl MsgHandler for HidJobs {
         }
     }
 
-    async fn handle_vendor(&mut self, cmd: u8, data: &[u8], out: &mut [u8]) -> Option<usize> {
+    async fn handle_vendor(
+        &mut self,
+        cid: u32,
+        cmd: u8,
+        data: &[u8],
+        out: &mut [u8],
+    ) -> Option<usize> {
         let job = Job::Vendor {
+            cid,
             cmd,
             data: data.to_vec(),
         };
@@ -259,6 +267,7 @@ fn declare<'d>(
     builder: &mut Builder<'d, UsbIpDriver>,
     kbd_state: &'d mut HidState<'d>,
     fido_state: &'d mut HidState<'d>,
+    ccid_buffers: &'d mut rsk_usb::ccid::Buffers,
     otp: Option<&'d mut crate::otp_kbd::OtpHandler>,
     jobs: &Jobs,
     atr: &'static [u8],
@@ -296,7 +305,7 @@ fn declare<'d>(
     // `bPINSupport = 0`: no pad. `--display` does give the emulator a touchscreen,
     // but the card interface would then have to collect the PIN on it and does
     // not — advertising VERIFY would light up a host flow that collects nothing.
-    let ccid = Ccid::new(builder, CardJobs(jobs.clone()), atr, 0x00);
+    let ccid = Ccid::new(builder, CardJobs(jobs.clone()), atr, 0x00, ccid_buffers);
     (kbd, fido, ccid)
 }
 
@@ -326,6 +335,17 @@ fn usb_config(yubico: bool) -> UsbConfig<'static> {
 struct PoweredPort {
     inner: crate::usbip_driver::Port,
     jobs: Jobs,
+    yubico: bool,
+}
+
+impl Backend for PoweredPort {
+    fn device(&self) -> UsbDeviceInfo {
+        device_info(self.yubico)
+    }
+
+    fn interfaces(&self) -> Vec<[u8; 3]> {
+        INTERFACES.to_vec()
+    }
 }
 
 impl UrbSink for PoweredPort {
@@ -380,6 +400,7 @@ pub fn serve(addr: String, jobs: Jobs, signals: Arc<Signals>, yubico: bool) {
         &mut builder,
         Box::leak(Box::new(HidState::new())),
         Box::leak(Box::new(HidState::new())),
+        Box::leak(Box::new(rsk_usb::ccid::Buffers::new())),
         Some(Box::leak(Box::new(otp.handler(signals.clone())))),
         &jobs,
         atr,
@@ -392,14 +413,16 @@ pub fn serve(addr: String, jobs: Jobs, signals: Arc<Signals>, yubico: bool) {
         HidJobs(jobs.clone()),
         up_pending,
         request_cancel,
+        Box::leak(Box::new(rsk_usb::ctaphid::Buffers::new())),
     );
 
     let mut port = PoweredPort {
         inner: port,
         jobs: jobs.clone(),
+        yubico,
     };
     std::thread::spawn(move || {
-        if let Err(e) = crate::usbip::listen(&addr, &device_info(yubico), &INTERFACES, &mut port) {
+        if let Err(e) = crate::usbip_server::listen(&addr, &mut port) {
             eprintln!("emu: cannot serve USB/IP on {addr}: {e}");
         }
     });

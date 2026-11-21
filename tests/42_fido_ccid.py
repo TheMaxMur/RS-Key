@@ -23,7 +23,7 @@ Step 5 is the one worth the suite: the transports share one `FidoState`, so a
 power cycle has exactly one key agreement. Two states would answer two — and
 would also carry two per-boot PIN-mismatch budgets, which is why they do not.
 
-⚠️ On the default `0x1209:0x0001` identity the `ccid` driver does not bind the
+⚠️ On the default `0x1209:0xF1D2` identity the `ccid` driver does not bind the
 interface at all, so a REAL board must be built `VIDPID=Yubikey5` (or the host
 must carry the `ccid-rs-key` overlay) for this to find a reader.
 """

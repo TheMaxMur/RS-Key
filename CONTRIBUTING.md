@@ -14,9 +14,10 @@ Using an AI agent (Claude Code, Cursor, Codex, …) to write a patch is fine —
 several already have. Two expectations. **You own the diff:** you understand it
 and can defend it in review; the agent is a tool (a `Co-Authored-By:` trailer is
 welcome), you are the contributor. And **the bar doesn't move:**
-`./scripts/check.sh` green, `bcdDevice` bumped if firmware behaviour changed,
-tests where the change is visible, docs in sync. A PR that compiles but skips the
-gate is more work to review than no PR.
+`./scripts/check.sh` green, and `./scripts/check-assurance.sh` before the PR,
+`bcdDevice` bumped if firmware behaviour changed, tests where the change is
+visible, docs in sync. A PR that compiles but skips the gate is more work to
+review than no PR.
 
 Point your agent at [AGENTS.md](AGENTS.md) — the condensed rules plus the gotchas
 agents reliably trip on (the `no_std` host-test split, the bcdDevice bump, keeping
@@ -46,27 +47,35 @@ dependencies. It works; it's just more moving parts to keep in sync.
 ## The gate
 
 ```sh
-./scripts/check.sh
+./scripts/check.sh            # every commit
+./scripts/check-assurance.sh  # once, before opening the pull request
 ```
 
-Everything that has to be green before a merge: rustfmt, clippy twice
-(embedded and host-test profiles), the host test suite, the fips-profile test
-flavor, both firmware images, the rsk-wipe image, cargo-audit, cargo-deny,
-gitleaks. CI runs exactly this script (`.github/workflows/ci.yml`), so green
-locally means green on the PR — there is no CI-only logic to discover later.
+Everything that has to be green before a merge. The first: rustfmt, clippy
+twice (embedded and host-test profiles), the host test suite, the fips-profile
+test flavor, both firmware images, the rsk-wipe image, cargo-audit, cargo-deny,
+gitleaks. The second: the TLA+ plumbing and the registries held against the
+prose, with their tables. CI runs `check.sh` and `check-assurance.sh` as
+separate jobs on every pull request (`.github/workflows/ci.yml`), so both green
+locally means green on the PR. The second goes red only when a model, a
+registry, a generated page, or code they cite or count moves: run it once
+before opening the PR, not on every commit.
 
 The default host target is `aarch64-apple-darwin` because that's where
 development happens; on Linux run `HOST_TARGET=x86_64-unknown-linux-gnu
 ./scripts/check.sh`.
 
-One trap worth knowing: check.sh builds the firmware twice into the *same
-path* — the real (touch-enabled) image first, then the no-touch test image
-that the automated suites need. After a check.sh run,
-`target/.../release/firmware` holds the **no-touch** build. Rebuild with
-`cargo build --release -p firmware` before flashing anything you intend to
-use. Yes, this has bitten us; the touch and no-touch images are otherwise
-indistinguishable until a credential gets minted without anyone touching the
-button.
+The standard firmware build is `bash scripts/build.sh` inside the
+dev shell, or `nix build .#firmware`. Both produce a combined Secure/Non-secure
+image with the partition table. TrustZone is mandatory: bare Cargo refuses to
+build the authenticator outside the S/NS link stages. `check.sh` leaves a
+combined no-touch test image. Rebuild with no test features before flashing;
+the builder outputs are
+`target/trustzone/combined.elf` and `combined.uf2`.
+
+The TUI has a separate shell: `nix develop .#tui`. The full gate enters it for
+TUI checks. CI runs the main gate and image suites on pushes to `develop` and
+`main`, as well as on pull requests.
 
 ## Code
 
@@ -75,12 +84,62 @@ change is wrong.
 
 Clippy runs with `-D warnings` on both profiles. Don't silence a lint without
 saying why on the `#[allow]` line — and silence it at the smallest scope that
-works.
+works. The policy itself lives once, in `[workspace.lints]` of the root
+`Cargo.toml`; a new crate opts in with `[lints] workspace = true`.
 
-`unsafe` is the expensive keyword. There are currently two audited exception
-areas, both documented in [docs/unsafe.md](docs/unsafe.md); a new `unsafe`
-site needs an entry there explaining why safe Rust can't do the job. PRs that
-add undocumented `unsafe` don't get merged, full stop.
+`unsafe` is the expensive keyword. The workspace denies it everywhere but the
+three crates that need it — `firmware`, `rsk-wipe` and `rsk-rsa` — and each
+of their sites is documented in [docs/unsafe.md](docs/unsafe.md); a new
+`unsafe` site needs an entry there explaining why safe Rust can't do the job,
+and a new `unsafe` block or `unsafe impl` a `// SAFETY:` comment, which clippy
+refuses to build without. PRs that add undocumented `unsafe` don't get merged,
+full stop.
+
+Key-grade bytes live in `rsk_secret::Secret` (or under a `WipeGuard` when the
+buffer outlives the scope), which wipes on every exit, a `?` included; the root
+`clippy.toml` refuses a bare `Zeroize::zeroize` or a `Zeroizing` in every crate.
+A wipe written by hand at the end of a function is the bug that type exists to
+remove. The rest follows from what the type can and cannot see:
+
+- A function that produces key-grade bytes hands them out in a `Secret`, or
+  writes them into the caller's `&mut Secret<[u8; N]>`, so a caller that brings
+  a bare array does not compile.
+- A move is a `memcpy` whose source is not wiped: build a secret in place
+  (`Secret::zeroed()`, then `expose_mut()`) and hand it on by reference.
+  `drop(secret)` is such a move; `.wipe()` wipes in place.
+- A wipe no `Secret` can make — state that outlives a command (a struct field,
+  a static), a key type's own `Drop` — stays bare at its wipe point under
+  `#[expect(clippy::disallowed_methods, reason = "…")]` naming that point, and
+  rustc holds the list both ways: a new bare wipe fails clippy, and so does an
+  `#[expect]` whose wipe is gone.
+- A hand-written wipe of a whole value — a type's `Drop`, a long-lived value's
+  `scrub`, a session's reset — names every field and variant of it:
+  `let Self { … } = self;` lists each field (`_` for one that holds no secret,
+  wipes itself or is cleared by a helper the wipe calls), and a `match` over the
+  variants has no `_` arm. A field or variant added later then does not compile
+  until someone decides how it is wiped, and a deleted wipe of a bound field leaves
+  its binding unused, which clippy refuses. A wipe of named buffers (a response or
+  chaining buffer, a challenge) covers those, not the struct around them.
+
+Resets are held the same way: `clippy.toml` refuses `SCB::sys_reset`,
+`rom_data::reset_to_usb_boot`, `reboot`, `reboot_ns` and
+`Watchdog::trigger_reset`, because a reset that skips `Worker::reboot` skips its
+scrub of the RAM secrets. The secure reboot and `rsk-wipe` (a RAM-only image with
+no secret to lose) keep their calls under an `#[expect]`.
+
+Host bytes cannot panic a parser: under `panic-halt` a panic is a board that
+answers nothing until it is unplugged. A module that reads what a host sent —
+the CTAPHID and CCID transports, the APDU, TLV and CBOR parsers, the record
+codecs, each applet crate and each CTAP command handler — denies
+`clippy::indexing_slicing`, `unwrap_used`, `expect_used`, `panic` and
+`cast_possible_truncation` at its top; an applet crate does it on its root, so
+the whole crate. An access there is checked — `get`, `first_chunk`, a fixed-size
+array, `try_from` — and fails to the status word or CTAP error its path already
+answers, never to a silent default. The test modules keep their fixtures'
+indexing under an `#[allow]` with a reason. An exemption is an
+`#[expect(…, reason = …)]` on the smallest item, where the truncation is the
+behaviour kept or a checked form costs a proof; a byte picked out of
+`to_le_bytes()` is not one, because it hides the narrowing from the lint.
 
 Every file starts with the SPDX header:
 

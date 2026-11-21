@@ -3,6 +3,21 @@
 
 use super::*;
 
+#[path = "hid_tx_tests.rs"]
+mod tx;
+
+#[test]
+fn a_valid_frame_without_write_flags_releases_nothing() {
+    let mut rx = FrameRx::new();
+    let mut out = Secret::new([0xa5; PAYLOAD_SIZE]);
+    for mut report in split_frame(&[0x5a; PAYLOAD_SIZE], 0x30) {
+        report[REPORT_DATA] &= SEQ_MASK;
+        assert_eq!(rx.feed(&report, &mut out), RxOutcome::None);
+        assert_eq!(out.expose(), &[0xa5; PAYLOAD_SIZE]);
+        assert_eq!(rx.buf.expose(), &[0; FRAME_SIZE]);
+    }
+}
+
 #[test]
 fn reassembles_a_full_frame() {
     let mut payload = [0u8; PAYLOAD_SIZE];
@@ -11,16 +26,18 @@ fn reassembles_a_full_frame() {
     }
     let reports = split_frame(&payload, 0x30);
     let mut rx = FrameRx::new();
+    let mut out = Secret::<[u8; PAYLOAD_SIZE]>::zeroed();
     for r in &reports[..9] {
-        assert_eq!(rx.feed(r), RxOutcome::None);
+        assert_eq!(rx.feed(r, &mut out), RxOutcome::None);
     }
-    match rx.feed(&reports[9]) {
-        RxOutcome::Frame { slot, payload: p } => {
+    match rx.feed(&reports[9], &mut out) {
+        RxOutcome::Frame { slot } => {
             assert_eq!(slot, 0x30);
-            assert_eq!(p, payload);
+            assert_eq!(*out.expose(), payload);
         }
         other => panic!("expected Frame, got {other:?}"),
     }
+    assert_eq!(rx.buf.expose(), &[0; FRAME_SIZE]);
 }
 
 #[test]
@@ -29,18 +46,25 @@ fn rejects_corrupted_crc() {
     let mut reports = split_frame(&payload, 1);
     reports[9][0] ^= 0xFF; // corrupt the last payload slice
     let mut rx = FrameRx::new();
+    let mut out = Secret::<[u8; PAYLOAD_SIZE]>::zeroed();
     for r in &reports[..9] {
-        rx.feed(r);
+        rx.feed(r, &mut out);
     }
-    assert_eq!(rx.feed(&reports[9]), RxOutcome::BadCrc);
+    assert_eq!(rx.feed(&reports[9], &mut out), RxOutcome::BadCrc);
+    assert_eq!(rx.buf.expose(), &[0; FRAME_SIZE]);
 }
 
 #[test]
 fn reset_byte_clears_state() {
     let mut rx = FrameRx::new();
+    let mut out = Secret::<[u8; PAYLOAD_SIZE]>::zeroed();
+    let reports = split_frame(&[0x5a; PAYLOAD_SIZE], 0x30);
+    assert_eq!(rx.feed(&reports[0], &mut out), RxOutcome::None);
+    assert_eq!(&rx.buf.expose()[..REPORT_DATA], &[0x5a; REPORT_DATA]);
     let mut reset = [0u8; REPORT_SIZE];
     reset[REPORT_DATA] = FLAG_RESET;
-    assert_eq!(rx.feed(&reset), RxOutcome::Reset);
+    assert_eq!(rx.feed(&reset, &mut out), RxOutcome::Reset);
+    assert_eq!(rx.buf.expose(), &[0; FRAME_SIZE]);
 }
 
 #[test]
@@ -49,9 +73,14 @@ fn dummy_write_aborts_like_a_reset() {
     // "force update or abort" (ykpers sends it to cancel a challenge waiting for a
     // touch, and again to reset the read mode after collecting a response).
     let mut rx = FrameRx::new();
+    let mut out = Secret::<[u8; PAYLOAD_SIZE]>::zeroed();
+    let reports = split_frame(&[0x5a; PAYLOAD_SIZE], 0x30);
+    assert_eq!(rx.feed(&reports[0], &mut out), RxOutcome::None);
+    assert_eq!(&rx.buf.expose()[..REPORT_DATA], &[0x5a; REPORT_DATA]);
     let mut dummy = [0u8; REPORT_SIZE];
     dummy[REPORT_DATA] = FLAG_WRITE | 0x0F;
-    assert_eq!(rx.feed(&dummy), RxOutcome::Reset);
+    assert_eq!(rx.feed(&dummy, &mut out), RxOutcome::Reset);
+    assert_eq!(rx.buf.expose(), &[0; FRAME_SIZE]);
 }
 
 #[test]
@@ -61,19 +90,20 @@ fn a_frame_interrupted_by_a_dummy_write_is_abandoned() {
     let payload = [0x5Au8; PAYLOAD_SIZE];
     let reports = split_frame(&payload, 0x30);
     let mut rx = FrameRx::new();
+    let mut out = Secret::<[u8; PAYLOAD_SIZE]>::zeroed();
     for r in &reports[..5] {
-        rx.feed(r);
+        rx.feed(r, &mut out);
     }
     let mut dummy = [0u8; REPORT_SIZE];
     dummy[REPORT_DATA] = FLAG_WRITE | 0x0F;
-    assert_eq!(rx.feed(&dummy), RxOutcome::Reset);
+    assert_eq!(rx.feed(&dummy, &mut out), RxOutcome::Reset);
     // Resuming mid-frame yields nothing; a frame sent from its start still lands.
-    assert_eq!(rx.feed(&reports[9]), RxOutcome::BadCrc);
+    assert_eq!(rx.feed(&reports[9], &mut out), RxOutcome::BadCrc);
     for r in &reports[..9] {
-        assert_eq!(rx.feed(r), RxOutcome::None);
+        assert_eq!(rx.feed(r, &mut out), RxOutcome::None);
     }
     assert!(matches!(
-        rx.feed(&reports[9]),
+        rx.feed(&reports[9], &mut out),
         RxOutcome::Frame { slot: 0x30, .. }
     ));
 }
@@ -201,8 +231,9 @@ fn a_complete_frame_is_taken_once() {
     let mut payload = [0u8; PAYLOAD_SIZE];
     payload[..4].copy_from_slice(b"ping");
     assert_eq!(write_frame(&mut hid, 0x38, &payload), SetOutcome::Frame);
-    assert_eq!(hid.take_request(), Some((0x38, payload)));
-    assert_eq!(hid.take_request(), None);
+    let (slot, taken) = hid.take_request().unwrap();
+    assert_eq!((slot, taken.expose()), (0x38, &payload));
+    assert!(hid.take_request().is_none());
 }
 
 /// The payload copy left behind is wiped: a slot-configure frame carries the AES
@@ -213,7 +244,19 @@ fn taking_a_request_leaves_no_copy_of_its_payload() {
     let payload = [0xA5u8; PAYLOAD_SIZE];
     write_frame(&mut hid, 1, &payload);
     hid.take_request().unwrap();
-    assert!(hid.req_payload.iter().all(|&b| b == 0));
+    assert!(hid.req_payload.expose().iter().all(|&b| b == 0));
+}
+
+/// The copy the caller takes wipes itself, on whatever exit it leaves by: the
+/// firmware held a bare array of the slot's AES key, UID and access code in the
+/// worker's frame and never wiped it.
+#[test]
+fn the_payload_a_caller_takes_wipes_itself() {
+    fn wipes_on_drop<T: zeroize::ZeroizeOnDrop>(_: &T) {}
+    let mut hid = OtpHid::new();
+    write_frame(&mut hid, 1, &[0xA5u8; PAYLOAD_SIZE]);
+    let (_, payload) = hid.take_request().unwrap();
+    wipes_on_drop(&payload);
 }
 
 /// While the command runs the host is told "working", and once a touch is
@@ -340,4 +383,25 @@ fn a_poll_before_the_first_seed_reports_the_firmware_version() {
     let (major, minor, patch) = VERSION;
     let expected = status_frame([major, minor, patch, 0, 0, 0, 0]);
     assert_eq!(get(&mut hid, false), expected);
+}
+
+#[test]
+fn default_hid_components_start_empty_and_announce_no_pending_touch() {
+    let mut rx = FrameRx::default();
+    let mut out = Secret::<[u8; PAYLOAD_SIZE]>::zeroed();
+    assert_eq!(rx.feed(&[0; REPORT_SIZE], &mut out), RxOutcome::None);
+    let mut tx = FrameTx::default();
+    let mut report = [0x55; REPORT_SIZE];
+    assert!(!tx.active());
+    assert!(!tx.next(&mut report));
+    assert_eq!(report, [0x55; REPORT_SIZE]);
+    let mut processing = ProcessingStatus::default();
+    assert_eq!(processing.poll(false), STATUS_PROCESSING);
+    let mut hid = OtpHid::default();
+    assert!(hid.take_request().is_none());
+    let (major, minor, patch) = VERSION;
+    assert_eq!(
+        get(&mut hid, false),
+        status_frame([major, minor, patch, 0, 0, 0, 0])
+    );
 }

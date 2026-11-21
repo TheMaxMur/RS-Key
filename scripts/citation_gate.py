@@ -29,7 +29,7 @@ code-owning configurations must have a production tag.
 
 ## What is decidable, and what is not
 
-That `clientpin.rs:35` still *means* what the model says is a review question.
+That `clientpin.rs:44` still *means* what the model says is a review question.
 That the file exists, that the line is inside it, and that a range runs forwards
 are not, so those are the rules — plus one drift signal that costs nothing: a
 citation whose first or last line is **blank**. Measured over every citation the
@@ -124,7 +124,7 @@ prose pages carry live model→code claims that only a person reads. `docs/` is 
 far the largest and is the next widening rather than an oversight — measured over
 this guard's own reader on the day the registries were taken: 229 citations over
 6 pages, of which 6 are already wrong, and 4 of those 6 are the SAME four the
-registries just surfaced, because `docs/platform-assumptions.md` restates
+registries just surfaced, because `assurance/reports/platform-assumptions.md` restates
 `assurance/platform.toml`. The other 2 are bare names that resolve in none of
 [`SEARCH`]'s five directories, so taking `docs/` needs a repair pass of its own
 before the flag flips — the argument [`EXTS`] makes one axis over.
@@ -199,7 +199,7 @@ PAGES = (
     pathlib.Path("formal/RSKeyTransport.tla"),
     # The applet-policy module was the ninth `.tla` carrying citations and the
     # only one this tuple did not name, so all four of its citations were
-    # unchecked — and one had rotted: `rsk-otp/src/lib.rs:564-569` was the swap's
+    # unchecked — and one had rotted: `rsk-otp/src/lib.rs:575-580` was the swap's
     # write-back tail ending on a blank line, not the access-code gate it claims.
     pathlib.Path("formal/RSKeyAppletPolicies.tla"),
     # The replay harness cites too, and R4c's whole content is a code rule
@@ -213,7 +213,7 @@ PAGES = (
     pathlib.Path("formal/comutants.toml"),
     # Not a model page but the config generator, and it makes the same kind of
     # model-to-code claim: the two firmware constants its SYMMETRY argument is
-    # priced against. Both had moved — `consts.rs:361,334` named `EF_LARGEBLOB`
+    # priced against. Both had moved — `consts.rs:364,337` named `EF_LARGEBLOB`
     # and a doc comment, not MAX_PIN_RETRIES and PIN_MISMATCH_LIMIT.
     pathlib.Path("formal/gen-configs.sh"),
 )
@@ -257,7 +257,7 @@ CODE_PAGES_FLOOR = 1
 #: exactly the same shape a proof header does — `security_trace.py` names the two
 #: predicates its recorder stands in for — and it was the last substantive citing
 #: surface nothing read: the reset sweep found BOTH of its reset citations naming
-#: `reset.rs:187` for a predicate that is on `:211`, which `formal/README.md` had
+#: `reset.rs:191` for a predicate that is on `:215`, which `formal/README.md` had
 #: right all along.
 SCRIPT_ROOT = "scripts/"
 
@@ -277,7 +277,7 @@ SCRIPT_ROOT = "scripts/"
 #: sentences about the derived-invariant fallback wrote a bare `run-tlc.sh:200-203`
 #: and a bare `run-tlc.sh` resolves in none of the five [`SEARCH`] directories, so
 #: the report would have been "no such file" — the wrong reason, on a citation
-#: whose line had simply moved. Both are written `formal/run-tlc.sh:231-234` now,
+#: whose line had simply moved. Both are written `formal/run-tlc.sh:234-237` now,
 #: which is the form a narrowing could check; that repair is what a narrowing is
 #: worth, and it costs nothing.
 SCRIPT_EXEMPT = frozenset(
@@ -308,20 +308,20 @@ SCRIPT_PAGES_FLOOR = 1
 #: Read off the directory for the reason `bundle_gate.py` gives at its own
 #: `BUNDLE_DIR`: a roster written down is a roster to remember to extend, and the
 #: next bundle then arrives unchecked. Measured the day this was added: 517
-#: citations over the eleven, of which 20 were already wrong by this row's own
-#: rules — 12 naming a file the tree does not have, 4 landing on a blank line, 2
-#: past the end, 2 basenames that resolve two ways — plus 11 bare continuations
-#: bound to nothing. Not one of them was reachable from any gate before.
+#: citations over the eleven bundles of that day, of which 20 were already wrong
+#: by this row's own rules — 12 naming a file the tree does not have, 4 landing
+#: on a blank line, 2 past the end, 2 basenames that resolve two ways — plus 11
+#: bare continuations bound to nothing. Not one was reachable from any gate before.
 BUNDLE_ROOT = "assurance/bundle/"
 
 #: The bundle half's own floor, apart from its two siblings for the same reason
-#: they are apart from each other. It is 1, not 11: what a number here can catch
+#: they are apart from each other. It is 1, not 17: what a number here can catch
 #: is the derivation finding NOTHING, and the roster ratchet — a bundle leaving —
 #: is `bundle_gate.py`'s `ROSTER_FLOOR`, which already refuses it. Two guards
 #: holding one number is how the second one comes to disagree with the first.
 #:
 #: It said `BUNDLE_FLOOR` until it was read by hand, and that name EXISTS — it is
-#: `bounds_gate.py`'s, and it is 11 as well — so the sentence named a real
+#: `bounds_gate.py`'s, and it is 17 as well — so the sentence named a real
 #: constant of the right value in the wrong guard. Nothing here could see it:
 #: this file resolves `file:line` SPANS, and a symbol named in prose carries no
 #: line to resolve, so a reference to a name is checked by a reader or by no one.
@@ -446,7 +446,7 @@ AMBIGUOUS = {
 }
 
 #: The citations a row landed over, each with the commit that rotted it. Empty
-#: today: the two this guard shipped with — `reset.rs:126-132`, whose range
+#: today: the two this guard shipped with — `reset.rs:130-136`, whose range
 #: `a430f2d` had moved onto a blank line, and the bare `presence.rs`, which
 #: `4798668` made resolve two ways — were both re-pointed by `formal/` itself.
 #:
@@ -508,7 +508,7 @@ def floor_for(page):
 #: a single line with the upper bound silently discarded, in two pages whose prose
 #: already uses `—` and `·` throughout — measured: `state.rs:284–99991` passed.
 #: `.sh` and `.txt` beside `.rs`, because the bundles cite the RUNNER as finely
-#: as they cite the firmware — `formal/run-tlc.sh:231-234` is the derivation their
+#: as they cite the firmware — `formal/run-tlc.sh:234-237` is the derivation their
 #: reason-comparison argument rests on — and the `.rs`-only group made every one
 #: of those invisible. Priced before flipping it, over the whole tree and not
 #: just the pages: 122 citations the group had never seen, of which exactly ONE
@@ -590,7 +590,7 @@ def cite_pattern(exts):
     or `formal/comutants.toml`, named in the same sentence WITHOUT a line
     number, so no binder can reach it and the ref lands on the last `.rs` name
     instead. Strengthening the binder does not save it -- `the module's own
-    :1751 comment` sits in a sentence that has already named `state.rs:584-599`,
+    :1751 comment` sits in a sentence that has already named `state.rs:601-616`,
     and nothing local decides between the two.
 
     And the noise is the smaller half. Of the 148, only 12 land out of bounds or
@@ -676,6 +676,7 @@ KEYED = {
     # column the runner matches on.
     "formal/floors.txt": lambda line: line.split()[0],
     "scripts/check.sh": check_row,
+    "scripts/check-assurance.sh": check_row,
 }
 
 

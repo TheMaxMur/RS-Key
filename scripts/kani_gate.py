@@ -42,12 +42,12 @@ the table with `--tiers`; this reads that table and asks four things of it:
   guard green over a job that proved nothing. "Uncommented" is judged from the
   `#`, not from the line's first character — `run: true # scripts/kani.sh all`
   runs the `true`;
-* and every tier is in docs/testing.md, which is what a reader copies and which
+* and every tier is in assurance/reports/testing-evidence.md, which is what a reader copies and which
   says CI runs the same commands.
 
 The counts those tiers are floored at are read the same way. `kani.sh`'s
 `FLOOR_*`/`COVERS_*` say how many harnesses and `kani::cover!`s a run must come
-back with, docs/testing.md prints the same numbers in a table, and all four sets
+back with, assurance/reports/testing-evidence.md prints the same numbers in a table, and all four sets
 were kept by the instruction "raise it in the commit that adds one". They drifted:
 `FLOOR_all` sat at 64 against a tree of 65, so one harness could have gone missing
 under a floor that still passed. Counted from the source here instead, both
@@ -94,7 +94,7 @@ import toolchain_gate
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 WORKFLOWS = pathlib.Path(".github/workflows")
-DOCS = pathlib.Path("docs/testing.md")
+DOCS = pathlib.Path("assurance/reports/testing-evidence.md")
 RUNNER = pathlib.Path("scripts/kani.sh")
 #: The gate script. Not a workflow, so no pin is looked for in it — but a tier
 #: named on one of its rows is a tier CI runs, because the merge gate is a CI
@@ -166,7 +166,7 @@ RAW_STRING = re.compile(r'(?:b|c)?r(#*)"')
 #: A lifetime does not match it: `'a` has no closing quote.
 CHAR_LIT = re.compile(r"'(?:\\.|[^\\'])'")
 
-#: `kani.sh`'s ratchets, and the columns docs/testing.md prints beside them:
+#: `kani.sh`'s ratchets, and the columns assurance/reports/testing-evidence.md prints beside them:
 #: `| `pr` | 13 | 49 | 23 | …` is crates, harnesses, covers.
 RATCHET = re.compile(r"^\s*(?:readonly\s+)?(FLOOR|COVERS)_(\w+)=\"?(\d+)\"?\s*(?:#.*)?$", re.M)
 DOC_ROW = re.compile(r"^\|\s*`(\w+)`\s*\|\s*(\d+)\s*\|\s*(\d+)\s*\|\s*(\d+)\s*\|", re.M)
@@ -729,7 +729,7 @@ def main():
         print(
             "\nA crate absent from the `all` tier is not proven, and the row that\n"
             "says it proves every harness stays green either way. Add it to\n"
-            "scripts/kani.sh and to docs/testing.md, or record it in EXCLUDED with\n"
+            "scripts/kani.sh and to assurance/reports/testing-evidence.md, or record it in EXCLUDED with\n"
             "the measured reason."
         )
         return 1

@@ -14,7 +14,7 @@ show that the tag a platform receives is the one it can open, and that it surviv
 the power the device actually loses.
 
   1. reset, nobody holds a token   -> 0x1E present anyway, exactly 32 bytes
-  2. PIN, then a pcmr token        -> 0x1E present, exactly 32 bytes, tag = zero
+  2. PIN, then a pcmr token        -> 0x1E present, exactly 32 bytes, a new tag
   3. two getInfo calls in a row    -> different IVs, SAME tag underneath
   4. makeCredential (rk)           -> the tag moves
   5. a getInfo and a getAssertion  -> the tag does NOT move
@@ -143,19 +143,19 @@ def main():
         print("1. no platform holds a token yet, and 0x1E is already published")
 
         token = pin_token(dev, cid, PERM_PCMR, set_pin=True)
-        first, zero = tag(dev, cid, token)
-        assert zero == b"\x00" * 16, f"an untouched store must be the zero tag, got {zero.hex()}"
-        print(f"2. pcmr token acquired; 0x1E present, {len(first)} bytes, tag = zero")
+        first, initial = tag(dev, cid, token)
+        assert initial != b"\x00" * 16, "a reset must start a new store state (§6.6), not the zero tag"
+        print(f"2. pcmr token acquired; 0x1E present, {len(first)} bytes, tag = {initial.hex()}")
 
         second, again = tag(dev, cid, token)
         assert first[:16] != second[:16], "the IV must be regenerated per getInfo"
         assert first != second, "a repeated blob would be a fingerprint"
-        assert zero == again, "an unchanged store must decrypt to an unchanged tag"
+        assert initial == again, "an unchanged store must decrypt to an unchanged tag"
         print("3. two calls differ, their IVs differ, the tag underneath does not")
 
         make_rk(dev, cid, b"\x01\x02", "alice")
         _, after_create = tag(dev, cid, token)
-        assert after_create != zero, "a new discoverable credential must move the tag"
+        assert after_create != initial, "a new discoverable credential must move the tag"
         print(f"4. makeCredential moved the tag: {after_create.hex()}")
 
         # Reads: another getInfo (already done by `tag`) and an enumerate.
@@ -181,7 +181,7 @@ def main():
         assert st == 0x00, f"deleteCredential status {st:#x}"
         _, after_delete = tag(dev, cid, token)
         assert after_delete != after_cycle, "deleteCredential must move the tag"
-        assert after_delete != zero, "the tag advances; it does not return to where it was"
+        assert after_delete != initial, "a change draws a new tag, not one already served"
         print(f"7. deleteCredential moved the tag again: {after_delete.hex()}")
 
         replug.reset(dev, "the cleanup reset")

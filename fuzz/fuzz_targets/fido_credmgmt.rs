@@ -33,6 +33,7 @@ fuzz_target!(|data: &[u8]| {
         serial_hash: &[0xAB; 32],
         serial_id: &[1, 2, 3, 4, 5, 6, 7, 8],
         otp_key: None,
+        latched: false,
     };
     let mut fs = Fs::new(RamStorage::new());
     let mut rng = SeqRng(1);
@@ -60,13 +61,19 @@ fuzz_target!(|data: &[u8]| {
             },
         };
         let mut cred_box = [0u8; 512];
-        if let Ok(len) =
-            credential_create(&seed, &dev, &input, &rp_hash, &[0x11; 12], &mut cred_box)
-        {
+        if let Ok(len) = credential_create(
+            seed.expose(),
+            &dev,
+            &input,
+            &rp_hash,
+            &[0x11; 12],
+            &mut cred_box,
+        ) {
             let _ = credential_store(
-                &seed,
+                seed.expose(),
                 &dev,
                 &mut fs,
+                &mut SeqRng(3),
                 &cred_box[..len],
                 &rp_hash,
                 "a.co",

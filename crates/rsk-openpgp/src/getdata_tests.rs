@@ -4,6 +4,7 @@
 use super::*;
 use crate::consts::OPGP_MFR_UNMANAGED;
 use crate::files::full_aid;
+use crate::test_tlv::{child, children};
 use rsk_fs::storage::ram::RamStorage;
 
 fn fs() -> Fs<RamStorage> {
@@ -14,6 +15,118 @@ fn fs() -> Fs<RamStorage> {
 
 fn aid() -> [u8; 16] {
     full_aid(&[1, 2, 3, 4], OPGP_MFR_UNMANAGED)
+}
+
+#[test]
+fn a_missing_or_wrong_width_signature_counter_cannot_form_a_successful_template() {
+    for counter in [
+        None,
+        Some(&[][..]),
+        Some(&[1, 2][..]),
+        Some(&[1, 2, 3, 4][..]),
+    ] {
+        let mut fs = fs();
+        if let Some(counter) = counter {
+            fs.put(EF_SIG_COUNT, counter).unwrap();
+        }
+        let generation = fs.write_gen();
+        let mut out = [0xa5; 32];
+        assert_eq!(
+            get_data(
+                EF_SEC_TPL,
+                false,
+                false,
+                &mut fs,
+                &aid(),
+                &mut None,
+                &mut out
+            ),
+            (0, Sw::MEMORY_FAILURE)
+        );
+        assert_eq!(fs.write_gen(), generation);
+    }
+}
+
+#[test]
+fn constructed_data_with_tiny_outputs_refuses_without_panicking_or_writing_flash() {
+    let mut fs = fs();
+    fs.put(EF_SIG_COUNT, &[0; 3]).unwrap();
+    let aid = aid();
+    for fid in [EF_CH_DATA, EF_APP_DATA, EF_SEC_TPL, EF_ALGO_INFO] {
+        let generation = fs.write_gen();
+        for room in 0..4 {
+            let mut out = [0xa5; 8];
+            let mut current = None;
+            assert_eq!(
+                get_data(
+                    fid,
+                    false,
+                    false,
+                    &mut fs,
+                    &aid,
+                    &mut current,
+                    &mut out[..room]
+                ),
+                (0, Sw::MEMORY_FAILURE),
+                "FID {fid:04x}, room {room}"
+            );
+            assert_eq!(current, Some(fid));
+            assert_eq!(fs.write_gen(), generation);
+            assert_eq!(&out[room..], &[0xa5; 8][room..]);
+        }
+    }
+}
+
+#[test]
+fn every_constructed_output_capacity_either_returns_the_whole_template_or_refuses() {
+    let mut fs = fs();
+    fs.put(EF_SIG_COUNT, &[0; 3]).unwrap();
+    let aid = aid();
+    for name_len in [0, 120, 128, 248, 256] {
+        fs.put(EF_CH_NAME, &vec![b'A'; name_len]).unwrap();
+        fs.put(EF_FP_SIG, &[0xab; 1000]).unwrap();
+        fs.put(EF_TS_SIG, &[0xcd; 1000]).unwrap();
+        for fid in [EF_CH_DATA, EF_APP_DATA, EF_SEC_TPL, EF_ALGO_INFO] {
+            let mut reference = [0; 1024];
+            let mut current = None;
+            let (n, sw) = get_data(
+                fid,
+                false,
+                false,
+                &mut fs,
+                &aid,
+                &mut current,
+                &mut reference,
+            );
+            assert_eq!(sw, Sw::OK);
+            assert!(n <= reference.len());
+            let generation = fs.write_gen();
+            for room in 0..=n + 2 {
+                let mut out = [0xa5; 1024];
+                let result = get_data(
+                    fid,
+                    false,
+                    false,
+                    &mut fs,
+                    &aid,
+                    &mut current,
+                    &mut out[..room],
+                );
+                if room < n {
+                    assert_eq!(
+                        result,
+                        (0, Sw::MEMORY_FAILURE),
+                        "FID {fid:04x}, name {name_len}, room {room}"
+                    );
+                } else {
+                    assert_eq!(result, (n, Sw::OK));
+                    assert_eq!(&out[..n], &reference[..n]);
+                }
+                assert_eq!(&out[room..], &[0xa5; 1024][room..]);
+                assert_eq!(fs.write_gen(), generation);
+            }
+        }
+    }
 }
 
 #[test]
@@ -28,18 +141,6 @@ fn full_aid_returns_16_raw_bytes() {
     assert_eq!(&out[..6], OPENPGP_AID);
     assert_eq!(&out[10..14], &[1, 2, 3, 4]);
     assert_eq!(cur, Some(EF_FULL_AID));
-}
-
-#[test]
-fn algo_sig_is_stripped_to_bare_value() {
-    let mut fs = fs();
-    let a = aid();
-    let mut out = [0u8; 64];
-    let mut cur = None;
-    // C1 06 01 08 00 00 20 00 -> strip outer C1 06 -> bare rsa2k attributes.
-    let (n, sw) = get_data(EF_ALGO_SIG, false, false, &mut fs, &a, &mut cur, &mut out);
-    assert_eq!(sw, Sw::OK);
-    assert_eq!(&out[..n], &[ALGO_RSA, 0x08, 0x00, 0x00, 0x20, 0x00]);
 }
 
 #[test]
@@ -80,17 +181,17 @@ fn app_data_keeps_6e_wrapper_for_ykman() {
 fn cardholder_data_keeps_65_wrapper() {
     // 0x65 is another constructed template ykman unpacks by tag
     // (`Tlv.unpack(0x65, …)`); it must keep its wrapper even when the nested
-    // name/lang/sex DOs are empty.
+    // name/lang/sex DOs are empty, in the length form a YubiKey 5.8.0 writes.
     let mut fs = fs();
     let a = aid();
     let mut out = [0u8; 128];
     let mut cur = None;
     let (n, sw) = get_data(EF_CH_DATA, false, false, &mut fs, &a, &mut cur, &mut out);
     assert_eq!(sw, Sw::OK);
-    assert_eq!(out[0], 0x65);
-    assert_eq!(out[1], 0x82);
-    let nested = ((out[2] as usize) << 8) | out[3] as usize;
-    assert_eq!(n, nested + 4);
+    assert_eq!(
+        out[..n],
+        [0x65, 0x08, 0x5B, 0x00, 0x5F, 0x2D, 0x00, 0x5F, 0x35, 0x00]
+    );
 }
 
 #[test]
@@ -116,6 +217,83 @@ fn flash_do_returns_raw_no_strip() {
     let (n, sw) = get_data(EF_LOGIN_DATA, false, false, &mut fs, &a, &mut cur, &mut out);
     assert_eq!(sw, Sw::OK);
     assert_eq!(&out[..n], &[0x05, 0x02, 0xAA, 0xBB]);
+}
+
+/// 6E's 73, on a store holding the PW status every card's init writes there.
+fn discrete(fs: &mut Fs<RamStorage>) -> Vec<(u16, Vec<u8>)> {
+    fs.put(EF_PW_PRIV, crate::files::PW_STATUS_DEFAULT).unwrap();
+    let a = aid();
+    let mut out = [0u8; 1024];
+    let mut cur = None;
+    let (n, sw) = get_data(EF_APP_DATA, false, false, fs, &a, &mut cur, &mut out);
+    assert_eq!(sw, Sw::OK);
+    let related = children(&child(&children(&out[..n]), EF_APP_DATA));
+    children(&child(&related, EF_DISCRETE_DO))
+}
+
+/// A YubiKey 5.8.0 answers `6B00` to each of these read on its own, with a key,
+/// a name, a language and a sex set (measured 2026-09-25), and serves them inside
+/// 65, 6E and 7A — the only places OpenPGP 3.4 §4.4.1 lists them.
+#[test]
+fn a_do_a_template_carries_is_not_read_on_its_own() {
+    let mut fs = fs();
+    fs.put(EF_CH_NAME, b"Doe<<John").unwrap();
+    fs.put(EF_LANG_PREF, b"en").unwrap();
+    fs.put(EF_SEX, b"1").unwrap();
+    fs.put(EF_SIG_COUNT, &[0, 0, 7]).unwrap();
+    fs.put(EF_FP_SIG, &[0x11; FP_LEN]).unwrap();
+    fs.put(EF_FP_CA1, &[0x22; FP_LEN]).unwrap();
+    fs.put(EF_TS_SIG, &[0x33; TS_LEN]).unwrap();
+    let a = aid();
+    let mut out = [0u8; 1024];
+    for fid in [
+        EF_CH_NAME,
+        EF_LANG_PREF,
+        EF_SEX,
+        EF_SIG_COUNT,
+        EF_DISCRETE_DO,
+        EF_EXT_CAP,
+        EF_ALGO_SIG,
+        EF_ALGO_DEC,
+        EF_ALGO_AUT,
+        EF_FP,
+        EF_CA_FP,
+        EF_TS_ALL,
+        EF_FP_SIG,
+        EF_FP_DEC,
+        EF_FP_AUT,
+        EF_FP_CA1,
+        EF_FP_CA2,
+        EF_FP_CA3,
+        EF_TS_SIG,
+        EF_TS_DEC,
+        EF_TS_AUT,
+    ] {
+        let mut cur = None;
+        let (n, sw) = get_data(fid, true, true, &mut fs, &a, &mut cur, &mut out);
+        assert_eq!((n, sw), (0, Sw::WRONG_P1P2), "{fid:#06x}");
+        assert_eq!(cur, Some(fid), "a refused read is still the current DO");
+    }
+
+    // The templates still carry every one of them.
+    let mut template = |fid| {
+        let mut cur = None;
+        let (n, sw) = get_data(fid, false, false, &mut fs, &a, &mut cur, &mut out);
+        assert_eq!(sw, Sw::OK, "{fid:#06x}");
+        children(&child(&children(&out[..n]), fid))
+    };
+    let ch = template(EF_CH_DATA);
+    assert_eq!(child(&ch, EF_CH_NAME), b"Doe<<John");
+    assert_eq!(child(&ch, EF_LANG_PREF), b"en");
+    assert_eq!(child(&ch, EF_SEX), b"1");
+    assert_eq!(child(&template(EF_SEC_TPL), EF_SIG_COUNT), [0, 0, 7]);
+    let dd = discrete(&mut fs);
+    assert_eq!(child(&dd, EF_FP)[..FP_LEN], [0x11; FP_LEN]);
+    assert_eq!(child(&dd, EF_CA_FP)[..FP_LEN], [0x22; FP_LEN]);
+    assert_eq!(child(&dd, EF_TS_ALL)[..TS_LEN], [0x33; TS_LEN]);
+    for tag in [EF_EXT_CAP, EF_ALGO_SIG, EF_ALGO_DEC, EF_ALGO_AUT] {
+        assert!(!child(&dd, tag).is_empty(), "{tag:#04x}");
+    }
 }
 
 #[test]
@@ -163,28 +341,25 @@ fn priv_do_3_needs_pw2_and_pw3_will_not_do() {
 #[test]
 fn oversized_do_is_refused_not_truncated() {
     // run-3 #1 / run-2 F3 regression: `Fs::read` reports the value's FULL stored
-    // length, so an over-long DO (here a 1500-byte C1 algorithm attribute) must
+    // length, so an over-long DO (here a 1500-byte private DO) must
     // never be sliced past the output buffer — that would panic-reset the device.
     // It used to clamp and answer `9000`, which is the same short-body-reported-
     // as-complete lie PUT DATA's length bound now prevents at the source; only a
     // value written by an older build can still get here, and it says so.
     let mut fs = fs();
-    fs.put(EF_ALGO_PRIV1, &[0x01u8; 1500]).unwrap();
+    fs.put(EF_PRIV_DO_1, &[0x01u8; 1500]).unwrap();
     let a = aid();
     let mut out = [0u8; 1024];
     let mut cur = None;
-    let (n, sw) = get_data(EF_ALGO_SIG, false, false, &mut fs, &a, &mut cur, &mut out);
+    let (n, sw) = get_data(EF_PRIV_DO_1, false, false, &mut fs, &a, &mut cur, &mut out);
     assert_eq!(sw, Sw::MEMORY_FAILURE);
     assert_eq!(n, 0, "an error carries no body");
 }
 
-/// Every attribute the card advertises must survive PUT DATA → GET DATA byte for
-/// byte. `rsa1024` did not: `emit_algoinfo` wrote the stored value bare, and
-/// `get_data`'s primitive-DO strip sniffs for a header rather than being told
-/// there is one — `01 04 00 00 20 00` parses as a length-4 TLV, so the card
-/// answered `00 00 20 00` while GENERATE still made a 1024-bit key. Swept by
-/// class: one case per advertised attribute, so the next value of that shape
-/// cannot slip through either.
+/// Every attribute the card advertises must come back byte for byte where a host
+/// reads it: inside 6E's 73, GET DATA serving no C1/C2/C3 on its own. `rsa1024`
+/// once came back from a standalone read as `00 00 20 00`, its header sniffed
+/// off. One case per advertised attribute, so no value of any shape slips.
 #[test]
 fn every_advertised_algo_attribute_round_trips() {
     use crate::dobj::{ALGO_AUT_SUPPORTED, ALGO_DEC_SUPPORTED, ALGO_SIG_SUPPORTED};
@@ -199,12 +374,8 @@ fn every_advertised_algo_attribute_round_trips() {
             let value = &attr[1..];
             let mut fs = fs();
             fs.put(crate::consts::algo_tag_to_priv(fid), value).unwrap();
-            let a = aid();
-            let mut out = [0u8; 64];
-            let mut cur = None;
-            let (n, sw) = get_data(fid, false, false, &mut fs, &a, &mut cur, &mut out);
-            assert_eq!(sw, Sw::OK, "{fid:#06x} {value:02x?}");
-            assert_eq!(&out[..n], value, "{fid:#06x} attribute did not round-trip");
+            let read = child(&discrete(&mut fs), fid);
+            assert_eq!(read, value, "{fid:#06x} attribute did not round-trip");
         }
     }
 }

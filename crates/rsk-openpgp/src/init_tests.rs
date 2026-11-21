@@ -6,6 +6,15 @@ use crate::dying_storage::DyingStorage;
 use rsk_fs::storage::ram::RamStorage;
 use rsk_sdk::Sw;
 
+#[path = "init_dek_decisions_tests.rs"]
+mod dek_decisions;
+
+#[path = "init_repair_decisions_tests.rs"]
+mod repair_decisions;
+
+#[path = "init_damage_tests.rs"]
+mod damage;
+
 /// Deterministic counter RNG for tests.
 struct CountRng(u8);
 impl Rng for CountRng {
@@ -22,6 +31,7 @@ fn dev() -> Device<'static> {
         serial_hash: &[0x11; 32],
         serial_id: &[1, 2, 3, 4, 5, 6, 7, 8],
         otp_key: None,
+        latched: false,
     }
 }
 
@@ -79,7 +89,7 @@ fn dek_decrypts_under_default_pin() {
     let session = d.pin_derive_session(PW1_DEFAULT);
     let mut dek = [0u8; DEK_SIZE];
     let m = d
-        .decrypt_with_aad(&session, &blob[1..n], PinKdf::V2, &mut dek)
+        .decrypt_with_aad(session.expose(), &blob[1..n], PinKdf::V2, &mut dek)
         .unwrap();
     assert_eq!(m, DEK_SIZE);
     // RC and PW3 are the same blob sealed under PW3 and decrypt to the same DEK.
@@ -87,7 +97,7 @@ fn dek_decrypts_under_default_pin() {
     fs.read(EF_DEK_PW3.get(), &mut blob3);
     let session3 = d.pin_derive_session(PW3_DEFAULT);
     let mut dek3 = [0u8; DEK_SIZE];
-    d.decrypt_with_aad(&session3, &blob3[1..], PinKdf::V2, &mut dek3)
+    d.decrypt_with_aad(session3.expose(), &blob3[1..], PinKdf::V2, &mut dek3)
         .unwrap();
     assert_eq!(dek, dek3);
 }
@@ -498,3 +508,18 @@ fn every_first_boot_dek_guard_refuses_its_own_faulted_probe() {
         fs = fs2;
     }
 }
+
+#[test]
+fn retry_and_maximum_repairs_can_observe_an_absent_status_record() {
+    let mut fs = Fs::new(RamStorage::new());
+    let generation = fs.write_gen();
+    assert!(settle_rc_retry_counter(&mut fs).is_ok());
+    assert!(settle_pw_status_maxima(&mut fs).is_ok());
+    assert_eq!(fs.write_gen(), generation);
+}
+
+#[path = "init_restart_tests.rs"]
+mod restarts;
+
+#[path = "init_mutation_tests.rs"]
+mod mutation;

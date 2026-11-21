@@ -1,0 +1,220 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 RS-Key contributors
+#
+# The accepted survivors of the weekly cargo-mutants sweep (scripts/mutants-all.sh):
+# one line per surviving mutant, `path: mutation`, which is the name `--list`
+# prints less its `:LINE:COL` — that part moves with every edit above it. Every
+# entry sits under a `[class] reason` line saying why a survivor there is not a
+# missing test, and the same mutation surviving twice in one function is listed
+# twice. A shard fails on a survivor not listed here, on an entry a test now
+# catches, and on an entry whose mutant no longer exists: killing a survivor
+# means deleting its line in the same commit.
+#
+# Seeding. A shard writes its unlisted survivors, in this format, to
+# target/mutants/new-survivors.txt, which the weekly job uploads. The first sweep
+# after this file landed is the seed: its twelve lists go in below under
+# `[untriaged <date>] seeded from that sweep, not yet read`, and triage moves each
+# entry to a class, or deletes it with the test that kills it.
+#
+# The classes the 2026-08-15 triage found:
+#   [cfg-off]      behind a feature the default `cargo test` never builds
+#   [masked]       a guard a deeper guard repeats, so removing it changes nothing
+#   [unpinned]     a value no test pins on purpose, a colour or a coordinate
+#   [const-assert] a compile-time assert, which no runtime test can kill
+
+[empty-suffix] Torn::tear's > to >= change only appends old[prefix..] when old.len() == prefix; that slice is empty, so the stored bytes are identical.
+crates/rsk-fs/src/storage.rs: replace > with >= in faults::Torn::tear
+
+[bit-lanes] OR and XOR combine disjoint bit lanes; SHA-512 Ch/Maj replacements retain the complete bit truth table, including Rust operator precedence.
+crates/rsk-crypto/src/base64url.rs: replace | with ^ in decode
+crates/rsk-crypto/src/base64url.rs: replace | with ^ in encode
+crates/rsk-crypto/src/base64url.rs: replace | with ^ in encode
+crates/rsk-crypto/src/base64url.rs: replace | with ^ in encode
+crates/rsk-mldsa/src/sample.rs: replace | with ^ in coeff_from_three_bytes
+crates/rsk-mldsa/src/sample.rs: replace | with ^ in coeff_from_three_bytes
+crates/rsk-rsa/src/blind_inverse.rs: replace | with ^ in top_word
+crates/rsk-rsa/src/lib.rs: replace | with ^ in mod_small
+crates/rsk-rsa/src/lib.rs: replace | with ^ in shr_into_be
+crates/rsk-rsa/src/montgomery.rs: replace | with ^ in square_block
+crates/rsk-rsa/src/montgomery.rs: replace | with ^ in square_block
+crates/rsk-rsa/src/montgomery.rs: replace | with ^ in square_block
+crates/rsk-rsa/src/montgomery.rs: replace | with ^ in square_block
+crates/rsk-rsa/src/montgomery.rs: replace | with ^ in quotient
+crates/rsk-rsa/src/montgomery.rs: replace | with ^ in quotient
+crates/rsk-rsa/src/montgomery.rs: replace | with ^ in to_mont
+crates/rsk-rsa/src/montgomery.rs: replace | with ^ in to_mont
+crates/rsk-rsa/src/montgomery.rs: replace | with ^ in to_mont
+crates/rsk-sha512/src/block.rs: replace ^ with | in compress
+crates/rsk-sha512/src/block.rs: replace ^ with | in compress
+crates/rsk-sha512/src/block.rs: replace ^ with | in compress
+
+[centering-gap] Decompose's pre-centering low part cannot equal the one-unit changed midpoint for either shipped gamma2; Q/2 and (Q-1)/2 are also identical integers.
+crates/rsk-mldsa/src/round.rs: replace - with + in decompose
+crates/rsk-mldsa/src/round.rs: replace - with / in decompose
+
+[decoded-range] The widened negative bound contains every decoded signed coefficient b-t, t in 0..2^bitlen-1; the independent unsigned upper bound still refuses unused encodings.
+crates/rsk-mldsa/src/pack.rs: replace + with * in bit_unpack
+crates/rsk-mldsa/src/pack.rs: replace + with - in bit_unpack
+crates/rsk-mldsa/src/pack.rs: replace - with + in bit_unpack
+
+[empty-or-final-update] The final full hash_multi chunk can move into the loop, and updating SHA-256 with an empty slice has no effect.
+crates/rsk-crypto/src/kdf.rs: replace > with >= in Device<'_>::hash_multi
+crates/rsk-crypto/src/kdf.rs: replace > with >= in Device<'_>::hash_multi
+
+[even-exponent] The only changed exponent is 2; the inverse and odd-exponent/modulus checks refuse it independently.
+crates/rsk-rsa/src/key.rs: replace < with <= in RsaKey::from_p_q
+
+[identical-quotient] For the fixed FIPS 204 parameter sets, (Q-1), Q and (Q+1) give the same integer quotient at these divisors; the derived value is identical.
+crates/rsk-mldsa/src/encode.rs: replace - with + in w1_encode
+crates/rsk-mldsa/src/encode.rs: replace - with / in w1_encode
+crates/rsk-mldsa/src/params.rs: replace - with +
+crates/rsk-mldsa/src/params.rs: replace - with +
+crates/rsk-mldsa/src/params.rs: replace - with +
+crates/rsk-mldsa/src/params.rs: replace - with /
+crates/rsk-mldsa/src/params.rs: replace - with /
+crates/rsk-mldsa/src/params.rs: replace - with /
+
+[inverse-identity] d=e^-1 mod lcm(p-1,q-1) already satisfies both congruences for every key reaching this guard, conditional on the modular-inverse implementation's contract.
+crates/rsk-rsa/src/key.rs: replace || with && in RsaKey::from_p_q
+
+[modular-result] The extra multiples of p disappear at the subsequent modulo p or pq reduction. Result/error equivalence is scoped to the current producers; allocation and timing equivalence are not established.
+crates/rsk-rsa/src/key.rs: replace % with + in RsaKey::private_op
+crates/rsk-rsa/src/key.rs: replace % with + in RsaKey::private_op
+crates/rsk-rsa/src/key.rs: replace % with + in RsaKey::private_op
+
+[repeated-width-guard] decoded_len repeats the modulo-four refusal before decode consumes input; removing the outer refusal preserves the same error and effects.
+crates/rsk-crypto/src/base64url.rs: replace % with + in decode
+
+[right-aligned-field] The changed start only enlarges an unused prefix. put_field writes at the unchanged right endpoint, and RsaKey's derived CRT values fit the original half-width. Output and errors agree for that producer invariant.
+crates/rsk-rsa/src/crt.rs: replace * with + in crt_plaintext
+
+[unused-padding] Increasing the maximum word count grows the fixed stack buffers. Public exponentiation still uses slices of the same modulus width and produces identical bytes. The mutation increases the stack footprint.
+crates/rsk-rsa/src/pubexp.rs: replace / with * in backend::pow
+
+[borrow-low-bit] The carry out of subtraction is 0 or 1. Replacing 1-carry with 1+carry preserves bit zero, the only bit that can affect the masked add in either caller.
+crates/rsk-rsa/src/montgomery.rs: replace - with + in subtract
+
+[scalar-fallback] Reversing the minimum width check sends every nonempty modulus through single-word Montgomery reduction. It yields the same canonical result and loses four-limb batching.
+crates/rsk-rsa/src/montgomery.rs: replace >= with < in reduce
+crates/rsk-rsa/src/crt.rs: replace * with + in crt_plaintext
+crates/rsk-rsa/src/crt.rs: replace * with + in crt_plaintext
+crates/rsk-rsa/src/crt.rs: replace * with / in crt_plaintext
+crates/rsk-rsa/src/crt.rs: replace * with / in crt_plaintext
+crates/rsk-rsa/src/crt.rs: replace * with / in crt_plaintext
+
+[montgomery-width-dispatch] Both branches call the same arithmetic over the original slices. A different array width changes where LLVM can specialize the code, so it can change latency without changing the result.
+crates/rsk-rsa/src/montgomery.rs: replace / with %
+crates/rsk-rsa/src/montgomery.rs: replace / with *
+crates/rsk-rsa/src/montgomery.rs: replace * with +
+crates/rsk-rsa/src/montgomery.rs: replace * with + in mul_acc
+crates/rsk-rsa/src/montgomery.rs: replace * with / in mul_acc
+crates/rsk-rsa/src/montgomery.rs: replace * with + in square
+crates/rsk-rsa/src/montgomery.rs: replace * with / in square
+crates/rsk-rsa/src/montgomery.rs: replace * with + in reduce
+crates/rsk-rsa/src/montgomery.rs: replace * with / in reduce
+
+[seed-stack-cost] The enlarged temporary seed array still fills, consumes and wipes the same half_bytes prefix. Device stack-cost equivalence is not established by host output tests.
+crates/rsk-rsa/src/keygen.rs: replace / with * in RsaKeygen::try_candidate
+
+[sieve-cost] These arms choose the cheap small-prime prefilter roster. Strong Miller-Rabin and Lucas still own acceptance; changed search cost is outside the result oracle.
+crates/rsk-rsa/src/lib.rs: delete match arm 129..= 192 in sieve_count
+crates/rsk-rsa/src/lib.rs: delete match arm 65..= 128 in sieve_count
+
+[scratch-prefix-identity] The widened scratch is only ever read through the unchanged returned prefix; the extra tail is never inspected.
+crates/rsk-openpgp/src/keys.rs: replace + with * in load_aes_key
+crates/rsk-openpgp/src/keys.rs: replace + with * in store_rsa_key
+crates/rsk-openpgp/src/keys.rs: replace + with * in load_rsa_key
+crates/rsk-openpgp/src/keys.rs: replace + with * in load_rsa_crt
+
+[counter-lane-identity] The counter's three byte lanes are disjoint, so OR and XOR agree for every admitted value; the increment and serialization are unchanged.
+crates/rsk-openpgp/src/keys.rs: replace | with ^ in inc_sig_count
+crates/rsk-openpgp/src/keys.rs: replace | with ^ in inc_sig_count
+
+[short-origin-identity] At idx == n the zero-initialized uncovered slot reads as imported either way; a valid prefix read leaves that byte zero.
+crates/rsk-openpgp/src/origin.rs: replace < with <= in of
+
+[short-dek-identity] A 0- or 1-byte DEK copy reaches EXEC_ERROR either from the format check or from the empty-blob decrypt, with no write and no access.
+crates/rsk-openpgp/src/pin.rs: replace < with == in migrate_pin_kbase
+crates/rsk-openpgp/src/pin.rs: replace < with <= in migrate_pin_kbase
+
+[verify-namespace-identity] `0x1000` has bit 12 set and `p2` is a u8, so OR and XOR agree for every VERIFY mode.
+crates/rsk-openpgp/src/pin.rs: replace | with ^ in pw_fid
+
+[empty-default-identity] An absent or empty record leaves the length byte zero, below every reference minimum, so the early guard cannot change the answer.
+crates/rsk-openpgp/src/pin.rs: replace match guard n >= 1 with true in offered_len_impossible
+
+[zero-padded-retry-identity] At idx == stored length the uncovered counter byte is zero, so the padded index and the else arm report the same retries.
+crates/rsk-openpgp/src/pin.rs: replace < with <= in verify
+
+[empty-change-identity] An absent or empty record yields old_len 0, and check_pin over an empty slice refuses REFERENCE_NOT_FOUND before any write.
+crates/rsk-openpgp/src/pin.rs: replace match guard n >= 1 with true in change_pin
+
+[short-counter-identity] At n == PW3_RETRY_IDX the counter byte was not copied and reads zero, so the widened condition does not change the decision.
+crates/rsk-openpgp/src/terminate.rs: replace > with >= in terminate_df
+
+[config-tail-identity] OFF_RFU + 2 + 2 and OFF_RFU + 2 * 2 are the same 52-byte config: the tail is 2 rfu + 2 crc either way.
+crates/rsk-otp/src/lib.rs: replace + with *
+
+[disjoint-mask-identity] The non-updateable side is masked out before OR, and the button-ticket mode mask has disjoint bits, so OR and XOR agree for every stored config.
+crates/rsk-otp/src/lib.rs: replace | with ^ in OtpApplet<'a>::button_ticket
+crates/rsk-otp/src/lib.rs: replace | with ^ in OtpApplet<'a>::cmd_update
+crates/rsk-otp/src/lib.rs: replace | with ^ in OtpApplet<'a>::cmd_update
+crates/rsk-otp/src/lib.rs: replace | with ^ in OtpApplet<'a>::cmd_update
+
+[wipe-budget-identity] deleted == WIPE_MAX_DELETES is unreachable on the applet's fid range; the pathological store that would reach the check refuses under both comparisons.
+crates/rsk-openpgp/src/terminate.rs: replace > with >= in sweep
+
+[clip-widening-identity] plate.x * plate.w widens the plate's text clip past the panel; the current headline strings fit inside the unchanged 6-px inset, so no pixel moves.
+crates/rsk-ui/src/render/backup.rs: replace + with * in render_backup
+
+[x509-sig-buffer-slack] MAX_EC_SIG * 9 is larger than any DER signature the signer emits, so the buffer bound is not observable from a successful build.
+crates/rsk-x509/src/lib.rs: replace + with *
+
+[x509-zero-uint-identity] Stripping the last zero byte and taking the empty branch both encode INTEGER 0 as 02 01 00.
+crates/rsk-x509/src/lib.rs: replace > with >= in DerRev<'a>::uint
+
+[right-clip-widening-identity] The trailing value is right-aligned at tx and never draws past it, so a clip widened to the right changes no pixel.
+crates/rsk-ui/src/render/components/mod.rs: replace - with + in rect_row
+
+[list-trailing-clip-widening-identity] The list row's trailing value is right-aligned at tx and never draws past it, so widening the trailing clip's right edge (tx + tleft instead of tx - tleft) moves no pixel.
+crates/rsk-ui/src/render/components/list.rs: replace - with + in row
+
+[type-init-lanes] `TYPE_INIT` is 0x80 and every command constant added to it is below 0x80, so the two operands never share a bit and OR and XOR agree for all thirteen; the `&` neighbour is killed by the pinned protocol bytes in the ctaphid tests.
+crates/rsk-usb/src/ctaphid.rs: replace | with ^
+crates/rsk-usb/src/ctaphid.rs: replace | with ^
+crates/rsk-usb/src/ctaphid.rs: replace | with ^
+crates/rsk-usb/src/ctaphid.rs: replace | with ^
+crates/rsk-usb/src/ctaphid.rs: replace | with ^
+crates/rsk-usb/src/ctaphid.rs: replace | with ^
+crates/rsk-usb/src/ctaphid.rs: replace | with ^
+crates/rsk-usb/src/ctaphid.rs: replace | with ^
+crates/rsk-usb/src/ctaphid.rs: replace | with ^
+crates/rsk-usb/src/ctaphid.rs: replace | with ^
+crates/rsk-usb/src/ctaphid.rs: replace | with ^
+crates/rsk-usb/src/ctaphid.rs: replace | with ^
+crates/rsk-usb/src/ctaphid.rs: replace | with ^
+
+[capability-lanes] `CAPFLAG_CBOR` (0x04) and `CAPFLAG_WINK` (0x01) are disjoint, so the capability byte is the same either way and the WINK bit is claimed exactly where an indicator exists.
+crates/rsk-usb/src/ctaphid.rs: replace | with ^ in init_capabilities
+
+[bcnt-lanes] The high byte is shifted left by eight before the OR, so its bits and `f[6]`'s are disjoint and OR and XOR agree for every 16-bit declared length.
+crates/rsk-usb/src/ctaphid.rs: replace | with ^ in Reassembler::feed
+
+[init-complete-overwrite] At `bcnt == INIT_DATA` the copy leaves `cur == bcnt`, so the completion check on the same call resets `in_tx` and returns `Message`; the widened assignment is never observable.
+crates/rsk-usb/src/ctaphid.rs: replace > with >= in Reassembler::feed
+
+[kani-width-off] The four operators of the `#[cfg(kani)]` arm of `CTAP_MAX_MESSAGE`: the host `cargo test` profile compiles the `#[cfg(not(kani))]` definition, so no input the suite can pose reaches them.
+crates/rsk-usb/src/ctaphid.rs: replace + with -
+crates/rsk-usb/src/ctaphid.rs: replace + with *
+crates/rsk-usb/src/ctaphid.rs: replace * with +
+crates/rsk-usb/src/ctaphid.rs: replace * with /
+
+[strict-config-off] `SET LED`'s presence gate is `#[cfg(feature = "strict-config")]`, which the default `cargo test` never builds, so the negated and un-negated forms compile to the same (absent) code; with the feature on, `declining_a_strict_led_write_preserves_live_and_stored_configuration` distinguishes them.
+crates/rsk-vendor/src/lib.rs: delete ! in <impl Applet<Fs<S>> for VendorApplet<'_, P>>::process
+
+[audit-clip-widening-identity] The audit row's label clip starts at label_x and only its right edge moves; every AuditKind label is at most 95 px wide while the narrowest reachable clip is 143 px (a "7101w" trailing token), so the label never meets the clip and text_left_ellipsized_on draws the identical glyphs. `right_x - width/8` (`-` -> `/`) keeps label_right at 220-223 px, a wider clip still, so it too moves no pixel; `audit_body` is only ever called with `row_rect(PK_LIST_TOP, i)` (x = 8, w = 224).
+crates/rsk-ui/src/render/audit.rs: replace - with + in audit_body
+crates/rsk-ui/src/render/audit.rs: replace - with + in audit_body
+crates/rsk-ui/src/render/audit.rs: replace - with + in audit_body
+crates/rsk-ui/src/render/audit.rs: replace - with + in audit_body
+crates/rsk-ui/src/render/audit.rs: replace - with / in audit_body

@@ -3,6 +3,14 @@
 
 use super::*;
 
+#[test]
+fn status_words_preserve_both_bytes_on_the_wire() {
+    let status = Sw(0x6282);
+    assert_eq!(status.sw1(), 0x62);
+    assert_eq!(status.sw2(), 0x82);
+    assert_eq!(status.to_bytes(), [0x62, 0x82]);
+}
+
 /// `63Cx` carries the remaining attempts in SW2's low nibble, so a count that does
 /// not fit must saturate rather than overflow into SW1's neighbours: unclamped,
 /// 0x10 reports "0 left" and 0x40 IS `63C0`, which every host reads as blocked —

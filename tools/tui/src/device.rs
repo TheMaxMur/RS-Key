@@ -25,7 +25,12 @@ use hmac::{Hmac, Mac};
 use p256::ecdsa::signature::Verifier;
 use p256::ecdsa::{Signature, VerifyingKey};
 use p256::elliptic_curve::sec1::{FromSec1Point, ToSec1Point};
-use p256::{FieldBytes, PublicKey, Sec1Point, SecretKey};
+use p256::elliptic_curve::{
+    Generate,
+    common::getrandom::SysRng,
+    rand_core::{CryptoRng, UnwrapErr},
+};
+use p256::{PublicKey, Sec1Point, SecretKey};
 use pcsc::{Context, Protocols, Scope, ShareMode};
 use rand_core::{OsRng, RngCore};
 use sha2::{Digest, Sha256};
@@ -436,16 +441,18 @@ fn as_u32(v: &Value) -> Option<u32> {
 // crypto primitives (HW-verified — do not alter the algorithm)
 // ===========================================================================
 
-fn ecdh_pub() -> (SecretKey, [u8; 32], [u8; 32]) {
-    // 0.14's `SecretKey::random` wants a rand_core 0.9 RNG; this crate is on 0.6,
-    // so draw the scalar through the existing OsRng and reject the zero case.
-    let mut raw = [0u8; 32];
-    let sk = loop {
-        OsRng.fill_bytes(&mut raw);
-        if let Ok(k) = SecretKey::from_bytes(&FieldBytes::from(raw)) {
-            break k;
+fn generate_ecdh_key(rng: &mut impl CryptoRng) -> SecretKey {
+    loop {
+        let key = SecretKey::generate_from_rng(rng);
+        // ScalarValue generation admits zero; ECDH private keys must not.
+        if !bool::from(key.as_scalar_value().is_zero()) {
+            return key;
         }
-    };
+    }
+}
+
+fn ecdh_pub() -> (SecretKey, [u8; 32], [u8; 32]) {
+    let sk = generate_ecdh_key(&mut UnwrapErr(SysRng));
     let ep = sk.public_key().to_sec1_point(false);
     let (mut x, mut y) = ([0u8; 32], [0u8; 32]);
     x.copy_from_slice(ep.x().unwrap());
@@ -454,12 +461,7 @@ fn ecdh_pub() -> (SecretKey, [u8; 32], [u8; 32]) {
 }
 
 fn ecdh_raw(sk: &SecretKey, px: &[u8; 32], py: &[u8; 32]) -> Option<[u8; 32]> {
-    // 0.14 dropped `Sec1Point::from_affine_coordinates`; splice `04 ‖ x ‖ y`.
-    let mut sec1 = [0u8; 65];
-    sec1[0] = 0x04;
-    sec1[1..33].copy_from_slice(px);
-    sec1[33..].copy_from_slice(py);
-    let ep = Sec1Point::from_bytes(&sec1).ok()?;
+    let ep = Sec1Point::from_affine_coordinates(px.into(), py.into(), false);
     let peer = Option::<PublicKey>::from(PublicKey::from_sec1_point(&ep))?;
     let shared = p256::ecdh::diffie_hellman(sk.to_nonzero_scalar(), peer.as_affine());
     let mut z = [0u8; 32];
@@ -620,15 +622,21 @@ fn read_fido(snap: &mut DeviceSnapshot) {
         Value::Map(vec![(iv(1), iv(VENDOR_ATT_STATE as i64))]),
         READ_TIMEOUT_MS,
     ) {
-        let installed = map_get(&v, 1).and_then(Value::as_bool).unwrap_or(false);
-        let chain = match map_get(&v, 2) {
-            Some(Value::Bytes(b)) if installed => Some(hex(b)),
-            _ => None,
-        };
-        snap.attestation = Some(AttestationState {
-            installed,
-            chain_sha256: chain,
-        });
+        snap.attestation = Some(attestation_state(&v));
+    }
+}
+
+/// An ATT_STATE answer. The device hashes only a chain it reads back whole, so an
+/// installed key with no hash (or an empty one) has a chain it cannot use.
+fn attestation_state(v: &Value) -> AttestationState {
+    let installed = map_get(v, 1).and_then(Value::as_bool).unwrap_or(false);
+    let chain_sha256 = match map_get(v, 2) {
+        Some(Value::Bytes(b)) if installed && !b.is_empty() => Some(hex(b)),
+        _ => None,
+    };
+    AttestationState {
+        installed,
+        chain_sha256,
     }
 }
 
@@ -780,7 +788,14 @@ fn ber_find(mut d: &[u8], tag: u16) -> Option<&[u8]> {
 /// (`C5`). Every field is optional — a card that omits one just leaves it unset.
 fn read_pgp_info(c: &mut Ccid) -> Option<PgpInfo> {
     let d = c.get_data_full(0x00, 0x6E).ok()?;
-    let inner = ber_find(&d, 0x6E).unwrap_or(&d);
+    Some(pgp_info(&d))
+}
+
+/// [`read_pgp_info`]'s parse. `4F` sits in `6E` itself and `C4`/`C5` in its `73`,
+/// the discretionary data objects, where a YubiKey and RS-Key both put them.
+fn pgp_info(d: &[u8]) -> PgpInfo {
+    let inner = ber_find(d, 0x6E).unwrap_or(d);
+    let discretionary = ber_find(inner, 0x73).unwrap_or_default();
     let mut info = PgpInfo::default();
     // 4F AID: D276 0001 2401 vvvv mmmm ssssssss 0000 — serial is bytes 10..14.
     if let Some(aid) = ber_find(inner, 0x4F)
@@ -789,20 +804,20 @@ fn read_pgp_info(c: &mut Ccid) -> Option<PgpInfo> {
         info.serial = Some(hex(&aid[10..14]));
     }
     // C4 PW status: [validity, pw1max, rcmax, pw3max, pw1tries, rctries, pw3tries].
-    if let Some(c4) = ber_find(inner, 0xC4)
+    if let Some(c4) = ber_find(discretionary, 0xC4)
         && c4.len() >= 7
     {
         info.pin_retries = Some([c4[4], c4[5], c4[6]]);
     }
     // C5 fingerprints: 3 x 20 bytes (sig/dec/auth); an all-zero block = no key.
-    if let Some(c5) = ber_find(inner, 0xC5)
+    if let Some(c5) = ber_find(discretionary, 0xC5)
         && c5.len() >= 60
     {
         info.keys_present = (0..3)
             .filter(|k| c5[k * 20..k * 20 + 20].iter().any(|&b| b != 0))
             .count() as u8;
     }
-    Some(info)
+    info
 }
 
 /// PIV PIN metadata (GET METADATA, INS 0xF7 / P2 0x80): retry counters + whether
@@ -831,10 +846,11 @@ fn read_piv_meta(c: &mut Ccid) -> Option<PivInfo> {
 // CCID applets (PC/SC)
 // ===========================================================================
 
-// Default build's product carries "RS-Key"; the opt-in Yubico interop
-// flavor carries "RSK". Neither is in a genuine YubiKey's reader name.
+// Linux pcscd can replace the product name with the driver's friendly name.
+// The firmware's USB serial is still present in the reader name in that case.
 const READER_TOKEN_DEFAULT: &str = "RS-Key";
 const READER_TOKEN_INTEROP: &str = "RSK";
+const READER_TOKEN_SERIAL: &str = "(rs-key-0001)";
 
 fn rs_key_reader<'a>(readers: &[&'a std::ffi::CStr]) -> Result<&'a std::ffi::CStr, String> {
     // No first-reader fallback: with the RS-Key's CCID interface absent (unplugged, or
@@ -849,7 +865,9 @@ fn rs_key_reader<'a>(readers: &[&'a std::ffi::CStr]) -> Result<&'a std::ffi::CSt
         .iter()
         .filter(|r| {
             let n = r.to_string_lossy();
-            n.contains(READER_TOKEN_DEFAULT) || n.contains(READER_TOKEN_INTEROP)
+            n.contains(READER_TOKEN_DEFAULT)
+                || n.contains(READER_TOKEN_INTEROP)
+                || n.contains(READER_TOKEN_SERIAL)
         })
         .copied()
         .collect();
@@ -1764,3 +1782,7 @@ impl DeviceProvider for MockProvider {
 #[cfg(test)]
 #[path = "device_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "device_crypto_tests.rs"]
+mod crypto_tests;

@@ -4,6 +4,18 @@
 use super::*;
 
 #[test]
+fn invalid_utf8_is_copied_with_a_bound_and_empty_needles_do_not_match() {
+    let mut out = [0xa5; 8];
+    assert_eq!(clamp_usb_string(&[0xff], &mut out), 1);
+    assert_eq!(out, [0xff, 0xa5, 0xa5, 0xa5, 0xa5, 0xa5, 0xa5, 0xa5]);
+    for predicate in [contains as fn(&[u8], &[u8]) -> bool, contains_ci] {
+        assert!(!predicate(b"a", b""));
+        assert!(!predicate(b"a", b"ab"));
+        assert!(predicate(b"ab", b"ab"));
+    }
+}
+
+#[test]
 fn roundtrip_all_fields() {
     let phy = PhyData {
         vid_pid: Some((0x1050, 0x0407)),
@@ -22,6 +34,29 @@ fn roundtrip_all_fields() {
     let mut buf = [0u8; PHY_MAX_SIZE];
     let n = phy.serialize(&mut buf).unwrap();
     assert_eq!(PhyData::parse(&buf[..n]), phy);
+}
+
+#[test]
+fn the_maximum_record_fills_its_declared_buffer() {
+    let phy = PhyData {
+        vid_pid: Some((0x1209, 0xf1d2)),
+        led_gpio: Some(16),
+        led_brightness: Some(200),
+        opts: OPT_LED_STEADY | OPT_DIMM,
+        presence_timeout: Some(20),
+        usb_product: Product::new(&[b'p'; PRODUCT_CAP]),
+        usb_manufacturer: Product::new(&[b'm'; PRODUCT_CAP]),
+        enabled_curves: Some(0x3ff),
+        enabled_usb_itf: Some(USB_ITF_CCID | USB_ITF_HID),
+        led_driver: Some(3),
+        led_order: Some(LED_ORDER_GRB),
+        led_num: Some(4),
+    };
+    let mut buf = [0; PHY_MAX_SIZE];
+    let n = phy.serialize(&mut buf).unwrap();
+    assert_eq!(n, buf.len());
+    assert_eq!(PhyData::parse(&buf), phy);
+    assert_eq!(phy.serialize(&mut buf[..n - 1]), None);
 }
 
 #[test]
@@ -44,9 +79,10 @@ fn vidpid_wire_is_big_endian() {
 #[test]
 fn parse_defaults_usb_itf_to_all() {
     let phy = PhyData::parse(&[]);
-    assert_eq!(phy.enabled_usb_itf, Some(USB_ITF_ALL));
+    assert_eq!(phy.enabled_usb_itf, Some(0x1f));
     assert_eq!(phy.vid_pid, None);
     assert_eq!(phy.opts, 0);
+    assert_eq!(USB_ITF_SUPPORTED, 0x0d);
 }
 
 #[test]
@@ -425,6 +461,10 @@ fn a_transient_fault_costs_the_boot_nothing() {
         "the retry must reach it"
     );
     assert_eq!(boot.usb_itf(), USB_ITF_HID);
+    let record = boot.record().unwrap();
+    assert_eq!(record.vid_pid, owner.vid_pid);
+    assert_eq!(record.usb_product, owner.usb_product);
+    assert_eq!(record.enabled_usb_itf, Some(USB_ITF_HID));
 }
 
 /// And a device nobody has configured still gets everything — the arm that must
@@ -438,3 +478,15 @@ fn a_never_written_record_opens_every_interface() {
     assert_eq!(boot.usb_itf(), USB_ITF_ALL);
     assert!(boot.record().is_none());
 }
+
+#[test]
+fn product_text_is_utf8_checked_without_altering_the_stored_bytes() {
+    for bytes in [b"RS-Key".as_slice(), "Key 🔑".as_bytes(), &[0xff, 0xfe]] {
+        let product = Product::new(bytes).unwrap();
+        assert_eq!(product.as_bytes(), bytes);
+        assert_eq!(product.as_str(), core::str::from_utf8(bytes).ok());
+    }
+}
+
+#[path = "restart_tests.rs"]
+mod restarts;

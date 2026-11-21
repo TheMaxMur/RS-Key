@@ -34,6 +34,7 @@ try:
     from fido2.ctap2 import Ctap2
     from fido2.ctap2.pin import ClientPin
     from fido2.ctap2.credman import CredentialManagement as CM
+    from fido2.ctap2.config import Config
 except ImportError:
     CtapHidDevice = None
 
@@ -48,6 +49,13 @@ def register(sub):
     lp = g.add_parser("list-passkeys", help="list discoverable credentials")
     add_pin_arg(lp)
     lp.set_defaults(func=list_passkeys)
+    pp = g.add_parser("pin-policy", help="show or strengthen the FIDO2 PIN policy")
+    add_pin_arg(pp)
+    pp.add_argument("--min-length", type=int, choices=range(4, 64), metavar="4-63")
+    pp.add_argument("--rp-id", action="append", help="RP allowed to read the PIN policy (repeatable)")
+    pp.add_argument("--force-change", action="store_true", help="require changing the current PIN")
+    pp.add_argument("--complexity", action="store_true", help="reject trivial PINs until factory reset")
+    pp.set_defaults(func=pin_policy)
 
     a = g.add_parser("attestation", help="org attestation key/chain (enterprise)")
     ga = a.add_subparsers(dest="acmd", required=True)
@@ -91,6 +99,30 @@ def _ctap(exclusive=False):
     if "FIDO_2_0" not in ctap.info.versions:
         die("device does not advertise FIDO2")
     return ctap
+
+
+def pin_policy(args):
+    ctap = _ctap(exclusive=True)
+    changing = (args.min_length is not None or args.rp_id is not None
+                or args.force_change or args.complexity)
+    if changing:
+        if not ctap.info.options.get("clientPin"):
+            die("set a FIDO2 PIN before configuring its policy")
+        cp = ClientPin(ctap)
+        pin = resolve_pin(args, has_pin=True, required=True)
+        try:
+            token = cp.get_pin_token(pin, ClientPin.PERMISSION.AUTHENTICATOR_CFG)
+            Config(ctap, cp.protocol, token).set_min_pin_length(
+                min_pin_length=args.min_length, rp_ids=args.rp_id,
+                force_change_pin=args.force_change, pin_complexity_policy=args.complexity)
+        except CtapError as e:
+            die_ctap_pin_error(e, cp)
+        except ValueError as e:
+            die(str(e))
+    info = ctap.get_info()
+    print(f"Minimum PIN length: {int(info.min_pin_length)} code points")
+    print(f"PIN complexity policy: {'enabled' if info.pin_complexity_policy else 'disabled'}")
+    print(f"PIN change required: {'yes' if info.force_pin_change else 'no'}")
 
 
 def set_pin(args):
@@ -258,6 +290,18 @@ def att_set_rpids(args):
         print("(enterpriseAttestation must also be enabled by the managed platform)")
 
 
+def _org_attestation(m):
+    """`{installed, chain_unusable, chain_sha256?}` from an ATT_STATE answer. The
+    device hashes only a chain it reads back whole (vendor.rs `att_state`), so an
+    installed key without a hash has a chain enterprise attestation cannot use."""
+    installed = bool(m.get(1))
+    chain = m.get(2) if installed else None
+    att = {"installed": installed, "chain_unusable": installed and not chain}
+    if chain:
+        att["chain_sha256"] = chain.hex()
+    return att
+
+
 def att_status(args):
     from .backup import _vendor
     from .common import connect_fido
@@ -266,7 +310,15 @@ def att_status(args):
     st, m = _vendor(dev, cid, {1: ATT_STATE})
     if st != 0:
         die(f"status failed: {st:#x}")
-    if m[1]:
-        print(f"org attestation : installed\nchain hash      : {m[2].hex()}")
-    else:
+    att = _org_attestation(m)
+    if not att["installed"]:
         print("org attestation : not installed (self-signed device cert in use)")
+    elif not att["chain_unusable"]:
+        print(f"org attestation : installed\nchain hash      : {att['chain_sha256']}")
+    else:
+        print("org attestation : installed\n"
+              f"chain           : missing, unreadable or over the {ATT_CHAIN_MAX}-byte cap\n"
+              "EA fallback     : device certificate, no `ep` flag (registrations fail while\n"
+              "                  the chain is unreadable, and on bcdDevice < 0x0A6A)\n"
+              "repair          : re-import key and chain with `rsk fido attestation import`,\n"
+              "                  or drop the key with `rsk fido attestation clear`")

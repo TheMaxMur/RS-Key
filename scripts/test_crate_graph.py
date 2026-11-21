@@ -14,6 +14,7 @@ one that cannot go red: the clean fixture generates, this checkout's own
 """
 
 import re
+from xml.etree import ElementTree
 
 import pytest
 
@@ -282,8 +283,26 @@ def test_an_optional_dependency_is_daggered(tree):
     assert "not linked by the default image: rsk-alg" in tree.svg()
 
 
+def test_a_long_allowlist_breaks_at_its_commas():
+    """The bottom tier's parent list grows with every crate that takes a secret.
+
+    Past one line it breaks after a comma: every name kept once, none of the
+    lines past the card, and the markup's highlighted crate still on the first.
+    """
+    names = [f"rsk-crate{i:02}" for i in range(20)]
+    plain = "rsk-secret ← " + ", ".join(names)
+    markup = '<tspan class="notek">rsk-secret</tspan> ← ' + ", ".join(names)
+    lines = crate_graph.wrap([(plain, markup)], "   ·   ")
+    assert len(lines) > 1
+    assert lines[0].startswith('<tspan class="notek">rsk-secret</tspan> ←')
+    for line in lines:
+        assert len(re.sub(r"<[^>]+>", "", line)) <= crate_graph.NOTE_BUDGET, line
+    text = " ".join(re.sub(r"<[^>]+>", "", line) for line in lines)
+    assert all(text.count(name) == 1 for name in names), text
+
+
 def test_a_note_never_overflows_the_card():
-    """The one defect a generated drawing can still ship.
+    """Check the text budget against the generated notes.
 
     Rendered here rather than read off the committed file, so breaking the
     wrapper fails this without anyone regenerating first. `wrap` can only
@@ -297,3 +316,16 @@ def test_a_note_never_overflows_the_card():
     for line in notes:
         plain = re.sub(r"<[^>]+>", "", line).strip()
         assert len(plain) <= crate_graph.NOTE_BUDGET, f"{len(plain)} chars: {plain}"
+
+
+def test_crate_chips_fit_inside_the_card():
+    members, edges, firm = crate_graph.read_workspace()
+    svg, _desc = crate_graph.render(members, edges, firm)
+    card, *chips = ElementTree.fromstring(svg).findall("{*}rect")
+    left = float(card.attrib["x"])
+    right = left + float(card.attrib["width"])
+
+    assert len(chips) == len(members)
+    for chip in chips:
+        x = float(chip.attrib["x"])
+        assert left <= x and x + float(chip.attrib["width"]) <= right, chip.attrib

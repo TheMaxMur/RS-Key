@@ -38,6 +38,7 @@ fuzz_target!(|data: &[u8]| {
         serial_hash: &[0xAB; 32],
         serial_id: &[1, 2, 3, 4, 5, 6, 7, 8],
         otp_key: None,
+        latched: false,
     };
     let dev_new = Device {
         otp_key: Some(&OTP),

@@ -38,37 +38,2951 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ## [Unreleased]
 
-### Added
+## [0.5.0] - 2026-11-21
 
-- **The `display` flavor builds for the V2 board's CST3530 touch controller.**
-  Waveshare's RP2350-Touch-LCD-2.8 moved its touch IC from a CST328 at `0x1A`
-  to a CST3530 at `0x58` in boards shipped after 2026-10-14. The two share the
-  panel, the pins and the reset line, so the old image drew correctly and then
-  ignored every touch. `DISPLAY_TP_CHIP=cst3530` selects the new driver, which
-  differs in three places: the I2C address, four-byte register addressing, and
-  a 9-byte report block at `0xD0070000` where the CST328 had a 7-byte one at
-  `0xD000`. The default stays `cst328`, so an existing board builds the same
-  image as before.
-- `bcdDevice` moves to **0x09DC**: the display flavor gains a second touch
-  driver. Images built without `--features display` are otherwise unchanged,
-  but the counter is shared by every board, so they report the new build too.
+### TL;DR
+
+- **Back up before upgrading.** Boot migrates readable legacy storage to the
+  authenticated format and resumes an interrupted migration. Use v2-aware
+  firmware after migration. A 16 MB key provisioned before 0.4.8 still comes up
+  factory-empty because the storage offset moved.
+- **TrustZone in every build.** The Secure worker owns credentials and policy.
+  USB framing runs on the Non-secure side. Build the combined image with
+  `nix build .#firmware` or `nix develop -c bash scripts/build.sh`.
+- **Bitmerse Romu has its own UF2.** Choose the `romu` image for the 2 MiB
+  RP2354A board with a discrete RGB LED and a touch pad.
+- **Provisioned devices seal OTP page 58 during boot** after migration and
+  a flash scrub. PIN-dependent records can delay sealing until migration
+  completes. The [production guide](https://github.com/TheMaxMur/RS-Key/blob/v0.5.0/docs/production.md)
+  covers the status checks and recovery steps.
+- **Authenticated storage and mirrored retry counters.** Damaged or unreadable
+  records cause storage errors instead of triggering factory defaults. FIDO,
+  PIV and OpenPGP PIN retries and OATH HOTP use the mirrored journal.
+- **RSA arithmetic is now in Rust.** Public and private exponentiation, CRT
+  and the Montgomery kernels share the Rust implementation on host and device.
+  RSA-2048 signing took about 155 ms on the 150 MHz RP2350 in an SRAM benchmark
+  that included blinding and the Bellcore check (bcdDevice `0x0BE9`).
+- **Compatibility and tools.** PIV serves a default Card Capability Container
+  for Windows. The CLI and TUI recognize Linux PC/SC readers by USB serial.
+  The Waveshare V2 display supports CST3530 touch. `rsk flash` verifies the
+  release signature and pins provenance checks to the release tag when `gh`
+  is installed.
+
+### Detailed changes
+
+- Derive the FIDO record nonce and legacy CBC IV directly from their inputs
+  (bcdDevice 0x0BED). The on-flash formats are unchanged.
+
+- Add the Bitmerse Romu board profile and release image, with its active-high
+  touch sensor and common-anode RGB driver from Jaydeep Dhrangdhariya.
+  `rsk hw` recognizes the Romu LED driver (bcdDevice 0x0BEC, `rsk` 0.3.55).
+
+- Reject FIDO relying-party records with mismatched domain hashes on read
+  and simplify SHA-256 outputs and encrypted-record parsing (bcdDevice 0x0BEB).
+
+- Validate the relying-party hash before sealing legacy FIDO metadata
+  (bcdDevice 0x0BEA).
+
+- Speed up RSA-2048 signing with batched blinding inversion and fixed-width
+  Montgomery kernels (bcdDevice 0x0BE9).
+
+- Speed up Montgomery squaring and reduction on the RP2350 (bcdDevice 0x0BE8).
+
+- Move RSA Montgomery multiplication, squaring and reduction to Rust on host
+  and device. Process four limbs at a time and store prime-sieve residues as
+  16-bit values to reduce SRAM use (bcdDevice 0x0BE7).
+
+- Move RSA modular subtraction, the Montgomery inverse and conversion to
+  Montgomery form to Rust (bcdDevice 0x0BE6).
+
+- Move RSA private exponentiation and CRT recombination to Rust while
+  retaining the Thumb-2 arithmetic (bcdDevice 0x0BE5).
+
+- Run RSA's fixed public exponentiation in Rust, backed by the existing
+  Thumb-2 Montgomery arithmetic on the device (bcdDevice 0x0BE4).
+
+- Use `nix build .#firmware` for the default TrustZone image. The duplicate
+  `firmware-trustzone` package has been removed.
+
+- Switch the status LED from boot to idle when USB configuration completes,
+  before the first applet command (bcdDevice 0x0BE3).
+
+- Serve the PIV Card Capability Container by default for Windows key-container
+  opens, while preserving a provisioned container. Support the CST3530 touch
+  controller on the Waveshare V2 display board (bcdDevice 0x0BE2).
+- Recognize the RS-Key PC/SC reader by its USB serial when Linux pcscd uses the
+  driver's friendly name (CLI and TUI).
+
+- Run display firmware images with `rsk-emu --image --display`: capture ST7789
+  pixels from PIO, deliver CST328 touch reports over I2C1, and show the panel in
+  SDL. Add headless image-time tap input and a display-image laboratory for
+  consent, cancellation and the device, FIDO and CCID PIN paths.
+
+- Cancel the background RSA prime candidate at Lucas progress boundaries once
+  the key is complete (bcdDevice 0x0BE1). Retain the Miller-Rabin and extra-strong
+  Lucas acceptance checks and wipe the abandoned candidate before core1 idles.
+  This bounds the unfinished Lucas sequence without delaying the key response.
+
+- Initialize the storage backend, filesystem and USB message buffers in static
+  memory instead of returning large values through constructor stack frames
+  (bcdDevice 0x0BE0). Bind the storage key source once before boot admission.
+  Resolve counter banks into caller-owned results and group SHA-256 expansion
+  and rounds to bound the unoptimized core1 stack. Build applet handlers on the
+  worker's first poll and share the wiped Non-secure reply buffer
+  under the existing exchange mutex. Reuse CTAPHID reply await sites and avoid
+  temporary ML-DSA polynomial-vector copies during key expansion and signing.
+  Reuse dead signing scratch while preserving byte-exact signatures. The
+  constant initializers raise the approved image budget from 952 to 1024 KiB;
+  the Secure and Non-secure stack floors are unchanged. Boards with at most
+  2 MiB flash construct the backend at runtime to preserve their code space
+  without moving either storage partition.
+
+- Abort partial CTAPHID reassembly when the USB session changes, before wiping
+  its buffer (bcdDevice 0x0BDF). A new channel can start immediately and a stale
+  continuation no longer produces a response in the new session.
+
+- Give each synthetic PIV-history emulator boot fresh TCP listener ports,
+  including boots in the next seed. ARM-image replay no longer stops at its
+  first reboot when an inspection socket remains in `TIME_WAIT`.
+
+- Expand hostile Non-secure image checks to peripheral grants, DMA channels and
+  atomic register aliases, with live NS RAM controls (bcdDevice 0x0BDE).
+  Identify SecureFault addresses separately from bus faults, compare complete
+  SRAM8/9 code/padding with the ELF, and exercise RSA session events and
+  authorized fatal-fault recovery with disposable images.
+
+- Add hostile NS USBCTRL write and DMA register probes alongside the read probe
+  (bcdDevice 0x0BDD; test coverage, no applet behavior change). Check the
+  actual LDR/STR instruction in the NS ELF, the access fault and terminal
+  USB/DPRAM cleanup.
+
+- Run the hostile Non-secure USBCTRL read and fatal USB/DPRAM fence check in
+  the image suite. Keep hostile, gateway-probe and ordinary build settings
+  separate even when probe variables are inherited from the shell.
+
+- Exercise TrustZone worker gateway range and selector probes in the image
+  suite (bcdDevice 0x0BDC; test coverage, no applet behavior change), with
+  valid-buffer controls and an explicit completion diagnostic. Test probes
+  remain absent from ordinary firmware.
+
+- Move the firmware entry point to `scripts/build.sh` (bcdDevice 0x0BDB;
+  build refactor, no applet behavior change). It inherits exported
+  environment variables, combines `FEATURES` with Cargo feature arguments,
+  forwards common Cargo options to all three TrustZone stages and supports
+  custom output directories without mixing Secure and Non-secure artifacts.
+
+- Fix picotool's ECDSA DER/RAW conversion for leading-zero scalars in the pinned
+  Nix tool. Signing now verifies the bytes written to the image; the gate also
+  reopens the sealed ELF and requires a verified hash and signature.
+
+- Make TrustZone mandatory for every authenticator build (bcdDevice 0x0BDA):
+  remove the monolithic firmware and legacy Nix package, refuse bare Cargo
+  builds, and halt the import-library ELF before initialization without NS.
+  Build and image checks now consume the combined image and independent NS ELF.
+
+### bcdDevice → 0x0BD9: refreshed build environment
+
+- Refresh the Nix inputs and use Rust 1.99.1, with matching LLVM tools for the
+  coverage package's own test suite.
+- Align the legacy, Secure and wipe `.text` sections to their actual input
+  alignment after the boot block, fixing the linker warning reported in #136.
+- Preserve Secure SRAM placement and XIP cache groups with Rust v0 symbols.
+- Regenerate IBM Plex tables from the updated font and rasterizer packages;
+  glyph metrics and table sizes are unchanged.
+- Keep the picoem model and its TrustZone changes in the external fork, pinned
+  by Cargo Git revision. Image suites and model checks remain in the RS-Key gate.
+
+### bcdDevice → 0x0BD8: TrustZone by default and complete debug hardening
+
+- Standard Nix packages, CI artifacts and local build recipes now use the
+  combined Secure/Non-secure image. Firmware features and documented environment
+  knobs reach both Secure links; NS receives its `strict-config` transport policy.
+- CLI 0.3.53 hardens both `DEBUG_DISABLE` and `SECURE_DEBUG_DISABLE`, verifies
+  all eight CRIT1 copies, resumes partial writes and refuses to lock incomplete
+  hardening. CLI and firmware status decode physical OTP copies and require
+  complete debug and page-lock copies before reporting `LOCKED`.
+- CI and image suites run on pushes to `develop` as well as `main` and PRs.
+  The TUI development command and native libraries live in `nix develop .#tui`;
+  the full gate retains its TUI checks in that environment.
+
+- **bcdDevice → 0x0BD7: automatic OTP sealing.** Boot validates page-58 keys and chaff,
+  migrates device-sealed records, completes a fresh flash scrub, then permanently
+  closes BOOTSEL/non-secure key access and the pre-OTP migration arms. This also
+  runs on upgrades of already fused but unlocked devices, including legacy
+  `0x3C3C3C` locks. PIN-dependent migration delays sealing; invalid or incomplete
+  provisioning refuses it. TrustZone performs this in Secure code before
+  starting Non-secure transports. A scrubbed restart refreshes the latch bindings.
+  All access-lock copies are verified before the Secure read-only latch is burnt.
+  A torn latch whose majority already closes Secure writes is reported separately;
+  ROM cannot complete its remaining bits, and boot does not repeatedly try.
+  If that old tear left BOOTSEL/Non-secure access open, root reads and migration
+  are blocked in recovery instead of treating the device as sealed.
+- **CLI 0.3.52:** `rsk otp burn` independently reads back keys and chaff, then
+  reboots into automatic sealing. It no longer trusts picotool's exit status
+  alone. `rsk otp status` reports completion or the action still needed, and
+  discovers Linux readers by the rescue protocol. `lock-page58` remains only
+  for servicing older firmware.
+
+- **bcdDevice → 0x0BD6:** accelerate Brainpool signing and public-key generation
+  with constant-time fixed-base tables, and ECDH with Jacobian mixed addition.
+  Preserve deterministic signatures, scalar and peer validation, and stored keys.
+  Pack counter snapshots into body pages before checkpoint publication, reducing
+  repeated flash programs during PIN/HOTP rotation. Stored bytes, capacity,
+  full-bank authentication, mirrored acknowledgment and rollback floors are unchanged.
+  Use the complete doubling formula in the secp256k1 comb and group hot
+  secp256k1 callees within one XIP cache way.
+  Reuse mixed addition for the public P-521 ECDH table, removing a duplicate
+  full-projective formula; keep the complete doubling formula outside the hot
+  fixed-base selection loop. Keep the Ed25519 loop and shared field arithmetic
+  on disjoint XIP cache indices. Skip two always-zero leading radix-16 digits
+  in P-521 ECDH and execute the checked storage reader from existing Secure RX SRAM.
+  Group the P-384 comb with its hot field callees.
+  Keep X25519's constant-time barrier and public ladder multiplier in its code
+  group. Precompute only the public `NO-OTP` HMAC pad states, preserving fresh
+  OTP reads and the fused-key path. Poll USB writes directly without an extra
+  async adapter; USB reset handling, cleanup and retry bounds are unchanged.
+
+- **bcdDevice → 0x0BB6:** derive U2F and attestation public points only when
+  needed, using the existing constant-time P-256 comb. Authentication and
+  attestation signing no longer calculate an unused public key. Credential
+  formats, signatures, presence checks and counter publication are unchanged.
+
+- **bcdDevice → 0x0BB0:** append each counter record's header and value together,
+  and end raw-bank write chunks at physical page boundaries, reducing repeated
+  flash programming during PIN retry and HOTP updates. The
+  record encoding, MAC checks, mirrored publication and rollback floors are
+  unchanged. Existing `0x0BA8` stores remain compatible in both directions.
+
+- **bcdDevice → 0x0BA8:** move PIN retry updates and encrypted HOTP moving
+  factors into the mirrored counter journal. Verifier-bearing PIN records and
+  HOTP credentials bind counters to their main publication generation; public
+  PIV/OpenPGP retry records are authoritative in the counter journal.
+  Existing records migrate on their first update;
+  replacement and deletion cannot inherit an older owner's counter. Retry
+  charging still precedes comparison, and both counter copies precede success.
+  The counter journal now retains an authenticated live rollback floor across
+  errors, as the main journal does. Earlier v2 firmware refuses the extended store
+  after migration; reinstalling this build resumes it without a reset.
+  P-384 field addition, subtraction and doubling stay out of line on 32-bit
+  targets, improving P-384 latency without changing arithmetic. TrustZone keeps
+  P-256 point addition and field inversion beside its multiplication loop in
+  Secure SRAM, avoiding the measured P-256 layout regression.
+
+- **bcdDevice → 0x0B83:** reuse command-local HMAC setup within complete
+  directory passes, reducing PIN retry and HOTP update
+  work. Every value is still read and authenticated at the same points; root
+  observations, rollback floors, publication order and persistent formats are
+  unchanged. No keyed state is kept between storage operations. P-256 ECDH
+  uses the same multiplication in Secure SRAM; P-256/P-384 decoding stays in
+  separate frames without changing point validation.
+
+- **bcdDevice → 0x0B70:** close main-journal and counter appends by freshly
+  checking both complete banks against the authenticated prefix and exact new
+  records, without replaying every older record's MAC. Compact SHA prefix state
+  stays in protected RAM; its reread partial block is authenticated before use.
+  PIN retry writes, HOTP advances and OpenPGP signatures retain both durable
+  publications, full payload checks, rollback floors and power-cut recovery.
+  Existing records need no migration; cold mounts and compaction still replay.
+  GET RESPONSE tails reuse the public OTP-status mirror from the producing
+  command; new APDUs and OTP operations still refresh it.
+
+- **bcdDevice → 0x0B66:** reuse authenticated counter locations after
+  fresh full-bank fingerprint and erased-tail checks; keep complete value MACs,
+  changed-bank recovery, and both durable publications. Unpublished-value cleanup
+  skips bodies of already-published files during its read-only walk and avoids
+  duplicate validation when it changed nothing. Keep ordinary lookup futures
+  separate, optimize the store for speed, and group the hot X25519 loop within
+  one XIP cache way. Enable the existing constant-time Ed25519 base-point tables.
+  Existing storage formats,
+  capacities, root checks, and rollback policy are unchanged.
+
+- **bcdDevice → 0x0B55:** Reuse the verified main-journal append position
+  after checking both complete physical journals and the mounted authority.
+  A completed write retains its authenticated mount for the next read.
+  PIN retry and OATH HOTP updates avoid redundant history scans; publication,
+  payload checks, recovery, persistent formats and retry ordering are unchanged.
+
+- Correct the cross-applet fuzz oracle's OATH authorization and credential
+  lifecycle model, including code removal, command chaining and DELETE's BER
+  fields. Production authorization and persistent formats are unchanged.
+
+- **bcdDevice → 0x0B46:** Consolidate the accepted TrustZone firmware and
+  correlated storage-fault test support on develop. The build identity advances;
+  device behavior, persistent formats and authentication remain unchanged.
+
+- **bcdDevice → 0x0B45:** Size the TrustZone CCID reply scratch buffer for
+  the existing CCID response limit, avoiding FIDO-sized initialization and
+  cleanup on APDU exchanges. Maximum responses, session checks and complete
+  buffer cleanup remain unchanged.
+
+- **bcdDevice → 0x0B44:** Use four signed comb groups for P-521 public-key
+  derivation and nonce commitments, including deterministic OpenPGP signatures
+  and authentication. P-521 agreement uses constant-time Jacobian formulas;
+  TrustZone executes the existing field products from read-only Secure SRAM8/9.
+  P-384 field squaring on 32-bit targets computes symmetric cross products once,
+  with fixed operation counts and the same canonical Montgomery result.
+  Scalar and peer-point validation, RFC6979 retries, authentication, rollback
+  checks and complete secret cleanup retain their existing contracts. Existing
+  keys need no migration; stack, heap and buffer capacities are retained.
+
+- **bcdDevice → 0x0B23:** Avoid deriving an unused public key on each
+  OpenPGP P-521 or Brainpool P-256/P-384 signature. The deterministic RFC6979 signer, scalar validation,
+  signature encoding and secret cleanup retain their existing contracts.
+  P-384 signing omits the RFC6979 state update after an accepted nonce; rejected
+  candidates still follow the same retry sequence. P-384 ECDH uses equivalent
+  bilinear Z-coordinate formulas to reduce field additions.
+  TrustZone places repeated AES-GCM blocks, EC selection and field arithmetic,
+  RSA integer operations, heap cleanup, record verification and single-message
+  SHA-256 in
+  read-only Secure SRAM. P-256 carries the protected borrow between words
+  without intermediate mask conversions and keeps the correction inline.
+  P-521's 17-word integer subtraction on 32-bit targets also carries the
+  protected borrow directly; other integer widths keep the upstream word loop. P-256 field squaring uses a symmetric product
+  kernel with fixed eight-word cross terms and the same Montgomery reduction.
+  Authentication checks are unchanged.
+
+- **bcdDevice → 0x0B0F:** Update `crypto-bigint` from 0.7.5 to 0.7.6
+  across the firmware, emulator, TUI and fuzz lockfiles. This addresses
+  RUSTSEC-2026-0387, including secret-dependent branches in arithmetic intended
+  to be constant-time. TUI 0.3.19 uses P-256 0.14 for its ECDH and identity
+  verification paths, removing its remaining vulnerable 0.5.5 dependency.
+  No advisory exception is added.
+
+- **bcdDevice → 0x0B05:** Keep shared memory-copy and clearing helpers in
+  read-only Secure SRAM alongside the TrustZone verifier. Persistent formats,
+  authentication checks and secret wiping remain unchanged.
+
+- **bcdDevice → 0x0AFF:** Reuse HMAC key pads within each authenticated
+  counter-bank scan and keep the public SHA-256 initial vector in Secure
+  read-only SRAM. Every record, sequence and erased tail is still checked.
+  HMAC pads are reused only within a scan; existing Secret drops and Secure
+  stack sweeps still cover keyed state. Storage formats and replica recovery
+  remain unchanged.
+
+- **bcdDevice → 0x0AF7; TUI → 0.3.18:** Update `ctutils` to 0.4.5 in all
+  four Rust workspaces to address RUSTSEC-2026-0385: compiler optimization of
+  constant-time mask generation and 128-bit comparisons on 32-bit targets.
+  Existing keys and persistent records remain compatible without a reset.
+
+- **bcdDevice → 0x0ADF:** Reduce TrustZone CCID continuation and initial OpenPGP
+  response latency with a bounded retry of busy Bulk IN writes. Each retry keeps
+  the USB lifecycle, fault and epoch checks; full packet cleanup completes before
+  notifying Non-secure. Storage authentication and rollback checks are unchanged.
+
+- **bcdDevice → 0x0ADE:** Use the shared aligned SRAM wipe for the complete
+  64-byte Secure gateway packet and the Non-secure endpoint/control IN packets.
+  Full cleanup on normal and error exits, future cancellation, epoch checks,
+  control abandonment and serialization ordering are retained.
+
+- **bcdDevice → 0x0ADD:** Skip unused zero-length USB packet bookkeeping in
+  TrustZone CCID transfers. Session and epoch checks, complete buffer/stack
+  cleanup, active ZLP retirement and CCID capacity are unchanged. Existing keys
+  and records remain compatible without a reset.
+
+- **bcdDevice → 0x0ADC:** Reduce shared SHA-256 and authenticated getInfo/OpenPGP
+  read latency by unrolling schedule expansion and avoiding a redundant schedule
+  copy. The complete schedule and chaining state remain wiped through `Secret`;
+  full hashes/MACs, fresh Root reads, rollback floors and cleanup before
+  publication are unchanged. Existing records upgrade without a reset.
+
+- **bcdDevice → 0x0ADB:** Reduce authenticated getInfo and OpenPGP latency with
+  fully unrolled software SHA-256 rounds, Secure RX SRAM placement of the
+  existing HKDF/DRBG helpers, and a full dead-stack sweep in 32-word groups.
+  Complete hashes/MACs, fresh Root reads, rollback floors, DRBG Generate/reseed
+  boundaries and cleanup before publication stay unchanged. Existing records
+  remain compatible without a reset.
+
+- **bcdDevice → 0x0ADA:** Run the shared SHA-256 compression/finalization and HMAC template functions
+  from Secure RX SRAM in the TrustZone build to reduce getInfo and OpenPGP
+  read latency. Existing records, full hashes and MACs, fresh Root checks,
+  rollback floors and complete buffer/stack cleanup are unchanged.
+
+- **bcdDevice → 0x0AD9:** Accelerate the shared storage verifier, FIDO getInfo
+  and OpenPGP reads with an eight-round software SHA-256 core. Full record
+  hashing, MAC inputs, fresh Root checks and rollback floors stay unchanged;
+  chaining state and the working schedule are wiped through `Secret`.
+
+- **bcdDevice → 0x0AD8:** Clear the complete Non-secure gateway reply buffer
+  with aligned volatile word stores. Every reply, abandoned session and dropped
+  pending future keeps the same full-buffer cleanup before ticket release.
+
+
+- **bcdDevice → 0x0AD7:** Clear both complete command response buffers with
+  aligned volatile word stores and byte edges. The full array extents, cleanup
+  on each command and dead-stack sweep before reply publication are preserved.
+
+
+- **bcdDevice → 0x0AD6:** Use the full wiped scratch for a Main read-tag miss,
+  so a larger neighboring value does not force a second lookup and repeated
+  authentication. A successful first lookup seeds its read tag immediately.
+  Tag hits retain bounded scratch; fresh root, binding, complete value proofs
+  and the mounted version floor are unchanged.
+
+- **bcdDevice → 0x0AD5:** Reuse authenticated Main read metadata without
+  repeating HKDF and the binding and record MAC checks on each warm lookup.
+  A warm tag hit reads OTP and verifies a full 32-byte software HMAC over the
+  exact mounted version and, for present files, the entry and complete value
+  digest. Cold reads and tag misses retain the original binding and record proofs.
+  Only metadata and tags survive a read. Main clears these hints before mutation
+  and on read errors while retaining the version floor. Persistent formats and
+  capacities remain unchanged.
+
+- **bcdDevice → 0x0AD4:** Reduce Non-secure backup USB polling from every
+  millisecond to every 16 ms, leaving more CPU time for authenticated storage
+  reads. Secure progress interrupts still wake waiters immediately; missed
+  notifications can add up to 15 ms per wait. Root, payload and USB-epoch
+  checks and Secure stack cleanup are unchanged.
+
+- **bcdDevice → 0x0AD3:** Prepare the Main read HMAC key once for the mounted
+  authority and requested record checks. The context exists only within that
+  backend read; each later read freshly derives its root and verifies both MACs.
+
+- **bcdDevice → 0x0AD2:** Wake Non-secure USB tasks on Secure USB and worker
+  progress instead of waiting for each polling interval. A one-millisecond
+  fallback remains. Publish replies and completed resets only after command
+  futures return and the Secure dead-stack sweep finishes; gateway span, ticket
+  and USB-epoch checks remain unchanged.
+
+- **bcdDevice → 0x0AD1:** Read the OpenPGP key-origin record once when building
+  key information, instead of once per present signing, decryption and
+  authentication key. Each response reads afresh; absent, short, invalid or
+  unreadable origins still report imported. Attestation-key behavior is unchanged.
+
+- **bcdDevice → 0x0AD0:** Shorten warm authenticated reads by lending flash only
+  the aligned scratch span required for the requested value. That whole span is
+  wiped on every exit, including partial I/O failures; cold reads and recovery
+  keep the full scratch cleanup. Fresh root, mounted-directory binding and full
+  payload authentication remain mandatory. Formats and capacities are unchanged.
+
+- **bcdDevice → 0x0ACF:** Reuse the complete authenticated main directory in
+  protected RAM between storage reads. Each read freshly derives its root and
+  authenticates the complete requested payload against its mounted version;
+  absence comes from the complete directory. Journal scans remain mandatory
+  before mutations and when rebuilding the directory. Retain exact publication
+  progress across errors and remounts to refuse live rollback and substitution.
+  Unrelated journal damage is detected when those journals are consumed, rather
+  than on every warm read. Persistent formats and capacities are unchanged.
+
+- **bcdDevice → 0x0ACE:** Check erased journal tails directly from the flash stream
+  instead of copying them through SRAM. Each backend read retains fresh checks
+  of both complete banks, their tails, the root and each complete payload MAC;
+  Every FIFO word and final transfer progress remain checked. QSPI mode checks
+  and the 100 ms wait bound keep their existing 4 KiB transfer boundaries.
+
+- **bcdDevice → 0x0ACD:** Shorten shared storage reads after long update histories: at mount, checkpoint
+  authenticated main journals when obsolete history can release at least half a
+  bank. Live files, counters, sequence and record formats are preserved. This
+  maintenance adds erases and startup work when due; every read still freshly
+  checks both complete banks, erased tails, root and full payload MAC.
+
+- Accelerate P-384 field products on 32-bit targets with a modulus-specific,
+  constant-time Montgomery CIOS kernel. ECDH, ECDSA commitments and public-key
+  derivation retain canonical results, point validation and secret cleanup.
+  Existing credentials and flash records are unchanged. bcdDevice `0x0ACC`.
+
+- Accelerate P-384 ECDH with Jacobian doubling and mixed addition. Signed
+  windows retain fixed work, full table selection and masked equality,
+  opposite-point and identity handling. Peer validation, errors and shared
+  secrets are unchanged. bcdDevice `0x0ACB`.
+
+- Use compact software SHA-2 rounds for the firmware's RustCrypto 0.11
+  dependency paths, reducing P-384 deterministic-signature latency and code
+  size on Cortex-M33. Nonces, signatures and validation remain unchanged.
+  bcdDevice `0x0ACA`.
+
+- Use command-free continuous Quad reads on the allowlisted Puya flash, at the
+  existing clock rate. A single-word priming transaction precedes a full probe;
+  failed probes release enhanced read mode, restore QMI and verify the old mode.
+  Fresh bank, erased-tail and record authentication checks are unchanged.
+  bcdDevice `0x0AC9`.
+
+- Halve P-384 comb doublings again with four centered signed groups and a
+  public correction point. Table decoding still validates every point; selection
+  and sign application use fixed work for every scalar. bcdDevice `0x0AC8`.
+
+- Reduce P-384 public-key and ECDSA commitment work with two fixed-base comb
+  groups and the curve library's complete doubling formula. Fixed loop counts,
+  full constant-time table selection, coordinate validation and sealed-key /
+  certificate checks remain in place. This shortens the first PIV SELECT and
+  its delay to queued commands. bcdDevice `0x0AC7`.
+
+- Feed complete SHA-256 blocks with straight-line word writes and peripheral
+  byte swapping in the shared flash backend. Eager readiness, error and timeout
+  checks still run before and after each block; full fresh bank, tail, root and
+  payload checks are unchanged. Records remain compatible. bcdDevice `0x0AC6`.
+
+- Batch fresh page-state probes across adjacent page boundaries in the shared
+  storage backend. Both bytes are bounds-checked before uncached reads; successor
+  and wrap checks remain fresh. Both whole journal banks, erased tails, the root
+  and full payload MAC are still checked on each backend read. No record format
+  or capacity changes. bcdDevice `0x0AC5`.
+
+- Read each variable OpenPGP GET DATA child once, using the authenticated read's
+  returned length instead of separate existence and size probes. An unreadable
+  child refuses the complete template. Fresh storage checks and record formats
+  are unchanged. bcdDevice `0x0AC4`.
+
+- Reduce CPU overhead in shared flash reads: poll FIFO readiness without
+  counting words, and read one-byte page-state probes through the translated
+  uncached XIP window. Bounds, stream completion and stall checks, fresh bank
+  and root checks, and full payload authentication are retained. Record formats
+  are unchanged. bcdDevice `0x0AC3`.
+
+- Reduce shared storage-read latency by checking the peer journal bank before
+  the selected bank when reusing its parsed directory. Each backend read still
+  checks both whole banks, erased tails, the fresh root and the full payload
+  MAC. Cold resolution and record formats are unchanged. bcdDevice `0x0AC2`.
+
+- Reduce authenticated storage-read latency with a simpler checked XIP FIFO
+  loop. Load each existing PIV management and attestation key once during the
+  first SELECT, retaining fresh backend checks and the existing sealed formats.
+  A failed management-key read now explicitly refuses SELECT; malformed seals
+  still leave certificate access and recovery available. bcdDevice `0x0AC1`.
+
+- Accelerate shared storage reads on matching Waveshare RP2350-One boards with
+  volatile Quad Enable and checked Quad SPI timing. Park core1 in SRAM before
+  changing the read mode, preserve protection bits, and retain every fresh bank,
+  tail, root and payload check. Existing records remain compatible.
+  bcdDevice `0x0AC0`.
+
+- Avoid duplicate OpenPGP status, fingerprint and timestamp reads on
+  authenticated storage. Each value still receives its normal fresh storage
+  checks; records and response formats remain compatible. bcdDevice `0x0ABF`.
+
+- Accelerate FIDO getInfo with RP2350 hardware SHA-256, checked CPU flash
+  streaming and one command-local persistent-token load. Restore the TrustZone
+  HID interval to 1 ms. Keep fresh checks of both banks, erased tails, payload
+  authentication and recovery; existing flash records remain compatible.
+  bcdDevice `0x0ABE`.
+
+- Fix multi-second FIDO getInfo latency on RP2350: reuse the parsed storage
+  directory only after freshly checking both journal banks, keep payload and
+  page-recovery checks, and use compact SHA-256 on the device to fit the XIP
+  cache. Existing flash records remain compatible. bcdDevice `0x0ABD`.
+
+- Fix display-image cold boot in the emulator: latch PIO TXSTALL on actual
+  empty pulls, complete I2C NACKs and route UART1/SPI1/I2C1 at their RP2350
+  addresses.
+
+- Bound image-laboratory CTAP requests by device time with a separate host
+  watchdog, retain transport timing and refuse USB keepalive gaps over 500 ms.
+  Native test clients keep their existing deadline.
+
+- Integrate the current develop storage recovery and host-test contracts
+  with the TrustZone transport build. Preserve Secure USB lifecycle
+  ownership and bank-aware stack measurements.
+  bcdDevice `0x0ABB` → `0x0ABC`.
+
+- Image laboratory measurements track Secure and Non-secure core0 main stacks
+  separately and check both bounds. A TrustZone image no longer fails `begin`
+  because its active Non-secure stack is outside the Secure ELF allocation.
+
+- TrustZone preserves an acknowledged USB configuration across the next SETUP and revokes authorization when HAL first observes a reset or suspend after the raw register snapshot (`bcdDevice 0x0ABB`).
+
+- TrustZone OTP HID status follows Secure applet updates and CCID SELECT, so YubiKit observes the current program sequence and slot flags (`bcdDevice 0x0AB0`).
+
+- TrustZone retires an unconsumed CCID terminating ZLP when the host starts its next command, preserving 3072-byte transfers and the endpoint data toggle (`bcdDevice 0x0AAF`).
+
+- TrustZone USB lifecycle revocation is Secure-only: delayed Non-secure reset callbacks no longer erase a new APDU session, and CCID ABORT state is scoped to the Secure USB epoch (`bcdDevice 0x0AAE`).
+
+- TrustZone no-touch builds keep the timeout-import lint expectation only for headless, non-display configurations; builds with LED services now pass strict clippy (`bcdDevice 0x0AAD`, no runtime behavior change).
+
+- TrustZone S/NS builds share the root Cargo workspace, dependency pins and lockfile; NS remains excluded from host-only rows and is compiled by the device gate (`bcdDevice 0x0AAC`).
+
+- TrustZone bcdDevice 0x0AAB: production boot keeps Secure touch, LED and display
+  tasks, including display CCID PIN entry. One generated S/NS/NSC layout follows
+  2/4/16 MiB profiles without moving KV bounds. The combined touch image includes
+  its partition table and has an offline unsigned Nix builder. Startup validates
+  NS vectors and clears register state; fatal S faults fence gateways and USB.
+
+- TrustZone bcdDevice 0x0AAA: Non-secure USB descriptors now use a bounded public
+  Secure boot snapshot (effective VID/PID, strings, version, interface mask and
+  ATR), including persisted PHY overrides. Synthetic getInfo delay and gateway
+  startup probes are explicit test switches; NS no longer parses Secure main.rs.
+
+- TrustZone (bcdDevice 0x0AA9): explicitly grant bus resources before NS entry,
+  lock Secure DMA channels, configure both Secure MPUs and the NS MPU, and
+  isolate RAM-resident code. Preserve the HAL boot2 flash path through a bounded
+  Secure stack execution window with NS interrupts masked.
+
+- TrustZone (bcdDevice 0x0AA8): keep USB controller, DPRAM, lifecycle observation
+  and EP0 execution in Secure; expose bounded packet operations to Non-secure
+  transports. Bind every response fragment to its request epoch and stop a
+  CTAPHID response at the first disabled endpoint.
+
+- Image emulation: preserve outer lazy-FPU state across a nested basic IRQ
+  return; report invalid EXC_RETURN in CFSR.INVPC, without falsely setting
+  UNDEFINSTR for every UsageFault.
+
+- TrustZone prototype USB-wide reset drops every applet's volatile authorization,
+  selection, chained/held replies and queued OTP output; preserves the FIDO
+  per-boot PIN failure budget. ICC reset remains transport-specific.
+  Firmware bcdDevice `0x0AA7`.
+
+- Enforce DMA channel and interrupt security, logical-address MPU rules and
+  DMA-master bus filters in the image model. Reject processor-local accesses
+  and privilege escalation through controller self-access, chaining and DREQs;
+  report bus errors without contaminating CPU fault state.
+
+- Bank the image emulator's SIO FIFOs, spinlocks, doorbells and interrupt lines
+  by security state; enforce GPIO masks and core-local peripheral ownership,
+  including the GPIO coprocessor and threaded handoff.
+
+- Apply RP2350 ACCESSCTRL master and privilege filters to emulator CPU accesses,
+  including instruction fetches and mounted MMIO. Model controller locks,
+  password writes, restricted Non-secure grants and Secure-only Boot RAM;
+  ROM hooks cannot bypass these filters.
+
+- Keep the emulator's Secure special-register banks inaccessible to Non-secure
+  MRS/MSR aliases. Validate exception returns and Secure stack signatures before
+  restoring state; preserve valid Secure/Non-secure interrupt returns. Run the
+  vendored CPU model tests in the existing quality gate.
+
+- Make the image emulator enforce CPU Secure/Non-secure memory attribution,
+  checked NSC entry, MPU permissions and SecureFault status. Cache hits and ROM
+  hooks cannot bypass fetch checks. The two picoem libraries and pinned A4 ROM
+  are kept locally so a clean checkout builds the tested model.
+
+- TrustZone: record the production trust boundary and Secure USB reset observer
+  decision in one documentation page, and share the transport/worker ABI through
+  `rsk-usb` instead of including a source file across firmware directories.
+  Refactor: request/reply values and command behavior are unchanged.
+  bcdDevice `0x0AA5` → `0x0AA6`.
+
+- Add an experimental TrustZone transport build: USB/CTAPHID/CCID/OTP framing
+  runs Non-secure while the existing worker and applets remain Secure. A
+  three-second synchronous getInfo workload exercises keepalive scheduling.
+  Image tests also verify RSA-2048 and ML-DSA-44/65/87 operations with keepalive
+  timestamps taken at USB completion.
+  The first prototype is a 4 MiB no-touch test image without display support.
+  bcdDevice `0x0AA3` → `0x0AA4`.
+
+- Keep TrustZone transport replies scoped to their request and USB session.
+  Processing CTAPHID_CANCEL and two-phase CCID ABORT discard the old response;
+  USB reset/disconnect clear applet authorization before accepting new work,
+  preserving the per-boot FIDO PIN failure budget. bcdDevice `0x0AA4` → `0x0AA5`.
+
+- Extend the storage-fault doubles and stateful fuzz seeds: `Silent`'s refused
+  read-back, a second cut during recovery, the credential/config/PIV/reset and
+  authenticated-store seeds, and the cross-applet OATH record-lifecycle oracle.
+  Behaviour is unchanged; the build counter advances because the test-util code
+  lives in `crates/rsk-fs/src/storage.rs`, which is shipped code.
+  bcdDevice `0x0AA7` → `0x0AA8`.
+
+- Complete the bounded USB oracle requirement matrix for confirmed profiles:
+  command-specific grammar, field/length/numeric/string boundaries, populated
+  private references, authorization/cursor lifetimes, native CCID/USB faults,
+  keyboard/button/pinpad input, applet reset isolation and cross-interface
+  cancellation, quotas, shared configuration and processing. Reconcile uncertain
+  writes through whole old/new/partial-state and private-key witnesses, retain
+  genuinely unknown outcomes, and halt mutations after failed recovery. Add
+  offline public foreign-reference proofs, seeded state histories and fresh
+  semantic-recipe minimization that preserves the original failure. Separate
+  warmups and witnessed session populations; omit latency ratios for mismatched
+  contexts or results. Scenario revision 3 requires fresh comparable captures.
+  Independent fault peers test the actual runner paths. Physical captures are
+  unperformed, external model-specific catalogs remain unknown, and Trezor's
+  wallet remains outside the recorder's allowed surface.
+
+- Add the host-only USB oracle recorder under `tests/interop`: durable raw
+  CTAPHID/APDU captures, per-request monotonic timing, independently checked
+  FIDO/U2F, OATH/OTP, PIV and OpenPGP fixtures, explicit Trezor FIDO-only routing,
+  offline comparison and partial matrix coverage reporting. Include offline
+  catalog expansion, structural refusal/recovery cases, witnessed OATH/FIDO/card
+  state transitions, raw report faults, cross-writer configuration-lock checks,
+  MSE/audit cryptography, and separate permissions for PIN/config changes and
+  applet reset. Expand the remaining numbered families into executable lifecycle,
+  slot/algorithm/policy, optional-extension, keyboard/pinpad, transport and
+  cross-applet scenarios. Include bounded PIN failure cycles, cryptographic
+  seed/identity witnesses, reset isolation, explicit reconnection binding and
+  cleanup failures that retain the original failed verdict. All 182 numbered
+  families have catalog entries; tags do not certify complete variation coverage.
+  Physical verification and model-specific external vendor catalogs remain pending.
+
+- Measure the host tools in their own workspaces (Phase 6): the Python CLI's
+  invalid-argument exit and its two JSON streams (`status --json`,
+  `inventory list --json`), and process-level contract tests for `tools/tui`'s
+  one-shot flags and `tools/emu`'s argument and bind refusals. The totals are
+  host-tool measurements, not folded into the firmware core percentage.
+  `rsk` → `0.3.51`, `rsk-tui` → `0.3.17`; `rsk-emu` keeps its version.
+
+- Add the test-only torn-write storage double (`faults::Torn`) and its read-back
+  oracle. Behaviour is unchanged: the module is `cfg(test-util)`, but the row
+  counts builds and `storage.rs` is shipped code.
+  bcdDevice `0x0AA6` → `0x0AA7`.
+
+- Fix the at-rest scrub re-arm's marker probe to ask the medium rather than the
+  present-cache, and fail OTP-PIN VERIFY closed when the re-arm cannot be shown
+  to have landed. `request_rescrub` deletes `EF_HARDENED` and re-reads it, but
+  `delete` marks the marker absent from its own present bit, so the
+  cache-satisfied probe answered "gone" without asking the backend; a medium
+  whose `remove` reported `Ok` without applying it left the marker live under a
+  standing `Ok(Rearmed)`, and the next boot's lap skipped. The new
+  `Fs::try_medium_has_data` reads the marker past `known_absent` and keeps the
+  `Storage::last_error` discipline; a swallowed tombstone now returns
+  `MemoryFatal` and latches `Fs::rescrub_refused`, and `cmd_verify_otp_pin`
+  answers `MEMORY_FAILURE` rather than succeeding with the record un-upgraded,
+  matching `cmd_change_otp_pin`.
+  bcdDevice `0x0AA5` → `0x0AA6`.
+
+- Revert the medium-probing at-rest re-arm fix. The marker probe is again
+  answered from the present cache, so a backend that reports a successful
+  `remove` without applying it can still leave `EF_HARDENED` live behind an
+  `Ok(Rearmed)`; the finding and its reproduction stay recorded as an open item
+  in the testing roadmap. Behavior matches `0x0AA4`; the build counter advances
+  because the reverted change could reach the image.
+  bcdDevice `0x0AA4` → `0x0AA5`.
+
+- Pin the OpenPGP pending mutation controls: counter lanes and persisted origin
+  order, the maximum AES/RSA sealed-record edges, the session-drop wipe
+  observer, exact-size AES PSO, the default algorithm attribute and the BER
+  long-form ECDH walk. Firmware behavior is unchanged; the build counter
+  advances for changes within a production crate's gated region and a
+  visibility-only helper export, as required by the existing bcd gate.
+  bcdDevice `0x0AA3` → `0x0AA4`.
+
+- Keep resident FIDO discovery's first assertion and continuation queue in the
+  same order, including equal creation times and more matches than the queue
+  holds. Each reported credential is returned once; the bounded queue retains
+  the newest matches. Storage and queue capacities are unchanged.
+  bcdDevice `0x0AA2` → `0x0AA3`.
+
+- Run mutation tests in one Docker container capped at 4 GiB with no swap,
+  one mutant and one test at a time. Native mutation entry points refuse an
+  unbounded environment. Nextest terminates ordinary tests after 20 seconds;
+  measured display and storage matrices retain explicit bounded exceptions.
+  Test processes also inherit a 1 GiB address-space limit, and doctests have
+  a separate 60-second timeout.
+
+- Extend host mutation oracles for applet state, protocol boundaries, display
+  flows, raw-record/provider contracts, journal and counter boundaries,
+  authority preservation after peer verification, and flash readback progress.
+  bcdDevice `0x0AA1` → `0x0AA2`: the build
+  gate requires a counter bump for inline test hooks and test helper exports;
+  these hooks are compiled only by host tests, with firmware behavior preserved.
+
+- Align the store's flash staging buffer to the flash write unit. `rsk-store`
+  wrote to flash through an align-1 `[u8; _]`, which only lands 4-byte aligned
+  by how the compiler happened to place the stack; the RP2350 ROM program (`and
+  the vendored NOR mock`) require a word-aligned buffer. A new `FlashBuf` type
+  makes the staging pointer aligned, and every buffer handed to
+  `NorFlash::write` goes through it. Found by driving the storage fuzz targets
+  under Miri. bcdDevice `0x0AA0` → `0x0AA1`: the build gate counts the change as
+  a build change; no observable firmware behaviour change.
+
+- Critical mutation verification: add independent ML-KEM ACVP and legacy PIN-KDF
+  vectors, OpenSSL-checked ML-DSA boundary candidates, one-shot crypto fault
+  probes, and live-field checks of secret destructors. Restore behavioral
+  witnesses for torn grant removal and OATH authorization, and repair the
+  local clientPIN budget defect injected by co-refutation.
+  bcdDevice `0x0A9F` → `0x0AA0`: the build gate counts inline test probes as a build change; no
+  firmware behaviour change.
+
+- Current host-profile coverage: exercise authenticated storage v2 APIs and
+  reachable parser, applet, display and test-util paths across the declared
+  feature profiles. One-shot test hooks exercise rare U2F key-construction and
+  PIV RSA-generation failures. bcdDevice `0x0A9E` → `0x0A9F`: the build gate
+  counts the inline test hooks as a build change; no firmware behaviour change.
+
+- Preserve legacy storage upgrades when an SDK UF2 left the RP2350-E10
+  `0xEF` padding block at the end of a smaller flash chip. Accept only the exact
+  256-byte suffix in an otherwise erased counter sector; expose that suffix
+  as erased only to the read-only legacy counter view. Authenticated v2 reads
+  and all other occupied/corrupt page refusals keep their existing meaning.
+  bcdDevice `0x0A9D` → `0x0A9E`.
+
+- Initialize blank storage and migrate readable legacy storage automatically
+  during boot, without a CLI command or physical confirmation. Resume interrupted
+  imports before exposing applets; existing v2 witnesses select authenticated
+  recovery, and read faults or incompatible legacy page markers refuse mutation.
+  The image upgrade harness asserts ready storage without issuing setup APDUs.
+  bcdDevice `0x0A9C` → `0x0A9D`.
+
+- Add authenticated storage v2 over the existing payload partition, with mirrored
+  counters, exact-candidate recovery and full-value integrity before decoding.
+  Lost expected records fail closed instead of becoming a first boot or an older
+  CRC-valid record. Unknown media exposes attended CCID rescue setup;
+  `rsk storage initialize` and `import-legacy` establish or migrate authority.
+  Preserve backups before upgrading; activated stores need v2-aware firmware.
+  File/value limits and partition offsets remain unchanged. The smaller mirrored
+  counter area increases programming and erase costs; measured workload figures
+  and remaining freshness limits are in `docs/limitations.md`.
+  bcdDevice → `0x0A9C`; rsk CLI → `0.3.50`.
 
 ### Fixed
 
-- `rsk` recognizes PC/SC readers carrying the firmware's `(rs-key-0001)` USB
-  serial when Linux's driver-supplied name omits `RS-Key` / `RSK`. Status and
-  OTP commands no longer reject those readers; irreversible commands still
-  refuse to select among multiple matching devices.
-- **PIV serves a Card Capability Container** (`5FC107`) where it previously
-  answered `6A82` on a card whose host had never written one. It is a mandatory
-  PIV object (SP 800-73-4 pt1 §3.1.1), and the Windows inbox PIV minidriver
-  reads it while opening a key container — the shape here follows Table 8's
-  mandatory elements in table order, with `F5` carrying the PIV data model
-  number `0x10`. `get_data` reads flash first, so a host `PUT DATA` still
-  overrides it and an empty one falls back to the default, exactly like the
-  synthesized CHUID.
-- `bcdDevice` moves to **0x09DB**: the applet is shared, so every board's image
-  gains the object.
+- OATH keeps damaged access-code and OTP-PIN records configured. Empty or
+  truncated owner records cannot reopen the applet, expose password-safe
+  entries or be replaced through SET PIN. VALIDATE rejects an algorithm-only
+  access code with a public empty HMAC key. bcdDevice → `0x0A9A`.
+
+- OpenPGP boot preserves present empty verifiers, DEKs and security settings.
+  Damaged UIF records require touch, malformed signature counters cannot be
+  restarted, and ATTEST refuses malformed subject fields instead of certifying
+  zero padding. An unrelated signature counter does not block DEC/AUT
+  attestation. bcdDevice → `0x0A99`.
+
+- PIV SELECT preserves present empty PIN, PUK, retry and private-key records.
+  It cannot replace damaged owner material with factory credentials or a new
+  attestation identity. Public F9 certificate repair still uses its original
+  private key. bcdDevice → `0x0A98`.
+
+- FIDO treats an existing empty security record as damaged material, rather
+  than an unset PIN, seed, lock or irreversible backup marker. Unauthenticated
+  SET PIN cannot replace a truncated owner verifier, seed boot cannot mint over
+  an empty identity record, and a damaged backup marker keeps export closed.
+  Malformed global counters cannot restart at zero, and a damaged alwaysUv
+  override keeps verification required and cannot be toggled from a fallback.
+  Non-empty data queries retain their existing meaning. bcdDevice → `0x0A97`.
+
+- Storage checks the bytes programmed and the complete erased NOR window before
+  accepting success. Dropped or partial mutations and failed readback propagate
+  as storage failures, including during tombstones, migration and scrub. An
+  uncertain write rebuilds Fs presence/capacity and invalidates derived caches;
+  an incomplete scan grants no new capacity until a complete retry. Persistent
+  records remain compatible. bcdDevice → `0x0A96`.
+
+- FIDO resident credential replacement resets its signature counter after the
+  replacement record commits. A power cut cannot leave the preceding credential
+  with a rolled-back counter. A partially committed replacement may retain the
+  preceding high counter until an owner retry; completed replacement starts at 1.
+  Existing credential and counter record layouts are unchanged.
+  bcdDevice → `0x0A95`.
+
+- OpenPGP ATTEST repairs an incomplete or mismatched attestation public key and
+  FC certificate from the surviving private key. Replacement retires the preceding
+  FC before its new key lands, so a repeated interruption cannot make a complete
+  root name another signer. Existing current and legacy key seals remain readable.
+  bcdDevice → `0x0A94`.
+
+- OpenPGP boot cleanup retries deletion of an obsolete public-reset-code DEK
+  wrapper after an interruption removed its verifier first. Cleanup authenticates
+  the orphan under the public default; unidentified wrappers and live reset codes
+  are preserved. Existing PW1/PW3 key material keeps its format and identity.
+  bcdDevice → `0x0A93`.
+
+- OpenPGP GET DATA refuses an undersized construction buffer instead of
+  panicking on an empty buffer or reporting a partially written template as
+  complete. GET DATA `7A` refuses a missing, unreadable or wrong-width signature
+  counter with `6581`, instead of returning an incomplete security-support
+  template under `9000`. Existing three-byte records keep their format.
+  bcdDevice → `0x0A91`.
+
+- Narrow rounded display shapes use the geometric path when cached corner
+  masks would overlap. One-pixel corners keep their inner halves solid.
+  bcdDevice → `0x0A90`.
+
+- PIV repairs an absent, empty, truncated or preceding-key F9 attestation
+  certificate on SELECT using its existing key, and retires a stale public cache
+  left by older builds. F9 recreation removes the preceding certificate before
+  committing a replacement key. bcdDevice → `0x0A8F`.
+
+- PIV retires a slot's old public-point cache before key replacement or MOVE.
+  A missing source cache or refused cache refresh no longer publishes the
+  preceding key's point; F9 recreation uses the same guard. bcdDevice → `0x0A8E`.
+
+- OATH CALCULATE ALL refuses a failed credential read during its only-increasing
+  preflight. A transient flash fault can no longer emit a code without first
+  persisting its challenge mark. bcdDevice → `0x0A8D`.
+
+- Image emulation detects a panic anywhere inside either core's panic handler,
+  including after an instruction quantum, and names the caller before its
+  return address crosses into the next function.
+
+- Image emulation follows the firmware ELF's 2, 4, 8 or 16 MiB flash layout.
+  NOR identity, upper-address reads, whole-chip erase and store-file sync use
+  the same capacity, so larger builds can retain their KV partitions.
+
+- The image emulator builds on ARM Linux: picoem's x86_64 affinity helpers
+  now use the same architecture guard as its threaded runtime.
+- Image PICOBOOT/MSC tests retry a refused USB/IP detach request after a
+  virtual-device reboot, within the existing deadline; a live failed port
+  still fails the run.
+
+- A failed read of the current PIN verifier during a forced PIN change returns
+  `CTAP2_ERR_OTHER` and leaves the change pending. It can no longer accept the
+  unchanged PIN and clear the policy flag. A read-fault sweep covers the command
+  before and after the fix. `bcdDevice` → `0x0A8C`.
+- The FIDO2, conformance and U2F metadata statements use the exact standard
+  MDS3 legal header expected by the official tool's Metadata P-36. The metadata
+  drift suite rejects a different header; the self-published and rootless
+  attestation limits remain documented.
+
+### Changed
+
+- Verification trace capture preserves full stored-record widths. Firmware
+  behavior is unchanged; the build counter advances for changes within a
+  production crate's gated region, as required by the existing bcd gate.
+  bcdDevice → `0x0A9B`.
+
+- Trusted-display host controls share named boot, poll, notice and wake-release
+  delays with the firmware. The existing durations are unchanged.
+  bcdDevice → `0x0A92`.
+
+### Added
+
+
+- A Linux MSC image runner reads BOOTSEL's FAT16 files with `usb-storage`
+  active, checks coexistence with PICOBOOT and reloads a complete UF2 through
+  the owned virtual block device. It verifies every payload, untouched bytes
+  outside the image and OATH persistence across reboot and cold boot. The image
+  USB host now serializes packets across endpoints and gives NAKing pipes a
+  bounded turn, avoiding simultaneous MSC/PICOBOOT transactions. Double-buffer
+  status retains both completions until the CPU acknowledges each. The picoem
+  pin isolates Non-secure RCP accesses from Secure counters and salts, fixing
+  intermittent BootROM faults during concurrent MSC/PICOBOOT use.
+- A Linux PICOBOOT image runner exercises real `picotool` over an owned USB/IP
+  device: SRAM/flash transfers, full reload/reboot, KV write refusal and
+  raw/ECC OTP persistence. Transport regressions cover final-packet completion,
+  BOOTSEL handover and refreshed descriptors.
+- The image laboratory measures FIDO, PIV, OpenPGP and OTP command stacks and
+  checks known-secret lifetimes across signing, decipher, PIN change and slot
+  deletion. Host cryptographic oracles verify the results, including all eight
+  FIDO signing algorithms; planted SRAM leaks exercise the residue assertions.
+- The emulator workflow runs firmware-image stack, residue and power-cut
+  scenarios on pull requests and nightly, retaining reports and logs.
+- The image laboratory checks PIV and OpenPGP RSA-2048/3072/4096 generation on both cores,
+  samples core1 through its background wind-down and scans all SRAM for factors
+  of the returned public modulus, with a planted-factor control at every size.
+  The tail timeout follows emulated time, with a separate host progress bound;
+  inspection reports that time alongside cycle counts.
+
+- FIDO `uvm` reports the presence and PIN factors used in signed registration
+  and assertion data, preserving device-local PIN provenance across tokens and
+  getNextAssertion. `pinComplexityPolicy` returns the effective policy to
+  authorized registration RPs; authenticatorConfig can enable it until reset.
+  Legacy PIN-policy records remain readable, and PIN changes preserve the
+  policy and RP allowlist. `bcdDevice` → `0x0A8B`.
+- `rsk fido pin-policy` shows or strengthens PIN length, complexity, RP access
+  and the forced-change requirement (CLI 0.3.49).
+
+- **Firmware-image emulator inspection and fault injection.** An opt-in loopback
+  port measures command stacks, scans emulated SRAM and cuts power at selected
+  cycles or program bytes, retaining a torn-flash snapshot before reboot. A
+  standalone runner compares native/image responses, checks release upgrades,
+  and falsifies residue and compatibility assertions with explicit controls.
+
+- **OpenPGP takes Yubico's SET PIN RETRIES (INS `F2`), as a YubiKey 5.8.0 does.**
+  `ykman openpgp access set-retries` sets how many tries PW1, the resetting code and
+  PW3 each get; RS-Key answered it `6D00`. Under PW3 (`6982` otherwise) a body of
+  exactly three bytes (`6A80` otherwise, P1 and P2 not judged) sets each PIN's
+  maximum from 1 to 255 and gives it that many tries at once, unblocking a blocked
+  PIN with its value kept, while a 0 leaves a PIN as it is. The resetting code's
+  maximum is kept while none is set, and PUT DATA `D3` starts a new one there. The
+  PINs and PW3's status are left alone, the maxima survive a power cycle, and
+  TERMINATE DF + ACTIVATE FILE put back 3, 3, 3. The maxima are the record every
+  path that gives a PIN its tries back already read (`EF_PW_RETRIES`, 3/3/3 on
+  every card so far), so no new record, and a build before this one counts from
+  the maxima set here too. The ykman suite's `test_change_pin_retries` is no longer
+  a divergence. `bcdDevice` 0x0A88 → 0x0A89.
+
+- **`tools/emu --image` serves the firmware image itself** — host only, no
+  `bcdDevice` bump. The emulator ran the applet crates, so what a board runs
+  around them — `main.rs`, the worker, the USB stack, the flash driver, the
+  bootrom — was exercised only on a board. `rsk-emu --image <elf>` cold-boots the
+  ELF through the real bootrom on picoem's RP2350 (a fork, pinned by rev in
+  `tools/emu/Cargo.toml`), over models of the USB controller, OTP, the QMI and its
+  NOR flash, the SHA-256 block, the TRNG, BOOTRAM and the PSM; an emulated host
+  controller enumerates the image and carries the same two ports over its own
+  endpoints, so `tests/emu.py` and the suites run unchanged. Over the sweep of
+  `scripts/emu-suites.sh`'s sessions it passes the same 54 suites and refuses the
+  same 11 as the applet backend. `--store` is the whole flash with the OTP beside
+  it, `--usbip` offers the image's own descriptors, `--touch` presses BOOTSEL, and
+  the flags that drive the applet backend's own state are refused by name. See
+  `tools/emu/README.md`.
+
+- **A host can ask which `authenticatorConfig` vendor commands a build serves.**
+  getInfo's `vendorPrototypeConfigCommands` (`0x15`) stays empty, because Yubico's
+  Android SDK fails a getInfo carrying a 64-bit id (issue #111), so the list was in
+  `docs/protocol.md` alone and every host tool hardcoded it (issue #122). The new
+  `authenticatorVendor` subcommand `0x0F` (`CONFIG_COMMANDS`) answers
+  `{1: [vendorCommandId, …]}`: the soft-lock pair, the four PicoForge phy ids and
+  the enterprise-attestation RP list. It is ungated, like the `*_STATE`
+  subcommands; a build that predates it answers `0x02`.
+  `bcdDevice` 0x0A7F → 0x0A80.
+
+- **`rsk flash` checks a release image before it writes it** (`rsk` 0.3.44).
+  Give it a release `.uf2` with `SHA256SUMS` and `SHA256SUMS.sigstore.json`
+  from the same release beside it. It runs `cosign verify-blob` with the
+  identity and issuer [supply-chain.md](docs/supply-chain.md#verifying-a-download)
+  publishes, which checks the certificate and the bundle's Rekor entry, matches
+  the image's sha256 to the one `SHA256SUMS` lists under its name, and runs
+  `gh attestation verify` pinned to `release-build.yml` when the GitHub CLI is
+  installed, saying so when it is not. Only then does it run `picotool load -v`
+  and `picotool reboot`. A missing file, a missing cosign or a failed check stops
+  it with nothing written. cosign and gh are run as programs, so `rsk` gains no
+  dependency. `--dry-run` checks and writes nothing, and an image you built
+  yourself flashes only with `--local-build`, which warns that nothing was
+  checked.
+- OpenPGP key attestation, as a YubiKey 5.8.0 does it. `ATTEST`
+  (`80 FB <key> 00`, what `ykman openpgp keys attest` sends) writes an X.509
+  certificate for a key the card generated into that key's cardholder-certificate
+  occurrence, signed by an attestation key the card mints for itself: P-384,
+  sealed under the DEK like every OpenPGP key, at the first boot and again at
+  every reset. `GET DATA FC` returns its self-signed certificate: the root a
+  verifier pins, where a YubiKey's chains to Yubico's CA. Each statement carries
+  Yubico's extensions in a YubiKey's order: firmware version, serial, the key's
+  touch policy, form factor, cardholder name, fingerprint, generation time, the
+  signature counter (the signing key's only) and the key source. The refusals come
+  in a YubiKey's order: `6982` without PW1 in mode 81, whatever else is wrong;
+  `6E00` for class `00`; `6A80` for a bad P2 or a body; the touch its flag `D9`
+  asks for (`6600` without it); `6A80` for a bad P1; `6985` for an empty slot or an
+  imported key. Past the touch an ATTEST spends a one-shot PW1 whatever it answers,
+  as a signature does. The attestation key shows where a
+  YubiKey's does: DO `DE`'s `81` pair, `DA` inside `73` and in `FA`, a fourth
+  entry in `C5`/`C6`/`CD` (PUT DATA `DB`/`DC`/`DD`), its touch flag `D9` (off by
+  default; ATTEST asks for the touch it sets), and GENERATE's `P1 = 81` read under
+  `B6 { 84 01 81 }`. A card an older build provisioned mints its attestation key
+  at its first ATTEST. No host can replace the key or its certificate
+  ([limitations](docs/limitations.md)).
+  `bcdDevice` 0x0A06 → 0x0A07.
+- **`previewSign`, experimental and off by default** — Yubico's draft WebAuthn
+  extension for signing a site's own data, in the draft v4 shape python-fido2
+  2.2.1 speaks (`4-SNAPSHOT-2025-08-21`), behind the `preview-sign` build
+  feature. A registration that asks for ESP256-split-ARKG (COSE `-65539`) mints an
+  ARKG-P256 seed beside the credential and returns its attestation object in
+  `unsignedExtensionOutputs`; an assertion then signs the site's SHA-256 digest
+  with a key the site derived from that seed. Nothing is stored: the signing key
+  handle is the draft's example MAC encoding, so no flash record changes shape.
+  Refusals come in a YubiKey 5.8.0's order, all before the touch: `flags` outside
+  the draft's three (`0x2C`), then an `alg` that is not a negative integer
+  (`0x11`), then no supported algorithm (`0x26`). Two deliberate deviations: the
+  seed's attestation object is `none` outside enterprise attestation (below), and an
+  ML-DSA credential refuses the extension (`0x26`), its response having no room
+  for a second attestation object. The default image
+  compiles none of it and getInfo does not advertise it
+  ([the FIDO guide](docs/guides/fido2.md#previewsign-experimental-off-by-default)).
+  `bcdDevice` 0x0A65 → 0x0A66. On a display build the touch that releases a
+  signature asks "Sign data?" where it asked "Sign in?", since the host chose what
+  it signs. `bcdDevice` 0x0A67 → 0x0A68. The two titles are literals again, where
+  the display's title census reads them: refactor, no behaviour change.
+  `bcdDevice` 0x0A68 → 0x0A69. A key asked for `unattended` (`flags` `0b000`) is
+  made and attested so, and signs without a touch: an assertion with `up: false`
+  is served with UP clear (authData flags `0x80`), as on a YubiKey 5.8.0. It was
+  made `require-up`, a deviation, and answered `up: false` with `0x3B`, as a
+  `require-up` key still does. `bcdDevice` 0x0A84 → 0x0A85. The seed's attestation
+  object is `fmt: "none"` with an empty statement beside a packed credential, as a
+  YubiKey 5.8.0 answers it; it took the credential's format, signer and chain, as
+  the draft asks. Under enterprise attestation, not measured on the YubiKey, it
+  still does. `bcdDevice` 0x0A85 → 0x0A86.
+
+### Changed
+
+- **Firmware-image emulation spends less CPU while idle.** The picoem pin
+  batches empty PIO `PULL` stalls without changing clock-divider phase,
+  side-set or diagnostic counters. Three idle samples per build reduced median
+  host CPU use from 68.7% to 22.4% of one core on macOS arm64, with the same
+  firmware ELF and GetInfo wake-up preserved. Host only; no `bcdDevice` bump.
+
+- **The default USB identity is the allocated `1209:F1D2`** (pid.codes), replacing
+  the shared test PID `1209:0001`. Firmware (`bcdDevice 0x0A8A`), the native
+  emulator and its test shim agree. The opt-in ccid overlay and Linux udev rules
+  recognize both IDs for existing devices. Explicit `EF_PHY` VID/PID overrides
+  survive upgrades, and stored keys and credentials are unchanged. Upstream
+  libccid support is still pending; use the local overlay in the meantime.
+
+- **`rsk flash` accepts only a signature from a release built at a tag**
+  (`rsk` 0.3.46). The cosign identity it checks, copied from the verify command
+  in [supply-chain.md](docs/supply-chain.md#verifying-a-download), took
+  `release-build.yml` at any ref of this repo (`@.*$`). Both now take a `v*` tag
+  only (`@refs/tags/v.*$`), the form [releases.md](docs/releases.md#verify-a-download)
+  already printed, and the two pages print the same regexp. A release run
+  dispatched from a branch signed with the branch's ref, which this refuses; the
+  release workflow no longer runs there (next entry). Every release published so
+  far was built by a tag push, so none that verified before is refused now.
+
+- **The release workflow runs only at the tag it releases** — CI only, no
+  `bcdDevice` bump. `resolve tag` in `release-build.yml` stops a run whose ref is
+  not `refs/tags/<the tag it builds>`. A run dispatched from a branch (`main`
+  is the default) signed and attested with the branch's ref, which the tag-only
+  identity refuses, and one dispatched from tag A with `tag: B` published B under
+  A's identity. The tag push runs as before, and so does a dispatch from the tag
+  itself (`gh workflow run release.yml --ref vX.Y.Z -f tag=vX.Y.Z`).
+  `scripts/release_gate.py` refuses a `resolve tag` step without that test, in
+  the `release manifest` row of `check-assurance.sh`. A dispatch uses the
+  workflow file at the ref it starts from, and the tags published up to v0.4.11
+  carry one without the test: a dispatch at one of them can still build another
+  tag under the old tag's name, which the tag-only identity regexp alone accepts.
+  The tag pin in the cosign step and `gh attestation verify --source-ref` refuse
+  it (entries below).
+
+- **`rsk flash` checks the build provenance at the release's own tag, and its
+  cosign identity escapes the host's dot** (`rsk` 0.3.48). `gh attestation
+  verify --signer-workflow` takes the workflow at any ref, so provenance from a
+  run at a branch passed. `rsk flash` adds `--source-ref refs/tags/<tag>`, the
+  tag read from the SBOM's name in the signed `SHA256SUMS`
+  (`rs-key-<tag>-sbom.cdx.json`), and refuses a `SHA256SUMS` that names no tag
+  or more than one; [supply-chain.md](docs/supply-chain.md#verifying-a-download)'s
+  step 3 prints the same flag. The identity regexp matched any character in
+  place of the dot in `github.com`; it is `github\.com` in `rsk flash` and on both
+  pages. The issuer is pinned, so that dot let no real certificate through. A
+  `gh` too old to know `--source-ref` stops it with a message to upgrade the
+  GitHub CLI, rather than as a failed check.
+
+- **`rsk flash` checks which repository's run signed `SHA256SUMS`** (`rsk`
+  0.3.48). The cosign identity names `release-build.yml`, a reusable workflow
+  any repository can call from its own, and a run elsewhere that called it
+  signed as that same identity. Without `gh`, which pins the repository, `rsk
+  flash` accepted such a signature. It now passes
+  `--certificate-github-workflow-repository TheMaxMur/RS-Key`, and so do the
+  verify commands on [supply-chain.md](docs/supply-chain.md#verifying-a-download)
+  and [releases.md](docs/releases.md#verify-a-download). Checked with cosign
+  3.1.3 on v0.4.11's own `SHA256SUMS`: it verifies, and pinned to
+  `someone/RS-Key` cosign refuses it on the certificate's repository.
+
+- **`rsk flash` checks the tag the signature was made at** (`rsk` 0.3.48). The
+  identity regexp takes any `v*` tag, and a release run dispatched from an older
+  tag signs a new release under that tag's name. `rsk flash` now reads the tag
+  from the SBOM's name in `SHA256SUMS` before it runs cosign, which is sound
+  because the signature covers that file, and passes
+  `--certificate-github-workflow-ref refs/tags/<tag>`. It refuses a `SHA256SUMS`
+  that names no single tag with or without `gh`, since without `gh` this is the
+  only tag pin. Both pages' cosign commands print the same flag with `<tag>` to
+  fill in. Checked with cosign 3.1.3 on v0.4.11's files: `refs/tags/v0.4.11`
+  verifies, and `refs/tags/v0.4.10` fails on the certificate's ref.
+
+- **OpenPGP TERMINATE DF leaves the applet terminated until ACTIVATE FILE, as on a
+  YubiKey 5.8.0.** TERMINATE DF wiped the applet and put the factory state back at
+  once, and ACTIVATE FILE did nothing. Now TERMINATE (PW3 verified or blocked,
+  `6982` otherwise, as before) records the terminated state before it wipes, and
+  every command, SELECT included, answers `6285` until ACTIVATE FILE; the state
+  survives a reset and a power cycle. ACTIVATE runs the wipe again, puts the
+  factory state back (`C4` = `01 7F 7F 7F 03 00 03`, PW1 `123456`, PW3
+  `12345678`) and clears the state last, so a reset cut short at any point is
+  either not done or still terminated, never half-wiped; running it again finishes
+  it. A PW1 or PW3 verified before TERMINATE is still verified after ACTIVATE, as
+  on the YubiKey, now against the factory password. ACTIVATE on an applet that is
+  not terminated still answers `9000` and changes nothing. `rsk openpgp reset`,
+  `ykman openpgp reset` and `gpg-card factory-reset` send ACTIVATE right after
+  TERMINATE and work as before. The state is a new record, `0x10A2`, which an
+  older build never reads: flashing one over a terminated applet leaves it usable,
+  and flashing this build back finds it terminated again.
+  `bcdDevice` 0x0A82 → 0x0A83.
+
+- **A configuration lock now shuts the phy and LED records too.** A code set with
+  `ykman config set-lock-code` guarded only the DeviceInfo record, so a host could
+  still rewrite the USB identity and the LED wiring and colours of a locked key.
+  While a code is set, every host write of either record is refused, a replay
+  included, and nothing is stored or applied live: rescue `1C/01` and the vendor
+  SET LED answer `6986`, before any touch they would ask for; the FIDO
+  `CONFIG_WRITE` targets `1` and `2`, over CTAPHID and CCID, and the
+  `authenticatorConfig` phy ids answer `0x30`. No code opens these records: clear
+  the lock to change them. A lock set before this build shuts them from the
+  upgrade on. The trusted display's own settings, the touch timeout included, stay
+  open. `bcdDevice` 0x0A7B → 0x0A7C.
+
+- **`rsk hw` and `rsk led` say when the configuration lock refused their write**
+  (`rsk` 0.3.45). A device refuses a phy or LED write for its configuration lock
+  with `6986` over CCID and `0x30` over the FIDO `CONFIG_WRITE`, the answers a
+  locked device-config write gets, and both commands printed only that bare code.
+  On either transport they now say that the lock is set, keep the device's
+  answer, and name what clears it (`ykman config set-lock-code -l <code>
+  --clear`). Every other answer keeps its own message.
+
+- **Setting a configuration lock code where none is set takes a touch.** Any host
+  could set one on a key that had none, as on a YubiKey, and a code its owner
+  does not hold keeps every later config change behind a factory wipe. All four
+  writers (CCID WRITE CONFIG, the vendor `CONFIG_WRITE`, CTAPHID `0x43` and the
+  OTP keyboard's `0x15`) now ask for a touch before they arm a lock. A declined
+  or timed-out one refuses the write whole and stores nothing: `6985` over CCID,
+  `0x27` over `CONFIG_WRITE`, `CTAPHID_ERROR` over `0x43`, an unmoved program
+  sequence over the OTP keyboard. Changing or clearing a code still takes only
+  the current code, and no other write asks. `bcdDevice` 0x0A60 → 0x0A61. Over
+  CTAPHID `0x43` that wait now streams UPNEEDED keepalives and a `CTAPHID_CANCEL`
+  ends it, as for a CBOR command: a vendor command had neither, so a host gave up
+  in silence while a later touch still armed the lock. `bcdDevice` 0x0A64 → 0x0A65.
+
+- **`rsk otp lock-page58` burns only over a device the migration has finished.**
+  A record sealed under the pre-burn key derives from the public chip serial, so
+  a flash writer can plant one and the boot pass re-seals it under the fused key
+  (audit run-27 #8); a later latch that closes those arms must not strand a
+  record a device still holds there. Each boot's seal passes now report what
+  they left behind, and the firmware refuses the page-58 burn with `6985`,
+  before the touch, until that is nothing: a FIDO seed, attestation key or
+  grant, the device key, a PIV, OATH or OTP record the pre-burn arm opened or
+  left in the clear, a FIDO seed wrapped by a PIN set before the burn, or a
+  legacy OATH OTP-PIN; a record a pass could not read counts as left. A boot
+  that could not read the fused key checked nothing and holds the burn too. A
+  record no key opens does not count, since no boot could ever move it. READ
+  `1E/07` reports the bits, and the tool reads them
+  first and names the fix (usually a replug; a PIN-wrapped seed or a legacy
+  OTP-PIN moves at its next use). PIN verifiers cannot be told apart by arm and
+  do not hold it back. It never burns what it would not have burnt before.
+  `bcdDevice` 0x0A56 → 0x0A57; `rsk` 0.3.38.
+
+- **`rsk otp lock-page58` now also latches the migration shut** (audit run-27
+  #8). It burns `0x3D3D3D` where it burnt `0x3C3C3C`: the same lock against
+  BOOTSEL, with the secure side read-only too, which still reads the keys. A boot
+  that finds it opens no FIDO seed, attestation key or grant, device key, PIV
+  key, or OATH or OTP record under the pre-burn key or in the clear, so a record
+  planted there over BOOTSEL stays shut instead of moving under the fused key.
+  Past the latch a command that cannot read the fused key opens and seals
+  nothing, where it used to fall back to the chip-serial key: most refuse
+  (`6400` over CCID, `CTAP1_ERR_OTHER` over CTAP) before they spend a PIN retry
+  or write, a logout still answers, and the OTP applet answers as if its slots
+  were empty. The burn keeps its guards:
+  provisioned keys, a finished migration (READ `1E/07` = `0000`) and a touch. A
+  device an older build locked works as before, and `lock-page58` run again
+  burns the latch over its lock under the same guards. PIN verifiers and the
+  OpenPGP DEK copies wrapped under a PIN keep their pre-burn arm
+  ([limitations](docs/limitations.md)).
+  `bcdDevice` 0x0A66 → 0x0A67; `rsk` 0.3.40.
+
+- **A wrong OpenPGP password answers `6982`, as a YubiKey 5.8.0 does**, in
+  VERIFY, CHANGE REFERENCE DATA and a RESET RETRY COUNTER with the reset code.
+  It was `63Cx` with the tries left, which is what OpenPGP 3.4 §7.2.2 says, but
+  yubikit reads only `6982` as a wrong PIN, so ykman met one with a raw APDU error
+  instead of its wrong-PIN message. The tries left stay on the empty VERIFY, which still
+  answers `63Cx`, and the attempt that blocks a reference still answers `6983`.
+  A card suite written to the specification now diverges where a YubiKey does,
+  and says so in tests/third_party.py. `bcdDevice` 0x0A50 → 0x0A51.
+
+- PIV GENERATE writes no certificate, from the host or the panel, as a YubiKey
+  5.8.0's writes none. RS-Key wrote a self-signed one into the slot's certificate
+  object for every key but X25519, so a slot showed a certificate the host never
+  asked for, and a key-management key's said `digitalSignature`. Make the
+  certificate as on a YubiKey: `ykman piv certificates generate`, or import one a
+  CA issued. A certificate already in a slot, one an older build wrote included,
+  stays through a new GENERATE, as on a YubiKey: replace it with the new key's.
+  This replaces the 0x09FD and 0x0A02 rules below, under which GENERATE replaced
+  the certificate of the key it replaced. A key with no certificate is one OpenSC
+  and the OS certificate stores do not list, on a YubiKey too, so a key the panel
+  generates needs its certificate from a host with the management key. GENERATE
+  also drops the slot's metadata head before it writes the key, as IMPORT does: a
+  head it cannot read now refuses with nothing written, where the new key was
+  written and left under the old key's PIN and touch policies.
+  `bcdDevice` 0x0A14 → 0x0A15.
+
+### Fixed
+
+- The image backend advances the ROM's watchdog countdown at its normal
+  1 MHz tick rate, so a delayed `picotool reboot` can reset the virtual chip.
+- **Firmware-image reboots advance the emulated entropy stream.** Reusing the
+  same TRNG seed and counter could recreate a deleted FIDO seed when two resets
+  booted a PIN-wrapped store, leaving a non-resident credential usable. Cold and
+  warm reboots now derive a new stream while seeded runs remain reproducible.
+  The reset wire test checks that a working credential becomes unavailable.
+  Host only; no firmware change or `bcdDevice` bump.
+
+- **`rsk openpgp reset` blocks a PIN however many tries it has** (`rsk` 0.3.47).
+  It sent five wrong VERIFYs per PIN, enough for the factory three but not for a
+  PIN that SET PIN RETRIES gave more, and TERMINATE DF then refused the reset, as
+  it refused `rsk offboard`'s OpenPGP wipe. It now sends wrong VERIFYs until the
+  card answers `6983`, up to 255, a byte's worth, and stops at the first.
+
+- **A U2F registration over an org attestation key the flash could not read is
+  retried, not attested by the device key.** U2F REGISTER read the org key as
+  absent whether it was absent, unreadable or would not open on this device, so
+  one faulted read on an org-provisioned key gave the registration the device's
+  own certificate in place of the organisation's batch attestation, for the life
+  of that registration. A read the flash failed now answers `6581`
+  (`MEMORY_FAILURE`), what U2F answers for an unreadable signature counter, and
+  the host retries it. A key that will not open here, and no key at all, still
+  give the device certificate. makeCredential's enterprise attestation has held
+  this rule since 0x0A79. `bcdDevice` 0x0A87 → 0x0A88.
+
+- **A U2F registration asserted over CTAP2 counts on the U2F counter, as on a
+  YubiKey 5.8.0.** A site that moved from U2F to WebAuthn logs its old
+  registrations in with the `appid` extension, a CTAP2 getAssertion whose rpId is
+  the AppID. RS-Key reported signCount 0 there while U2F AUTHENTICATE went on
+  advancing its own counter, so the site saw the counter fall back to 0, the sign
+  of a cloned key. The YubiKey reports one rising counter for the credential on
+  both paths (measured: 1, 4, 7, 11 across AUTHENTICATE, CTAP2 with `up: false`,
+  CTAP2 with `up: true`, AUTHENTICATE). RS-Key now reports and advances U2F's
+  counter on the CTAP2 path too, `up: false` included, in steps of one, and stores
+  it before anything is signed; a counter the flash will not serve fails the
+  assertion (`CTAP1_ERR_OTHER`), as it fails U2F AUTHENTICATE. Other non-resident
+  credentials still report 0. `bcdDevice` 0x0A86 → 0x0A87.
+
+- **A command whose lengths fit no ISO 7816-4 case is `6700`, as on a YubiKey
+  5.8.0.** RS-Key ignored bytes past the `Le`: `00 A4 04 00 07 <OATH AID> 00 AA`
+  selected OATH, and an extended `Le` followed by one more byte read the whole DO.
+  The YubiKey answers both `6700` before any application sees the command
+  (measured over raw USB). A byte past the `Le`, short or extended, is now `6700`
+  over CCID and to the vendor applet over CTAPHID alike, and the selection, an open
+  chain and a held tail stay as they were. Two shapes outside the standard are
+  read as the YubiKey reads them: `00 xx` is the extended `Le` `00xx` (so `00 00`
+  is 65536 now, not 256; that one is unmeasured), and an extended `Le` followed by
+  two more bytes is a case 4 with `Lc` 0. U2F over CTAPHID keeps its own framing.
+  `bcdDevice` 0x0A83 → 0x0A84.
+
+- **OpenPGP GET CHALLENGE serves a whole frame.** It stopped at 1024 random bytes,
+  the size of the applet's scratch, which DO `C0` announced as its maximum. It now
+  serves up to 3060, one response APDU less its status word, the most one CCID
+  frame carries back, generated straight into the response; `C0` bytes 3–4
+  announce exactly that, and the rest of `C0` is unchanged. An `Le` past it is
+  still `6700`. `bcdDevice` 0x0A81 → 0x0A82.
+
+- **OpenPGP's historical bytes (DO `5F52`) are a YubiKey 5.8.0's.** GET DATA `5F52`,
+  and the copy inside `6E`, answered `00 31 84 73 80 01 C0 05 90 00`, the bytes of
+  pico-openpgp, which this applet came from. They answer the YubiKey's
+  `00 73 00 00 E0 05 90 00` now. The vendored openpgp-card suite accepts those only
+  from a card it knows is a YubiKey, so its `test_historical_bytes` is listed as a
+  divergence. `bcdDevice` 0x0A80 → 0x0A81.
+
+- **The TenStar RP2350-USB preset takes user presence from its BOOT button.**
+  `BOARD=tenstar-usb` read presence from a GPIO button on pin 15, and pressing the
+  board's BOOT button did nothing, so a registration waited for a touch it could
+  never get (issue #125). The preset now uses BOOTSEL, as the default image does;
+  the reporter's build with `PRESENCE_PIN=bootsel` completed a passkey
+  registration on Windows 11. Not verified on a board here. A build that sets
+  `PRESENCE_PIN` explicitly is unchanged. `bcdDevice` 0x0A7E → 0x0A7F.
+
+- **The DRBG is never seeded from an all-zero TRNG block.** The RP2350's TRNG
+  presents no result when a health check fails and its result registers then read
+  zero; the firmware took the 48-byte boot seed, and each 32-byte reseed, as they
+  came, so a part that ever flagged zeroed registers valid would have seeded the
+  DRBG from a constant and every key after it with it. Each draw is now checked
+  block by block (the TRNG's 24-byte block): one holding an all-zero block is drawn
+  again, three draws in all. At boot the board then halts before USB attach, the
+  seed and the dead stack wiped (nothing else holds a secret yet), so the key never
+  enumerates and a replug retries. At a reseed (every 64 KiB of DRBG output) the
+  operation in flight is served by the DRBG as its checked seeds left it, and the
+  key then reboots through the RAM scrub every requested reboot runs; the boot after
+  it draws its seed afresh and halts there if the TRNG is still dead. Nothing
+  changes on a working TRNG, which answers an all-zero block with probability
+  2^-192. `bcdDevice` 0x0A7D → 0x0A7E.
+
+- **A page-58 latch a power cut tore can be completed.** `rsk otp lock-page58`
+  burns `3D3D3D` into the lock row, and a burn cut short leaves some of those bits
+  and not others. The firmware took any row but blank, `3C3C3C` or `3D3D3D` as
+  foreign and refused it for good, so the latch could never close. A row whose
+  every set bit is the latch's now takes the burn, under a first lock's guards,
+  and lands on exactly the latch: provisioned keys, the magic, a boot that left
+  nothing under the pre-burn key (`6985` before the touch otherwise, and nothing
+  burnt), then the touch. A row with a bit outside the latch is still refused
+  (`6985`), and one holding the latch still answers `9000` with nothing burnt.
+  `bcdDevice` 0x0A7C → 0x0A7D.
+
+- **DeviceInfo reports `DEVICE_FLAGS` after a host has written the configuration,
+  as a YubiKey 5.8.0 always does.** `ykman config usb` stores a record without tag
+  `08`, and READ CONFIG echoed that record with no `DEVICE_FLAGS` at all, on every
+  transport. It now adds `08 01 00`, the factory flags, after an echo that carries
+  none, where the whole response still fits the 64-byte OTP-HID frame. Every record
+  the writer accepts leaves room for it. The stored record is unchanged, and a
+  record with flags of its own keeps them. yubikit already read a missing tag as
+  `00`, so this changes no client's reading. `bcdDevice` 0x0A7A → 0x0A7B.
+
+- **A PIV ECDSA signature over a challenge wider than the key's field answers
+  `6A80`, as on a YubiKey 5.8.0.** GENERAL AUTHENTICATE signed the leftmost 32 bytes
+  of a longer challenge with a P-256 key, and the leftmost 48 with a P-384 one. The
+  YubiKey answers `6A80` to a 33-, 48- or 64-byte challenge on P-256 (measured);
+  RS-Key now refuses any challenge longer than the field, on P-384 from 49 bytes by
+  the same rule (not yet measured on a YubiKey). RS-Key refuses it before the touch
+  and before a PIN-ALWAYS slot's VERIFY is spent. A shorter challenge is still
+  left-padded to the field, as on the YubiKey. `bcdDevice` 0x0A79 → 0x0A7A.
+
+- **An enterprise attestation over an org key that cannot be loaded no longer
+  claims `ep`.** The org attestation key was read as absent whether it was absent,
+  unreadable or would not open, so an enterprise request got the per-device
+  attestation with `ep: true` in all three cases, as if no org key were installed.
+  An absent key still gives that. A key stored but not openable on this device is
+  treated as a cut chain is: the per-device attestation and no `ep`. A key the
+  flash could not read fails the registration with `CTAP1_ERR_OTHER`, which the host
+  can retry, as an unreadable chain already did. U2F registration takes the same
+  rule at 0x0A88. `bcdDevice` 0x0A78 → 0x0A79.
+
+- **A makeCredential whose `pubKeyCredParams` is absent or empty is
+  `UNSUPPORTED_ALGORITHM` (`0x26`), as on a YubiKey 5.8.0.** CTAP §6.1.2 step 3
+  walks the list for an algorithm the authenticator supports, and with no list, or an
+  empty one, it chooses nothing, exactly as with a list of only unsupported ones. The
+  YubiKey answers all three `0x26` (measured); RS-Key answered the first two
+  `MISSING_PARAMETER` (`0x14`). A request without its clientDataHash, rp or user is
+  still `0x14`, ahead of the algorithm, on both keys. `bcdDevice` 0x0A77 → 0x0A78.
+
+- **While alwaysUv has U2F switched off, VERSION says so too, and a SELECT over CCID
+  answers `FIDO_2_0`, as on a YubiKey 5.8.0.** CTAP 2.1 §7.2.4 disables CTAP1/U2F
+  under alwaysUv, and REGISTER and AUTHENTICATE already answered `6986` while getInfo
+  dropped `U2F_V2`; but VERSION still answered `U2F_V2` over CCID and CTAPHID, and a
+  SELECT of the FIDO applet answered `U2F_V2`, which is how a host decides CTAP1 is
+  served. The YubiKey answers VERSION `6986` over both transports and SELECTs as
+  `FIDO_2_0`, the version string CTAP 2.3 §11.3.3 gives an authenticator that
+  implements CTAP2 alone; RS-Key now does both. The display build with a PIN set keeps
+  U2F on, as before, and SELECT, VERSION, REGISTER, AUTHENTICATE and getInfo now read
+  one predicate for it. `bcdDevice` 0x0A76 → 0x0A77.
+
+- **setPIN over a PIN already set answers `NOT_ALLOWED` (`0x30`), as a YubiKey 5.8.0
+  does.** CTAP §6.5.5.5 names `PIN_AUTH_INVALID` (`0x33`) there, and RS-Key answered
+  it. The YubiKey answers `0x30` whether or not the request carries a newPinEnc, and
+  in this order: a missing keyAgreement or pinUvAuthParam is `MISSING_PARAMETER`
+  (`0x14`), then a newPinEnc that fails the length gate is `PIN_POLICY_VIOLATION`
+  (`0x37`), then the PIN already set. RS-Key answered a missing newPinEnc `0x14` and
+  a gated one `0x33`. With no PIN set a missing newPinEnc stays `0x14`, and the PIN
+  already set is never touched. pico-fido's `test_set_pin_twice` asserts `0x30`, so its
+  divergence entry goes. `bcdDevice` 0x0A75 → 0x0A76.
+
+- **changePIN and the PIN token subcommands judge pinHashEnc's length as a YubiKey
+  5.8.0 does.** A pinHashEnc that is neither 16 bytes nor 32, one block bare or
+  behind protocol two's IV, is `INVALID_PARAMETER` (`0x02`) before the PIN is tried,
+  under either protocol, and spends no retry even behind a wrong PIN; on the display
+  build it comes before the consent screen too. getPinToken
+  and getPinUvAuthTokenUsingPinWithPermissions took any length their decrypt did: 48
+  and 64 bytes were verified on their first block, an empty one under protocol one
+  was a wrong PIN and spent a retry, and the rest were `PIN_AUTH_INVALID`. On
+  changePIN the other protocol's length now passes that gate and is refused after
+  the MAC, `PIN_AUTH_INVALID` (`0x33`) with no retry spent, where it was `0x02`
+  before it. The token subcommands read the two lengths as the YubiKey does:
+  protocol two's 16 bytes are an IV with no hash, a wrong PIN, and protocol one's 32
+  bytes are compared on their first block. `bcdDevice` 0x0A74 → 0x0A75.
+
+- **setPIN and changePIN judge newPinEnc's length as a YubiKey 5.8.0 does.** A
+  newPinEnc that is empty, not a whole number of 16-byte blocks, or longer than 80
+  bytes is `PIN_POLICY_VIOLATION` (`0x37`) before the MAC is checked, under protocol
+  one as under two. A length that passes is held to the padded PIN's only after the
+  MAC (`0x33` first), and on changePIN only after the current PIN, as
+  `INVALID_PARAMETER` (`0x02`). RS-Key judged the exact length before the MAC, `0x02`
+  below it and `0x37` above it, so a short newPinEnc with a bad MAC was never a MAC
+  failure, and an 80-byte one under protocol one was a policy violation. Measured
+  cell by cell over both protocols and both MACs. Protocol two's 16 bytes, an IV
+  with no ciphertext, re-enumerate the YubiKey when the MAC is good; RS-Key answers
+  them `0x02`, as it answers their neighbours. `bcdDevice` 0x0A73 → 0x0A74.
+
+- **`rsk otp lock-page58` exits 0 on a key whose lock row already holds the
+  latch** (`rsk` 0.3.43). A boot past the latch can still report a record under
+  the pre-burn key on READ `1E/07` (a legacy OATH OTP-PIN, or a record the flash
+  failed to read), and the tool then listed the remedies and exited 2 over a key
+  that needed nothing. No READ reports the lock row, but while `1E/07` is nonzero
+  the firmware refuses any burn before its touch, so the tool now sends OTP_LOCK
+  to ask: `9000` means the row already holds the latch and nothing was burnt, and
+  it says so and exits 0. A `--dry-run` sends no OTP_LOCK and says it cannot tell.
+
+- **A U2F VERSION that carries data is a wrong length, `6700`, as on a YubiKey
+  5.8.0.** U2F Raw Message Formats §6.1 has VERSION take no data, and a YubiKey
+  refuses one with a data field `6700` over CTAPHID and CCID alike; RS-Key
+  answered `U2F_V2`. It now answers `6700` on both transports. P1 and P2 are still
+  not judged, as there. `bcdDevice` 0x0A72 → 0x0A73.
+
+- **U2F over CTAPHID takes U2F HID's extended-length framing alone, as a YubiKey
+  5.8.0 does.** U2F HID v1.2 §2 encodes every raw message with extended lengths,
+  but a CTAPHID_MSG request was parsed as any ISO APDU, so a short `Le` or `Lc`
+  was served: `00 03 00 00 00` answered `U2F_V2`, where a YubiKey answers `6700`.
+  Over CTAPHID a U2F request is now the bare header or `00 Lc Lc` with that many
+  data bytes, anything after them ignored; any other form is `6700`, judged after
+  the class and before the instruction, each cell as measured on the YubiKey.
+  Over CCID both encodings stay accepted, as there. `bcdDevice` 0x0A71 → 0x0A72.
+
+- **With no applet selected over CCID a command is an unknown instruction, `6D00`,
+  as on a YubiKey 5.8.0.** After a card reset, or before any SELECT, every command
+  but a SELECT answered `6A82` (file not found), and one under a secure-messaging
+  class `6E00`. A YubiKey 5.8.0 answers `6D00` to all of them, measured class by
+  class: getInfo, U2F, GET RESPONSE, GET DATA, VERIFY, a SELECT by file id or with
+  `P2 0C`, and classes `80` and `84`. A SELECT of an AID the device lacks is still
+  `6A82`, a class outside `00`, `04`, `80` and `84` still gets the empty answer, and
+  an SM class sent to a selected applet is still `6E00`. A command to an applet
+  disabled since its SELECT gets the same `6D00`. `bcdDevice` 0x0A70 → 0x0A71.
+
+- **The CTAPHID_INIT capability byte leaves bit `0x02` clear.** It carried the
+  pre-standard U2FHID `CAPFLAG_LOCK` to announce that `CTAPHID_LOCK` works, but no
+  FIDO specification ever defined that bit: CTAP 2.3 §11.2.9.1.3 defines `0x01`,
+  `0x04` and `0x08` and has every other bit set to zero. A YubiKey 5.8.0 answers
+  `0x05`. The byte is now `0x05` with an LED and `0x04` without one, and
+  `CTAPHID_LOCK` works as before. The FIDO conformance tool gates its two LOCK cases
+  on that bit, so it now skips them. `bcdDevice` 0x0A6F → 0x0A70.
+
+- **NFCCTAP_CONTROL END ends the FIDO session on the CCID interface, as CTAP 2.3
+  §11.3.4 has it.** `80 12 01 00` answered `9000` and changed nothing, so the
+  applet went on serving CTAP2 and U2F after a host had ended the session, where
+  the spec says to ignore FIDO commands until the next applet selection. It now
+  answers every command `6986` until the FIDO applet is selected again, by its AID
+  or a prefix of it; a chain's segments are still acknowledged, and CTAPHID is not
+  affected. A YubiKey 5.8.0 answers each of these the same, measured command by
+  command. `bcdDevice` 0x0A6E → 0x0A6F.
+
+- **The FIDO metadata statements no longer claim `upv` 1.2.** MDS 3.1.1 maps a
+  FIDO2 statement's `upv` onto the CTAP versions in `versions` and reserves 1.2,
+  because CTAP 2.2 was skipped. The statements listed it beside 1.0, 1.1 and 1.3
+  from when getInfo still advertised `FIDO_2_2`, and kept it when getInfo stopped.
+  The shipping statement and its conformance variant now carry 1.0, 1.1 and 1.3,
+  one per FIDO2 entry in `versions`; the U2F statement is unchanged. The docs link
+  the MDS 3.1.1 Proposed Standard in place of its review draft.
+
+- **`authenticatorReset` gives the credential store a new state, as CTAP 2.3 §6.6
+  asks.** getInfo's `encCredStoreState` sealed a counter: each change added one,
+  and a reset deleted it back to the zero every fresh device started from, so a
+  store nothing had changed read the same before and after a reset. Every new store
+  now gets a new tag — derived from the new seed on a fresh device or a reset, drawn
+  at random for a `BACKUP_LOAD` — and a reset draws one again before its sweeps, so
+  a wipe stopped part-way still moves it. Every change draws a fresh random tag
+  instead of the next number, without reading the old one, so a tag the flash
+  cannot serve no longer refuses the change. A device an older build provisioned
+  keeps its tag until its first change. `bcdDevice` 0x0A6D → 0x0A6E.
+
+- **A secure reboot wipes the smart-card sessions too.** Before it resets, the
+  reboot scrubbed the FIDO state, the DRBG and the OTP and core1 buffers, but of
+  the CCID side only the response buffer: the OpenPGP session keys a VERIFY
+  derives, which open the DEK, PIV's authentication status and witness, OATH's
+  validation, and a command chain or response tail either dispatcher still held
+  stayed in RAM through it. Each applet now drops its session as a deselect does,
+  every applet rather than only the selected one, and both dispatchers drop their
+  chain, their tail and their selection. The drop to BOOTSEL clears SRAM on an
+  RP2350 A4 anyway (`tests/54_sram_residue.py`); this is the scrub a part that
+  kept it would rely on. `bcdDevice` 0x0A6B → 0x0A6C.
+
+- **An enterprise registration over a cut org chain registers on the device's
+  own attestation, as the 0.4.11 notes said it would.** A chain a build before
+  0.4.11 stored past the cap 0.4.11 set reads back cut; those notes promised the
+  registration falls back to device attestation, but it failed with
+  `CTAP1_ERR_OTHER`. It now registers under the device's own key and
+  certificate, with no `ep` flag: the enterprise attestation the org key was
+  installed for is the one the device could not give, so a `["none"]`
+  attestation preference is honoured over the request. previewSign's signing
+  key (preview-sign builds) follows the same choice. A chain the flash fails to
+  read still fails the registration, so the host can retry it. Re-import the
+  chain within the cap to restore org attestation. `bcdDevice` 0x0A69 → 0x0A6A.
+
+- **`rsk fido attestation status` reports an org key whose chain the device
+  cannot use instead of crashing** (`rsk` 0.3.41). The device leaves the chain
+  hash out of its answer for a chain that does not read back whole, as one
+  firmware before 0.4.11 stored past today's cap does, and `status` died on a
+  `KeyError`. It now says the chain is missing, unreadable or over the cap, what
+  enterprise registrations get meanwhile, and how to repair it.
+
+- **`rsk inventory list` and `rsk-tui` flag an org key whose chain the device
+  cannot use** (`rsk` 0.3.42, `rsk-tui` 0.3.14). Both showed it as a healthy
+  "installed". The inventory record gains a `chain_unusable` field and `list`
+  prints the chain as `UNUSABLE`; the TUI's org-attestation row turns `WARN` and
+  reads "installed, chain unusable", and its `--json` carries the same field.
+
+- **`rsk-tui`'s Audit section names the key the checkpoint signs with**
+  (`rsk-tui` 0.3.15). With an org attestation key installed its "checkpoint
+  key" row read "org key installed", but `AUDIT_CHECKPOINT` always signs with
+  the DEVK-derived key; the row now says so whatever is installed.
+
+- **`rsk-tui`'s hints name the commands that do the job** (`rsk-tui` 0.3.16).
+  Four named commands the CLI does not have: `rsk fido change-pin` and `rsk fido
+  reset` (the CLI changes the PIN with `rsk fido set-pin`; a FIDO reset is
+  `ykman fido reset` on the `VIDPID=Yubikey5` build, or a browser's "reset
+  security key"), `rsk lock engage | disengage` (`enable | disable`) and `rsk
+  fido attest` (`attestation`). The OTP-slot note sent users to `rsk otp`, the
+  OTP-fuse ritual, for what `ykman otp` does. A test now holds the subcommand
+  path of every `rsk …` hint in the TUI's sources to the CLI's parser.
+
+- **A Yubico-OTP use counter planted at `0xFFFF` no longer wraps to 0.** Only a
+  flash writer can store a counter above the 15-bit ceiling, and the power-up
+  advance took `0xFFFF` to `0`, a counter going backwards, which is the replay it
+  exists to stop. It now leaves such a counter where it is, as it does one at the
+  ceiling. `bcdDevice` 0x0A63 → 0x0A64.
+
+- **A boot that cannot read the fused key no longer runs its seal passes.** A
+  key page closed even to secure code read as a blank one, so the boot ran every
+  seal pass, the FIDO seed and OpenPGP first-boot setup and the rest under the
+  chip-serial key a blank board uses, where it could re-seal, provision or
+  migrate what only the fused key should hold. The fused-key read now tells a
+  blank page from an unreadable one, and on an unreadable one the boot skips
+  every step that seals, reporting `FFFE` on READ `1E/07`, which keeps the
+  page-58 burn refused. `rsk otp lock-page58` names that answer and says to
+  replug (rsk 0.3.39). `bcdDevice` 0x0A61 → 0x0A62.
+
+- **A Yubico OTP typed after a warm reboot no longer repeats a position.** The
+  use counter advanced once per cold boot, before USB came up. A warm reboot,
+  which any host can ask for, restarted the session counter over the same use
+  counter, so the next presses re-typed positions a validation server had
+  already seen; a boot write the store refused did the same after a cold boot.
+  The counter now advances at the first press after every boot, warm or cold, as
+  a YubiKey advances it at its first use after power-up, and a press whose
+  advance the store will not take types nothing. A host still cannot move the
+  counter without a press. `bcdDevice` 0x0A5F → 0x0A60. A SWAP that lands only
+  half owes both slots that advance again, so the record it left under the other
+  slot's RAM half cannot re-type an earlier boot's position; `bcdDevice` 0x0A62 → 0x0A63.
+
+- **An access code any host could set no longer opens the OATH password safe.**
+  On an applet with no access code, SET CODE needs no credential, as on a
+  YubiKey, and it deleted the OTP PIN that guards the password safe (the
+  logins and passwords `nitropy` stores): any host could set its own code,
+  VALIDATE with it and read every stored password. SET CODE now keeps the OTP
+  PIN, and VERIFY PIN opens the applet only while no access code is set (the
+  nitropy flow). Where a code is set the code opens the applet and the PIN the
+  password safe alone: a right PIN keeps the unlock VALIDATE gave, a wrong one
+  drops both. A PIN planted before a code existed therefore opens no coded
+  applet either, which is what deleting it was for. Found in review.
+  `bcdDevice` 0x0A5E → 0x0A5F.
+
+- **A failed flash read no longer lets a registration past its excludeList.**
+  makeCredential looks each excludeList id up among the stored passkeys, and
+  skipped a record it could not read: a resident registration for the same
+  account then went ahead and replaced the passkey the relying party had on
+  file, the credential its excludeList was sent to protect. The lookup now
+  answers `ERR_OTHER`, after the same touch a match asks for, when a record the
+  flash would not serve could be one of the RP's own, judged by its `EF_RP`
+  count as the store's refusal is. Found in review.
+  `bcdDevice` 0x0A5D → 0x0A5E.
+
+- **Changing the PIV management key can no longer lock the admin out, or leave
+  a key behind another touch policy.** SET MANAGEMENT KEY wrote the new key,
+  then its algorithm head, as two records. A power cut between them, or one
+  failed flash read of the head after the key had landed, left the new key under
+  the old algorithm, and slot 9B then refused every algorithm: management was
+  gone until a PIV reset, which wipes every key. A changed key is now sealed in
+  one record with its algorithm and touch policy, by SET MANAGEMENT KEY and by
+  the panel's protect alike, so a change lands whole or not at all. The head
+  only caches that record, and a refused head write answers `9000`, since the
+  key it describes is in force. A head the flash will not take at SELECT no
+  longer fails it: the next SELECT writes it, and a RESET that could not says
+  so. ADMIN DATA is read before the key is written too, so a failed read of
+  it refuses the change with nothing written, where it answered `6581` over the
+  new key. The factory key and a key an older build wrote stay key-only, their
+  head the word on both; a new boot's SELECT gives such a head that disagrees
+  with its key's length the algorithm the length names (16, 24 or 32 bytes, 24
+  read as AES-192). A build older than this one cannot use a key this one
+  changed: after a downgrade, slot 9B refuses until the upgrade, and nothing is
+  erased. Found in review. `bcdDevice` 0x0A5C → 0x0A5D.
+
+- **A failed flash read no longer hides a passkey from credMgmt.**
+  `enumerateRPs` and `enumerateCredentialsBegin` skipped a record they could not
+  read and answered success, a total one short: the owner was shown a list with
+  an RP or a passkey missing. The credential walk also cached each slot's rpId
+  prefix across commands, so one failed read hid that passkey from every later
+  walk until the next flash write. `deleteCredential` and
+  `updateUserInformation` answered `NO_CREDENTIALS` for a passkey whose record
+  would not read, which tells a platform to forget one that is still stored.
+  Each now answers `ERR_OTHER` over a record the flash would not serve, and the
+  cache is only kept from a complete pass. A credential list fails only for the
+  RP whose `EF_RP` count says the walk missed one, so another RP's unreadable
+  record leaves it whole. The display's Passkeys view still skips such a
+  record. Found by the read-fault sweep and in review.
+  `bcdDevice` 0x0A5B → 0x0A5C.
+
+- **A passkey record the flash cannot read no longer refuses registrations at
+  every site.** Refusing a new account while a record went unread (the fix a
+  few lines down) reached every relying party: one record that never reads
+  again refused every new passkey on the key with `ERR_OTHER`, and credMgmt
+  cannot delete a record it cannot read, so only `authenticatorReset` ended it.
+  An unread record can only be the account being registered while that account's
+  RP counts more credentials than the search read — a count is never below its
+  credentials — so a new account at any other RP, or at a new one, now
+  registers. Found in review. `bcdDevice` 0x0A5A → 0x0A5B.
+
+- **A failed flash read no longer files a second OATH account under one name.**
+  An OATH `PUT` for a name the key already holds replaces that account, and
+  `RENAME` onto a taken name is refused. Both found the name by reading every
+  account, and an account whose read failed was skipped: one failed read of the
+  account itself filed the new one beside it, two accounts under one name, and
+  `CALCULATE` by that name kept answering with the old secret. A `RENAME` could
+  likewise take a name already in use. An account the flash cannot read now
+  refuses the command with `6581` unless the name turns up in another one, and
+  each account is read once. The cost, stated: while one account never reads
+  again, no new name can be added until an OATH reset. Found by the read-fault
+  sweep. `bcdDevice` 0x0A59 → 0x0A5A.
+
+- **A passkey delete no longer answers success over an RP record it could not
+  read.** `deleteCredential` removes the credential and then decrements its RP
+  record's count. A failed read of that record was taken for "no such RP", so
+  the delete answered success and left the count one too high: for an RP's
+  last credential, a record `enumerateRPs` lists and whose credential walk
+  answers `NO_CREDENTIALS`, until the next boot settles it. The delete now
+  answers `ERR_OTHER` when the RP it must decrement could be the record it could
+  not read. Found by the read-fault sweep. `bcdDevice` 0x0A58 → 0x0A59.
+
+- **A failed flash read no longer files a second passkey for one account.**
+  A resident makeCredential for an (RP, user) the key already holds overwrites
+  that credential (CTAP 2.1 §6.1.2). The search for it skipped a slot whose read
+  failed, so one failed read of the old credential's record filed the new one
+  beside it: two passkeys for one account, the RP counting both, and the old one
+  still signing for the RP that had just replaced it. An unread slot now refuses
+  the registration unless the account turns up in another one, as the RP record
+  search already did. Found by the read-fault sweep. `bcdDevice` 0x0A57 → 0x0A58.
+
+- **One failed flash read at boot no longer destroys the OATH access code.**
+  The boot pass that brings every OATH secret under the current seal read each
+  record up to three times: to open it under the current key, under the pre-burn
+  key, and as legacy plaintext. When one of the first two reads failed, the third
+  went on to the plaintext arm, which takes any short record for the access code,
+  and re-sealed the sealed code's ciphertext as the code. `VALIDATE` could never
+  succeed again, and the only way out was an OATH reset, which wipes every
+  account. It took one transient read error at any boot of a key with an access
+  code set, on a burned key or not. The pass now reads each record once and tries
+  every arm over those bytes; a read that fails leaves the record for the next
+  boot. `bcdDevice` 0x0A55 → 0x0A56.
+
+- **A passkey delete cut by a power loss no longer leaves an RP with no
+  credential in it.** A delete removes the credential and then its RP record's
+  count; a cut between the two left the count one too high, and for an RP's last
+  credential a record naming none, which `enumerateRPs` went on listing and whose
+  `enumerateCredentialsBegin` answered `NO_CREDENTIALS` until a reset, from the
+  host's `deleteCredential` and the display's delete alike. A boot pass now
+  settles every RP record against the credentials that remain; a credential the
+  flash cannot read settles nothing, so it can never delete a live RP's record.
+  Found by the per-command power-cut sweeps. `bcdDevice` 0x0A54 → 0x0A55.
+
+- **`ykman config set-lock-code` locks the configuration, as on a YubiKey.** The
+  code was accepted and ignored: ykman printed "Lock code updated", DeviceInfo
+  went on reporting the device unlocked, and any host could still change which
+  applications are enabled. Once a code is set, every write of the DeviceInfo
+  record needs it, over all four transports that carry one: `6986` without it and
+  `63C0` with another over CCID, as a YubiKey 5.8.0 answers; an unmoved program
+  sequence over the OTP keyboard; an error over CTAPHID `0x43`; `0x30` and `0x27`
+  over the vendor `CONFIG_WRITE`. DeviceInfo reports `CONFIG_LOCK = 01`, and a new
+  code of 16 zero bytes clears it (`--clear`). The code is never stored: a new
+  record, `EF_DEV_LOCK`, holds its SHA-256 salted with the serial. No retry
+  counter, as on a YubiKey. The lock survives `authenticatorReset`; the display
+  build's factory reset or an `rsk-wipe` erase clears it. The phy and LED records
+  stay outside it. A device upgrades unlocked, as every older build reported it,
+  and a code one stored in plaintext is not honoured (below). Setting a code on a
+  key that has none takes a touch (above), and one its owner does not hold keeps
+  every config change behind a factory wipe: set your own at provisioning
+  (docs/threat-model.md). The device-wide wipe now removes both records last, so a
+  torn one cannot open the configuration before the OTP slots are gone.
+  `bcdDevice` 0x0A53 → 0x0A54.
+
+- **A configuration-lock code an old build stored in plaintext is erased.** Up
+  to 0.4.4, `ykman config set-lock-code` left the 16-byte code verbatim in the
+  device-config record; 0.4.5 stopped storing and echoing it (audit run-30) but
+  kept what was already there, and every later config write merged it forward.
+  A boot pass now drops it and re-arms the at-rest scrub, so the lap erases the
+  superseded copy on an OTP-provisioned device, and a config write no longer
+  carries a stored lock tag. `bcdDevice` 0x0A52 → 0x0A53.
+
+- **An RSA keygen right after another no longer runs on one core.** Before it
+  handed core1 its job, core0 waited for core1 to finish the previous keygen's
+  last candidate, for at most 6 s, and gave up past that: the keygen then ran
+  on core0 alone, after the wait. At RSA-4096 that last candidate can be a
+  software Lucas test of ten seconds and more, and on a Waveshare RP2350-Zero 2
+  of 8 back-to-back PIV GENERATEs took 72 s and 100 s single-core; two such
+  misses running latched every later keygen to one core until a reboot. Core0
+  now starts searching at once and hands core1 the job as soon as it is free,
+  with no wait and no latch; OpenPGP's three-key generation and the panel's
+  keygen take the same path. `bcdDevice` 0x0A51 → 0x0A52.
+
+- **A tap past the trusted display's right edge no longer opens Settings.** The
+  bottom bar picked its tab by dividing the tap's x by the cell width and
+  clamping to the last tab, so a touch reported at x ≥ 240, off the 240-pixel
+  panel with no tab under it, opened Settings; one below the panel opened a tab
+  too. A tap now selects the tab whose drawn rect holds it, and nothing
+  elsewhere. The Kani proof that every painted tab is hit now also proves the
+  converse. `bcdDevice` 0x0A4F → 0x0A50.
+
+- What a request's crypto left below the stack pointer stayed there until a
+  later frame overwrote it. RustCrypto's `Copy` temporaries, the `hmac` crate's
+  key XORed with its pads, `aes`'s key schedule and a SHAKE reader's state are
+  in no value a `Secret` or a `Drop` can reach: the frame that held them has
+  returned. Core0's dead stack, every word from the stack's floor to its live
+  frames, is now zeroed after each request, each keyboard OTP frame, each typed
+  ticket and each flow the panel runs, and core1 zeroes its own after each prime
+  search (`firmware/src/sweep.rs`). A `--features bench` build adds a vendor
+  probe (INS 0x15) that counts a pattern in that region and can stop the sweep,
+  and `tests/55_stack_residue.py` uses it to find an OATH key's HMAC residue
+  there with the sweep stopped and none with it running; that run, and what the
+  sweep adds to a request, are still to be measured on the board. Reading any of
+  it took a memory read on the live device. **bcdDevice → 0x0A4D.**
+
+- Freed heap blocks kept key material until an allocation reused them. The heap
+  serves `rsk-rsa`'s big integers, and `num-bigint-dig` frees the limbs of its
+  own working buffers without wiping them: a key rebuild's arithmetic (import,
+  OpenPGP ATTEST, key generation) and a key `RsaKey::from_p_q` refuses left
+  primes, `d` and CRT values in freed blocks. The allocator now zeroes every
+  block as it frees it (`ZeroingHeap` in `firmware/src/main.rs`), and a grown
+  vector's old block with it, so a freed buffer's bytes do not outlive the free.
+  It stores words, not bytes: an RSA key generation frees tens of megabytes of
+  big-integer temporaries. What that costs RSA key generation and signing is
+  still to be measured on the board. Reading any of it took a memory read on the
+  live device. **bcdDevice → 0x0A4A, then 0x0A4C.**
+
+- OpenPGP PSO:DECIPHER left the deciphered secret in the applet's memory. The
+  applet builds every PSO result in a 1 KiB scratch buffer that lives as long
+  as the applet, copies it into the response and never cleared it, so what a
+  decipher returned — the message's session key under `gpg --decrypt` (RSA),
+  the ECDH shared secret, or an AES decipher's plaintext — stayed in RAM
+  across commands; a later command overwrote only the length of its own
+  answer. The scratch is now wiped whenever PSO returns, on every exit.
+  Reading it took a memory read on the live device.
+  **bcdDevice → 0x0A2B.**
+
+- PIV GET METADATA and ATTEST on an RSA slot left the key's primes in freed
+  RAM, and neither needs a PIN. GET METADATA multiplies the two stored primes
+  for the modulus, and `num-bigint-dig`'s `from_bytes_be` reverses each prime
+  in a buffer it frees without wiping: in a host replay of the device's
+  allocator the second prime stayed in freed heap after every call, all but the
+  eight bytes the allocator's header overwrites, which is enough of a prime to
+  factor the modulus. ATTEST rebuilt the whole private key only to certify its
+  modulus, and that arithmetic's working buffers kept both primes and `dQ`.
+  `rsk-rsa` now reads a secret big-endian value through a reversed copy it
+  holds in a `rsk_secret::Secret`, which the library reads little-endian
+  without a copy of its own — every private operation, key load and import
+  reads its primes that way — and PIV ATTEST reads the modulus alone, as GET
+  METADATA does. The replay finds no prime after either command now. A key
+  rebuild's own arithmetic (import, OpenPGP ATTEST, key generation) freed
+  working copies unwiped until the heap wiped what it frees (0x0A4A). Reading
+  any of it takes a memory read on the live device.
+  **bcdDevice → 0x0A24.**
+
+- Yubico OTP left a slot's secrets in RAM after most commands. Every command
+  that reads a slot — the keyboard ticket, CALCULATE (challenge-response),
+  SWAP, UPDATE, CONFIGURE and the status reads — unseals
+  the record, with its AES or HMAC key, private UID and access code, into a
+  buffer in its own frame and returned without wiping it; CALCULATE and the
+  keyboard ticket also copied the key out into bare arrays, three handlers held
+  the presented access code in one, and a keyboard slot write passed the whole
+  frame through two more copies on its way to the applet. `rsk-otp`'s unseal
+  now writes only into a `rsk_secret::Secret`, which the compiler holds every
+  reader to, the key, code and request copies are `Secret`s, and the keyboard
+  frame is copied straight into the request buffer that wipes itself. The
+  `hmac` and `aes` crates left the key in their own dead frames, as a padded
+  block or a key schedule, until the dead-stack sweep (0x0A4D). Reading any of
+  it takes a memory read on the live device.
+  **bcdDevice → 0x0A23.**
+
+- OATH left a credential's secret in RAM after most commands. PUT, DELETE,
+  RENAME, CALCULATE, CALCULATE ALL, LIST (and its SEND REMAINING pages),
+  VERIFY CODE and GET CREDENTIAL unseal a credential — its name, HMAC key and
+  counter, and for a password-safe entry the login and password — into a
+  buffer in their own frame, and returned without wiping it; PUT and RENAME
+  also built the record they store in one, and VALIDATE held the access-code
+  key the same way. A failed VALIDATE also left the right answer to the
+  session's challenge, which unlocks the applet until the next SELECT, and
+  VERIFY CODE the HOTP code the next CALCULATE returns. Only the credential
+  walk and the boot pass that reseals legacy records wiped theirs. `rsk-oath`'s
+  unseal now writes only into a `rsk_secret::Secret`, which the compiler holds
+  every reader to, and the builders' buffers and those two MACs are `Secret`s
+  too, so each is wiped on every exit. The `hmac` crate left the key, XORed
+  with its pad, in its own dead frame after every MAC until the dead-stack sweep
+  (0x0A4D). Reading any of it takes a memory read on the live device.
+  **bcdDevice → 0x0A21.**
+
+- An RSA decipher left the deciphered block in freed RAM. OpenPGP's
+  PSO:DECIPHER and PIV's GENERAL AUTHENTICATE both run
+  `rsk_rsa::crt::private_op`, whose unblinded result — for a decipher, the
+  PKCS#1 block that carries the session key — was a plain bignum, reduced from
+  a product equal to it modulo the public n and copied into two byte vectors on
+  its way out, one for the fault check and one for the answer. All four were
+  freed unwiped, and the heap did not clear what it freed. The software path,
+  `RsaKey::private_op` (the legacy decipher, and the signature on the
+  certificate PIV GENERATE wrote until 0x0A15), freed its product the same way and every step
+  of its CRT recombination too — a CRT half, which with the blinded input
+  factors the key — and both paths their blinding temporaries. All of them are
+  `rsk_secret::Secret`s now, wiped before they are freed. What is left is
+  `num-bigint-dig`'s own working buffers — the reduction's, and on the
+  software path the fault check's — each freed holding the result, less the
+  eight bytes the allocator's free-list header takes, until the heap wiped what
+  it frees (0x0A4A). Reading any of it takes a memory read on the live
+  device. **bcdDevice → 0x0A1F.**
+
+- An ML-DSA credential key was copied into its box through the stack, leaving
+  the whole expanded key behind each time it was derived. `rsk-fido` boxed
+  `MlDsa*::from_seed(&xi)`, which built the key — the NTT-domain s1, s2 and
+  t0, the signing seed K — on the stack; the copy into the box left that stack
+  image unwiped. The key is now expanded field by field into a zeroed box
+  (`zeroed()` + `expand()`), and a zeroed key refuses to sign until then.
+  Measured in an emulator on the release image, the secret bytes a derivation
+  leaves in dead stack fall from 36.0 / 49.4 / 65.7 KB to 8.3 / 10.4 / 14.5 KB
+  (ML-DSA-44 / -65 / -87), and its stack depth from 77.6 / 105.3 / 140.1 KB to
+  42.6 / 53.8 / 70.2 KB. What remained still rebuilt the key — ρ′ and K sat in
+  the SHAKE256 reader's state, which `sha3` never wipes — until the dead-stack
+  sweep (0x0A4D). Reading any of it takes a memory read on the live device.
+  **bcdDevice → 0x0A1C.**
+
+- An RSA key generation could leave the key's primes on core0's stack. A prime
+  core1 found was handed back by value on its way to the key, and each frame it
+  passed through kept a copy nothing wiped, so with core1 engaged one factor of
+  the new modulus, or both when core1 posted both before core0 polled, could
+  stay in core0's dead stack after the key was built. Core1's copy of the job's DRBG seed, which replays every candidate it
+  tried, stayed on its own stack until the next job the same way, and posting
+  the job left two short-lived copies on core0's. Primes and seed are now copied
+  into zeroed slots inside the mailbox lock and never moved; checked in the
+  release image, where the search's frame shrank from 1180 to 900 bytes.
+  Reading any of it takes a memory read on the live device.
+  **bcdDevice → 0x0A19.**
+
+- OpenPGP's first boot left both PIN session keys in RAM when a write failed.
+  `scan_files` derives the PW1 and PW3 session keys to seal the new DEK and
+  wiped them only after its last write, so a failed flash write before that
+  returned past the wipe. A fused-key read that
+  failed part-way — an OTP ECC error while reading the MKEK or DEVK — likewise
+  left the bytes read so far in the reader's frame. Both are wiped on every
+  exit now: key derivation hands out `rsk_secret::Secret`s and the fused read
+  writes straight into one (see Internal). A session key opens the DEK only
+  together with the device root key. **bcdDevice → 0x0A17.**
+
+- A Yubico OTP slot write over the keyboard interface left the slot's secrets in
+  RAM. The firmware took its own copy of the request — for a slot configure,
+  the AES key, the private UID and the access code — and never wiped it, and
+  the response body (for a challenge-response, the HMAC under the slot secret)
+  likewise; only the transport's buffer was cleared. `rsk-otp` now hands the
+  request over as a `rsk_secret::Secret`, copied straight into it, and the
+  worker wipes the response in place. **bcdDevice → 0x0A14.**
+
+- OpenPGP left PIN-derived session keys in RAM unwiped. The session key a new
+  PW1, PW3 or resetting code derives — the key that, with the device root key,
+  opens the DEK every private key is sealed under — was returned as a bare
+  array by the staging and re-wrap steps, and dropped without a wipe wherever
+  a caller discarded it: on SUCCESS when `PUT DATA D3` sets a resetting code
+  and when a pre-OTP DEK copy is migrated at VERIFY, and on every flash-error
+  path after staging (CHANGE, RESET RETRY, the KDF-DO write). VERIFY's derived
+  verifier was never wiped either. They are held in `rsk_secret::Secret` now,
+  which wipes on every exit, and the KDF-DO write hands its two new keys over by
+  reference instead of by value. Exposure needs a memory read on a live device,
+  and a session key opens the DEK only together with the device root key, which
+  a fused board keeps in OTP.
+  **bcdDevice → 0x0A13.**
+
+- A display build with `WAKE_PIN=6` or `WAKE_PIN=7` compiled, and handed the
+  touch controller's I2C1 data or clock pad to the wake button as well: the
+  firmware stole that GPIO for a second driver while I2C1 still owned it. The
+  build checked the wake pin against the LCD range (`10..=18`) and the panel's
+  control lines but not against the hard-wired pins beside them; it now refuses
+  6, 7, 10 and 11 like every other panel pin. No board preset uses either
+  value (the Touch-LCD board wakes on GPIO25). **bcdDevice → 0x0A10.**
+- An `XfrBlock` of one or three bytes, too short for `CLA INS P1 P2`, is refused
+  by the reader as a YubiKey 5.8.0 refuses one: a failed `RDR_to_PC_SlotStatus`,
+  `bStatus` `40` with the slot powered, whose `bError` `01` names `dwLength`, and
+  no APDU runs. RS-Key ran it as an APDU and answered a data block with `6700`.
+  Read off the YubiKey over raw USB; RS-Key refuses none and two bytes the same
+  way, which was not measured.
+  `bcdDevice` 0x0A15 → 0x0A16.
+
+- Over CCID the card passes on only the classes a YubiKey 5.8.0 does: `00`,
+  `04`, `80`, `84`, and any with the chaining bit. Every other class gets an
+  empty data block, no body and no status word, as from the YubiKey. RS-Key ran
+  those commands instead (a SELECT under `01`, `20`, `40` or `C0` selected, and
+  PIV and OpenPGP served what followed) or answered `6E00`. A SELECT under `04`
+  or `84` selects as under `00`, where RS-Key answered `6E00` (over CTAPHID's
+  vendor channel too); any other command there is still `6E00`. The classes were
+  read off a YubiKey 5.8.0 one by one over raw USB. As before, a GET RESPONSE for
+  an answer already begun is served under any class (the YubiKey serves one under
+  `0C`), and an unanswered command leaves an open chain and a held tail as they
+  were.
+  `bcdDevice` 0x0A13 → 0x0A14.
+
+- An attestation statement names no key usage: a YubiKey 5.8.0's OpenPGP
+  statement carries Yubico's extensions and nothing else. RS-Key's put a critical
+  keyUsage in every statement, `digitalSignature` for all but an X25519 key, so a
+  PIV `9D` or OpenPGP DEC key meant for key agreement or decryption was stated as
+  a signing key. The PIV statement follows the OpenPGP one's measured shape;
+  reading a YubiKey's own PIV statement uses its `F9` key, which stays untouched.
+  The `F9` and `FC` certificates keep their keyUsage.
+  `bcdDevice` 0x0A12 → 0x0A13.
+
+- The management applet answers its SELECT with a YubiKey 5.8.0's words,
+  `Virtual mgr - FW version 5.8.0`, where RS-Key sent the bare `5.8.0`. yubikit
+  and ykman read the version out of either. A host that compared the whole
+  answer to `5.8.0`, as `docs/protocol.md` once described it, needs to take the
+  last word instead, or DeviceInfo tag `05`. `bcdDevice` 0x0A11 → 0x0A12.
+
+- PIV answers its SELECT with a YubiKey 5.8.0's application property template,
+  byte for byte: the PIX in `4F` and the NIST RID in `79`, 19 bytes. RS-Key added
+  a `50` label and an `AC` algorithm list, 45 bytes in all; SP 800-73-4 makes the
+  label optional and the list a condition of secure messaging, which RS-Key's PIV
+  does not do, and no host needs either from a YubiKey. The application has no
+  SELECT of its own either: every other form that reaches it is `6D00`, as on the
+  YubiKey, where RS-Key answered a `P2` of `01` with the template (a bare `9000`
+  for a body that was no AID prefix) and anything else with `6B00`.
+  `bcdDevice` 0x0A10 → 0x0A11.
+
+- OpenPGP answers its SELECT with no FCI, as a YubiKey 5.8.0 does, where RS-Key
+  sent a 34-byte `6F` template; a truncated AID selects the same way. The
+  application has no SELECT of its own either: every other form that reaches it,
+  by file id, by path or by AID with a `P2` other than `00` or `04`, is `6D00` and
+  leaves it selected, as on the YubiKey. RS-Key selected files by id (`9000` or
+  `6A88`) and answered `6A86` to some `P2`s. GnuPG and yubikit never read that
+  FCI, and OpenSC takes an empty answer as it takes a YubiKey's.
+  `bcdDevice` 0x0A0F → 0x0A10.
+
+- `rsk-tui` shows the OpenPGP PIN retry counters and how many keys the card holds.
+  It looked for `C4` and `C5` at the top of `6E`, where neither a YubiKey 5.8.0
+  nor RS-Key sends them — both carry them inside `73` — so the counters stayed
+  blank and the key count read 0. `rsk-tui` 0.3.13.
+
+- PIV stores a data object of up to 3063 bytes, as a YubiKey 5.8.0 does; RS-Key
+  took 2029. The CCID class descriptor's `dwMaxCCIDMessageLength` is the
+  YubiKey's 3072, up from 2048, so a host sends one extended APDU of up to 3062
+  bytes, and a command chain reassembles 3072: the object and its
+  `5C 03 id 53 82 LL LL` header. A response is built whole and leaves in frames of
+  up to 3060 bytes of body; a longer one chains through `61xx` whatever its `Le`,
+  where a YubiKey cuts a PIV read past 3060 bytes and loses its status word. With
+  the frame, OpenPGP's DO `7F66` announces 3062 each way, what one frame carries
+  (a YubiKey says 3070), and DO `C0` announces 2048 for the cardholder
+  certificate, as the YubiKey does, and for the special DOs, where it says 255 and
+  keeps a longer one modulo 256; RS-Key said 2036 for both. The certificate
+  stores 2048 bytes and refuses 2049 with `6A80`, keeping what it held, as on the
+  YubiKey. FIDO over CCID takes a command and builds a response of up to 3072
+  bytes, and OATH, management and OTP answer up to 3060 in a frame. The larger
+  buffers cost 7 KiB of RAM: the stack the linker leaves is 205 KiB, 202 on the
+  display build. `bcdDevice` 0x0A0E → 0x0A0F.
+
+- OpenPGP templates give their length in BER's shortest form, as a YubiKey
+  5.8.0 does: a reset card's `65` reads `65 09 5B 00 5F 2D 00 5F 35 01 39`, byte
+  for byte the YubiKey's, where RS-Key wrote `65 82 00 09`. `73` and `6E` are
+  always past 255 bytes and keep their `82` form. `bcdDevice` 0x0A0C → 0x0A0D.
+
+- OpenPGP DO `7F66`, the extended-length information, sits inside `73` right
+  after `DE`, where a YubiKey 5.8.0 carries it; RS-Key had it at `6E`'s top
+  level, before `7F74`. `6E` reads `4F`, `5F52`, `7F74`, `73` now, as on the
+  YubiKey, and GET DATA `7F66` still serves it alone. yubikit reads the DO only
+  from `6E`'s top level and uses it for nothing, so it no longer sees one, as
+  with a YubiKey. `bcdDevice` 0x0A0B → 0x0A0C.
+
+- OpenPGP SELECT DATA answers as a YubiKey 5.8.0 does. It judges P1 and P2
+  first — an occurrence past the third or a `P2` other than `04` is `6B00` —
+  and then takes one body only, `60 04 5C 02 7F 21` byte for byte, answering
+  `6A80` to anything else. RS-Key answered `6A86` to a wrong `P2`, `6700` to a
+  body of the wrong shape and `6A88` to another tag, and judged the tag before
+  the occurrence. A refused SELECT DATA moves neither the occurrence nor the
+  walk. `bcdDevice` 0x0A0A → 0x0A0B.
+
+- OpenPGP GET NEXT DATA stops walking the cardholder certificates after a GET
+  DATA or PUT DATA of any other DO, whatever that command answered, as a YubiKey
+  5.8.0 does. A GET DATA RS-Key refused (`6B00`) and any PUT DATA, refused or
+  written, left the walk open, so the next GET NEXT DATA still served the next
+  occurrence where a YubiKey answers `6A80`. A GET DATA or PUT DATA of `7F21`
+  itself, SELECT DATA, IMPORT, VERIFY's status check, GET CHALLENGE, GET
+  RESPONSE, VERSION and an unknown instruction keep it open, on both, and a PUT
+  DATA of `7F21` opens a closed one again. `bcdDevice` 0x0A09 → 0x0A0A.
+
+- OpenPGP GET DATA answers `6B00` to a DO only a template carries, as a YubiKey
+  5.8.0 does with keys and a name set: `5B`, `5F2D` and `5F35` (inside `65`),
+  `93` (inside `7A`), and `73`, `C0`–`C3`, `C5`, `C6`, `CD` and the `C7`–`D0`
+  slices (inside `6E`). RS-Key served all 21 on their own. The templates carry
+  them as before and PUT DATA still takes the writable ones; a host that read,
+  say, `C5` by itself must read `6E` instead ([protocol](docs/protocol.md)).
+  `bcdDevice` 0x0A07 → 0x0A08.
+
+- OpenPGP GENERATE and IMPORT read the whole control-reference template, as a
+  YubiKey 5.8.0 does. They read its first byte only, so the template ykman uses
+  for the attestation key, `B6 { 84 01 81 }`, named the signature slot: an IMPORT
+  or a GENERATE under it replaced the owner's signing key, and a read under it
+  returned that key. IMPORT and GENERATE `P1 = 80` refuse the template
+  (`6A80`), and a `P1 = 81` read returns the attestation key's public key (Added,
+  above) ([limitations](docs/limitations.md)). A key reference
+  `84 01 01`/`02`/`03` that names the template's own slot selects that slot; one
+  naming another slot is `6A80`. The refusals follow a YubiKey's order and codes.
+  GENERATE judges P2, the template, P1 and then the admin password; it judged P1
+  first and answered any template length but 2 or 5 bytes with `6700`. IMPORT
+  judges the admin password before its body; a body under 5 bytes was `6700`,
+  with or without the password.
+  `bcdDevice` 0x0A05 → 0x0A06.
+
+- PIV stores any `5Fxxxx` data object a YubiKey 5.8.0 stores, except the
+  attestation certificate `5FFF01`: the Yubico minidriver's `5FFF10`–`5FFF15`,
+  `5FC1F0`–`5FC1FF`, `5FFF02`–`5FFFFF` and every other id, where RS-Key refused
+  all but `5FC100`–`5FC1EF` and `5FFF00` with `6A80`. The ids outside the
+  standard set share room for 256 objects and 32 KiB of bodies; the next one
+  answers `6A84`, as a full YubiKey does, and so does a PUT DATA past the
+  device's shared file budget, which answered `6581`. An object is up to 2029
+  bytes, from 1900: what a command chain reassembles, 2022 through ykman's single
+  extended APDU; a YubiKey reassembles 3072 bytes and takes 3063, as RS-Key does
+  from 0x0A0F. A PIV reset takes the pool with the rest of the applet.
+  `bcdDevice` 0x0A03 → 0x0A04.
+
+- A vendor `CONFIG_WRITE` of the LED block or the phy record sent over CCID as a
+  command chain took effect only at the next reboot: the LED block did not reload
+  and a changed USB identity did not re-enumerate. The router looked for the
+  vendor command in the chain's last segment, whose data is the tail of the CBOR
+  message. RS-Key's own tools never chain these writes (`rsk led` over PC/SC sends
+  the vendor applet's SET LED, and python-fido2 chains only past 250 bytes); a
+  third-party PC/SC host that chains short commands met it. The live effects now
+  follow the write itself, on both transports and however it was framed, and a
+  vendor command that does not write the LED block no longer reloads it.
+  `bcdDevice` 0x0A02 → 0x0A03.
+
+- PIV GENERATE replaces a slot's certificate only when that certificate
+  carries the key being replaced, and keeps any other — as a YubiKey keeps
+  every certificate, since its GENERATE writes none. The keep-a-moved-key's-
+  certificate rule of 0x09FD held only until the slot got a key: an IMPORT, a key
+  moved in, or one GENERATE, and the next GENERATE wrote its self-signed
+  certificate over the one for the key that had moved away. Regenerating the key
+  a slot's certificate is for — the one the last GENERATE wrote, say — still
+  writes a fresh one. A certificate stored compressed, one for a key an IMPORT
+  has since replaced, or one beside a key the firmware cannot read back stays,
+  and the new key gets none: write one with `ykman piv certificates generate`.
+  `bcdDevice` 0x0A01 → 0x0A02.
+
+- The Management applet has no device-wide reset any more, as a YubiKey 5.8.0
+  has none: INS `1E` answers `9000` and does nothing, whatever the P1-P2 or
+  data under class `00` or `80`, and INS `1F` (ykman's `device_reset`, which it
+  sends only when DeviceInfo reports a blocked reset or a Bio with PIV) answers
+  `6D00`. Both were a presence-gated factory reset of the whole device. The
+  vendor applet reboots with `00 1F` — and since Management took class `80`
+  (above), the rescue applet's `80 1E` READ and `80 1F` REBOOT reach it too — so
+  any of those sent while another PC/SC client had Management selected asked for
+  a touch, which a BOOTSEL reboot expects, and wiped the device. The trusted
+  display's factory reset and every applet's own reset are unchanged; a board
+  without the display wipes itself only with `rsk-wipe` over BOOTSEL.
+  `bcdDevice` 0x0A00 → 0x0A01.
+
+- A refused OpenPGP RSA import no longer marks the slot as imported. The key
+  origin (DO `0xDE`) was recorded before the key was checked, so an import
+  refused at the last step — primes the CRT layout could not take — left the
+  old key in the slot reading `02` (imported) where a YubiKey 5.8.0 keeps `01`.
+  The refusals now read as a YubiKey's: a prime that is not exactly half the
+  modulus attribute's width is `6A80` (was `6700` or `6400`; one sent with a
+  leading zero byte was imported); a pair of the right widths that makes no
+  working key — `p = q`, composite primes a trial signature exposes, a short
+  modulus — is `6581` (was `6400` or `6A80`, or stored as a key that then refused
+  every signature). On those a YubiKey also destroys the slot's key; RS-Key keeps
+  it.
+  `bcdDevice` 0x09FF → 0x0A00.
+
+- PIV RSA IMPORT refuses every key it will not use with `6A80`, as a YubiKey
+  5.8.0 does, and keeps the slot's key. It takes each prime at exactly half the
+  modulus width (a prime sent with a leading zero byte was taken), and a key
+  must sign one trial block before it replaces anything: RS-Key stored a pair of
+  composite "primes", which assembles into a key that then refused every
+  signature (`6400`). A pair it could not lay out for the CRT signer answered
+  `6700` or `6400`, and one it could not assemble at all (`p = q` among them)
+  `6400`.
+  `bcdDevice` 0x09FE → 0x09FF.
+
+- PIV PUT DATA reads its request as a YubiKey 5.8.0 does. Without the
+  management key it answers `6982` whatever the P1-P2 or body (a one-byte body
+  stays every PIV command's `6A80`); with it, a P1-P2
+  other than `3FFF` is `6A80` (was `6A86`, judged before the key), and so is any
+  body that is not `5C 03 <id>` followed directly by `53` with its length in the
+  shortest form. RS-Key searched the body for either tag, so it stored an
+  object whose `53` came before the `5C` or after a second `5C`, or whose length
+  was written longer than it needs; and it answered `9000` to a discovery
+  (`7E`) or BIT group template (`7F61`) write it did not store. Bytes after the
+  object are still ignored.
+  `bcdDevice` 0x09FD → 0x09FE.
+
+- PIV GENERATE into a slot that holds a certificate and no key keeps that
+  certificate instead of writing its self-signed one over it. A key move leaves
+  the source slot's certificate behind, as a YubiKey does, and that certificate
+  belongs to the key that moved; a YubiKey's GENERATE writes no certificate, so
+  it keeps it too. Which certificate a GENERATE over a key replaces is 0x0A02's
+  rule, above.
+  `bcdDevice` 0x09FC → 0x09FD.
+
+- PIV MOVE KEY and its delete (`ykman piv keys move` / `keys delete`) leave
+  every certificate object where it is, as a YubiKey 5.8.0 does. RS-Key carried
+  the source slot's certificate to the destination, deleted the destination's
+  own certificate when the source had none, and deleted the slot's certificate
+  on a key delete, so a certificate held in a slot with no key was lost to a
+  move onto it. A certificate now stays with the slot, not the key: re-import it
+  where the key went if a host should find the key there.
+  `bcdDevice` 0x09FB → 0x09FC.
+
+- PIV's discovery object (`7E`) carries the PIN usage policy `40 00`, as a
+  YubiKey 5.8.0's does. RS-Key sent `40 10`, whose second byte ranks the
+  application PIN above a global PIN the card does not have.
+  `bcdDevice` 0x09FA → 0x09FB.
+
+- FIDO over CCID takes CTAP2's MSG, GETRESPONSE and CONTROL (`10`, `11`, `12`)
+  under class `00` as under `80`, as a YubiKey 5.8.0 does; answers a poll or
+  cancel with nothing pending `9000` with `CTAP2_ERR_USER_ACTION_TIMEOUT`,
+  whatever its P1-P2; answers CONTROL `01 00` `9000` and any other P1-P2
+  `6A86`; and refuses a U2F instruction under `80` with `6E00`. RS-Key answered
+  each of those `6D00`, or a poll `9000` with no body.
+  `bcdDevice` 0x09F9 → 0x09FA.
+
+- PIV GET DATA answers `6A82` to a tag list it cannot read and to a P1-P2 other
+  than `3FFF`, the answer for an object it does not hold, as a YubiKey 5.8.0
+  does. RS-Key answered a missing or malformed list (no data, `5C 00`, a length
+  the data does not carry, a long-form length, a four-byte tag, another outer
+  tag) `6A80`, and a wrong P1-P2 `6A86`. A one-byte body stays `6A80`, as on
+  every PIV command.
+  `bcdDevice` 0x09F8 → 0x09F9.
+
+- PIV MOVE KEY onto a slot that already holds a key is refused `6A80` and keeps
+  both keys, as a YubiKey 5.8.0 refuses it; RS-Key moved over it and destroyed
+  the key that was there, with its certificate. Its other refusals follow the
+  same reading: an empty source, or deleting an empty slot, `6A88` (was
+  `6A82`); a destination that takes no key, or a move onto itself, `6A80` (was
+  `6A86`); a source that takes no key `6A88` (was `6A86`).
+  `bcdDevice` 0x09F7 → 0x09F8.
+
+- A refused PIV RSA IMPORT leaves the key already in the slot in use. Whether
+  the new key could be laid out for the CRT signer (primes that share a factor,
+  a prime width it cannot take) was decided after the slot's metadata was
+  dropped, so that refusal left the old key unreachable: GET
+  METADATA and every use answered `6A88`. It is decided before anything is
+  written now.
+  `bcdDevice` 0x09F6 → 0x09F7.
+
+- On the board, an RSA GENERATE (PIV, OpenPGP) that does not close an open
+  command chain is refused `6883` and runs nothing, like any other command
+  outside the chain and as a YubiKey 5.8.0 refuses it; one that closes the chain
+  is joined to it. The accelerated keygen took the GENERATE alone and ran it,
+  then dropped the chain.
+  `bcdDevice` 0x09F5 → 0x09F6.
+
+- PIV IMPORT ASYMMETRIC KEY into a slot that takes no key is refused `6A80` once
+  the management key is in, as a YubiKey 5.8.0 refuses it and as RS-Key already
+  refused a bad algorithm, policy or key encoding there; it was `6A86`. A
+  YubiKey refused an authenticated IMPORT with nothing else across P1
+  `00`/`07`/`11`/`FF`, P2 `9A`/`9B`/`80`/`00`/`82` and three bodies. Slot `f9`
+  stays refused ([limitations](docs/limitations.md)), with the same `6A80`.
+  `bcdDevice` 0x09F4 → 0x09F5.
+
+- A GET RESPONSE is judged by its class byte as a YubiKey 5.8.0 judges it. While
+  a tail is owed, a secure-messaging class (`84 C0`) is served that tail, where
+  RS-Key answered `6E00`. With the chaining bit (`10`, `90`, `1C`) it is a
+  `9000` that changes nothing, owed tail or not: RS-Key served the tail to it,
+  or, with none owed, opened a chain on its header that the next command then
+  broke or ended (a GET DATA got `6883`). Inside an open chain it stays `6883`.
+  `bcdDevice` 0x09F3 → 0x09F4.
+
+- OATH, management and OTP serve a command under class `80` as they do under
+  `00`: a known instruction runs, an unknown one is `6D00`. A YubiKey 5.8.0 does
+  that on every card applet; RS-Key refused every class but `00` there with
+  `6E00`, while PIV and OpenPGP already took `80`.
+  `bcdDevice` 0x09F2 → 0x09F3.
+
+- An RSA key generated on the board (PIV GENERATE, OpenPGP GENERATE) is
+  answered in frames like every other response: a short command gets at most
+  its `Le`, 256 bytes where it carries none, and the rest through GET RESPONSE,
+  as on a YubiKey 5.8.0. The dual-core keygen answers off the applet
+  dispatcher, and it sent the whole public key in one frame whatever the
+  command's `Le` — 270 bytes for RSA-2048 to a client that asked for at most
+  256. Host builds and the emulator run the applet's own keygen and were not
+  affected.
+  `bcdDevice` 0x09F1 → 0x09F2.
+
+- PIV answers a GET RESPONSE (`00 C0`) with nothing left to serve `6A80`, as a
+  YubiKey 5.8.0's PIV does in every form it was read in; RS-Key answered
+  `6D00`, and `6A80` only to a one-byte body. OpenPGP, OATH, management, OTP
+  and FIDO keep `6D00`, which is what the YubiKey's answer.
+  `bcdDevice` 0x09F0 → 0x09F1.
+
+- PIV, OpenPGP and CTAP over CCID answer an extended command that carries no
+  `Le` with the whole response in one frame, as a YubiKey 5.8.0 does, and an
+  extended GET RESPONSE with no `Le` takes the rest of a chained response
+  whole. RS-Key cut both at 256 bytes and chained the rest through `61xx`.
+  python-fido2's `CtapPcscDevice` with `use_ext_apdu` sends exactly that form
+  and does not follow `61xx`, so its getInfo failed outright; ykman and Yubico
+  Authenticator send it too over USB, and paid a GET RESPONSE round trip per
+  256 bytes of a certificate or an RSA public key. A short command is still cut
+  at its `Le`, or at 256 where it carries none.
+  `bcdDevice` 0x09EF → 0x09F0.
+
+- OATH LIST and CALCULATE ALL cap each response frame at the command's `Le`,
+  as a YubiKey 5.8.0 does: a short command with no `Le` gets 256 bytes, and
+  the rest comes through SEND REMAINING, cut at the byte and with the bytes
+  left named in `61xx` once fewer than 256 remain. An extended command still
+  gets as much as one CCID frame holds. RS-Key sent the whole list in one
+  frame to a short command, past the 256 bytes ISO 7816-4 allows it, and cut
+  its own pages only at whole entries. ykman and Yubico Authenticator join
+  `61xx` frames, so they read the same list.
+  `bcdDevice` 0x09EE → 0x09EF.
+
+- OATH SEND REMAINING (`00 A5`) with no LIST or CALCULATE ALL page owed
+  answers `6D00`, as a YubiKey 5.8.0 does, and a page that is owed is served
+  whatever P1-P2 carry. With no page owed RS-Key answered `9000` and an empty
+  body under `00 00` and `6B00` under any other pair, and it refused an owed
+  page with `6B00` unless P1-P2 were `00 00`. ykman and Yubico Authenticator
+  send SEND REMAINING only after a `61xx`, with `00 00`, so they saw neither
+  difference.
+  `bcdDevice` 0x09ED → 0x09EE.
+
+- A SELECT of the OATH applet while it is already selected keeps a VALIDATE, as
+  a YubiKey 5.8.0 does; selecting another application and coming back, a card
+  reset, or a replug still locks it. RS-Key re-locked on every SELECT, so a
+  client that re-selects between commands was asked for the access code again
+  where a YubiKey does not ask. This widens how long a VALIDATE holds, as the
+  same rule did for PIV and OpenPGP. The password-safe OTP PIN is still dropped
+  by every SELECT.
+  `bcdDevice` 0x09EC → 0x09ED.
+
+- An unconfigured device reports `DEVICE_FLAGS = 00` in its management
+  DeviceInfo, as a factory YubiKey 5.8.0 does. It reported `80`, the touch-eject
+  flag, for a mode RS-Key never implemented; `ykman --diagnose` and any raw
+  DeviceInfo reader saw it set.
+  `bcdDevice` 0x09EB → 0x09EC.
+
+- The OTP applet answers INS `03` over CCID with its status, as a YubiKey does,
+  so a yubikit client driving it over CCID can write an NDEF configuration. That
+  write answers no status and yubikit asks for it with `03`, which RS-Key
+  answered `6D00`: the write landed and the client reported a failure. A YubiKey
+  5.8.0 answers `03` with the 6-byte status SELECT returns, for any P1, P2, body
+  or Le.
+  `bcdDevice` 0x09EA → 0x09EB.
+
+- OpenPGP offers and stores RSA attributes the way a YubiKey does, so
+  `ykman openpgp keys import` and every other yubikit client can set RSA.
+  DO `0xFA` listed RSA with a 32-bit exponent length (`01 0800 0020 00`), and
+  yubikit sets only an attribute that list holds, built with the 17 bits a
+  YubiKey lists: it refused RSA outright. PUT DATA C1/C2/C3 took nothing but 32
+  either, so a host writing a YubiKey's `0011` got `6A80`. A YubiKey 5.8.0 lists
+  17, takes any length from 17 bits up and stores 17, and refuses 16, another
+  import format or another width; RS-Key now does all of that, and the default
+  is `01 0800 0011 00`. An attribute an older build stored with 32 reads back as
+  17 and keeps its key; only a change of size retires one. Back on an older
+  build, which takes only 32, a slot set here refuses GENERATE and IMPORT until a
+  factory reset clears its attribute; its keys go on working.
+  `bcdDevice` 0x09E9 → 0x09EA.
+
+- OpenPGP answers a public-key read from an empty slot `6581`, as a YubiKey
+  does. GENERATE ASYMMETRIC KEY PAIR with `P1 = 81` on a slot with no public
+  key answered `6A88`; a YubiKey 5.8.0 answers `6581` for the signature, decryption
+  and authentication slots alike, under RSA attributes and P-256 ones. The
+  vendored OpenPGP suite expects `6581` only from a card it knows is a YubiKey,
+  so its three empty-slot cells are listed divergences now.
+  `bcdDevice` 0x09E8 → 0x09E9.
+
+- OpenPGP answers a private-key command on an empty slot `6985`, as a YubiKey
+  does. PSO:CDS, PSO:DECIPHER (its RSA and ECDH arms) and INTERNAL
+  AUTHENTICATE with no key in the slot answered `6A88`; a YubiKey 5.8.0 answers
+  `6985` to all three, under the default RSA attributes and under P-256 ones
+  alike.
+  `bcdDevice` 0x09E7 → 0x09E8.
+
+- OpenPGP spends a one-shot PW1 on every PSO:CDS past the PIN check, as a
+  YubiKey does. With PW1 valid for one signature (`C4` byte `00`), a PSO:CDS
+  the card refused — no key in the slot, an input past k − 11 — left the
+  verification standing, so the next PSO:CDS signed without a new VERIFY. A
+  YubiKey 5.8.0 spends it on those refused attempts too, and RS-Key now spends
+  it after every PSO:CDS past the PIN check; the signature counter still moves
+  only for a signature, on both.
+  `bcdDevice` 0x09E6 → 0x09E7.
+
+- OpenPGP signs an RSA PSO:CDS or INTERNAL AUTHENTICATE the way a YubiKey
+  does: PKCS#1 v1.5 over the command data exactly as sent. A bare hash of a
+  hash's length was wrapped in a DigestInfo first, and any other input — a
+  DigestInfo with a byte appended, an empty block, 102 bytes — was signed raw,
+  with no padding at all, up to the modulus width. A YubiKey 5.8.0 pads anything
+  from 0 to k − 11 bytes as type 1 and answers `6581` past that (measured at
+  RSA-2048; the tests hold the same limit at every size to 4096), and RS-Key now
+  does both. A host that sends a SHA-1 or SHA-2 DigestInfo, as gpg does, gets the
+  signature it always got; a DigestInfo for any other hash — scdaemon still
+  builds RIPEMD-160's — was signed raw and now gets one that verifies; and a host
+  that relied on a bare hash being wrapped now gets the YubiKey's signature over
+  the bare bytes. With MSE pointing INTERNAL
+  AUTHENTICATE at the decryption key, the raw arm had exponentiated any block
+  with that key — the unpadded block PSO:DECIPHER refuses; that is gone with it.
+  `bcdDevice` 0x09E5 → 0x09E6.
+
+- OpenPGP PSO:DECIPHER answers every RSA cryptogram it refuses with `6581`, as
+  a YubiKey 5.8.0 does. A padding or decryption failure answered `6400`, and a
+  cryptogram short of the modulus `6A80`; the YubiKey answers `6581` to each of
+  them — bad padding in any position, c = 0, n − 1 and n, bytes prepended, a
+  cryptogram one byte short or the padding indicator alone. A command with no
+  data at all still answers `6A80`, which is the YubiKey's answer too.
+  `bcdDevice` 0x09E4 → 0x09E5.
+
+- OpenPGP PSO:DECIPHER with an RSA key decrypted a cryptogram with bytes
+  appended. It read the first modulus-width bytes after the padding indicator and
+  dropped the rest, so `ct ‖ 00 00` gave back the message `ct` carries. A
+  YubiKey 5.8.0 answers `6581` to it, one byte appended or two, and so does
+  RS-Key now: the cryptogram must be exactly one modulus wide. Wycheproof's
+  `appended bytes to ciphertext` case found it, on RSA-2048, -3072 and -4096 and
+  both DECIPHER arms. `bcdDevice` 0x09E3 → 0x09E4.
+
+- ECDH takes only the point encodings a YubiKey takes. An X25519 peer is the
+  bare 32-byte u; the `0x40`-prefixed OpenPGP native form was accepted as well,
+  and a YubiKey 5.8.0 answers `6A80` to it in OpenPGP and PIV even around a good
+  point. A Weierstrass peer is the uncompressed `04 ‖ x ‖ y`; a compressed or
+  compact (`05 ‖ x`) one had its y rebuilt and was used, and the YubiKey answers
+  `6A80` to both on every curve it has. RS-Key now refuses all three with
+  `6A80`. A host that already decrypts on a YubiKey sends the accepted forms, so
+  it is unaffected. `bcdDevice` 0x09E2 → 0x09E3.
+
+- OpenPGP answers an unusable ECDH peer point the way a YubiKey does.
+  PSO:DECIPHER answered `6984` to every point it could not use. A YubiKey 5.8.0
+  tells two cases apart on each of its curves (P-256/384/521, brainpool
+  P-256/384, secp256k1, X25519): `6A80` for bytes the curve cannot decode, the
+  identity included, and `6581` for a decoded point with a coordinate off the
+  field or the curve. RS-Key now does the same. PIV already answered `6A80` to
+  both, as a YubiKey's PIV does, and is unchanged. One neighbour moved with it:
+  an agreement over a stored scalar the curve refuses answered `6984` and now
+  answers `6400`, as signing with that key always has — a key only an older
+  build's unchecked import could have stored. `bcdDevice` 0x09E1 → 0x09E2.
+
+- An X25519 agreement with a small-order peer is refused now, as a YubiKey
+  refuses it. Such a point agrees to 32 zero bytes whatever the key, and both
+  PSO:DECIPHER (OpenPGP Cv25519) and GENERAL AUTHENTICATE (PIV X25519) handed
+  those zeros back with `9000`. A YubiKey 5.8.0 answers `6581` in OpenPGP and
+  `6A80` in PIV to all seven small-order encodings, measured twice, and RS-Key
+  answers the same. No key material was exposed — the zeros are the same for
+  every key — so this is parity, not a disclosure.
+  `bcdDevice` 0x09E0 → 0x09E1.
+
+- A vendor (`0x41`) config write over CCID now applies its out-of-flash effects, as it
+  already did over CTAPHID. After such a command the CTAPHID handler re-loads the LED
+  block (whose live copy is firmware-side atomics the flash record does not reach) and,
+  if the write changed the boot-only USB identity, warm-reboots so it takes effect
+  without a replug. FIDO's CTAP2 vendor commands also run as ISO 7816 APDUs over CCID
+  (`80 10`, what python-fido2's `CtapPcscDevice` / ykman send), and that path did
+  neither: a vendor `CONFIG_WRITE` with the LED target sent that way took no effect
+  until the next reboot, and — worse — a phy write over CCID left the one-shot "phy
+  changed" flag standing, so the next unrelated CTAPHID `0x41` command (even an audit
+  read) consumed it and rebooted the device. (This is distinct from the `rsk led`
+  path, which selects the Vendor AID and writes the live LED atomics directly.) Both
+  effects now run through one shared helper that either transport calls for a `0x41`
+  command. Host tests over CCID assert the LED reload happens and that the phy write
+  reboots on the write, not on a later command. **bcdDevice → 0x09E0.**
+
+- A credentialManagement or getAssertion walk opened on a CTAPHID channel can no
+  longer be continued over CCID. A getNextRP / getNextCredential / getNextAssertion
+  carries no pinUvAuthParam of its own (§6.8): its authorization is that it arrives on
+  the `FidoState::channel` whose Begin opened the walk, and the same binds the
+  seed-backup MSE key. Only the CTAPHID handler stamped that field, so a FIDO command
+  over CCID ran with whatever CTAPHID CID was there last — letting a PC/SC process that
+  holds no token take the next leg of a walk a CTAPHID credential manager had opened,
+  reading its RP ids, user entities, credential ids and public keys, and knocking the
+  manager's own walk out of step. CCID now stamps the reserved channel 0 (which
+  `rsk_usb::ctaphid::CidAllocator` never hands out) before every dispatch, so a walk or
+  MSE key one transport opened is not continuable from the other; two PC/SC clients on
+  the one reader still share it, as they already share the card. A host test opens a
+  walk on a CTAPHID channel and asserts the CCID getNextRP is refused `NOT_ALLOWED`.
+  **bcdDevice → 0x09DF.**
+
+- The clientPIN soft lock now survives a warm reboot even when the wrong PINs were
+  spent over CCID. After `PIN_MISMATCH_LIMIT` consecutive wrong PINs CTAP 2.1
+  §6.5.5.6 stops accepting attempts until a real power cycle; that lock lives in RAM,
+  and only the board carries it across the ungated warm reboots a host can request
+  (the vendor and rescue applets' `INS_REBOOT` P1=00, the phy config-write reboot).
+  The lock was handed to the board only after a CTAPHID CBOR command, never after a
+  FIDO command over CCID — so three wrong PINs on the smart-card interface engaged the
+  lock in RAM alone, and a PC/SC process could then send the ungated reboot (served on
+  that same interface) to come back with the batch cleared and guess three more, over
+  and over, unattended — the restart-by-reboot attack §6.5.5.6 exists to stop. Both
+  transports now hand the lock over through one function after every dispatch. Host
+  tests spend the limit over each transport and assert the engaged lock reaches the
+  board; the CTAPHID one also pins that the lock handed over is the one the command
+  left, which a hand-over moved before the dispatch would get one command wrong. The
+  register only a real power-on clears is unchanged, so a board measurement still owes
+  `PLAT-RESET-001`. **bcdDevice → 0x09DE.**
+
+- A FIDO PIN changed or mistyped on the trusted panel, or a factory reset there, now
+  ends a host's pinUvAuthToken over CCID as well. FIDO also runs as ISO 7816 APDUs
+  on the smart-card interface (`80 10`, what python-fido2's `CtapPcscDevice` sends
+  over PC/SC), which is on by default and shares CTAPHID's session state, but only
+  a CBOR command over CTAPHID took the panel's one-shot signal. So the token a host
+  already held kept passing every `pinUvAuthParam` check over CCID —
+  makeCredential, getAssertion, credentialManagement, authenticatorConfig,
+  largeBlobs and the vendor 0x41 command — until a CTAPHID CBOR command took the
+  signal or the token's own §6.5.5.7 limits (30 s idle, 10 minutes in all) retired
+  it. Both transports now take the signal through one function before they
+  dispatch, and any CCID APDU takes it. A host test on each transport has a
+  credentialManagement call that verified answer `PIN_AUTH_INVALID` once the
+  signal is raised; the CTAPHID test used to check only that the flag was read,
+  which a take moved after the dispatch still passed. **bcdDevice → 0x09DD.**
+
+- The trusted panel no longer comes back to life between a factory reset and the
+  reset itself. The worker takes a queued reboot and then waits 200 ms before its
+  scrub and reset, on the executor the panel shares, and taking the request cleared
+  the flag the panel parks on: the panel handled input in that wait, over a store the
+  reset had already wiped. The "Hold to wipe" button's bottom edge overlaps the nav
+  bar, and a flow that closes on a contact still down left the panel armed, so a
+  finger still there could reopen a tab and hold the reset off — and an edit made
+  there would write the old `pin_declined` into the wiped store. The reboot slot now
+  reads pending from the request until the reset, and a handled tap disarms the
+  panel until the finger lifts. That also
+  stops a contact resting on the panel from counting as a fresh tap every tick, which
+  kept the auto-lock from ever arming. A completed reset ends the host's
+  pinUvAuthToken before the next CTAPHID command, too: a command already waiting is
+  still answered before the reboot, and could spend the token the wipe left alive
+  (`authenticatorConfig` writing `EF_EA_ENABLED` into the wiped store).
+  `PLAT-TOKEN-004` records what still runs in that window. The slot lives in
+  `rsk-device`; host tests drive the panel's own loop against a stand-in worker that
+  a source check holds to `firmware/src/worker.rs`. **bcdDevice → 0x09DC.**
+
+- An on-panel factory reset no longer leaves a pending Settings edit behind. The
+  menu's exit still wrote after a completed reset, and its debounce writes an edit
+  only after 1.5 s without a tap. So toggling Scramble PIN, or stepping brightness,
+  display sleep or the touch timeout, and then reaching Factory reset with no such
+  pause wrote `EF_DISPLAY` or `EF_PHY` back into the store the reset had just wiped,
+  ahead of its queued reboot. `EF_DISPLAY` carries `pin_declined`, so a device whose
+  owner had declined onboarding came back without offering it: the 0.4.6 fix for
+  that record made the reset leave the menu at once, and leaving still wrote. A
+  reset abandoned at its confirm screen still keeps the edit, and so does Settings →
+  Firmware, whose reboot to BOOTSEL wipes nothing. Host tests drive the real menu
+  through all three, and one of them now also kills the recorded code-level GAP
+  `BugWipeWithoutItsReboot`. **bcdDevice → 0x09DB.**
+
+### Internal
+
+- **The model-exception gate no longer counts a `set` or `case` row as carried
+  by a switch** — host only, no `bcdDevice` bump. A row's claimed mutant was held
+  to the `Bug…` switches its model definition reads, while the `omits` of a `set`
+  or `case` row is derived from the literal or the CASE arms alone. A switch on a
+  continuation line past a set literal, or in a CASE arm the scan does not parse,
+  was read, so a configuration turning it on passed as the row's mutant and the
+  row counted as carried, while the switch changed nothing the row records. Such
+  a row now claims no mutant: the `model exceptions` row in `check-assurance.sh`
+  fails on the claim, and the row owes until the derivation can read a switched
+  arm. One whose owed configuration exists is told that, not to claim it. None
+  claimed one; the three `set` rows and the two `case` rows owe.
+
+- **`check.sh` runs the rsk-fido tests on the `always-uv` build** — host only, no
+  `bcdDevice` bump. No row did, and 251 of the 882 cases failed there: every one
+  on a fixture that took alwaysUv to be off (a registration with no PIN, U2F
+  enabled), none on a defect. The fixtures now say so through
+  `tests::uv_optional`, which on that build writes the explicit alwaysUv-off a
+  `toggleAlwaysUv` would leave, unless the test set it first; the tests of the
+  flavour's own default leave it out. All 881 pass on both builds.
+
+- **The standing-assumption gate refuses a field its registry does not name** —
+  host only, no `bcdDevice` bump. `assurance/assumptions.toml` allows four
+  hand-written fields per entry, and nothing refused a fifth: a derived column
+  typed by hand, or a misspelled field, passed the `standing assumptions` row in
+  `check-assurance.sh`. The row now fails on any other key in an entry or at the
+  top level, and on an entry with no `constant`, which used to stop the gate with
+  a traceback.
+
+- **`check.sh` runs the rsk-fido tests with `preview-sign` and `largeblob-ext`
+  together** — host only, no `bcdDevice` bump. The previewSign test of how the two
+  extensions share makeCredential's unsigned outputs compiles only with both on,
+  and no row set both, so it had never run. It passes, and swapping the two
+  entries turns it red.
+
+- **A hand-written wipe of a whole value names every field and variant** —
+  refactor; the same bytes are wiped at the same points. `CredKey`'s drop wiped
+  its four curve scalars and let every other scheme through a `_ => {}` arm, so a
+  scheme added later with a key that does not wipe itself would have compiled
+  unwiped. It now names each variant, and the whole-value wipes that picked fields
+  by name list them all, as `FidoState`'s drop and the secure reboot already did:
+  the drops of the pinUvAuthToken inside `FidoState`, `ExpandedKey`, `Poly`, the
+  OpenPGP `Session`, `RsaCrt`, `CrtParams`, `RsaKey` and `RsaKeygen`; the OpenPGP
+  and PIV sessions' resets; the scrubs of the prime sieve, the HMAC-DRBG, the OTP
+  HID frame buffers, the CTAPHID reassembler, the typing queue, core1's mailbox
+  and the RNG; and the early wipes of a fused-key read, the PIV management key
+  and an enterprise registration's org key. A field or variant added to any of
+  them does not compile until its wipe is decided. The OpenPGP session's reset
+  assigns a fresh session, so its drop is the one wipe. Wipes of named buffers
+  keep their shape. `bcdDevice` 0x0A6A → 0x0A6B.
+
+- **OATH's deselect names every field too** — refactor, no behaviour change. The
+  secure reboot ends OATH's session through it, so a field added to the applet
+  does not compile until its reset is decided. `bcdDevice` 0x0A6C → 0x0A6D.
+
+- **cargo-mutants in three places: the fix loop, every pull request, and a
+  weekly sweep that gates against a baseline** — host only, no `bcdDevice`
+  bump. `scripts/mutants-all.sh --in-diff [<base>]` mutates only the lines the
+  working tree changes against its merge base with `<base>` (default
+  `origin/main`), untracked files under `crates/` included, and exits 2 when one
+  of those mutants survives; AGENTS.md puts `--in-diff HEAD` in the fix loop.
+  CI runs the same over each pull request's diff as `mutants-diff`, advisory
+  (`continue-on-error`, never a required check). The weekly sharded sweep now
+  compares each shard with `scripts/mutants-accepted.txt` — `path: mutation`
+  per accepted survivor, less its `:LINE:COL`, each under a `[class] reason` —
+  counting duplicates: a survivor it does not hold fails the shard, and so does
+  an entry the shard now catches or one no longer in the roster, so killing a
+  survivor means deleting its line. The file ships with no entries; the first
+  sweep's uploaded `new-survivors.txt` lists are its seed. Driven by
+  `scripts/test_mutants_all.py` over a fake `cargo-mutants`.
+
+- **The gate is two runners: `scripts/check.sh` on every commit,
+  `scripts/check-assurance.sh` once before a pull request** — host only, no
+  `bcdDevice` bump. The 26 rows of the TLA+ plumbing (generated
+  configurations, citations, scopes, verdicts, the co-refutation lint, the trace
+  and token refinements) and of the registries held against the prose
+  (assurance, build matrix, threat model, standing and platform assumptions,
+  evidence vector, bounds, published run counts and claims, the release
+  manifest, the toolchain TCB, the 11C record) move to the new runner, with the
+  32 tables behind them under a pytest `assurance` marker: `check.sh` collects
+  `scripts/` with `-m "not assurance"` and the new runner with `-m assurance`,
+  so an unmarked new table runs per commit and none falls between the two. CI
+  runs the new runner as its own `assurance` job on every pull request — no
+  path filter, since its rows read `docs/` — and weekly in deep-checks.
+  `run`, the signal traps and the per-checkout pytest base are shared through
+  `scripts/gate-lib.sh`. `docstring_count_gate.py` and the `SUITE_CASES`
+  equality pin are gone. AGENTS.md, CONTRIBUTING.md, README.md and
+  docs/testing.md carry the rule.
+
+- **The certificate builder signs with an EC key and nothing else** — refactor,
+  no behaviour change. Since GENERATE stopped writing a self-signed certificate
+  (0x0A15), every certificate the card makes is signed by an EC key, PIV's F9
+  and attestation ones and OpenPGP's attestation root and statements, and each
+  carries a keyUsage exactly when it is a CA. What only that self-signed
+  certificate used is gone: `rsk-x509`'s RSA and Ed25519 signers (`build` takes
+  the EC `PrivKey`), its keyUsage for a leaf, and with them its dependency on
+  `rsk-rsa`; in `rsk-rsa`, the full-key `rsa_sign`, the DigestInfo recogniser
+  `rsa_sign_em` and the unpadded `rsa_raw` it fell back to, with the
+  `openpgp_rsa_sign` fuzz target that drove the recogniser. The Wycheproof and
+  OpenSSL signing vectors still run through `rsa_sign_crt`, the signer OpenPGP
+  uses, and Wycheproof's through the software private operation a legacy key's
+  PSO:DECIPHER takes. `bcdDevice` 0x0A4E → 0x0A4F.
+
+- **The type-contracts line lands on develop** — merge. Its entries (the thirteen
+  under Fixed from the dead-stack sweep down to the `WAKE_PIN` build, and those
+  here from the host-bytes deny down to the one lint policy) meet develop's own
+  since 0x0A0E, and where develop's parity fixes land in a module under the
+  host-bytes deny they are written as it asks: `refuse_short_xfr`, the
+  dispatcher's frame limit, and PIV GENERATE without its certificate. Both lines
+  numbered their builds from 0x0A0F, so 0x0A0F–0x0A16 each name one build on
+  either line; the merge is the next. `bcdDevice` 0x0A16 and 0x0A4D → 0x0A4E.
+
+- **The parsers of host bytes cannot index, unwrap or truncate unchecked** —
+  refactor; the same bytes out for the same bytes in. A module that reads what a
+  host sent denies `clippy::indexing_slicing`, `unwrap_used`, `expect_used`,
+  `panic` and `cast_possible_truncation`, so every access there is one whose
+  failure the code handles: under `panic-halt` a panic on a host's bytes is a
+  board that answers nothing until it is unplugged. So far: `rsk-sdk`'s TLV walk,
+  whose `format_len` now takes the `[u8; 3]` it writes at most, its APDU
+  parser and applet dispatcher, `rsk-usb`'s CTAPHID and CCID transports,
+  `rsk-fido`'s credential-descriptor list decoder, `rsk-openpgp`'s data-object
+  writer, the two record codecs, `rsk-devconf` (the device configuration) and
+  `rsk-phy` (the board record the boot path reads), and the whole OTP applet,
+  `rsk-otp`, whose slot configure/update now takes the 52-byte config as a
+  `[u8; 52]` it cannot be handed short. A length narrowed into a byte is a
+  checked conversion, or a cast under a stated `#[expect]`, rather than a byte
+  picked out of a wider integer. The PIV applet, `rsk-piv`, whole crate,
+  follows the OTP one; its data-object reader takes the `[u8; RECORD_MAX]` it
+  fills. The OATH applet, `rsk-oath`, follows too; its PUT keeps a HOTP
+  credential's initial moving factor as the `[u8; 4]` it was checked to be.
+  In `rsk-fido` the CTAP handlers follow, a module at a time: `credential.rs`,
+  the credential-id box codec, `getassertion.rs`, `makecredential.rs`,
+  `u2f.rs`, `credmgmt.rs` and `clientpin.rs`. The allowList and excludeList take
+  their length from the constant `getNextAssertion`'s list does, not a cast each.
+  `bcdDevice` 0x0A35 → 0x0A49, then 0x0A4B.
+
+- **The trusted display a host ceremony reaches holds no cell its dispatch
+  borrows** — refactor; the same screens, touches and store writes. The panel's
+  `Ui` no longer carries the store, the device keys or the DRBG: the device's own
+  screens get them as `Parked` cells, handed to the status loop only, and run as
+  methods of a `Local` view, while `TouchPresence` holds the `Ui` alone. A borrow
+  of a cell the host dispatch is holding (issue #107) no longer compiles from
+  anything a ceremony can reach; the one store read left there, the device-PIN bit
+  a mid-ceremony sleep locks on, goes through a try-borrow that cannot wait. The
+  gate that walked the call graph for such borrows,
+  `scripts/display_borrow_gate.py`, is gone.
+  `bcdDevice` 0x0A34 → 0x0A35.
+
+- **A response's UP bit and the token's spend come from one presence test** — refactor;
+  the same status words, flags and token state. makeCredential's and
+  getAssertion's four user-presence tests (the matched and the no-match
+  assertion, the registration, the excludeList hit) go through one producer,
+  `Ctx::user_presence_test`: it polls the touch when there is one, runs CTAP
+  2.1 §6.5.5.7's triad when the request asserts `up`, and answers the `UpFlag`
+  the two success paths build their authenticator data's UP bit from. Only
+  those two commands' requests can ask it (a sealed trait).
+  `bcdDevice` 0x0A33 → 0x0A34.
+
+- **The MSE seed-backup channel is spent by taking it** — refactor; the same
+  status words in the same order. The channel a `VENDOR_MSE` handshake
+  establishes is one private `Option<MseChannel>` in the FIDO state, where a
+  live flag, the key, the device public key and the CTAPHID channel were four
+  public fields: a consumer (`BACKUP_EXPORT`, `BACKUP_LOAD`, `UNLOCK`, `ATT_IMPORT`,
+  `ATT_CLEAR`, and `authenticatorConfig`'s `AUT_ENABLE`) reaches the key only
+  through the channel `take_mse` hands it, which empties the slot whatever it
+  answers, and a handshake installs one only with the token `vacate_mse` gives
+  when no channel is live.
+  `bcdDevice` 0x0A32 → 0x0A33.
+
+- **A write over a pre-OTP copy takes the at-rest re-arm's token** — refactor;
+  the same appends in the same order. `rsk_fs::request_rescrub` answers
+  `Result<Rearmed>`, and the writes that supersede or tombstone a record the
+  chip serial alone keys (`Fs::put_over`, `put_key_over`, `delete_over`,
+  `delete_key_over`, and the applets' seal and verifier writers above them)
+  take it, so a write that passes it comes neither before the re-arm nor after
+  a refused one; which writes supersede such a copy stays the caller's call. The wipe
+  sweeps take the `RearmAttempted` that `rsk_fs::attempt_rescrub` returns, so
+  none runs without the best-effort re-arm ahead of it.
+  `bcdDevice` 0x0A31 → 0x0A32.
+
+- **An OTP slot's use counter moves only by the record's own methods** —
+  refactor; the same bytes reach flash for every command. `rsk-otp`'s slot
+  record is a type, `SlotRecord`, whose tail (the Yubico-OTP use counter or the
+  OATH-HOTP moving factor) is private: it is read from a slot, zeroed by a
+  CONFIGURE, carried by an UPDATE, or moved by a press, and
+  `seal::seal_put` seals a record and nothing else. The
+  gate that listed the sites persisting a record,
+  `scripts/counter_writers_gate.py`, is gone with its ledger.
+  `bcdDevice` 0x0A30 → 0x0A31.
+
+- **The counter partition's FIDs are written once** — refactor; the records stay
+  where they are on flash. `rsk-fs` declares the four counters (FIDO's global
+  and per-credential signature counters, OpenPGP's signature counter, the vendor
+  test counter) as `rsk_fs::counter::CounterFid`s with the one list
+  `COUNTER_FIDS`, which `rsk_store::is_counter_fid`, its test and the
+  `power_cut` fuzz target now read instead of their own copies of the four
+  numbers; a counter is written and read through `Fs::put_counter` and its
+  readers, since the plaintext `Fs::put` does not take one. The gate that held
+  the copies to each other, `scripts/partition_routing_gate.py`, is gone.
+  `bcdDevice` 0x0A2F → 0x0A30.
+
+- **Clippy refuses a reset outside the secure reboot** — a lint-policy change;
+  the code is the same. `clippy.toml` refuses `SCB::sys_reset`,
+  `rom_data::reset_to_usb_boot`, `reboot`, `reboot_ns` and
+  `Watchdog::trigger_reset`; the secure reboot, which scrubs the RAM secrets
+  first, and `rsk-wipe`, which holds none, keep their calls under an
+  `#[expect]`. `bcdDevice` 0x0A2E → 0x0A2F.
+
+- **The zeroize ban covers every crate** — a lint-policy change; the code is
+  the same. The workspace's clippy table now refuses a bare `Zeroize::zeroize`
+  and a `Zeroizing` everywhere, where each crate used to switch the ban on at
+  its own root as its secrets moved into `rsk_secret`; with every crate moved,
+  those per-crate switches are gone. `bcdDevice` 0x0A2D → 0x0A2E.
+
+- **The panel's PINs and backup words are typed** — refactor; nothing on the
+  panel or the wire changes. `rsk-display`'s PIN buffers (the device, FIDO and
+  PIV PIN and PUK flows), the pad-scramble entropy and the SLIP-39 share
+  indices are `rsk_secret::Secret`s, wiped where the hand wipes were and
+  again when dropped, and `rsk_piv::pad_pin` hands the padded PIN out in one.
+  The crate takes the zeroize ban at its root. `bcdDevice` 0x0A2C → 0x0A2D.
+
+- **The recovery phrase's word indices are typed** — refactor; the phrase is
+  the same, word for word. `rsk-bip39` builds the 24 indices, which
+  reconstruct the seed, in a `rsk_secret::Secret` and hands them out in it,
+  so the display's seed-phrase screen can only hold them in a type that wipes
+  itself. The crate takes the zeroize ban at its root.
+  `bcdDevice` 0x0A2B → 0x0A2C.
+
+- **FIDO's seed and the keys derived from it are typed** — refactor; nothing a
+  host sees changes. `rsk-fido`'s seed loaders, the credential, hmac-secret and
+  key-handle derivations, the ratchet, the persistent token and the vendor
+  channel key hand their bytes out in `rsk_secret::Secret`s instead of bare
+  arrays their callers wiped, and the PIN-protocol shared secrets, PIN hashes,
+  unsealed records and field bytes are `Secret`s too, wiped in place where the
+  hand wipes were and on every other exit — three callers that never wiped a
+  derived key now do. The largeBlobKey, which CTAP hands to the platform, is
+  still returned as a plain array, but the chain it is derived through is a
+  `Secret`. The unlocked seed copy in RAM is an `Option<Secret>` that wipes
+  itself when cleared. The session's token, key-agreement key and channel key,
+  and a credential key's own `Drop`, keep their bare wipes under an
+  `#[expect]`. The crate takes the zeroize ban at its root.
+  `bcdDevice` 0x0A29 → 0x0A2A.
+
+- **OpenPGP's DEK and sealed keys are typed** — refactor; nothing a host sees
+  changes. `rsk-openpgp`'s DEK load and its unseal write only into a
+  `rsk_secret::Secret`, the DEK's split keys and the AES key are handed out in
+  `Secret`s, and every DEK, staged DEK record, key-data and sealed-blob buffer
+  it wiped by hand is one, wiped in place where the hand wipes were and on
+  every other exit — which now includes a failed DEK load in six callers and
+  a staged DEK's early return after an unauthenticated decrypt. Six functions
+  that wrapped their body in a closure only so the wipe would run after a `?`
+  are plain code again. The `Session`'s PIN-derived keys keep their bare
+  wipes in `reset` and `Drop` under an `#[expect]`. The crate takes the
+  zeroize ban at its root. `bcdDevice` 0x0A28 → 0x0A29.
+
+- **PIV's keys and sealed plaintext are typed** — refactor; nothing a host
+  sees changes. `rsk-piv`'s unseal writes only into a `rsk_secret::Secret`,
+  and the seal key, the sealing blob, every unsealed key buffer, the
+  management key in GENERAL AUTHENTICATE and its reads, the RSA decipher
+  output, the ECDH secret, the PIN record a PIN change writes and the X25519
+  import buffer are `Secret`s, wiped in place where the hand wipes were and on
+  every other exit — which now includes GENERAL AUTHENTICATE's `?` on a
+  response that does not fit, where the decipher output and the ECDH secret
+  were left. The three loaders and stores that wrapped their body in a
+  closure only so the wipe would run after a `?` are plain code again. The
+  challenge between GENERAL
+  AUTHENTICATE's two halves keeps its bare wipe under an `#[expect]`. The
+  crate takes the zeroize ban at its root. `bcdDevice` 0x0A27 → 0x0A28.
+
+- **SLIP-39's working buffers are typed** — refactor; the shares are the same,
+  byte for byte. `rsk-slip39`'s Feistel halves, round outputs, PBKDF2 state,
+  the random part, the Shamir base points and the split shares are
+  `rsk_secret::Secret`s, wiped where the hand wipes were and again when
+  dropped; the Feistel swap copies bytes into the halves rather than moving
+  arrays between them. The crate takes the zeroize ban at its root.
+  `bcdDevice` 0x0A26 → 0x0A27.
+
+- **The device key's scalar is typed** — refactor; nothing a host sees
+  changes. `rsk-rescue`'s keydev unseal hands the scalar out in a
+  `rsk_secret::Secret` instead of a bare array its callers wiped, its seal key
+  and the sealed record's buffers are `Secret`s, and the signing key is built
+  from a reference to the scalar rather than a copy of it. The crate takes the
+  zeroize ban at its root. `bcdDevice` 0x0A25 → 0x0A26.
+
+- **The dispatchers' response buffers take the zeroize ban** — refactor;
+  nothing a host sees changes. `rsk-device`'s CTAP and CCID handlers keep their
+  response buffer for their whole life and wipe it after each hand-off and on
+  a secure reboot, so those three wipes stay bare under an `#[expect]` that
+  names the wipe point; the crate takes the zeroize ban at its root.
+  `bcdDevice` 0x0A24 → 0x0A25.
+
+- **Yubico OTP's seal and frame buffers are typed** — refactor; nothing a host
+  sees changes. `rsk-otp`'s seal key, the sealing and unsealing blob, the
+  reseal pass's two buffers, the keyboard frame's reassembly buffer and the
+  taken request's payload are `rsk_secret::Secret`s, wiped in place where the
+  hand wipes were and on every other exit. The crate takes the zeroize ban at
+  its root, and `zeroize` is left to its tests. `bcdDevice` 0x0A21 → 0x0A22.
+
+- **OATH's seal buffers are typed** — refactor; nothing a host sees changes.
+  `rsk-oath`'s seal key, the sealing and unsealing blob, the credential walk's
+  scratch and the reseal pass's two buffers are `rsk_secret::Secret`s, wiped in
+  place where the hand wipes were and on every other exit. The crate takes the
+  zeroize ban at its root. `bcdDevice` 0x0A1F → 0x0A20.
+
+- **RSA's working buffers and bignums are typed** — refactor; nothing a host
+  sees changes. `rsk-rsa`'s modexp and CRT buffers (the assembly's limb arrays,
+  a prime candidate among them), the CRT field bytes, the blinding factor, the
+  keygen's transport bytes and the software decryption's padded plaintext are
+  `rsk_secret::Secret`s or sit under a `WipeGuard`, wiped in place where the
+  hand wipes were and on every other exit; its 29 `Zeroizing` uses are
+  `Secret`s.
+  `RsaKey`, its CRT parameters, `RsaCrt` and the keygen state keep their
+  hand-written wiping `Drop`, the prime sieve its `scrub` and the keygen's
+  duplicate-prime refusal its wipe of a by-value prime: six `#[expect]`s. The
+  assembly wrappers' stack frames are unchanged; the drops wiping again what
+  `.wipe()` already cleared add 936 bytes of code. The crate takes the zeroize
+  ban at its root.
+  `bcdDevice` 0x0A1D → 0x0A1E.
+
+- **The EC key's scalars are typed** — refactor; nothing a host sees changes.
+  `rsk-ec`'s key generation draws each candidate scalar into a
+  `rsk_secret::Secret` and wipes it in place where the hand wipe was; the
+  scalars signing and public-point derivation lift out of the stored key, and
+  the X25519 little-endian scalar and ECDH shared secret, are `Secret`s instead
+  of `Zeroizing` or plain arrays. `PrivKey` keeps its hand-written wiping
+  `Drop` under an `#[expect]`. The crate takes the zeroize ban at its root.
+  `bcdDevice` 0x0A1C → 0x0A1D.
+
+- **ML-DSA's secrets are typed, and it drops its zeroize proc-macro** —
+  refactor; nothing a host sees changes. The two 64-byte seeds `rsk-mldsa`
+  wiped by hand — ρ′, which expands to the whole secret key, and ρ″, the
+  per-signature mask seed — are `rsk_secret::Secret`s, wiped in place where the
+  hand wipe was and on every other exit. `Poly` and `ExpandedKey` keep wiping
+  themselves on drop through hand-written `Drop` impls instead of
+  `derive(Zeroize, ZeroizeOnDrop)`, whose generated field wipes the zeroize ban
+  would refuse; `ExpandedKey` loses `Clone`, which nothing used, so the expanded
+  key cannot be duplicated. The crate takes the ban at its root; `zeroize_derive`
+  leaves the dependency graph. `bcdDevice` 0x0A1A → 0x0A1B.
+
+- **The transports and the dispatcher wipe through guards** — refactor; nothing
+  a host sees changes. CCID's request is wiped by a `WipeGuard` as soon as the
+  handler is done with it, before the reply goes out rather than after, and its
+  reply, like CTAPHID's response scratch, once sent; a guard would also cover a
+  future dropped mid-transfer, which nothing in the tree does today. The APDU
+  dispatcher wipes a reassembled chained command under a guard across its
+  dispatch, and its four inline chain drops call `clear_chaining`. What stays
+  bare, under `#[expect(clippy::disallowed_methods)]` with the reason, are wipes
+  of buffers that outlive a call: the dispatcher's held chain and GET RESPONSE
+  tail, and CTAPHID's reassembly buffer. `rsk-usb` and `rsk-sdk` take the
+  zeroize ban at their roots. `bcdDevice` 0x0A19 → 0x0A1A.
+
+- **The firmware's own secrets are typed too** — refactor; nothing a host sees
+  changes. The core1 mailbox holds the keygen's DRBG seed and each prime in
+  transit as `rsk_secret::Secret`, so assigning a slot wipes the static in
+  place; the TRNG seed and reseed buffers, and the pinpad's PIN and assembled
+  VERIFY, are `Secret`s wiped in place where the hand wipes were; the three
+  transport round trips copy the response out through one `WipeGuard`. The two
+  wipes whose point no scope spans — the request buffer after dispatch and the
+  keyboard queue at reboot — carry `#[expect(clippy::disallowed_methods)]` and
+  the reason, so a stale one fails the build. The firmware crate takes the
+  zeroize ban at its root. `bcdDevice` 0x0A17 → 0x0A18.
+
+- **Derived keys leave `rsk-crypto` as `Secret`s** — refactor; nothing a host
+  sees changes. The PIN KDF (`derive_kbase`, `derive_kver`,
+  `pin_derive_verifier`, `pin_derive_session`, `pin_derive_kenc`,
+  `pin_derive_kenc2`, `double_hash_pin`), the pinUvAuth ECDH shared secret and
+  the HMAC-DRBG's state are `rsk_secret::Secret` now, so a caller's copy is
+  wiped when it goes out of scope. Of the 31 hand wipes that followed them at
+  call sites, the 16 that sat before a scope's end are `Secret::wipe()`, which
+  zeroizes in place: `drop(secret)` would move the value and wipe only the
+  copy. The PIN verifiers that clientPIN, OATH, OpenPGP and PIV
+  derive to check a PIN were never wiped; they are now. A `FusedKey` fills the
+  caller's buffer instead of returning the key, so the OTP read lands in a
+  `Secret`. `rsk-crypto` takes the zeroize ban at its root and no longer
+  depends on `zeroize` itself. `bcdDevice` 0x0A16 → 0x0A17.
+
+- **The reboot's scrubs are held by the compiler** — refactor, no behaviour
+  change. `Worker::reboot` destructures the worker exhaustively before it wipes,
+  so a new field cannot join it without a decision about the secrets it holds,
+  and deleting one of the three scrubs leaves its binding unused, which the
+  build refuses. The register that used to derive that list went with
+  `secrets_gate.py`. `bcdDevice` 0x0A15 → 0x0A16.
+
+- **A bare wipe no longer compiles** — build, no behaviour change. The root
+  `clippy.toml` refuses `Zeroize::zeroize` and `Zeroizing` outside
+  `rsk-secret`'s two `Drop` impls, so a new secret has to live in `Secret` or
+  under a `WipeGuard` and is wiped on every exit, a `?` included. It is on per
+  crate: `rsk-secret` takes it now, and each crate takes it at its root as its
+  secrets move over, the workspace leaving it at allow until the last one
+  does. `scripts/secrets_gate.py` and
+  `assurance/secrets.toml` are gone: they counted wipes, and could not see a
+  secret nobody wiped, which is the case the ban and the type now refuse; the
+  threat model states the two exits no type reaches, a panic and a move.
+  `bcdDevice` 0x0A14 → 0x0A15.
+
+- **`rsk-secret`: a type for key-grade bytes that wipes itself** — new crate,
+  nothing uses it yet. `Secret<T>` has no `Copy`, `Clone`, `Debug` or
+  `PartialEq`, so a secret cannot be duplicated, printed or compared in variable
+  time by accident, and its `Drop` zeroizes it on every exit — a `?` included,
+  which the explicit `.zeroize()` at the end of a function the tree relies on
+  today does not cover. `WipeGuard` does the same for a borrowed buffer that
+  outlives the scope. It sits in a new bottom tier of the crate graph, below the
+  algorithm crates, so every crate that holds a secret can name it.
+  `bcdDevice` 0x0A11 → 0x0A12.
+
+- **`unsafe` compiles only in the three crates docs/unsafe.md names** — build, no
+  behaviour change. The workspace denies `unsafe_code`; `firmware`, `rsk-wipe`
+  and `rsk-rsa` (on the device target, where it links the assembly) lift it at
+  their crate root, the two build scripts at their one `set_var`. In the other
+  twenty-six crates a new `unsafe` now fails to compile instead of failing
+  `platform_gate.py`'s census afterwards. `clippy::undocumented_unsafe_blocks`
+  refuses a block or `unsafe impl` without its `// SAFETY:` comment; eleven sites
+  lacked one, five of them compiled into the display build only, and writing
+  them found the `WAKE_PIN` gap fixed above. `bcdDevice` 0x0A10 → 0x0A11.
+
+- **One lint policy for the workspace** — build, no behaviour change. Twenty
+  crates each carried the same `[lints.rust]` table (the `cfg(kani)` check-cfg)
+  and nine carried none; the table now lives once, as `[workspace.lints]` in the
+  root `Cargo.toml`, and all 29 members inherit it. It is where the lints the
+  crates must share will go. `bcdDevice` 0x0A0E → 0x0A0F.
+- **A TLC run past an hour could not be recorded.** TLC prints
+  `Finished in 01h 12min` past an hour and drops the seconds, and
+  `run_count_gate.py` read that line as minutes and seconds only, so `--record`
+  refused a 72-minute `Liveness.cfg` with "TLC never said it finished". It reads
+  the hour form now, and a runner clock may trail TLC's by the up to 59 s TLC no
+  longer prints on top of the JVM bracket.
+
+- **Two gates on one machine made each other's TLC runs fail.** SANY writes each
+  standard module a spec extends into `java.io.tmpdir` under its bare name,
+  truncating and rewriting it on every run and deleting it at exit, and on macOS
+  that directory is the user's one `/var/folders/…/T/` whatever `$TMPDIR` says, so
+  two TLCs at once parsed a half-written `Naturals.tla` and exited 150 — the
+  security-trace row's "TLC exit 150" that only ever came up beside another gate.
+  `formal/run-tlc.sh`, `security_trace.py` and `export_token_relation.py` hand
+  every launch a `java.io.tmpdir` of its own, and a test at each of the three
+  runs them under a default nothing can be written to. The TLC tiers are
+  re-recorded against the new runner.
+
+- **Two gates at once measured one comutant in one worktree.** `comutate.py` put
+  every bug's worktree at `/tmp/rsk-comutant-<bug>` whatever the checkout, and
+  clears what it finds there first, so a second gate on the same bug deleted the
+  first's live tree or died "already exists". The directory is keyed by the
+  checkout now; one checkout keeps one, which the stale-registration case needs.
+
+- **The firmware's tasks kept their state twice** — refactor, 38 KiB of RAM back.
+  `ctap_task`, `ccid_task` and `worker_task` took the CTAPHID class, the CCID
+  class and the worker by value, and an async function's future holds a by-value
+  argument twice: the argument and the local it is moved into. They take a
+  `&'static mut` into a `StaticCell` now, as the other long-lived state does, and
+  the stack the linker leaves grows from 174 to 212 KiB (171 to 209 KiB on the
+  display build). No behaviour changes. `bcdDevice` 0x0A0D → 0x0A0E.
+
+- **OpenPGP GET DATA no longer sniffs its answer for a header to strip** —
+  refactor. Since a DO only a template carries answers `6B00` on its own
+  (0x0A08), no primitive DO GET DATA serves alone opens with a header spanning
+  it, so the strip never fired: armed with a panic, it was not reached by the
+  crate's tests or by the on-device, ykman and OpenPGP card suites against
+  `tools/emu`, and a C4 made to carry its header reached it at once. One stored
+  state still differed: a `C4` an old build wrote over its maximum lengths
+  (`01 05 7F 7F …`), which boot's repair puts back unless that write fails, read
+  cut to its last five bytes and now reads whole. `bcdDevice` 0x0A08 → 0x0A09.
+
+- **The X.509 builder moved out of `rsk-piv` into `rsk-x509`** — refactor, no
+  behaviour change. OpenPGP's attestation statements are X.509 certificates too,
+  and no applet may name another, so the builder PIV's slot, F9 and attestation
+  certificates use now sits below both, as `rsk-ec` and `rsk-rsa` did before it.
+  `rsk_piv::x509` keeps its interface over it. Seven PIV certificates, one of every
+  shape the applet builds, and the ECDSA answer encoding come out byte-identical
+  under a fixed RNG before and after the move. `bcdDevice` 0x0A04 → 0x0A05.
+
+- **`tools/emu` never took the reboot a panel factory reset queues.** `firmware/src/
+  worker.rs` takes a reboot the trusted display queues after the next transport request
+  or on its idle tick. The panel's reset did wipe, then parked on its request for good
+  while the host was answered from a store with no seed. One reboot step now runs after
+  each answer and on an idle pass, never ahead of a request already waiting, and builds
+  the CCID applets afresh as well as the CTAP handler: PIV, still holding the applet that
+  had provisioned its files, skipped that after the wipe and answered VERIFY `6A88`. A
+  BOOTSEL the panel asks for is logged and dropped, as the rescue applet's already was.
+  (The Management reset this also served was removed later in this release.)
+  `a_factory_reset_on_the_panel_reboots_the_device` fails against the old loop,
+  `piv_takes_its_default_pin_again_after_a_panel_reset` against a reboot that keeps the
+  applets, and `a_waiting_request_is_answered_before_the_panels_reboot` — its host
+  shares the device loop's thread, so the order is not a race — against a reboot taken
+  ahead of a waiting request; between them they also kill the request dropped, the wipe
+  without its reboot, the panel's reboot unserved, its request never cleared and a loop
+  with no idle pass. The reboot does not rebuild the panel's own `Ui`, which keeps its
+  RAM state: a lock taken before a host reset lingers where a board boots onto onboarding,
+  and `pin_declined`, scramble and brightness survive, so the next settings save writes
+  them back into the wiped image. A replug has the same gap; both are left for their own
+  change. Host-only: no firmware image differs.
+
+- **`tools/emu` restarted over a `--store` image saw every slot as free.**
+  `firmware/src/main.rs` rebuilds the store's in-RAM file index (`Fs::scan`) before
+  anything reads flash; the emulator's boot block never did. Reads by FID still
+  reached flash, but everything that walks a slot bitmap came back empty and a new
+  record took an occupied slot. Measured after a restart: a resident credential
+  answered as absent and the next registration overwrote it, and OATH listed nothing
+  and put a new name over the live credential. One process hid it, because the index
+  survives a replug in RAM. The boot block now scans first, at process start, replug
+  and warm reboot alike. `a_restart_over_the_store_keeps_its_resident_credentials`
+  fails without the process-start scan (the credential is not found, and two
+  registrations leave one record); the replug and warm-reboot scans rebuild an index
+  that already matches flash unless a fault was injected, so no test separates them.
+  Host-only: no firmware image differs.
 
 ## [0.4.11] - 2026-09-08
 
@@ -647,7 +3561,7 @@ the release carries the flag, the decision stays yours
   feature at all. The three `SEC-DISP-*` cells stay `gap` for that reason.
 
 - **The delete ledger carried the record half of the contract and not the value
-  half.** Stage 5A п.6 of the formal programme asks the `Fs` contract to
+  half.** Stage 5A item 6 of the formal programme asks the `Fs` contract to
   distinguish three outcomes — "value removed, metadata left", "both removed",
   "the medium refused" — and to name which each `force_delete` site requires.
   The three are already typed in `rsk-fs` as `Removal { value, record }`, and
@@ -712,7 +3626,7 @@ the release carries the flag, the decision stays yours
   repo had.
 
 - **The model's five permission subsets were a scope claiming to be a
-  description, and both halves of stage 2 п.7 now answer for it.** `PermSets`
+  description, and both halves of stage 2 item 7 now answer for it.** `PermSets`
   carried five of the sixteen subsets of its four permission elements with a
   comment calling them "the sets a host actually asks for". Measured by driving
   `client_pin` over all 256 requestable permission bytes on both
@@ -2064,7 +4978,7 @@ the release carries the flag, the decision stays yours
   drift at one site and leave any assertion about the other four passing. All
   five now call one `const fn slot(fid) -> (usize, u8)`.
 
-  What that buys is stage 5A п.5 of the formal programme: the aliasing clauses
+  What that buys is stage 5A item 5 of the formal programme: the aliasing clauses
   `store_refinement_kani.rs` proves are drawn from `0..FID_LIMIT`, and under
   `cfg(kani)` that limit is 24 of 65 536 bits. A `const _: () = assert!` beside
   `slot` now enumerates all 65 536 FIDs and states that its two halves recompose
@@ -2137,7 +5051,7 @@ the release carries the flag, the decision stays yours
   when told "not 123456" (`123321`, `112233`, `112358`). The two-symbol rule is not a
   length argument: two symbols leave two smudges on the glass, and the space an onlooker
   or a fingerprint leaves is then the orderings of two marks, however long the PIN.
-  Every rule reads **code points**, so a repeated multi-byte character (`АААААА`) is
+  Every rule reads **code points**, so a repeated multi-byte character (`ÄÄÄÄÄÄ`) is
   refused where the old byte-wise check passed it, and a PIN that is not UTF-8 is refused
   rather than measured. The default build is untouched — it keeps the CTAP-standard
   four-code-point floor with no complexity rule. **bcdDevice → 0x0982.**
@@ -2958,7 +5872,7 @@ the release carries the flag, the decision stays yours
   that violate `-003` and `-004` are `BugMetaAddDropsOnFault` and
   `BugMetaDeleteDropsOnFault`, both **faulted EF_META reads**; `Reboot` sets
   `metaAbsent' = FALSE`, so a power cycle structurally cannot reach the false
-  absence `-004` forbids; and `crates/rsk-store/src/lib.rs:236` states outright
+  absence `-004` forbids; and `crates/rsk-store/src/lib.rs:238` states outright
   that a read fault is *"which a NOR power cut never produces (a torn write yields
   deterministic bytes, not a read error)"*. Their `why` now says that, names
   `TM-HOST-POWER-CUT` as the clause it is **not**, and pins the sentence it rests
@@ -3303,7 +6217,7 @@ the release carries the flag, the decision stays yours
   number, two vocabularies widened by a member). Six also redden the real
   checkout. Six more did not apply on the first pass and the harness said so — an
   unapplied patch over a green suite reads exactly like a survivor.
-- **The two registries are one graph.** Stage 1B п.3's link vocabulary less
+- **The two registries are one graph.** Stage 1B item 3's link vocabulary less
   `contradicts`: `supports` names registry properties, `depends_on` and `refines`
   name entries here, and `discharges` names a constant of the first registry —
   with `covers`/`discharges` held to agree, so the two files cannot hold two
@@ -3374,7 +6288,7 @@ the release carries the flag, the decision stays yours
   `test_assurance_gate.py` said "28 of 44" — while the tree has **46**
   MODELLED-ONLY rows, 28 of which carry a driven, killed code twin. The number is
   generated into `docs/assurance-vector.md` now and the four copies point at it,
-  which is 1A п.2's open class closed the way §7.1 asks rather than refreshed for
+  which is 1A item 2's open class closed the way §7.1 asks rather than refreshed for
   the next reader to find stale again.
 
 - **The first closed slice's raw evidence bundle, held to stage 1A's ten-group
@@ -4494,7 +7408,7 @@ the release carries the flag, the decision stays yours
   `Ctx::load_keydev` cited three times as `lib.rs:91-95`, which is
   `require_presence`, and `state.keydev_dec` as `state.rs:360-362`, which is
   `channel`. The last two are in `scripts/security_trace.py`, which no gate reads:
-  both name `reset.rs:187` for the reset-window predicate that is on `:211` — the
+  both name `reset.rs:191` for the reset-window predicate that is on `:215` — the
   same sentence `formal/README.md` already cited correctly, which is the tell that
   found them. Re-locked, each verified through the lock's own first/last line.
   No syntactic rule was added: "reject a citation whose first or last line is a
@@ -4951,7 +7865,7 @@ the release carries the flag, the decision stays yours
   marker-still-there arm would have reported as a healthy device.
 
   **No `tests/*.py` repro exists and none is claimed.** `rsk_fs::run_at_rest_lap`
-  has exactly one caller, `firmware/src/main.rs:633`, gated on `mkek.is_some()`;
+  has exactly one caller, `firmware/src/main.rs:634`, gated on `mkek.is_some()`;
   `tools/emu` never calls it and builds its device with `otp_key: None`, so on the
   emulator `EF_HARDENED` is never latched and its RAM medium refuses nothing. A
   board would need a `FAKE_MKEK` build *and* a persistently refusing
@@ -5377,7 +8291,7 @@ the release carries the flag, the decision stays yours
 - **The boot pass re-keys pre-OTP records too, and standing before the at-rest lap
   is not the same as standing before the lap that latched.** 0x09BD swept thirteen
   lazy re-keys onto "re-arm first, and write only if the re-arm landed"; the eight
-  calls at `firmware/src/main.rs:610-617` were left out on the reading that the lap
+  calls at `firmware/src/main.rs:611-618` were left out on the reading that the lap
   at the foot of their own block covers whatever they supersede. It covers only the
   boot they run on. `run_at_rest_lap` latches `EF_HARDENED` once per device and
   gates on it and nothing else, so a boot that silently skipped a record — every
@@ -5448,7 +8362,7 @@ the release carries the flag, the decision stays yours
 
 - **OATH's boot pass was the sixth member of the boot-migration class, and it
   carries the two arms the other five did.** `rsk_oath::migrate_seal` runs at
-  `firmware/src/main.rs:613`, ahead of `run_at_rest_lap`, and standing ahead of
+  `firmware/src/main.rs:614`, ahead of `run_at_rest_lap`, and standing ahead of
   the lap is not the same as standing ahead of every lap — `rsk-fs`'s own doc now
   says so. `reseal_if_plaintext` re-seals a credential (or the SET CODE key) that
   opens only under `dev.without_otp()`, i.e. under `HKDF("NO-OTP", serial_hash)`,
@@ -10061,7 +12975,7 @@ several sites of a rule the codebase had already decided once and swept incomple
   mode `Development` — so it matches what the reader is looking at rather than a
   provisioned key or the `VIDPID=Yubikey5` flavor.
 - **[Telesma](https://github.com/go-ctap/app) is tracked in the interop matrix as
-  `⏳ untested`** — the first row to use a mark [interop.md](docs/interop.md) has had
+  `⏳ untested`** — the first row to use a mark the [interop report](assurance/reports/interop.md) has had
   in its legend from the start. It is a desktop CTAP workbench over
   [`go-ctap/ctap`](https://github.com/go-ctap/ctap), an independent CTAP 2.0–2.3
   client stack, and that is the reason it is worth a row: every FIDO cell in that
@@ -12069,7 +14983,7 @@ strict-config`) remains the complete answer.
   that legitimately differ. Host-testable engine (`python -m pytest
   tests/interop/test_diff.py`). A first macOS run against a YubiKey 5C NFC found
   85 identical / 76 expected-divergence / 1 unexpected field (see
-  [docs/interop.md](docs/interop.md) → "Differential against a real YubiKey").
+  [Differential against a real YubiKey](assurance/reports/interop.md#differential-against-a-real-yubikey)).
 
 ### Changed
 
@@ -13746,7 +16660,7 @@ family that keeps the "enterprise" features in the open tree.
 
 - 39 fuzz targets, Kani proofs, a Miri pass, power-cut torture, bit-reproducible
   `nix build` images (per platform, per `flake.lock`), and a hardware-verified
-  interop matrix ([docs/interop.md](docs/interop.md)).
+  interop matrix ([interop report](assurance/reports/interop.md)).
 
 ### Release artifacts
 
@@ -13758,7 +16672,8 @@ family that keeps the "enterprise" features in the open tree.
   signature of it, and a CycloneDX SBOM. See
   [docs/releases.md](docs/releases.md) to verify a download.
 
-[Unreleased]: https://github.com/TheMaxMur/RS-Key/compare/v0.4.11...HEAD
+[Unreleased]: https://github.com/TheMaxMur/RS-Key/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/TheMaxMur/RS-Key/compare/v0.4.11...v0.5.0
 [0.4.11]: https://github.com/TheMaxMur/RS-Key/compare/v0.4.10...v0.4.11
 [0.4.10]: https://github.com/TheMaxMur/RS-Key/compare/v0.4.9...v0.4.10
 [0.4.9]: https://github.com/TheMaxMur/RS-Key/compare/v0.4.8...v0.4.9

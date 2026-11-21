@@ -4,6 +4,16 @@
 use super::*;
 
 #[test]
+fn the_largest_public_key_object_keeps_only_its_documented_byte_of_slack() {
+    let key = crate::PrivKey::from_scalar(crate::Curve::P521, &[1]).unwrap();
+    let mut point = [0; MAX_EC_POINT];
+    let n = key.public_point(&mut point).unwrap();
+    let mut out = [0; MAX_EC_PUBDO];
+    let written = make_ec_pubkey_do(&point[..n], &mut out);
+    assert_eq!(out.len() - written, 1);
+}
+
+#[test]
 fn short_form_wraps_a_p256_point() {
     // A 65-byte SEC1 point: both lengths fit in one byte, so the DO is
     // `7F49 43 { 86 41 <point> }` — 4 bytes of framing plus the point.

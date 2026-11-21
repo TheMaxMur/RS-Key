@@ -1,0 +1,36 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 RS-Key contributors
+
+[package]
+name = "firmware-ns"
+version = "0.1.0"
+edition = "2024"
+license = "AGPL-3.0-only"
+publish = false
+
+[lints]
+workspace = true
+
+[features]
+strict-config = ["rsk-otp/strict-config"]
+test-hostile-access = []
+test-gateway-probes = []
+
+[dependencies]
+embassy-executor = { git = "https://github.com/embassy-rs/embassy", branch = "main", features = ["platform-cortex-m", "executor-interrupt"] }
+embassy-rp = { git = "https://github.com/embassy-rs/embassy", branch = "main", default-features = false, features = ["rp235xa", "imagedef-none"] }
+embassy-time = { git = "https://github.com/embassy-rs/embassy", branch = "main" }
+embassy-time-driver = { git = "https://github.com/embassy-rs/embassy", branch = "main", features = ["tick-hz-1_000_000"] }
+embassy-time-queue-utils = { git = "https://github.com/embassy-rs/embassy", branch = "main", features = ["generic-queue-16"] }
+embassy-sync = { git = "https://github.com/embassy-rs/embassy", branch = "main" }
+embassy-usb = { git = "https://github.com/embassy-rs/embassy", branch = "main" }
+critical-section = { version = "1.2", features = ["restore-state-bool"] }
+static_cell = "2"
+cortex-m = "0.7"
+cortex-m-rt = "0.7"
+panic-halt = "1"
+rp-pac = { git = "https://github.com/embassy-rs/rp-pac", rev = "c2e27609b021c444f634673155318977d7f0bdf6", features = ["rp235x", "rt"] }
+rsk-phy = { workspace = true }
+rsk-usb = { workspace = true }
+rsk-otp = { workspace = true }
+rsk-secret = { workspace = true }

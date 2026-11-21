@@ -12,7 +12,6 @@ publish = false
 # gated code with no host-side arithmetic to second-guess. It exists to make EC
 # latency A/B trustworthy — steady-state timing on the RP2350 is XIP-cache /
 # code-layout sensitive (±~30 ms), so a naive host-timed mean fakes regressions;
-# median + MAD + a separate cold sample are the honest read. `cfg(kani)` guards
-# the proof harness.
-[lints.rust]
-unexpected_cfgs = { level = "warn", check-cfg = ["cfg(kani)"] }
+# median + MAD + a separate cold sample are the honest read.
+[lints]
+workspace = true

@@ -6,7 +6,7 @@
 What the firmware advertises itself as, per protocol: the place to look when a
 host tool gates a feature on a version number. The build knobs that change any of
 this are documented in [Build options](build.md); what has actually been checked
-against real host software is in the [Interop matrix](interop.md).
+against real host software is in the [interop report](https://github.com/TheMaxMur/RS-Key/blob/main/assurance/reports/interop.md).
 
 ## Firmware version
 
@@ -41,7 +41,7 @@ the **`bcdDevice`** counter:
 
 ```sh
 rsk-tui --once          # prints "bcdDevice 0x…" alongside the applet state
-lsusb -v -d 1209:0001 | grep bcdDevice          # Linux
+lsusb -v -d 1209:F1D2 | grep bcdDevice          # Linux
 ioreg -p IOUSB -l | grep -i bcdDevice           # macOS
 ```
 
@@ -83,7 +83,7 @@ mechanics in [Build options](build.md)):
 
 The project tracks the latest stable Rust, pinned hermetically rather than to a
 declared MSRV. `nix develop` / `nix build` take the toolchain from the flake
-(fenix `stable`, frozen in `flake.lock`, currently rustc 1.96), on Rust edition
+(fenix `stable`, frozen in `flake.lock`, currently rustc 1.99.1), on Rust edition
 2024. `rust-toolchain.toml` (`channel = "stable"`) is only the fallback for the
 non-Nix rustup path. "Which Rust built this image" is answered by the committed
 `flake.lock`, so there is no separate minimum-version commitment to drift.

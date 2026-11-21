@@ -157,3 +157,7 @@ pub(super) fn splash<D: DrawTarget<Color = Rgb565>>(t: &mut D) -> Result<(), D::
         MUTED,
     )
 }
+
+#[cfg(test)]
+#[path = "boot_helper_tests.rs"]
+mod helper_tests;

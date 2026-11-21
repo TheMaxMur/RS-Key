@@ -57,7 +57,7 @@ impl OtpKbd {
         std::future::poll_fn(|cx: &mut Context<'_>| {
             let mut s = self.0.lock().expect("otp mutex poisoned");
             match s.hid.take_request() {
-                Some(req) => Poll::Ready(req),
+                Some((slot, payload)) => Poll::Ready((slot, *payload.expose())),
                 None => {
                     s.waker = Some(cx.waker().clone());
                     Poll::Pending

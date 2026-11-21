@@ -1,0 +1,42 @@
+TLC2 Version 2.19 of 08 August 2024 (rev: 5a47802)
+Running breadth-first search Model-Checking with fp 73 and seed -7814882855405168953 with 2 workers on 18 cores with 3641MB heap and 64MB offheap memory (Mac OS X 27.0 aarch64, Azul Systems, Inc. 1.8.0_492 x86_64, MSBDiskFPSet, DiskStateQueue).
+Parsing file /Users/maxmur/rs-key-wt-store/formal/RSKeyStore.tla
+Parsing file /private/var/folders/gg/lgcg496924x384yd58t3b9180000gn/T/Naturals.tla
+Semantic processing of module Naturals
+Semantic processing of module RSKeyStore
+Starting... (2026-09-18 12:07:52)
+Computing initial states...
+Computed 2 initial states...
+Computed 4 initial states...
+Computed 8 initial states...
+Computed 16 initial states...
+Computed 32 initial states...
+Computed 64 initial states...
+Computed 128 initial states...
+Computed 256 initial states...
+Computed 512 initial states...
+Finished computing initial states: 1000 distinct states generated at 2026-09-18 12:07:52.
+Error: Invariant NoRecordLostToMetaWrite is violated.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+/\ val = [a |-> "v1", b |-> "v1"]
+/\ decided = [a |-> FALSE, b |-> FALSE]
+/\ metaAbsent = FALSE
+/\ meta = [a |-> FALSE, b |-> TRUE]
+/\ viol = {}
+/\ dead = FALSE
+/\ present = [a |-> FALSE, b |-> FALSE]
+
+State 2: <Next line 377, col 24 to line 377, col 42 of module RSKeyStore>
+/\ val = [a |-> "v1", b |-> "v1"]
+/\ decided = [a |-> FALSE, b |-> FALSE]
+/\ metaAbsent = FALSE
+/\ meta = [a |-> TRUE, b |-> FALSE]
+/\ viol = {"NoRecordLostToMetaWrite"}
+/\ dead = FALSE
+/\ present = [a |-> FALSE, b |-> FALSE]
+
+1499 states generated, 1002 distinct states found, 961 states left on queue.
+The depth of the complete state graph search is 2.
+The average outdegree of the complete state graph is 0 (minimum is 0, the maximum 0 and the 95th percentile is 0).
+Finished in 00s at (2026-09-18 12:07:52)

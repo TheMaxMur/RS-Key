@@ -8,6 +8,37 @@ use super::*;
 /// The firmware's idle cadence (`BTN_POLL_MS`), so a tick count reads as time.
 const POLL_MS: u64 = 16;
 
+#[test]
+fn a_gesture_fires_only_after_its_exact_release_deadline() {
+    let mut clicks = Clicks::new();
+    assert_eq!(clicks.tick(10, true), None);
+    assert_eq!(clicks.tick(20, false), None);
+    assert_eq!(clicks.tick(20 + CLICK_WINDOW_MS, false), None);
+    assert_eq!(clicks.tick(21 + CLICK_WINDOW_MS, false), Some(1));
+}
+
+#[test]
+fn a_second_release_at_the_exact_window_end_does_not_add_a_click() {
+    let mut clicks = Clicks::new();
+    assert_eq!(clicks.tick(10, true), None);
+    assert_eq!(clicks.tick(20, false), None);
+    assert_eq!(clicks.tick(30, true), None);
+    assert_eq!(clicks.tick(20 + CLICK_WINDOW_MS, false), None);
+    assert_eq!(clicks.tick(21 + 2 * CLICK_WINDOW_MS, false), Some(1));
+}
+
+#[test]
+fn a_second_press_held_past_the_window_waits_for_its_release() {
+    let mut clicks = Clicks::new();
+    assert_eq!(clicks.tick(10, true), None);
+    assert_eq!(clicks.tick(20, false), None);
+    assert_eq!(clicks.tick(30, true), None);
+    assert_eq!(clicks.tick(21 + CLICK_WINDOW_MS, true), None);
+    assert_eq!(clicks.tick(22 + CLICK_WINDOW_MS, false), None);
+    assert_eq!(clicks.tick(23 + 2 * CLICK_WINDOW_MS, false), Some(1));
+    assert_eq!(clicks.tick(24 + 2 * CLICK_WINDOW_MS, false), None);
+}
+
 /// Drive `n` polls at `pressed`, returning any slot the gesture fired.
 fn run(c: &mut Clicks, now: &mut u64, n: usize, pressed: bool) -> Option<u8> {
     let mut fired = None;

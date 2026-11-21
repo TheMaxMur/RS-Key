@@ -1,4 +1,42 @@
 
 # cargo-vet audits file
 
-[audits]
+[[audits.crypto-bigint]]
+who = "OpenAI Codex (automated delta source review, 2026-10-24)"
+criteria = "safe-to-deploy"
+delta = "0.7.5 -> 0.7.6"
+notes = """
+Reviewed all published Rust source differences, Cargo manifests/lock metadata,
+README/changelog and changed test/benchmark files in the 0.7.5 -> 0.7.6 package
+delta, with relevant base arithmetic and RS-Key caller context. The 0.7.6 crate
+SHA-256 is 6bb08299a6046833a879ace115697f12fd2bd6c8d3e93c909ffc9e0738e7cae0.
+The delta addresses RUSTSEC-2026-0387: subtraction/zero counting/division/
+Montgomery primitive hardening, UintRef equality and boxed inversion. It also
+changes integer square root, GCD/Jacobi, exact division, Karatsuba carry,
+Montgomery repeated squaring, safegcd bounds and try_sub_with_carry correctness,
+and adds optional EncodedUint Zeroize support. No new normal dependency names,
+unsafe code or build script were introduced; features/defaults are unchanged.
+The ctutils minimum is 0.4.5, MSRV increases to 1.87 and resolver to 3.
+This is an AI source delta review, not a full-crate or human audit, a proof of
+constant-time target code generation, or evidence of RS-Key test/performance
+results. The existing 0.7.5 exemption remains an explicit unaudited base; no
+safety claim is made for deploying that vulnerable version. Other packages in
+the crate's development lock or RS-Key's separately changed TUI graph are not
+audited by this entry. Integration and exact-target checks are separate.
+"""
+
+[[audits.ctutils]]
+who = "OpenAI Codex (automated delta source review, 2026-10-23)"
+criteria = "safe-to-deploy"
+delta = "0.4.2 -> 0.4.5"
+notes = """
+Reviewed the published package delta and relevant base Choice/CtOption/predication
+context. The 0.4.5 crate SHA-256 is
+38d28fb6aa7dd680b3ffd1a3e64e115c177bdba63c0ae7f9cd48129ff05c4fa0.
+The delta addresses RUSTSEC-2026-0385 and adds integer primitives and Thumb-1
+hardening without new runtime dependencies, unsafe code, or a build script.
+This is an AI source delta review, not a full-crate or human audit or a proof
+of constant-time code generation for every target/compiler. The existing
+0.4.2 exemption remains an explicit unaudited base; no safety claim is made
+for deploying that vulnerable version. Integration/target checks are separate.
+"""

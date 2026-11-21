@@ -170,8 +170,16 @@ test("the preview workflow grants OIDC and PR comment access with no upload secr
 
 test("CI adds the partition table before UF2 conversion", async () => {
   const workflow = await readFile(new URL("../workflows/ci.yml", import.meta.url), "utf8");
+  const builder = await readFile(new URL("../../scripts/build.sh", import.meta.url), "utf8");
+  const buildStep = workflow.slice(workflow.indexOf("- name: build (${{ matrix.name }})"), workflow.indexOf("- name: package firmware-"));
   const packageStep = workflow.slice(workflow.indexOf("- name: package firmware-"), workflow.indexOf("- uses: actions/upload-artifact", workflow.indexOf("- name: package firmware-")));
-  assert.ok(packageStep.indexOf("./scripts/pt.sh") >= 0);
-  assert.ok(packageStep.indexOf("./scripts/pt.sh") < packageStep.indexOf("picotool uf2 convert"));
-  assert.match(packageStep, /firmware-\$\{\{ matrix\.name \}\}\.elf -t elf/);
+  assert.match(buildStep, /bash scripts\/build\.sh/);
+  assert.doesNotMatch(buildStep, /--no-partition-table/);
+  assert.match(packageStep, /cp target\/trustzone\/combined\.uf2 firmware-\$\{\{ matrix\.name \}\}\.uf2/);
+  assert.match(builder, /^partition_table=1$/m);
+  assert.match(builder, /picotool partition create "\$work\/partitions\.json" "\$work\/combined\.elf" "\$firmware" -t elf/);
+  const partition = builder.indexOf('add_partition_table "$firmware" "$image_tmp"');
+  const convert = builder.indexOf('picotool uf2 convert -t elf "$image_tmp/combined.elf" "$image_tmp/combined.uf2"');
+  const publish = builder.indexOf('mv "$image_tmp/combined.elf" "$image_tmp/combined.uf2" "$out/"');
+  assert.ok(partition >= 0 && partition < convert && convert < publish);
 });

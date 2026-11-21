@@ -33,10 +33,9 @@ pub const CTAP_LARGE_BLOBS: u8 = 0x0C;
 pub const CTAP_CONFIG: u8 = 0x0D;
 pub const CTAP_VENDOR: u8 = 0x41; // vendor range: seed backup + MSE channel
 
-// authenticatorVendor (0x41) subcommands — wallet-style seed backup. Export hands
-// the raw 32-byte seed *value* over the encrypted MSE channel so the host can
-// render it as a BIP-39 / SLIP-39 mnemonic; restore re-seals it under this
-// chip's kbase.
+// authenticatorVendor (0x41) subcommands. Backup export hands the raw 32-byte seed
+// *value* over the encrypted MSE channel, for a host to render as a BIP-39 / SLIP-39
+// mnemonic; restore re-seals it under this chip's kbase.
 pub const VENDOR_MSE: u64 = 0x01; // establish the ECDH key-agreement channel
 pub const VENDOR_BACKUP_EXPORT: u64 = 0x02; // hand the seed to the host (gated)
 pub const VENDOR_BACKUP_LOAD: u64 = 0x03; // install a seed from the host (gated)
@@ -51,6 +50,7 @@ pub const VENDOR_ATT_STATE: u64 = 0x0B; // {present, chain hash} — ungated
 pub const VENDOR_CONFIG_WRITE: u64 = 0x0C; // persist a device-config blob (PIN + touch)
 pub const VENDOR_CONFIG_READ: u64 = 0x0D; // read a device-config record (ungated, for host RMW)
 pub const VENDOR_AUDIT_CONFIG: u64 = 0x0E; // turn the audit journal on/off (PIN + touch), OFF by default
+pub const VENDOR_CONFIG_COMMANDS: u64 = 0x0F; // list the authenticatorConfig vendor ids (ungated)
 
 // Config-write targets — `subCommandParams` key 1 of `VENDOR_CONFIG_WRITE`. The
 // FIDO-transport twin of the CCID device-config writes, so a host without a
@@ -203,6 +203,9 @@ pub const MAX_MSG_SIZE: u64 = 7609;
 /// mints (a non-resident box) — and therefore the largest it will assert.
 pub const MAX_CRED_ID_LENGTH: u64 = crate::credential::CRED_BOX_MAX as u64;
 pub const MAX_CREDENTIAL_COUNT_IN_LIST: u64 = 16;
+/// [`MAX_CREDENTIAL_COUNT_IN_LIST`] as a length: what the allowList, excludeList
+/// and `getNextAssertion` buffers hold.
+pub const MAX_CREDENTIAL_LIST_LEN: usize = MAX_CREDENTIAL_COUNT_IN_LIST as usize;
 /// The only `PublicKeyCredentialType` WebAuthn defines. A credential descriptor
 /// carrying anything else is a type this device cannot assert, so the allowList
 /// and excludeList parsers drop it rather than match on its id.
@@ -229,7 +232,7 @@ pub const U2F_VERSION: &[u8] = b"U2F_V2";
 pub const ENC_GETINFO_MEMBER_LEN: usize = 16 + 16;
 
 /// The `encCredStoreState` plaintext: a 128-bit tag over the discoverable-credential
-/// set, advanced once per create / delete / updateUserInformation. Read as its own
+/// set, drawn afresh on every create / delete / updateUserInformation. Read as its own
 /// record so it survives a power cycle — `Fs::write_gen` restarts at 0 on every boot
 /// and would let a changed store read as unchanged.
 pub const CRED_STATE_LEN: usize = 16;
@@ -312,8 +315,8 @@ pub const EF_EA_ENABLED: u16 = 0xCE12;
 /// 0xCE14 is `rsk_fs::EF_HARDENED`, hence the gap.
 pub const EF_EA_RPIDS: u16 = 0xCE15;
 /// Where the [`CRED_STATE_LEN`] credential-store tag lives. **Absent reads as
-/// all-zero**, which is the state of a store nothing has ever written to — a fresh
-/// device, and one just reset.
+/// all-zero**: a store an older build provisioned that nothing has changed since —
+/// this build writes a tag with every new seed.
 pub const EF_CRED_STATE: u16 = 0xCE16;
 /// `alwaysUv` state, read via `crate::config::always_uv_enabled` — tri-state:
 /// absent = the compile default (`DEFAULT_ALWAYS_UV`), `[1]` = on, `[0]` = explicit
@@ -329,15 +332,15 @@ pub use rsk_fs::EF_HARDENED;
 /// `[retries, len, format, verifier(32)]`, device-sealed. Wiped by `authenticatorReset`
 /// (so a forgotten device PIN is recoverable by a host reset) and by factory reset. NOT
 /// in the OpenPGP 0x10xx range — kept in FIDO's 0xCExx block to avoid an applet clash.
-pub const EF_DEVICE_PIN: u16 = 0xCE20;
-pub const EF_COUNTER: u16 = 0xC000; // global signature counter (U2F + legacy-cred migration seed)
+pub const EF_DEVICE_PIN: u16 = rsk_fs::counter::DEVICE_PIN;
+pub use rsk_fs::counter::EF_COUNTER; // global signature counter (U2F + legacy-cred migration seed)
 /// Per-credential signature counters, a single packed `u32`-LE array indexed by
 /// EF_CRED slot (`[..MAX_RESIDENT_CREDENTIALS*4]`). One file keeps the
 /// dynamic-file budget flat, and being independent of the EF_CRED record version
 /// it migrates every stored credential without touching its box or keys. An
 /// absent slot entry means a credential created before this region existed: its
 /// counter is seeded from `EF_COUNTER` on first use so it never DEcreases.
-pub const EF_CRED_CTR: u16 = 0xC001;
+pub use rsk_fs::counter::EF_CRED_CTR;
 pub const EF_CRED: u16 = 0xCF00; // resident credentials, 0xCF00..0xCFFF
 pub const EF_RP: u16 = 0xD000; // relying-party metadata, 0xD000..0xD0FF
 // Device-local relying-party display nicknames, 0xD300..0xD3FF (one slot per EF_RP
@@ -355,7 +358,7 @@ pub const RP_NICK_MAX_LEN: usize = 24;
 /// build: a key that ran that firmware once must still be wipeable by the one it
 /// is flashed with next.
 pub const EF_CRED_BLOB: u16 = 0xD500;
-pub const EF_PIN: u16 = 0x1080; // PIN: [retries, len, format, verifier(32)]
+pub const EF_PIN: u16 = rsk_fs::counter::FIDO_PIN; // PIN: [retries, len, format, verifier(32)]
 /// The **persistent** pinUvAuthToken (CTAP 2.2 §6.5.2.2): a bearer secret the
 /// platform keeps across power cycles, so it is kbase-sealed like the seed. Minted
 /// at provisioning and by a pcmr request; HOLDING it is the grant. Dropped
@@ -377,7 +380,7 @@ pub const MIN_PIN_LENGTH: u8 = 4;
 #[cfg(any(feature = "fips-profile", feature = "strong-pin"))]
 pub const MIN_PIN_LENGTH: u8 = 6;
 
-/// Whether this build enforces a PIN rule BEYOND the length floor — getInfo's
+/// Whether this build enables the PIN complexity rule by default — getInfo's
 /// `pinComplexityPolicy` (0x1B). True where `clientpin::pin_is_trivial` refuses a
 /// repeated code point or a ±1 run; a raised `MIN_PIN_LENGTH` alone is not one.
 pub const PIN_COMPLEXITY_POLICY: bool = cfg!(any(feature = "fips-profile", feature = "strong-pin"));
@@ -409,3 +412,40 @@ pub const U2F_AUTH_CHECK_ONLY: u8 = 0x07; // is this key handle ours?
 pub const U2F_AUTH_NO_ENFORCE: u8 = 0x08; // don't enforce user presence and sign
 pub const U2F_AUTH_FLAG_TUP: u8 = 0x01; // test-of-user-presence bit
 pub const U2F_REGISTER_ID: u8 = 0x05; // registration response leading byte
+
+/// What a SELECT of [`FIDO_AID`] answers in place of [`U2F_VERSION`] once alwaysUv has
+/// switched U2F off: CTAP 2.3 §11.3.3's version string for CTAP2 alone.
+pub const FIDO_2_0_VERSION: &[u8] = b"FIDO_2_0";
+
+/// How much of an rpIdHash `credmgmt::settle_rp_records` matches a credential to
+/// its RP record on: a collision can only count a record high, never delete it.
+pub const SETTLE_KEY_LEN: usize = 8;
+
+// The `previewSign` extension's COSE identifiers. All three are the ARKG draft's
+// placeholder values — the ones python-fido2 2.2.1 speaks — not registered ids.
+/// ESP256-split-ARKG: ESP256 signing, split, with an ARKG-P256-derived key.
+#[cfg(feature = "preview-sign")]
+pub const ALG_ESP256_SPLIT_ARKG: i64 = -65539;
+/// ARKG-P256, the ARKG instance an ARKG-pub key is for (its `alg`).
+#[cfg(feature = "preview-sign")]
+pub const ALG_ARKG_P256: i64 = -65700;
+/// The ARKG-pub key type: an ARKG public seed `{-1: pk_bl, -2: pk_kem, -3: dkalg}`.
+#[cfg(feature = "preview-sign")]
+pub const KTY_ARKG_PUB: i64 = -65537;
+
+/// Every authenticatorConfig vendorCommandId `config.rs` serves: what getInfo's `0x15`
+/// would list if a 64-bit id there did not fail Yubico's Android SDK (issue #111), so
+/// `VENDOR_CONFIG_COMMANDS` hands it to a host instead (issue #122).
+pub const VENDOR_PROTOTYPE_CONFIG_COMMANDS: [u64; 7] = [
+    CONFIG_AUT_ENABLE,
+    CONFIG_AUT_DISABLE,
+    CONFIG_PHY_VIDPID,
+    CONFIG_PHY_LED_GPIO,
+    CONFIG_PHY_LED_BRIGHTNESS,
+    CONFIG_PHY_OPTIONS,
+    CONFIG_EA_RPIDS,
+];
+
+#[cfg(test)]
+#[path = "consts_tests.rs"]
+mod tests;

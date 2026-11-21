@@ -18,7 +18,7 @@ stale, not the disposition going missing, and `--relock` clears it — so the
 abstraction could still be dropped, in two commands instead of one.
 
 So the roster moves into `assurance/abstractions.toml` and this writes the page
-back from it: markers, `--write`, a byte diff, a `check.sh` row. That is the
+back from it: markers, `--write`, a byte diff, a gate row. That is the
 shape `bounds_gate.py` uses on `docs/assurance-bounds.md` and `comutate.py`
 already uses on this very page, rather than a ninth mechanism. The page cannot
 exempt itself by saying it is generated, either: nothing here reads the "do not

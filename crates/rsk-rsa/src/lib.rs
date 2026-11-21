@@ -2,28 +2,41 @@
 // Copyright (C) 2026 RS-Key contributors
 
 #![cfg_attr(not(test), no_std)]
+// On-device arithmetic runs from SRAM while both cores search for primes.
+#![cfg_attr(
+    target_os = "none",
+    expect(
+        unsafe_code,
+        reason = "the .data placement of the RSA kernels; docs/unsafe.md"
+    )
+)]
 
 //! The RSA algorithm family: key generation, the CRT parameter layout and its
 //! blinded private operation, PKCS#1 v1.5, and the public-key DO both card
-//! applets answer with — over fast bignum modular exponentiation for ARMv7E-M
-//! (Cortex-M33 + DSP), wrapping the vendored rsa-armv7 C + ARM assembly (Emil
-//! Lenngren, BSD-2-Clause — see `csrc/LICENSE.txt`). The host build (no ARM
-//! assembler) falls back to a num-bigint-dig modexp, keeping the prime-search
-//! logic testable. All multi-byte values in this file are **little-endian**
-//! except the modexp exponent (big-endian, per the C API).
+//! applets answer with. Both host and device use the same fixed-width
+//! Montgomery arithmetic. All multi-byte values in this file are **little-endian**
+//! except the modexp exponent (big-endian).
 //!
 //! Nothing here names a status word or a filesystem: `rsk-openpgp` and `rsk-piv`
 //! own the APDU framing and the seal I/O, and map [`RsaError`] at their edge.
 
 extern crate alloc;
 
+use privexp::modexp_priv;
+use rsk_secret::Secret;
+
 pub mod crt;
 pub mod keygen;
 pub mod pkcs1v15;
 pub mod pubdo;
 
+mod blind_inverse;
 mod error;
 mod key;
+mod lucas;
+mod montgomery;
+mod privexp;
+mod pubexp;
 mod rng;
 
 /// Known-answer vectors and the public-key verifier the host tests check this
@@ -38,12 +51,13 @@ pub use crt::{MAX_CRT_PLAIN, RsaCrt};
 pub use error::RsaError;
 pub use key::{RsaKey, modulus_be};
 pub use keygen::{RsaKeygen, RsaStep, generate_rsa, rsa_from_pqe};
-pub use pkcs1v15::MAX_RSA_DIGESTINFO;
 pub use pubdo::{MAX_RSA_PUBDO, make_rsa_pub_body, make_rsa_response};
 pub use rng::Rng;
 
+const RSA_2048_BYTES: usize = 256;
+
 /// Largest modulus this handles: an RSA-4096 prime is 2048 bits = 256 bytes. The
-/// asm requires the modulus length to be a multiple of 32 bytes — every standard
+/// routines retain a 32-byte width requirement — every standard
 /// RSA prime size (512/1024/1536/2048-bit) qualifies.
 pub const MAX_MOD: usize = 256;
 
@@ -116,6 +130,8 @@ const fn build_small_primes() -> [u32; N_SMALL] {
         }
         cand += 2;
     }
+    // Every residue plus one sieve stride must fit before reduction.
+    assert!(primes[N_SMALL - 1] <= u16::MAX as u32 - 2);
     primes
 }
 
@@ -167,7 +183,7 @@ pub struct IncrementalSieve {
     cnt: usize,
     // `MAX_MOD` is already a single prime's width (an RSA-4096 prime = 256 B).
     cand: [u8; MAX_MOD],
-    res: [u32; N_SMALL],
+    res: [u16; N_SMALL],
     steps: u32,
     seeded: bool,
 }
@@ -211,7 +227,7 @@ impl IncrementalSieve {
             .iter_mut()
             .zip(&SMALL_PRIMES[..self.cnt])
         {
-            *r = mod_small(&self.cand[..half], p);
+            *r = mod_small(&self.cand[..half], p) as u16;
         }
         self.steps = 0;
         self.seeded = true;
@@ -262,6 +278,7 @@ impl IncrementalSieve {
             .iter_mut()
             .zip(&SMALL_PRIMES[..self.cnt])
         {
+            let p = p as u16;
             *r += 2;
             if *r >= p {
                 *r -= p;
@@ -277,62 +294,28 @@ impl IncrementalSieve {
     }
 
     /// Wipe the candidate window (a found prime may still sit in it).
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the sieve lives in a static: `scrub` is its wipe point"
+    )]
     pub fn scrub(&mut self) {
         use zeroize::Zeroize;
-        self.cand.zeroize();
-        self.res.zeroize();
-        self.seeded = false;
+        let Self {
+            half: _,
+            cnt: _,
+            cand,
+            res,
+            steps: _,
+            seeded,
+        } = self;
+        cand.zeroize();
+        res.zeroize();
+        *seeded = false;
     }
 }
 
 // -------------------------------------------------------- modexp backend -----
 
-#[cfg(target_os = "none")]
-unsafe extern "C" {
-    /// rsa-armv7 `bignum_modexp_private_exponent` (see `csrc/bignum_high_level.h`).
-    fn bignum_modexp_private_exponent(
-        result: *mut u32,
-        exponent: *const u8,
-        modulus: *const u32,
-        exponent_length_bytes: usize,
-        modulus_length_bytes: usize,
-        temp: *mut u32,
-    );
-
-    /// rsa-armv7 `rsa_private_exp_crt`: `result = c^d mod (p·q)` via CRT. `c`, `p`,
-    /// `q`, `q_modular_inv` are little-endian u32; `dP`, `dQ` big-endian bytes;
-    /// `result`/`c` are 2× a prime's width; `temp` ≥ 20× a prime's width in bytes.
-    fn rsa_private_exp_crt(
-        result: *mut u32,
-        c: *const u32,
-        d_p: *const u8,
-        d_p_length_bytes: usize,
-        d_q: *const u8,
-        d_q_length_bytes: usize,
-        p: *const u32,
-        q: *const u32,
-        q_modular_inv: *const u32,
-        small_modulus_length_bytes: usize,
-        temp: *mut u32,
-    );
-
-    /// rsa-armv7 `bignum_modexp_public_exponent`: `result = base^exp mod modulus`
-    /// for a public (non-secret) exponent, odd modulus. `base`/`modulus`/`result`
-    /// little-endian u32 (len a multiple of 32 bytes, `base < modulus`); `exponent`
-    /// big-endian; `temp` ≥ 5× the modulus length in bytes. Returns 0 on success,
-    /// negative if a precondition fails (bad length / base≥mod / exp≥mod / even mod).
-    fn bignum_modexp_public_exponent(
-        result: *mut u32,
-        base: *const u32,
-        exponent: *const u8,
-        modulus: *const u32,
-        exponent_length_bytes: usize,
-        modulus_length_bytes: usize,
-        temp: *mut u32,
-    ) -> i32;
-}
-
-#[cfg(target_os = "none")]
 fn bytes_to_words_le(src: &[u8], dst: &mut [u32]) {
     for (i, w) in dst.iter_mut().enumerate() {
         let b = i * 4;
@@ -340,276 +323,19 @@ fn bytes_to_words_le(src: &[u8], dst: &mut [u32]) {
     }
 }
 
-#[cfg(target_os = "none")]
 fn words_to_bytes_le(src: &[u32], dst: &mut [u8]) {
     for (i, w) in src.iter().enumerate() {
         dst[i * 4..i * 4 + 4].copy_from_slice(&w.to_le_bytes());
     }
 }
 
-/// `out = base ^ exponent mod modulus`, all little-endian except `exponent_be`.
-/// `modulus_le.len()` must be a multiple of 32 and ≤ [`MAX_MOD`]; `base_le` may be
-/// shorter (it is zero-extended). On the device this calls the ARM-assembly
-/// routine; on the host it uses num-bigint-dig.
-#[cfg(target_os = "none")]
-pub(crate) fn modexp_priv(
-    base_le: &[u8],
-    exponent_be: &[u8],
-    modulus_le: &[u8],
-    out_le: &mut [u8],
-) {
-    let mod_len = modulus_le.len();
-    debug_assert!(mod_len.is_multiple_of(32) && mod_len <= MAX_MOD);
-    let words = mod_len / 4;
-
-    // The C wants base placed in `temp` at byte offset 2 × modulus length; `temp`
-    // must be ≥ 19 × modulus length bytes; `result` separate from `modulus`.
-    let mut temp = [0u32; 19 * MAX_MOD / 4];
-    let mut result = [0u32; MAX_MOD / 4];
-    let mut modulus = [0u32; MAX_MOD / 4];
-
-    bytes_to_words_le(modulus_le, &mut modulus[..words]);
-
-    // `modulus_bitwise_inv` (= ~modulus) lives at temp + 18·mod_len. The public
-    // wrapper does NOT fill it (only the CRT path does), yet the internal modexp
-    // reads it — fill it here, or it uses garbage and returns a wrong result.
-    for i in 0..words {
-        temp[18 * words + i] = !modulus[i];
-    }
-
-    let mut base_buf = [0u8; MAX_MOD];
-    base_buf[..base_le.len()].copy_from_slice(base_le);
-    bytes_to_words_le(&base_buf[..mod_len], &mut temp[2 * words..3 * words]);
-
-    // SAFETY: all buffers are ≥ the sizes the C requires (asserted above for the
-    // modulus; `temp` is 19× the max, `result`/`modulus` are MAX_MOD); `result`
-    // does not overlap `modulus`; the exponent is a valid big-endian slice.
-    unsafe {
-        bignum_modexp_private_exponent(
-            result.as_mut_ptr(),
-            exponent_be.as_ptr(),
-            modulus.as_ptr(),
-            exponent_be.len(),
-            mod_len,
-            temp.as_mut_ptr(),
-        );
-    }
-    words_to_bytes_le(&result[..words], &mut out_le[..mod_len]);
-    // For keygen the modulus IS the prime candidate (and `temp` holds its
-    // Montgomery state + complement) — wipe the working set.
-    use zeroize::Zeroize;
-    temp.zeroize();
-    result.zeroize();
-    modulus.zeroize();
-    base_buf.zeroize();
-}
-
-/// Host fallback (no ARM assembly): the same operation via num-bigint-dig.
-#[cfg(not(target_os = "none"))]
-pub(crate) fn modexp_priv(
-    base_le: &[u8],
-    exponent_be: &[u8],
-    modulus_le: &[u8],
-    out_le: &mut [u8],
-) {
-    use num_bigint_dig::BigUint;
-    let r = BigUint::from_bytes_le(base_le).modpow(
-        &BigUint::from_bytes_be(exponent_be),
-        &BigUint::from_bytes_le(modulus_le),
-    );
-    let bytes = r.to_bytes_le();
-    let n = bytes.len().min(out_le.len());
-    out_le[..n].copy_from_slice(&bytes[..n]);
-    out_le[n..].fill(0);
-}
-
-// ------------------------------------------------------- CRT private op ------
-
 /// The i-th least-significant 32-bit limb of a big-endian value: fill `dst`
 /// (length = `be.len() / 4`) with `be` re-read as little-endian u32 words.
-#[cfg(target_os = "none")]
 fn be_bytes_to_words_le(be: &[u8], dst: &mut [u32]) {
     for (i, w) in dst.iter_mut().enumerate() {
         let hi = be.len() - 4 * i;
         *w = u32::from_be_bytes([be[hi - 4], be[hi - 3], be[hi - 2], be[hi - 1]]);
     }
-}
-
-/// RSA CRT private-key operation `out = base ^ d mod (p·q)`, given the key by its
-/// precomputed CRT parameters — the fast path for signing/decryption. `p_be`,
-/// `q_be`, `qinv_be` are each a prime's width (`half` bytes, a multiple of 32);
-/// `dp_be`, `dq_be` are big-endian and may be shorter (zero-extended by the C).
-/// `base_le` and `out_le` are the modulus width (`2·half` bytes), little-endian.
-/// On the device this calls the ARM-assembly CRT routine; on the host it uses
-/// num-bigint-dig. The caller is expected to blind `base` and to fault-check the
-/// result (`out^e == base`), so a wrong asm result can never leave as a signature.
-#[cfg(target_os = "none")]
-#[inline(never)]
-pub(crate) fn sign_crt(
-    base_le: &[u8],
-    dp_be: &[u8],
-    dq_be: &[u8],
-    p_be: &[u8],
-    q_be: &[u8],
-    qinv_be: &[u8],
-    out_le: &mut [u8],
-) {
-    use zeroize::Zeroize;
-    let half = p_be.len();
-    debug_assert!(half.is_multiple_of(32) && half <= MAX_MOD);
-    debug_assert!(q_be.len() == half && qinv_be.len() == half);
-    debug_assert!(base_le.len() == 2 * half && out_le.len() == 2 * half);
-    let words = half / 4;
-
-    let mut p = [0u32; MAX_MOD / 4];
-    let mut q = [0u32; MAX_MOD / 4];
-    let mut qinv = [0u32; MAX_MOD / 4];
-    be_bytes_to_words_le(p_be, &mut p[..words]);
-    be_bytes_to_words_le(q_be, &mut q[..words]);
-    be_bytes_to_words_le(qinv_be, &mut qinv[..words]);
-
-    let mut c = [0u32; 2 * MAX_MOD / 4];
-    bytes_to_words_le(base_le, &mut c[..2 * words]);
-    let mut result = [0u32; 2 * MAX_MOD / 4];
-    // The C wants `temp` ≥ 20× a prime's width in bytes.
-    let mut temp = [0u32; 20 * MAX_MOD / 4];
-
-    // SAFETY: every pointer is to a buffer sized for the max prime width; the
-    // asserted lengths (half multiple of 32, ≤ MAX_MOD) are the C's precondition;
-    // `result`/`c`/`temp` do not overlap the key limbs.
-    unsafe {
-        rsa_private_exp_crt(
-            result.as_mut_ptr(),
-            c.as_ptr(),
-            dp_be.as_ptr(),
-            dp_be.len(),
-            dq_be.as_ptr(),
-            dq_be.len(),
-            p.as_ptr(),
-            q.as_ptr(),
-            qinv.as_ptr(),
-            half,
-            temp.as_mut_ptr(),
-        );
-    }
-    words_to_bytes_le(&result[..2 * words], &mut out_le[..2 * half]);
-    p.zeroize();
-    q.zeroize();
-    qinv.zeroize();
-    c.zeroize();
-    result.zeroize();
-    temp.zeroize();
-}
-
-/// Host fallback for [`sign_crt`]: the same CRT combine via num-bigint-dig.
-#[cfg(not(target_os = "none"))]
-pub(crate) fn sign_crt(
-    base_le: &[u8],
-    dp_be: &[u8],
-    dq_be: &[u8],
-    p_be: &[u8],
-    q_be: &[u8],
-    qinv_be: &[u8],
-    out_le: &mut [u8],
-) {
-    use num_bigint_dig::BigUint;
-    let base = BigUint::from_bytes_le(base_le);
-    let p = BigUint::from_bytes_be(p_be);
-    let q = BigUint::from_bytes_be(q_be);
-    let dp = BigUint::from_bytes_be(dp_be);
-    let dq = BigUint::from_bytes_be(dq_be);
-    let qinv = BigUint::from_bytes_be(qinv_be);
-    // Garner's CRT recombination: m1 = c^dP mod p, m2 = c^dQ mod q,
-    // h = qinv·(m1 − m2) mod p, m = m2 + h·q.
-    let m1 = base.modpow(&dp, &p);
-    let m2 = base.modpow(&dq, &q);
-    let m2p = &m2 % &p;
-    let diff = if m1 >= m2p {
-        &m1 - &m2p
-    } else {
-        &m1 + &p - &m2p
-    };
-    let h = (&qinv * &diff) % &p;
-    let m = &m2 + &h * &q;
-    let bytes = m.to_bytes_le();
-    let n = bytes.len().min(out_le.len());
-    out_le[..n].copy_from_slice(&bytes[..n]);
-    out_le[n..].fill(0);
-}
-
-// ----------------------------------------------------- public-exp modexp -----
-
-/// `out = base ^ exponent mod modulus` for a PUBLIC (non-secret) exponent and an
-/// odd modulus — the blinding/fault-check side of an RSA signature. All
-/// little-endian except `exp_be`; `base_le`/`modulus_le`/`out_le` are all
-/// `modulus_le.len()` bytes, a multiple of 32 and ≤ `2·MAX_MOD`, with
-/// `base_le < modulus_le`. Returns `false` if the asm rejects a precondition
-/// (the caller maps that to an error). On the device this is the ARM assembly;
-/// on the host it uses num-bigint-dig.
-#[cfg(target_os = "none")]
-#[inline(never)]
-pub(crate) fn modexp_pub(
-    base_le: &[u8],
-    exp_be: &[u8],
-    modulus_le: &[u8],
-    out_le: &mut [u8],
-) -> bool {
-    use zeroize::Zeroize;
-    let mod_len = modulus_le.len();
-    debug_assert!(mod_len.is_multiple_of(32) && mod_len <= 2 * MAX_MOD);
-    debug_assert!(base_le.len() == mod_len && out_le.len() == mod_len);
-    let words = mod_len / 4;
-
-    let mut base = [0u32; 2 * MAX_MOD / 4];
-    let mut modulus = [0u32; 2 * MAX_MOD / 4];
-    let mut result = [0u32; 2 * MAX_MOD / 4];
-    // The C wants `temp` ≥ 5× the modulus length in bytes.
-    let mut temp = [0u32; 5 * (2 * MAX_MOD) / 4];
-    bytes_to_words_le(base_le, &mut base[..words]);
-    bytes_to_words_le(modulus_le, &mut modulus[..words]);
-
-    // SAFETY: buffers are sized for the max modulus; `result` does not overlap
-    // `modulus`; lengths meet the C's stated preconditions (asserted above).
-    let rc = unsafe {
-        bignum_modexp_public_exponent(
-            result.as_mut_ptr(),
-            base.as_ptr(),
-            exp_be.as_ptr(),
-            modulus.as_ptr(),
-            exp_be.len(),
-            mod_len,
-            temp.as_mut_ptr(),
-        )
-    };
-    let ok = rc == 0;
-    if ok {
-        words_to_bytes_le(&result[..words], &mut out_le[..mod_len]);
-    }
-    base.zeroize();
-    modulus.zeroize();
-    result.zeroize();
-    temp.zeroize();
-    ok
-}
-
-/// Host fallback for [`modexp_pub`]: the same operation via num-bigint-dig.
-#[cfg(not(target_os = "none"))]
-pub(crate) fn modexp_pub(
-    base_le: &[u8],
-    exp_be: &[u8],
-    modulus_le: &[u8],
-    out_le: &mut [u8],
-) -> bool {
-    use num_bigint_dig::BigUint;
-    let r = BigUint::from_bytes_le(base_le).modpow(
-        &BigUint::from_bytes_be(exp_be),
-        &BigUint::from_bytes_le(modulus_le),
-    );
-    let bytes = r.to_bytes_le();
-    let n = bytes.len().min(out_le.len());
-    out_le[..n].copy_from_slice(&bytes[..n]);
-    out_le[n..].fill(0);
-    true
 }
 
 /// Fermat primality pre-filter to base 2: `2^(n-1) mod n == 1`. `n` is the
@@ -618,21 +344,32 @@ pub(crate) fn modexp_pub(
 /// be caught by the vetted final primality test), and a prime always passes — so
 /// this never rejects a real prime.
 pub fn passes_fermat_base2(n_le: &[u8]) -> bool {
-    use zeroize::Zeroize;
+    #[cfg(test)]
+    if let Some(verdict) = tests::inject_primality_fault(tests::PrimalityGate::Fermat, n_le) {
+        return verdict;
+    }
     let mod_len = n_le.len();
     // exponent = n − 1 in big-endian. n is odd, so n − 1 just clears bit 0.
-    let mut exp_be = [0u8; MAX_MOD];
+    let mut exp_be = Secret::<[u8; MAX_MOD]>::zeroed();
+    let exp = exp_be.expose_mut();
     for i in 0..mod_len {
-        exp_be[mod_len - 1 - i] = n_le[i];
+        exp[mod_len - 1 - i] = n_le[i];
     }
-    exp_be[mod_len - 1] &= 0xFE;
+    exp[mod_len - 1] &= 0xFE;
 
-    let mut out = [0u8; MAX_MOD];
-    modexp_priv(&[2u8], &exp_be[..mod_len], n_le, &mut out[..mod_len]);
-    let prime = out[0] == 1 && out[1..mod_len].iter().all(|&b| b == 0);
+    let mut out = Secret::<[u8; MAX_MOD]>::zeroed();
+    if !modexp_priv(
+        &[2u8],
+        &exp_be.expose()[..mod_len],
+        n_le,
+        &mut out.expose_mut()[..mod_len],
+    ) {
+        return false;
+    }
+    let prime = out.expose()[0] == 1 && out.expose()[1..mod_len].iter().all(|&b| b == 0);
     // `exp_be` is candidate − 1; for the accepted candidate that is p − 1.
-    exp_be.zeroize();
-    out.zeroize();
+    exp_be.wipe();
+    out.wipe();
     prime
 }
 
@@ -671,7 +408,7 @@ fn is_one_le(v: &[u8]) -> bool {
 }
 
 /// Strong Miller-Rabin probable-prime test to base 2 — the Miller-Rabin half
-/// of Baillie-PSW — on the (SRAM-resident) asm modexp. `n_le` is the odd
+/// of Baillie-PSW — on the SRAM-resident modexp. `n_le` is the odd
 /// little-endian candidate, length a multiple of 32 bytes, like
 /// [`passes_fermat_base2`] but strictly stronger: write n − 1 = d·2^s (d odd);
 /// n passes iff 2^d ≡ ±1 (mod n) or one of the s − 1 successive squarings
@@ -681,44 +418,61 @@ fn is_one_le(v: &[u8]) -> bool {
 /// tests hold the two implementations equal over random candidates and the
 /// canonical pseudoprime families.
 pub fn passes_strong_mr_base2(n_le: &[u8]) -> bool {
-    use zeroize::Zeroize;
+    #[cfg(test)]
+    if let Some(verdict) = tests::inject_primality_fault(tests::PrimalityGate::StrongMr, n_le) {
+        return verdict;
+    }
     let len = n_le.len();
     debug_assert!(len >= 2 && n_le[0] & 1 == 1);
 
     // n − 1: n is odd, so clearing bit 0 is the whole subtraction.
-    let mut nm1 = [0u8; MAX_MOD];
-    nm1[..len].copy_from_slice(n_le);
-    nm1[0] &= 0xFE;
+    let mut nm1 = Secret::<[u8; MAX_MOD]>::zeroed();
+    nm1.expose_mut()[..len].copy_from_slice(n_le);
+    nm1.expose_mut()[0] &= 0xFE;
 
     // n − 1 = d · 2^s, d odd; the exponent rides big-endian.
-    let s = trailing_zeros_le(&nm1[..len]);
-    let mut d_be = [0u8; MAX_MOD];
-    shr_into_be(&nm1[..len], s, &mut d_be[..len]);
+    let s = trailing_zeros_le(&nm1.expose()[..len]);
+    let mut d_be = Secret::<[u8; MAX_MOD]>::zeroed();
+    shr_into_be(&nm1.expose()[..len], s, &mut d_be.expose_mut()[..len]);
 
-    let mut x = [0u8; MAX_MOD];
-    modexp_priv(&[2u8], &d_be[..len], n_le, &mut x[..len]);
+    let mut x = Secret::<[u8; MAX_MOD]>::zeroed();
+    if !modexp_priv(
+        &[2u8],
+        &d_be.expose()[..len],
+        n_le,
+        &mut x.expose_mut()[..len],
+    ) {
+        return false;
+    }
 
-    let mut verdict = is_one_le(&x[..len]) || x[..len] == nm1[..len];
+    let mut verdict = is_one_le(&x.expose()[..len]) || x.expose()[..len] == nm1.expose()[..len];
     if !verdict {
         for _ in 1..s {
             // One modular squaring: exponent 2 costs ~two multiplications.
-            let mut sq = [0u8; MAX_MOD];
-            modexp_priv(&x[..len], &[2u8], n_le, &mut sq[..len]);
-            x[..len].copy_from_slice(&sq[..len]);
-            sq.zeroize();
-            if x[..len] == nm1[..len] {
+            let mut sq = Secret::<[u8; MAX_MOD]>::zeroed();
+            if !modexp_priv(
+                &x.expose()[..len],
+                &[2u8],
+                n_le,
+                &mut sq.expose_mut()[..len],
+            ) {
+                return false;
+            }
+            x.expose_mut()[..len].copy_from_slice(&sq.expose()[..len]);
+            sq.wipe();
+            if x.expose()[..len] == nm1.expose()[..len] {
                 verdict = true;
                 break;
             }
-            if is_one_le(&x[..len]) {
+            if is_one_le(&x.expose()[..len]) {
                 break; // nontrivial √1 — certainly composite
             }
         }
     }
     // For the accepted candidate these hold p − 1 and its power residues.
-    nm1.zeroize();
-    d_be.zeroize();
-    x.zeroize();
+    nm1.wipe();
+    d_be.wipe();
+    x.wipe();
     verdict
 }
 
@@ -737,8 +491,8 @@ const KAT_COMPOSITE_LE: [u8; 32] = [
 
 /// Known-answer test of the modexp path: a known prime must pass and a known
 /// composite must fail BOTH the base-2 Fermat test and the strong Miller-Rabin
-/// gate the keygen actually uses. Catches a wrong asm result (marshaling /
-/// calling-convention bug) before it can weaken the primality decision.
+/// gate the keygen uses. Catches a wrong modexp result before it can weaken
+/// the primality decision.
 pub fn self_test() -> bool {
     passes_fermat_base2(&KAT_PRIME_LE)
         && !passes_fermat_base2(&KAT_COMPOSITE_LE)
@@ -758,3 +512,7 @@ mod fixtures;
 
 #[cfg(test)]
 mod tests;
+
+/// Wycheproof's RSA cases, dev-only like [`vectors`].
+#[cfg(any(test, feature = "test-util"))]
+pub mod wycheproof;

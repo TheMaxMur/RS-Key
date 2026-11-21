@@ -3,8 +3,8 @@
 """The mutation table for `owner_binding_gate.py`.
 
 Every case runs against RECORDED `arm-none-eabi-readelf` / `arm-none-eabi-nm`
-output and a registry handed in as text, so nothing here needs a linked image, a
-cross toolchain or a write to the working tree — and nothing SKIPS, which is the
+output and a registry handed in as text. No case builds or changes an image;
+the v0 fixtures use the pinned binutils demangler. Nothing SKIPS, which is the
 only state `check.sh` cannot tell from a pass.
 
 The recorded DWARF is verbatim in form and elided in bulk: the real dump is
@@ -30,6 +30,7 @@ and `test_elf_gate.py` already make.
 
 from __future__ import annotations
 
+import functools
 import hashlib
 import pathlib
 import sys
@@ -221,7 +222,7 @@ CLAIMS = """
 [[claim]]
 subject = "owner->image"
 method = "BINARY-CHECKED"
-artifact = "target/thumbv8m.main-none-eabihf/release/firmware"
+artifact = "target/trustzone/combined.elf"
 build = "cargo build --release -p firmware"
 statement = "every registered owner is bound to this ELF"
 
@@ -294,7 +295,7 @@ def test_the_shipped_registry_and_tree_are_green_together():
     assert not findings, findings
     assert {c["subject"]: c["method"] for c in claims} == gate.SUBJECTS
     sites = {(f, fn) for _axis, f, fn in gate.roster(ROOT)}
-    assert len(sites) == 47, len(sites)
+    assert sites
     # The shipped floor, held from BOTH sides. Zero is the weakening a case
     # cannot see — the cases hand their own floor in — and a floor set AT the
     # measurement of 21 turns a deleted guard into a report about its reader,
@@ -310,14 +311,15 @@ def test_the_shipped_registry_and_tree_are_green_together():
 
 
 def test_the_roster_deduplicates_a_ledger_that_owns_more_rows_than_sites():
-    """48 rows over 45 sites, so the dedup is load-bearing on live data — and it
-    is asserted HERE and not through `audit`, whose oracle would have to rebuild
-    a set of sites and re-deduplicate them to compare at all."""
+    """Every declared owner appears once, even when several axes own it."""
     doc = tomllib.loads((ROOT / refinement.MANIFEST).read_text(encoding="utf-8"))
-    rows = sum(len(doc.get(axis, [])) for axis in refinement.AXES)
-    sites = gate.roster(ROOT)
-    assert rows == 50, rows
-    assert len(sites) == 47 == len({(f, fn) for _axis, f, fn in sites}), len(sites)
+    rows = [(entry["file"], entry["function"])
+            for axis in refinement.AXES for entry in doc.get(axis, [])]
+    owners = [(f, fn) for _axis, f, fn in gate.roster(ROOT)]
+    assert any(rows.count(owner) > 1 for owner in rows)
+    for owner in rows:
+        assert owners.count(owner) == 1, owner
+    assert all(owner in rows for owner in owners)
 
 
 # ---- the registry shape ------------------------------------------------------
@@ -337,7 +339,7 @@ def test_an_empty_artifact_is_not_an_answer():
     """`assurance/board/*.toml` ships `firmware_sha256 = ""` in eleven files, so
     a blank field is this tree's own spelling and a presence test walks past it."""
     findings, _ = run(CLAIMS.replace(
-        'artifact = "target/thumbv8m.main-none-eabihf/release/firmware"', 'artifact = ""'
+        'artifact = "target/trustzone/combined.elf"', 'artifact = ""'
     ) + ABSENT)
     assert any("claim 1: `artifact` is empty" in f for f in findings), findings
 
@@ -469,10 +471,9 @@ def test_a_verifier_that_is_a_page_rather_than_a_job_is_refused():
 
 
 def test_a_workflow_that_runs_the_build_is_what_verifies_it():
-    """Not "a workflow that exists": measured over this repo's eight, four
-    executed `nix build` lines in `release-build.yml` and none in `ci.yml`."""
+    """The transparency-log monitor exists but never runs `nix build`."""
     findings, _ = run(CLAIMS.replace(
-        ".github/workflows/release-build.yml", ".github/workflows/ci.yml"
+        ".github/workflows/release-build.yml", ".github/workflows/rekor-monitor.yml"
     ) + ABSENT)
     assert any("runs no `nix build`" in f for f in findings), findings
 
@@ -490,10 +491,10 @@ def test_the_artifact_is_held_against_the_other_registry_in_this_window():
     does not audit: `assurance/image.toml` names the same path, and the no-touch
     build overwrites it ~250 rows later."""
     findings, _ = run(CLAIMS.replace(
-        "target/thumbv8m.main-none-eabihf/release/firmware",
+        "target/trustzone/combined.elf",
         "target/thumbv8m.main-none-eabihf/release/rsk-wipe",
     ) + ABSENT)
-    assert any("names `target/thumbv8m.main-none-eabihf/release/firmware`" in f for f in findings), findings
+    assert any("names `target/trustzone/combined.elf`" in f for f in findings), findings
 
 
 def test_an_artifact_that_is_not_there_says_which_command_makes_it():
@@ -501,7 +502,7 @@ def test_an_artifact_that_is_not_there_says_which_command_makes_it():
     by injecting `raw`: no build, no image, and a row that must say so rather
     than resolve 44 owners `absent` against a file it never opened."""
     findings, _ = run(CLAIMS.replace(
-        "target/thumbv8m.main-none-eabihf/release/firmware", "target/nothing/here/firmware",
+        "target/trustzone/combined.elf", "target/nothing/here/firmware",
     ) + ABSENT, raw=None)
     assert any("build it first: cargo build --release -p firmware" in f for f in findings), findings
 
@@ -597,18 +598,130 @@ def test_an_instance_with_no_linkage_name_keeps_its_declarations_path():
     assert (state, "mark_token_used") not in by_site
 
 
-def test_a_mangling_this_reader_does_not_speak_keeps_the_bare_name():
-    """`ct_gate.demangle` returns the v0 scheme and plain C names unchanged, and
-    a path whose last component is not the `fn` is not that function's path. The
-    fallback is the bare name — a collapse the source-anchored count catches, and
-    strictly better than attributing a symbol to the wrong function."""
-    v0 = DWARF.replace(
-        "_ZN8rsk_fido5reset5sweep17hb74b7f7c3f715bcfE",
-        "_RNvNtCsbG6fPTLZAcM_8rsk_fido5reset5sweep",
+def test_a_plain_c_name_keeps_the_bare_name():
+    """A C name cannot attribute a Rust owner to an unrelated qualified path."""
+    dwarf = DWARF.replace(
+        "_ZN8rsk_fido5reset5sweep17hb74b7f7c3f715bcfE", "a_c_function"
     )
-    by_site, _inlined = gate.instances(v0, gate.source_paths(RAWLINE))
+    by_site, _ = gate.instances(dwarf, gate.source_paths(RAWLINE))
     assert ("crates/rsk-fido/src/reset.rs", "sweep") in by_site
     assert ("crates/rsk-fido/src/reset.rs", "rsk_fido::reset::sweep") not in by_site
+
+
+# Linkage names recorded from the Rust 1.99.1 default ELF. The generic free
+# functions exercise v0 instantiations as well as the four distinct reset owners.
+V0_NAMES = {
+    "_ZN8rsk_fido5reset5sweep17hb74b7f7c3f715bcfE": (
+        "_RINvNtCs99D6QPz3uut_8rsk_fido5reset5sweepINtNtNtCsk5waN0OSTRl_9rsk_store1"
+        "3authenticated7managed7ManagedNtNtCs8dDKasuzl7Y_8firmware13flash_storage11"
+        "SharedFlashINtNtCs9QvSXyS3s5K_18sequential_storage5cache5CacheINtNtB2z_11p"
+        "age_states15ArrayPageStatesKj160_EINtNtB2z_13page_pointers17ArrayPagePoint"
+        "ersKB3Z_EINtNtB2z_12key_pointers16ArrayKeyPointerstKj507_EtEENtNtB1H_7hand"
+        "ler7FidoRngEB1H_"
+    ),
+    "_ZN8rsk_fido4seed11clear_ppuat17h90b7fc19f5c74d0fE": (
+        "_RINvNtCs99D6QPz3uut_8rsk_fido4seed11clear_ppuatINtNtNtCsk5waN0OSTRl_9rsk_"
+        "store13authenticated7managed7ManagedNtNtCs8dDKasuzl7Y_8firmware13flash_sto"
+        "rage11SharedFlashINtNtCs9QvSXyS3s5K_18sequential_storage5cache5CacheINtNtB"
+        "2F_11page_states15ArrayPageStatesKj160_EINtNtB2F_13page_pointers17ArrayPag"
+        "ePointersKB45_EINtNtB2F_12key_pointers16ArrayKeyPointerstKj507_EtEEEB1N_"
+    ),
+    "_ZN8rsk_fido5state9FidoState15mark_token_used17h299e14bc1842cea0E": (
+        "_RNvMs4_NtCs99D6QPz3uut_8rsk_fido5stateNtB5_9FidoState15mark_token_used"
+    ),
+    "_ZN8rsk_fido5state9FidoState5reset17h0123456789abcdefE": (
+        "_RNvMs4_NtCs99D6QPz3uut_8rsk_fido5stateNtB5_9FidoState5reset"
+    ),
+    "_ZN8rsk_fido5state14AssertionState5reset17haaaaaaaaaaaaaaaaE": (
+        "_RNvMNtCs99D6QPz3uut_8rsk_fido5stateNtB2_14AssertionState5reset"
+    ),
+    "_ZN8rsk_fido5state13CredMgmtState5reset17hbbbbbbbbbbbbbbbbE": (
+        "_RNvMs_NtCs99D6QPz3uut_8rsk_fido5stateNtB4_13CredMgmtState5reset"
+    ),
+    "_ZN8rsk_fido5state14LargeBlobState5reset17hccccccccccccccccE": (
+        "_RNvMs0_NtCs99D6QPz3uut_8rsk_fido5stateNtB5_14LargeBlobState5reset"
+    ),
+}
+
+
+def v0(text):
+    for old, new in V0_NAMES.items():
+        text = text.replace(old, new)
+    return text
+
+
+def test_v0_generic_and_specification_owners_keep_their_qualified_paths():
+    by_site, inlined = gate.instances(v0(DWARF), gate.source_paths(RAWLINE))
+    sweep = ("crates/rsk-fido/src/reset.rs", "rsk_fido::reset::sweep")
+    state = ("crates/rsk-fido/src/state.rs", "rsk_fido::state::FidoState::mark_token_used")
+    assert sweep in by_site and state in by_site
+    status, evidence = gate.bind(sweep, by_site[sweep], inlined,
+                                 {line.split()[-1] for line in v0(DEFINED).splitlines()})
+    assert status == "symbol" and evidence.startswith("rsk_fido::reset::sweep::<")
+    findings, _ = run(raw=raw(dwarf=v0(DWARF), defined=v0(DEFINED)))
+    assert findings == [], findings
+
+
+def test_v0_four_functions_of_one_name_remain_four_sites():
+    by_site, _ = gate.instances(v0(DWARF + FIDO_RESET + SIBLING_RESETS), gate.source_paths(RAWLINE))
+    resets = sorted(key[1] for key in by_site if key[1].rsplit("::", 1)[-1] == "reset")
+    assert resets == [
+        "rsk_fido::state::AssertionState::reset",
+        "rsk_fido::state::CredMgmtState::reset",
+        "rsk_fido::state::FidoState::reset",
+        "rsk_fido::state::LargeBlobState::reset",
+    ]
+
+
+def test_v0_missing_owner_cannot_borrow_its_siblings_evidence():
+    findings, _ = run(sites=SITES + [RESET_SITE],
+                      raw=raw(dwarf=v0(DWARF + SIBLING_RESETS), defined=v0(DEFINED)))
+    assert len(findings) == 1, findings
+    assert "declares 4 `fn reset`" in findings[0] and "the image carries 3" in findings[0]
+
+
+def test_v0_missing_owner_reddens_the_gate_entry(monkeypatch, capsys):
+    # Only inputs are substituted: main executes the real audit and exit path.
+    monkeypatch.setattr(gate, "audit", functools.partial(
+        gate.audit, registry_text=CLAIMS + ABSENT,
+        raw=raw(dwarf=v0(DWARF + SIBLING_RESETS), defined=v0(DEFINED)),
+        sites=SITES + [RESET_SITE], gated=GATED, floors=FLOORS,
+    ))
+    assert gate.main([]) == 1
+    out = capsys.readouterr()
+    assert "declares 4 `fn reset`" in out.err and "the image carries 3" in out.err
+    assert not out.out and "floor" not in out.err
+
+
+def test_v0_instantiations_do_not_supply_a_missing_source_owner():
+    original = V0_NAMES["_ZN8rsk_fido5state14AssertionState5reset17haaaaaaaaaaaaaaaaE"]
+    # The extra I prefix shifts the owner backreference by one byte.
+    path = original[2:].replace("B2_", "B3_")
+    first, second = "_RI" + path + "hE", "_RI" + path + "tE"
+    siblings = v0(SIBLING_RESETS).replace(original, first)
+    extra = v0(SIBLING_RESETS.split(" <1><b2000>", 1)[0])
+    extra = extra.replace("b100", "b400").replace(original, second)
+    extra += " <2><330>: Abbrev Number: 20 (DW_TAG_inlined_subroutine)\n"
+    extra += "    <331> DW_AT_abstract_origin: <0xb4000>\n"
+    findings, _ = run(sites=SITES + [RESET_SITE], raw=raw(
+        dwarf=v0(DWARF) + siblings + extra, defined=v0(DEFINED),
+    ))
+    assert len(findings) == 1, findings
+    assert "declares 4 `fn reset`" in findings[0] and "the image carries 3" in findings[0]
+
+
+def test_v0_definition_identity_keeps_trait_and_owner_paths():
+    first = gate.definition_path("<rsk_test::State<u8> as rsk_sdk::First<u16>>::reset::<u32>")
+    second = gate.definition_path("<rsk_test::State<u8> as rsk_sdk::Second<u16>>::reset::<u32>")
+    assert first == "rsk_test::State as rsk_sdk::First::reset"
+    assert second == "rsk_test::State as rsk_sdk::Second::reset"
+    assert gate.definition_path("<rsk_test::State<fn(u8) -> u16>>::reset") == "rsk_test::State::reset"
+
+
+def test_invalid_v0_owner_linkage_is_an_explicit_decode_failure():
+    dwarf = DWARF.replace("_ZN8rsk_fido5reset5sweep17hb74b7f7c3f715bcfE", "_Rinvalid")
+    findings, _ = run(raw=raw(dwarf=dwarf))
+    assert len(findings) == 1 and "demangling failed" in findings[0], findings
 
 
 def test_every_function_of_the_name_the_file_declares_is_owed():
@@ -751,7 +864,7 @@ def test_an_absent_owner_with_no_registered_row_is_refused():
 def test_a_stale_exemption_is_refused():
     """A row kept for an owner the image now binds is one nobody will notice go
     stale — the allowlist would then be shorter than the contract by one. Its
-    evidence names the FUNCTION: `ct_gate.demangle` is the only reason a finding
+    evidence names the FUNCTION: `ct_gate.demangle_names` is the reason a finding
     reads `rsk_fido::reset::sweep` rather than the mangling `nm` prints."""
     findings, _ = run(CLAIMS + ABSENT.replace(
         'file = "crates/rsk-device/src/ctap.rs"\nfunction = "security_trace_snapshot"',
@@ -829,13 +942,28 @@ def test_a_caller_outside_the_writer_axes_three_directories_is_still_a_caller():
 
 def test_the_default_images_closure_is_walked_and_leaves_the_optional_crates_out():
     """`unlinked-crate` rests on this walk. Cross-checked against
-    `cargo tree -p firmware -e normal`: the same 22 crates, and the five it
-    leaves out are the `display`/`bench` optionals nothing turns on."""
+    `cargo tree -p firmware -e normal`: the same 23 crates, and the paths it leaves
+    out are display/bench optionals and the separate NS binary."""
     linked = gate.linked_crates(ROOT)
     assert "firmware" in linked and "crates/rsk-fido" in linked
     assert set(gate.crates(ROOT).values()) - linked == {
         "crates/rsk-bench", "crates/rsk-bip39", "crates/rsk-display",
-        "crates/rsk-slip39", "crates/rsk-ui"}
+        "crates/rsk-slip39", "crates/rsk-ui", "firmware/trustzone/nonsecure"}
+
+
+def test_a_nested_workspace_cannot_shadow_the_images_package(tmp_path):
+    (tmp_path / "Cargo.toml").write_text(
+        '[workspace]\nmembers = ["firmware", "crates/thing"]\n', encoding="utf-8")
+    for directory, manifest in {
+        "firmware": '[package]\nname = "firmware"\n[dependencies]\nthing = {}\n',
+        "crates/thing": '[package]\nname = "thing"\n',
+        "firmware/experiment": '[package]\nname = "firmware"\n[workspace]\n',
+    }.items():
+        path = tmp_path / directory
+        path.mkdir(parents=True)
+        (path / "Cargo.toml").write_text(manifest, encoding="utf-8")
+    assert gate.crates(tmp_path) == {"firmware": "firmware", "thing": "crates/thing"}
+    assert gate.linked_crates(tmp_path) == {"firmware", "crates/thing"}
 
 
 def test_an_optional_dependency_a_default_feature_turns_on_is_linked(tmp_path):

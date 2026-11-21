@@ -12,9 +12,9 @@ It replaces a hand-typed table. Fourteen rows stood under `The bounds` in [the s
 
 ## What is rendered
 
-**Every bundle the tree has — 11 of them.** Not the first slice's alone: the exit criterion says *the slice's bundle* because there was one when it was written, and rendering one now would leave most of the tree's bounds unshown, which is the same table written in parallel with a smaller denominator.
+**Every bundle the tree has — 17 of them.** Not the first slice's alone: the exit criterion says *the slice's bundle* because there was one when it was written, and rendering one now would leave most of the tree's bounds unshown, which is the same table written in parallel with a smaller denominator.
 
-Every one of the 11 is a `p0-launch` row of `assurance/configurations.toml`, all in the SEC-FIDO family, so *all the bundles* and *the P0-launch rows that have any raw evidence at all* are one set. The rest of that tranche is the difference, derived here rather than typed: **6 of its 17 rows** carry no bundle, so there is nothing to render for them — `SEC-STORE-001`, `SEC-STORE-002`, `SEC-STORE-003`, `SEC-STORE-004`, `SEC-STORE-005`, `SEC-STORE-006`.
+Every one of the 17 is a `p0-launch` row of `assurance/configurations.toml`, all in the SEC-FIDO and SEC-STORE family, so *all the bundles* and *the P0-launch rows that have any raw evidence at all* are one set. The rest of that tranche is the difference, derived here rather than typed: **0 of its 17 rows** carry no bundle, so there is nothing to render for them — none.
 
 | Property | Invariant | Bundle | Method rows | Bounds | With a per-bound consequence |
 |---|---|---|---:|---:|---:|
@@ -29,8 +29,14 @@ Every one of the 11 is a `p0-launch` row of `assurance/configurations.toml`, all
 | `SEC-FIDO-006C` | `ResetKeepsTheBackupSeal` | `assurance/bundle/SEC-FIDO-006C.toml` | 8 | 37 | 37 |
 | `SEC-FIDO-007` | `RamNeverOutlivesFlashSeed` | `assurance/bundle/SEC-FIDO-007.toml` | 5 | 26 | 26 |
 | `SEC-FIDO-008` | `NoLiveTokenWithoutPinRecord` | `assurance/bundle/SEC-FIDO-008.toml` | 8 | 42 | 42 |
+| `SEC-STORE-001` | `RSKeyStore!NoOrphanedMetadata` | `assurance/bundle/SEC-STORE-001.toml` | 4 | 24 | 24 |
+| `SEC-STORE-002` | `RSKeyStore!NoFalseAbsent` | `assurance/bundle/SEC-STORE-002.toml` | 4 | 24 | 24 |
+| `SEC-STORE-003` | `RSKeyStore!NoRecordLostToMetaWrite` | `assurance/bundle/SEC-STORE-003.toml` | 4 | 24 | 24 |
+| `SEC-STORE-004` | `RSKeyStore!NoFalseMetaAbsent` | `assurance/bundle/SEC-STORE-004.toml` | 4 | 24 | 24 |
+| `SEC-STORE-005` | `RSKeyStore!CacheHonest` | `assurance/bundle/SEC-STORE-005.toml` | 4 | 24 | 24 |
+| `SEC-STORE-006` | `RSKeyStore!NoSilentOrphan` | `assurance/bundle/SEC-STORE-006.toml` | 4 | 24 | 24 |
 
-**397 of 397** bounds carry a per-bound consequence. The column is `stops_<name>` beside `bound_<name>` in the bundle — the same way `shipped_relation` already travels with a method row, one field down — so the consequence moves with the number instead of being re-typed beside it. A cell reading `—` would be a bound the bundle carries no such field for; what such a bound costs is then only in its row's `shipped_relation`, printed under each table as the row note.
+**541 of 541** bounds carry a per-bound consequence. The column is `stops_<name>` beside `bound_<name>` in the bundle — the same way `shipped_relation` already travels with a method row, one field down — so the consequence moves with the number instead of being re-typed beside it. A cell reading `—` would be a bound the bundle carries no such field for; what such a bound costs is then only in its row's `shipped_relation`, printed under each table as the row note.
 
 ## The bounds, by property
 
@@ -123,11 +129,11 @@ Every one of the 11 is a `p0-launch` row of `assurance/configurations.toml`, all
 | Bound | Value | What stops being proved |
 |---|---|---|
 | `bound_ctap_max_message` | `3` | a pinUvAuthParam arriving across more than two continuation frames. Shipped is one INIT plus 128 continuations; rsk-device's RESP_CAP IS this constant, so every harness in rsk-device — including the seven in presence_kani.rs — proves over a transport two frames wide |
-| `bound_chain_buf_size` | `16` | any chained APDU over 16 bytes. Shipped is 2038, and rsk-device's FidoCcidApplet is an rsk_sdk::Applet, so the FIDO applet's CCID chaining is proved at 16 |
-| `bound_resp_chain_cap` | `16` | any chained response over 16 bytes; shipped is 2048 |
+| `bound_chain_buf_size` | `16` | any chained APDU over 16 bytes. Shipped is 3072, and rsk-device's FidoCcidApplet is an rsk_sdk::Applet, so the FIDO applet's CCID chaining is proved at 16 |
+| `bound_resp_chain_cap` | `16` | any chained response over 16 bytes; shipped is 3072 |
 | `bound_cfg_not_kani_assertions` | `2` | the equality of the two widths the getInfo response and the transport publish. crates/rsk-device/src/ctap.rs gates MAX_MSG_SIZE == RESP_CAP behind cfg(not(kani)), and rsk-usb does the same for the frame-multiple assertion; neither is a proof obligation and both are about the SHIPPED width, so under Kani the two constants are not held equal to each other |
 
-> **Row note (`shipped_relation`).** CTAP_MAX_MESSAGE is 129 frames shipped and 3 under cfg(kani), and rsk-device's RESP_CAP IS that constant, so all seven presence_kani.rs harnesses prove over a two-continuation transport; rsk-sdk's CHAIN_BUF_SIZE/RESP_CHAIN_CAP are 2038/2048 shipped and 16 here. What stops being proved: a pinUvAuthParam arriving across more than two continuation frames, and any chained APDU over 16 bytes
+> **Row note (`shipped_relation`).** CTAP_MAX_MESSAGE is 129 frames shipped and 3 under cfg(kani), and rsk-device's RESP_CAP IS that constant, so all seven presence_kani.rs harnesses prove over a two-continuation transport; rsk-sdk's CHAIN_BUF_SIZE/RESP_CHAIN_CAP are 3072/3072 shipped and 16 here. What stops being proved: a pinUvAuthParam arriving across more than two continuation frames, and any chained APDU over 16 bytes
 
 #### Method 8 — the ghost's completeness
 
@@ -214,7 +220,7 @@ Every one of the 11 is a `p0-launch` row of `assurance/configurations.toml`, all
 
 #### Method 6 — the production side: which sites own the decision, whether the tagged owners are those sites, and what the derived columns see
 
-`review` over crates/rsk-device/src/presence.rs::request_cancel crates/rsk-device/src/presence.rs::cancel_otp_wait crates/rsk-device/src/presence.rs::pending_for firmware/src/presence.rs::up_pending scripts/assurance_gate.py. cfg: none — every site above is unconditional production code on a button build; the two `cfg(feature = "display")` forwarders at firmware/src/presence.rs:263-269 are counted apart and are AS-XT-4's. features: none.
+`review` over crates/rsk-device/src/presence.rs::request_cancel crates/rsk-device/src/presence.rs::cancel_otp_wait crates/rsk-device/src/presence.rs::pending_for firmware/src/presence.rs::up_pending scripts/assurance_gate.py. cfg: none — every site above is unconditional production code on a button build; the two `cfg(feature = "display")` forwarders at firmware/src/presence.rs:269-275 are counted apart and are AS-XT-4's. features: none.
 
 | Bound | Value | What stops being proved |
 |---|---|---|
@@ -226,7 +232,7 @@ Every one of the 11 is a `p0-launch` row of `assurance/configurations.toml`, all
 | `bound_harnesses_in_file` | `7` | the five harnesses the column does not count. Seven live in the proof file and two are credited, so whatever the other five prove is outside every derived number this row feeds |
 | `bound_harnesses_counted` | `2` | any claim that the two counted harnesses are the strongest available. The count is what the column credits, not a judgement about which proofs are load-bearing |
 
-> **Row note (`shipped_relation`).** `git grep -n 'cancel_requested.store(true'` is exactly TWO sites — crates/rsk-device/src/presence.rs:120 inside `request_cancel`'s SCOPE_FIDO test and :131 inside `cancel_otp_wait`'s SCOPE_OTP test — and both carry a tag, so both halves of the cancel decision are covered, which is the thing that had to be confirmed rather than assumed. The four `set_wait_scope` call sites are firmware/src/worker.rs:434, :528, :663 and :665. Two files are credited to the `rust` column and one of them carries no tag; seven harnesses live in the proof file and two are counted. These bounds are counts of SITES and not shrinks of a shipped constant, because a review has no other unit — the same weakness SEC-FIDO-007 recorded about its own review row
+> **Row note (`shipped_relation`).** `git grep -n 'cancel_requested.store(true'` is exactly TWO sites — crates/rsk-device/src/presence.rs:120 inside `request_cancel`'s SCOPE_FIDO test and :131 inside `cancel_otp_wait`'s SCOPE_OTP test — and both carry a tag, so both halves of the cancel decision are covered, which is the thing that had to be confirmed rather than assumed. The four `set_wait_scope` call sites are firmware/src/worker.rs:484, :795, :934 and :938. Two files are credited to the `rust` column and one of them carries no tag; seven harnesses live in the proof file and two are counted. These bounds are counts of SITES and not shrinks of a shipped constant, because a review has no other unit — the same weakness SEC-FIDO-007 recorded about its own review row
 
 #### Method 7 — the code twin: the same defect in production Rust, driven to the name of every test that fell and the direction each fell in
 
@@ -240,7 +246,7 @@ Every one of the 11 is a `p0-launch` row of `assurance/configurations.toml`, all
 | `bound_owner_canceller_pairs` | `6` | the two pairs the sweep excludes — an owner raising its own cancel — and any pair over a transport the four owners do not include |
 | `bound_comutants_for_this_property` | `5` | any model switch with no code twin. Five comutants stand against this invariant and the register is what defines the set, so a modelled defect nobody wrote a patch for has no code-level verdict here |
 
-> **Row note (`shipped_relation`).** all five of this property's comutants patch ONE file, `crates/rsk-device/src/presence.rs`, which is the tagged owner — the healthy case, and not SEC-FIDO-007's, where the patched file was neither an owner nor tagged. `BugUnscopedCancel` and `BugPanelCancelable` share an ANCHOR (formal/comutants.toml:159-163 and :450-454 quote the same three lines), which the file's own note says in as many words: the model splits the scope test three ways and the code fuses it into one guard. One of the five was re-driven by hand here; the other four are the recorded `expect = "killed"`, which `.github/workflows/deep-checks.yml:476-479` re-drives WEEKLY as a gating row and the `scripts/check.sh:"comutants lint"` row lints on every run. The six pairs are `w4c`'s sweep: four owners × two host-reachable cancels, less the two an owner may raise for itself
+> **Row note (`shipped_relation`).** all five of this property's comutants patch ONE file, `crates/rsk-device/src/presence.rs`, which is the tagged owner — the healthy case, and not SEC-FIDO-007's, where the patched file was neither an owner nor tagged. `BugUnscopedCancel` and `BugPanelCancelable` share an ANCHOR (formal/comutants.toml:165-169 and :459-463 quote the same three lines), which the file's own note says in as many words: the model splits the scope test three ways and the code fuses it into one guard. One of the five was re-driven by hand here; the other four are the recorded `expect = "killed"`, which the `comutants` job of `.github/workflows/deep-checks.yml` re-drives WEEKLY as a gating row and the `scripts/check-assurance.sh:"comutants lint"` row lints on every pull request. The six pairs are `w4c`'s sweep: four owners × two host-reachable cancels, less the two an owner may raise for itself
 
 #### Method 8 — the scope disposition: why four build columns are `out-of-scope` and not `gap`, and what that leaves open
 
@@ -254,7 +260,7 @@ Every one of the 11 is a `p0-launch` row of `assurance/configurations.toml`, all
 | `bound_columns_gap` | `24` | everything on those twenty-four columns. A gap is the honest remainder — nobody has judged — and three of them are board columns that move `presence.source` off BOOTSEL, where the decision's producer is not the one this evidence was taken over |
 | `bound_board_columns_moving_presence` | `3` | the three boards themselves. Naming which gap columns change the presence source says where the evidence would have to be retaken and never that it holds there |
 
-> **Row note (`shipped_relation`).** this is the only row of the eleven-bundle programme with `out-of-scope` cells, and the disposition is DECIDED rather than open: on the four `no-touch` images `ButtonWait::wait` — the sole caller of `set_up_pending(true)` on a non-display build — is never called, because `ButtonPresence::wait` is `cfg(not(feature = "no-touch"))` and `request`/`request_ceremony` return `Presence::Confirmed` outright (firmware/src/presence.rs:202-258). So no presence DECISION is produced at all, and a property about where a decision may be applied has no subject. `gap` would say nobody has judged; `out-of-scope` says the claim is not made, which is the true state — and the tree already treats those builds that way, `firmware/Cargo.toml` saying 'Never ship a no-touch build' and `release-build.yml` refusing to release one. NOTE WHAT SURVIVES: `Arbiter` and all three tagged functions ARE compiled into those images; what is absent is the wait, not the arbitration. The 24 `gap` cells are the honest remainder and three of them are board columns that move `presence.source` off BOOTSEL
+> **Row note (`shipped_relation`).** this is the only row of the eleven-bundle programme with `out-of-scope` cells, and the disposition is DECIDED rather than open: on the four `no-touch` images `ButtonWait::wait` — the sole caller of `set_up_pending(true)` on a non-display build — is never called, because `ButtonPresence::wait` is `cfg(not(feature = "no-touch"))` and `request`/`request_ceremony` return `Presence::Confirmed` outright (firmware/src/presence.rs:208-264). So no presence DECISION is produced at all, and a property about where a decision may be applied has no subject. `gap` would say nobody has judged; `out-of-scope` says the claim is not made, which is the true state — and the tree already treats those builds that way, `firmware/Cargo.toml` saying 'Never ship a no-touch build' and `release-build.yml` refusing to release one. NOTE WHAT SURVIVES: `Arbiter` and all three tagged functions ARE compiled into those images; what is absent is the wait, not the arbitration. The 24 `gap` cells are the honest remainder and three of them are board columns that move `presence.source` off BOOTSEL
 
 ### `SEC-FIDO-003` — `NoTokenAfterInvalidation`
 
@@ -271,7 +277,7 @@ Every one of the 11 is a `p0-launch` row of `assurance/configurations.toml`, all
 | `bound_max_clock` | `1` | every question about elapsed time. One Tick is the whole clock, so the TIMER invalidator — `expire_stale_token` against a usage period this model has no wall clock for — is exercised as `some time has passed` and never at a duration |
 | `bound_reset_window` | `0` | the reset invalidator as a legitimate in-window reset. At zero the window is only ever seen closed, so `reset` is reached through ResetStart and ResetConfirmed and never through the power-up window the shipped device opens |
 
-> **Row note (`shipped_relation`).** MaxRetries and MismatchLimit ARE the shipped MAX_PIN_RETRIES (8) and PIN_MISMATCH_LIMIT (3) at crates/rsk-fido/src/consts.rs:368,372, and for THIS property that matters in a way it does not for SEC-FIDO-007: `BugWrongPinKeepsToken` and `BugLocalPinKeepsToken` are both reached through the retry ladder, so the ladder is on the path. RPs and Channels are 2 against an unbounded device; MaxClock 1 is the smallest value at which Tick is not dead, which bounds the TIMER arm — `expire_stale_token` is a tagged owner and PUAT_MAX_USAGE_PERIOD_MS (600 000 ms) is a wall clock this model does not have. ResetWindow 0 runs the window closed only, so the `reset` invalidator is exercised through ResetStart/ResetConfirmed and never through a legitimate in-window reset. This is the ONLY one of the four GREEN rows at AlwaysUvShipped = FALSE
+> **Row note (`shipped_relation`).** MaxRetries and MismatchLimit ARE the shipped MAX_PIN_RETRIES (8) and PIN_MISMATCH_LIMIT (3) at crates/rsk-fido/src/consts.rs:371,375, and for THIS property that matters in a way it does not for SEC-FIDO-007: `BugWrongPinKeepsToken` and `BugLocalPinKeepsToken` are both reached through the retry ladder, so the ladder is on the path. RPs and Channels are 2 against an unbounded device; MaxClock 1 is the smallest value at which Tick is not dead, which bounds the TIMER arm — `expire_stale_token` is a tagged owner and PUAT_MAX_USAGE_PERIOD_MS (600 000 ms) is a wall clock this model does not have. ResetWindow 0 runs the window closed only, so the `reset` invalidator is exercised through ResetStart/ResetConfirmed and never through a legitimate in-window reset. This is the ONLY one of the four GREEN rows at AlwaysUvShipped = FALSE
 
 #### Method 2 — tier B: the same invariant on the arm of AlwaysUvShipped the default image does not build
 
@@ -313,7 +319,7 @@ Every one of the 11 is a `p0-launch` row of `assurance/configurations.toml`, all
 | `bound_max_retries` | `2` | the six rungs between two and the shipped eight; a retry-shaped defect is not what this arm is for |
 | `bound_mismatch_limit` | `1` | the two mismatches between one and the shipped three, on the forced-change arm |
 
-> **Row note (`shipped_relation`).** ForceChangeModelled = TRUE turns on `gate.forceChange`, EF_MINPINLEN byte 1, which `clientpin.rs` reads at the two get_pin_token doors and `change_pin` clears. It belongs to this property because it is a refusal AFTER the PIN has verified — a grant that must not be minted rather than one that must be retired — and `assurance/platform.toml` PLAT-MODEL-010 is `discharged` on it. What the arm does NOT reach is the built-in-UV door (clientpin.rs:493-495), which has no action in this module at all, and the panel's own clear at clientpin.rs:1269
+> **Row note (`shipped_relation`).** ForceChangeModelled = TRUE turns on `gate.forceChange`, EF_MINPINLEN byte 1, which `clientpin.rs` reads at the two get_pin_token doors and `change_pin` clears. It belongs to this property because it is a refusal AFTER the PIN has verified — a grant that must not be minted rather than one that must be retired — and `assurance/platform.toml` PLAT-MODEL-010 is `discharged` on it. What the arm does NOT reach is the built-in-UV door (clientpin.rs:544-546), which has no action in this module at all, and the panel's own clear at clientpin.rs:1366
 
 #### Method 5 — non-degeneracy: the invariant can go red, seven different ways, and each red names it rather than a sibling
 
@@ -326,7 +332,7 @@ Every one of the 11 is a `p0-launch` row of `assurance/configurations.toml`, all
 | `bound_configurations` | `7` | an eighth way for this invariant to fail. Seven switches are seven defects somebody wrote, so non-degeneracy covers those seven and no failure mode nobody modelled |
 | `bound_conjuncts_falsified` | `3` | nothing — all three conjuncts are separately falsified, which is the strongest single statement in this bundle, because a conjunction whose clauses are never falsified apart is a conjunction with a passenger. What it does not say is that each clause is falsified in every way it could be |
 
-> **Row note (`shipped_relation`).** every one of the seven checks TypeOK and this invariant and NOTHING ELSE (formal/gen-configs.sh:181-184 emits the SOLO block — the WORKING-TREE numbers, re-taken by content after a sibling slice grew that file by 69 lines NET — 72 added and 3 removed, 923 lines to 992; the same four lines stood at :173-176 at this bundle's `build.commit`, which stays where it is because `scripts/evidence_gate.py:459-490` dates a bundle by a commit git can resolve and the one carrying this file does not exist yet), with exactly one Bug* TRUE and every other FALSE, which is what tells a kill from a neighbouring invariant's. `mut = 7` IS this set: `assurance_gate.solo_target_counts` counts single-target Solo_* configurations. All three conjuncts are separately falsified — the ghost by BugPinWriteBeforeRevoke, the session term by four, the persistent term by two — and that is the strongest single statement in this bundle, because a conjunction whose clauses are never falsified apart is a conjunction with a passenger
+> **Row note (`shipped_relation`).** every one of the seven checks TypeOK and this invariant and NOTHING ELSE (formal/gen-configs.sh:181-184 emits the SOLO block — the WORKING-TREE numbers, re-taken by content after a sibling slice grew that file by 69 lines NET — 72 added and 3 removed, 923 lines to 992; the same four lines stood at :173-176 at this bundle's `build.commit`, which stays where it is because `scripts/evidence_gate.py:515-546` dates a bundle by a commit git can resolve and the one carrying this file does not exist yet), with exactly one Bug* TRUE and every other FALSE, which is what tells a kill from a neighbouring invariant's. `mut = 7` IS this set: `assurance_gate.solo_target_counts` counts single-target Solo_* configurations. All three conjuncts are separately falsified — the ghost by BugPinWriteBeforeRevoke, the session term by four, the persistent term by two — and that is the strongest single statement in this bundle, because a conjunction whose clauses are never falsified apart is a conjunction with a passenger
 
 #### Method 6 — tier C: the session token's own state machine, over a symbolic five-operation sequence
 
@@ -354,7 +360,7 @@ Every one of the 11 is a `p0-launch` row of `assurance/configurations.toml`, all
 | `bound_mac_payloads` | `1` | anything about `pinproto::verify` as a MAC. One concrete payload is driven, so what is shown is that THIS replayed MAC still verifies — never that a forged one would not, which is TCB-2's |
 | `bound_clauses` | `2` | the same pair of clauses at the other three token gates. They are inline in functions that need a `Ctx`, and a `Ctx` drags `p256` into the reachable set where Kani 0.67.0 aborts in codegen, so this pair is proved at one door of four |
 
-> **Row note (`shipped_relation`).** the real `verify_cm_token` (credmgmt.rs:278-288) is driven, not a predicate standing in for it, and the pinUvAuthParam is a genuine v2 MAC minted while the grant was live and then REPLAYED. C2 is the load-bearing clause and it is the one that makes C1 mean something: the replayed MAC still verifies, so at this call site and at config.rs:243-245 zeroing `permissions` is not defence in depth — it is the only defence. One concrete payload, so this says nothing about `pinproto::verify` as a MAC (TCB-2). Only the `cm` permission and only this one of the four token gates: the other three are inline in functions that need a `Ctx`, and a `Ctx` drags `p256` into the reachable set where Kani 0.67.0 aborts in codegen
+> **Row note (`shipped_relation`).** the real `verify_cm_token` (credmgmt.rs:300-310) is driven, not a predicate standing in for it, and the pinUvAuthParam is a genuine v2 MAC minted while the grant was live and then REPLAYED. C2 is the load-bearing clause and it is the one that makes C1 mean something: the replayed MAC still verifies, so at this call site and at config.rs:245-247 zeroing `permissions` is not defence in depth — it is the only defence. One concrete payload, so this says nothing about `pinproto::verify` as a MAC (TCB-2). Only the `cm` permission and only this one of the four token gates: the other three are inline in functions that need a `Ctx`, and a `Ctx` drags `p256` into the reachable set where Kani 0.67.0 aborts in codegen
 
 #### Method 8 — the production side: which sites own each of the three conjuncts, and whether the tagged owners are those sites
 
@@ -369,7 +375,7 @@ Every one of the 11 is a `p0-launch` row of `assurance/configurations.toml`, all
 | `bound_citations_read` | `23` | any citation the review never opened. Twenty-three OCCURRENCES were read, which is a count of readings and not of sources |
 | `bound_citations_wrong` | `5` | how many SOURCES are wrong. The occurrences collapse onto fewer distinct references — one of them is written three times — so the defect count is smaller than the occurrence count and this bound cannot say by how much |
 
-> **Row note (`shipped_relation`).** six tags over three files, and the `rust` column is 3 because `assurance_gate.grep_word` returns FILE names — a seventh tag in a counted file moves nothing, which is the reason the missing one has never reddened a row. The mapping is clean on two conjuncts and empty on the third: session gets state.rs:491/:551/:600, persistent gets clientpin.rs:175/:229 and seed.rs:337, and the ORDER — the conjunct SetPinWrite and ChangePinWrite write the ghost for — gets nothing, because `write_pin_verifier` is untagged. Two more invalidators the statement names by word, `reset` and `power cycle`, are owned by state.rs:426 and state.rs:371 and carry SEC-FIDO-006's tag and no tag respectively. The citation bounds are OCCURRENCES, not distinct citations: 23 read and 5 wrong over 3 distinct references, and the distinction matters because one of the three is written three times. This bound is a count of sites and of citations, not a shrink of a shipped constant, because a review has no other unit
+> **Row note (`shipped_relation`).** six tags over three files, and the `rust` column is 3 because `assurance_gate.grep_word` returns FILE names — a seventh tag in a counted file moves nothing, which is the reason the missing one has never reddened a row. The mapping is clean on two conjuncts and empty on the third: session gets state.rs:610/:649/:698, persistent gets clientpin.rs:184/:239 and seed.rs:360, and the ORDER — the conjunct SetPinWrite and ChangePinWrite write the ghost for — gets nothing, because `write_pin_verifier` is untagged. Two more invalidators the statement names by word, `reset` and `power cycle`, are owned by state.rs:545 and state.rs:436 and carry SEC-FIDO-006's tag and no tag respectively. The citation bounds are OCCURRENCES, not distinct citations: 23 read and 5 wrong over 3 distinct references, and the distinction matters because one of the three is written three times. This bound is a count of sites and of citations, not a shrink of a shipped constant, because a review has no other unit
 
 #### Method 9 — the code twins: the same defects injected into production Rust, and the one that could not be
 
@@ -400,7 +406,7 @@ Every one of the 11 is a `p0-launch` row of `assurance/configurations.toml`, all
 | `bound_max_clock` | `1` | any falsifying state that needs a second unit of elapsed time. One Tick is the whole clock here |
 | `bound_reset_window` | `0` | the in-window arm. At zero a reset may start only at clock 0, so a gate record dropped during a legitimate power-up-window reset is a prefix no run on this row produces |
 
-> **Row note (`shipped_relation`).** MaxRetries and MismatchLimit ARE the shipped MAX_PIN_RETRIES (8) and PIN_MISMATCH_LIMIT (3) at crates/rsk-fido/src/consts.rs:368,372; RPs and Channels are 2 against an unbounded device; MaxClock 1 is the smallest value at which Tick is not dead; ResetWindow 0 runs the window closed only. THE RETRY LADDER IS NOT ON THIS PROPERTY'S PATH — `gate.ppuat => pin.set` names two booleans and no constant — but the ladder is what makes the PIN doors reachable, so what the six buy is the state set a falsifying state would have to appear in. And this is the ONE row of the four GREEN configurations that runs the shipped ladder at all: the other three set MaxRetries 2 and MismatchLimit 1, and two of those run one RP
+> **Row note (`shipped_relation`).** MaxRetries and MismatchLimit ARE the shipped MAX_PIN_RETRIES (8) and PIN_MISMATCH_LIMIT (3) at crates/rsk-fido/src/consts.rs:371,375; RPs and Channels are 2 against an unbounded device; MaxClock 1 is the smallest value at which Tick is not dead; ResetWindow 0 runs the window closed only. THE RETRY LADDER IS NOT ON THIS PROPERTY'S PATH — `gate.ppuat => pin.set` names two booleans and no constant — but the ladder is what makes the PIN doors reachable, so what the six buy is the state set a falsifying state would have to appear in. And this is the ONE row of the four GREEN configurations that runs the shipped ladder at all: the other three set MaxRetries 2 and MismatchLimit 1, and two of those run one RP
 
 #### Method 2 — the same invariant on the other arm of the three standing assumptions that have one
 
@@ -455,7 +461,7 @@ Every one of the 11 is a `p0-launch` row of `assurance/configurations.toml`, all
 | `bound_files_in_argument` | `5` | anything in a sixth file. Five files carry the argument, two of them only through cfg-gated projections that reach no image |
 | `bound_crates` | `2` | a site in a third crate. The argument spans two, so a consumer of this record outside them is not covered |
 
-> **Row note (`shipped_relation`).** one producer (seed.rs:319, the sole put_sealed32 that MINTS the record; 0x09D9's boot re-seal at seed.rs:508 writes it again and mints nothing); three consumers (seed.rs:302 load_ppuat, credmgmt.rs:266 through it, and clientpin.rs:418 which is also the producer's call site); two sweep sites (reset.rs:275 is_fido_fid, which puts the record in the SECRETS phase, and reset.rs:248 is_fido_gate_record, which keeps it out of the GATES phase). Five files — seed.rs, credmgmt.rs, clientpin.rs, reset.rs and crates/rsk-device/src/ctap.rs:201,236, the two cfg-gated projections — across rsk-fido and rsk-device. This bound is a count of sites and not a shrink of a shipped constant, because a review has no other unit; the honest reading of that is in the counterpart bundle and it applies here too
+> **Row note (`shipped_relation`).** one producer (seed.rs:342, the sole put_sealed32 that MINTS the record; 0x09D9's boot re-seal at seed.rs:528 writes it again and mints nothing); three consumers (seed.rs:325 load_ppuat, credmgmt.rs:288 through it, and clientpin.rs:462 which is also the producer's call site); two sweep sites (reset.rs:283 is_fido_fid, which puts the record in the SECRETS phase, and reset.rs:255 is_fido_gate_record, which keeps it out of the GATES phase). Five files — seed.rs, credmgmt.rs, clientpin.rs, reset.rs and crates/rsk-device/src/ctap.rs:241,276, the two cfg-gated projections — across rsk-fido and rsk-device. This bound is a count of sites and not a shrink of a shipped constant, because a review has no other unit; the honest reading of that is in the counterpart bundle and it applies here too
 
 #### Method 6 — the code twin: the same defect injected into production Rust, driven against the tree's own suite
 
@@ -468,7 +474,7 @@ Every one of the 11 is a `p0-launch` row of `assurance/configurations.toml`, all
 | `bound_tests_fallen` | `1` | which assertion is load-bearing. One test falls now and the count says the mutant died, not that the test was written for this property — it reads the gate set, which is what the patch edits. It was three before provisioning began minting the grant; see retired_owners_of_the_kill for why the two torn-wipe tests no longer reach the state |
 | `bound_slice_crates` | `1` | any test outside the one crate the slice runs. A kill by a test in another crate would not be observed by this row |
 
-> **Row note (`shipped_relation`).** the patch puts `\|\| fid == EF_PAUTHTOKEN.get()` back on is_fido_gate_record (formal/comutants.toml:395-414) — eab4b5c reverted, in the shipped file, not a model edit — and it is the ONE co-refutation in this tree whose patch site is a function this property's own tag sits on. Driven here rather than transcribed: a throwaway worktree at 31c21a7, the anchor asserted to resolve exactly once, `cargo test -p rsk-fido --target aarch64-apple-darwin` against the main build cache. `expect = "killed"` in that file is a RECORDED verdict per its own status vocabulary (:19-21), and this run is the second observation of it
+> **Row note (`shipped_relation`).** the patch puts `\|\| fid == EF_PAUTHTOKEN.get()` back on is_fido_gate_record (formal/comutants.toml:404-420) — eab4b5c reverted, in the shipped file, not a model edit — and it is the ONE co-refutation in this tree whose patch site is a function this property's own tag sits on. Driven here rather than transcribed: a throwaway worktree at 31c21a7, the anchor asserted to resolve exactly once, `cargo test -p rsk-fido --target aarch64-apple-darwin` against the main build cache. `expect = "killed"` in that file is a RECORDED verdict per its own status vocabulary (:19-21), and this run is the second observation of it
 
 #### Method 7 — what the tag gate can and cannot see about which site owns this property
 
@@ -480,7 +486,7 @@ Every one of the 11 is a `p0-launch` row of `assurance/configurations.toml`, all
 | `bound_tags` | `2` | which side of the implication a tag is on. The rule counts to one and the sweep measures that either tag alone clears it, so a tree whose only tag sits on a half that cannot falsify the invariant is still green |
 | `bound_owner_configurations` | `9` | any configuration outside the nine the rule reads. A tag is owed only for the invariants those nine check, so an invariant checked nowhere among them owes none |
 
-> **Row note (`shipped_relation`).** the sweep is over EVERY subset of the two tags — none, each alone, both — driven through `check_tags`, the gate's own entry point, with `production_rust` pointed at copies rather than at the tree, so nothing was edited. The rule it exercises is scripts/assurance_gate.py:1053-1062: for each of the nine OWNER_CFGS, every invariant that configuration checks must carry a Refines tag SOMEWHERE in production Rust. It is a count-to-one rule and the sweep is what makes that a measurement instead of a reading: either tag alone clears it, and the rule knows nothing about which side of the implication a tag is on
+> **Row note (`shipped_relation`).** the sweep is over EVERY subset of the two tags — none, each alone, both — driven through `check_tags`, the gate's own entry point, with `production_rust` pointed at copies rather than at the tree, so nothing was edited. The rule it exercises is scripts/assurance_gate.py:1068-1077: for each of the nine OWNER_CFGS, every invariant that configuration checks must carry a Refines tag SOMEWHERE in production Rust. It is a count-to-one rule and the sweep is what makes that a measurement instead of a reading: either tag alone clears it, and the rule knows nothing about which side of the implication a tag is on
 
 ### `SEC-FIDO-005` — `NoUnmanageableCredential`
 
@@ -524,7 +530,7 @@ Every one of the 11 is a `p0-launch` row of `assurance/configurations.toml`, all
 | `bound_solo_configurations` | `3` | a fourth ordering. The three switches are the three orderings the shipped tree chose — registration, credential-management delete and the wipe — so an ordering nobody wrote a switch for is not shown to be falsifiable |
 | `bound_counterexample_depths` | `14` | nothing — the depth is the deepest MEASURED trace of the three and not a cap the configurations impose; the other two fall shallower |
 
-> **Row note (`shipped_relation`).** each configuration checks TypeOK and this invariant and NOTHING else, and arms exactly one Bug* with every other FALSE — which is what tells these kills from a neighbouring invariant's. The three switches are the three orderings the shipped tree chose: registration (EF_RP before EF_CRED, credential.rs:853 vs :888), credential-management delete (EF_CRED before the count, credmgmt.rs:672 vs :679) and the wipe (the seed before the batch — the `FIDO_SEED_FIDS` loop at reset.rs:113-117, under the comment at :105-107 that says why). The depth bound is the deepest of the three traces, 14 on Solo_BugDeleteRpBeforeCred; the other two fall at 7 and 13. Unlike SEC-FIDO-007, the Solo_ rows are not the ONLY place this property is observed to fail — `formal/gen-configs.sh:185-187` puts a mutant's target invariant FIRST in a Mut_ configuration's INVARIANTS block, so all three Mut_ twins report this name too
+> **Row note (`shipped_relation`).** each configuration checks TypeOK and this invariant and NOTHING else, and arms exactly one Bug* with every other FALSE — which is what tells these kills from a neighbouring invariant's. The three switches are the three orderings the shipped tree chose: registration (EF_RP before EF_CRED, credential.rs:887 vs :925), credential-management delete (EF_CRED before the count, credmgmt.rs:766 vs :738) and the wipe (the seed before the batch — the `FIDO_SEED_FIDS` loop at reset.rs:116-120, under the comment at :108-110 that says why). The depth bound is the deepest of the three traces, 14 on Solo_BugDeleteRpBeforeCred; the other two fall at 7 and 13. Unlike SEC-FIDO-007, the Solo_ rows are not the ONLY place this property is observed to fail — `formal/gen-configs.sh:185-187` puts a mutant's target invariant FIRST in a Mut_ configuration's INVARIANTS block, so all three Mut_ twins report this name too
 
 #### Method 4 — the historical row: the wipe order this tree had before 0x08BF, run against the whole invariant set
 
@@ -540,18 +546,18 @@ Every one of the 11 is a `p0-launch` row of `assurance/configurations.toml`, all
 
 #### Method 5 — the production side: which sites own each half, whether the tags reach them, and what `reachable by the management surface` means in Rust that `store.rpent` does not say
 
-`review` over crates/rsk-fido/src/credential.rs::credential_store + crates/rsk-fido/src/credmgmt.rs::decrement_rp + …enumerate_rps + crates/rsk-fido/src/passkeys.rs::for_each_rp. cfg: none — every site above is unconditional production code; the invariant's name appears in no cfg-gated mirror. features: none.
+`review` over crates/rsk-fido/src/credential.rs::credential_store + crates/rsk-fido/src/credmgmt.rs::decrement_rp + …settle_rp_records + …enumerate_rps + crates/rsk-fido/src/passkeys.rs::for_each_rp. cfg: none — every site above is unconditional production code; the invariant's name appears in no cfg-gated mirror. features: none.
 
 | Bound | Value | What stops being proved |
 |---|---|---|
-| `bound_tagged_owners` | `3` | any owner outside the three the tag set names. This is a count of SITES and not a shrink of a shipped constant, because a review has no other unit |
-| `bound_writer_sites` | `8` | a writer in a file the review did not open. Eight entries over four files is what was read, and one entry holds three best-effort rollbacks, so the site count is larger than the entry count |
+| `bound_tagged_owners` | `4` | any owner outside the four the tag set names. This is a count of SITES and not a shrink of a shipped constant, because a review has no other unit |
+| `bound_writer_sites` | `10` | a writer in a file the review did not open. Ten entries over four files is what was read, and one entry holds three best-effort rollbacks, so the site count is larger than the entry count |
 | `bound_reader_sites` | `3` | anything about what a reader DOES with a slot it read. The count names the three browse surfaces and not their agreement — measured, two of them disagree on one skip condition |
 | `bound_skip_conditions` | `3` | the invariant itself, and this is the finding: a record that exists and is SKIPPED satisfies `store.rpent` as plain set membership while being exactly what the clause forbids. Three skip conditions are three ways for that to happen, and no model bound reaches any of them |
 | `bound_files_in_argument` | `4` | anything in a fifth file |
 | `bound_crates` | `1` | a site outside rsk-fido. The whole argument is in one crate, so a management surface in another would be outside it |
 
-> **Row note (`shipped_relation`).** eight writer entries over four files in ONE crate — ten sites, since one entry holds the three best-effort rollbacks — against the three functions the tag set names; the count is a count of sites and not a shrink of a shipped constant, because a review has no other unit. The three skip conditions are the finding: both browse surfaces drop an EF_RP slot when `fs.read` answers None (credmgmt.rs:364, passkeys.rs:113), when `n < RP_PREFIX \|\| buf[0] == 0` (credmgmt.rs:368, passkeys.rs:117) and when `unseal_rp_id` fails (credmgmt.rs:402, passkeys.rs:122) — and `store.rpent` is plain set membership, so a record that exists and is skipped satisfies the invariant while being exactly what the clause forbids. The two surfaces do not even agree with each other on the third: `enumerate_rps` answers `CtapError::Other` for the WHOLE walk, so one unsealable record hides every other relying party from the host, while `for_each_rp` skips that one and lists the rest
+> **Row note (`shipped_relation`).** eight writer entries over four files in ONE crate — ten sites, since one entry holds the three best-effort rollbacks — against the three functions the tag set names; the count is a count of sites and not a shrink of a shipped constant, because a review has no other unit. The three skip conditions are the finding: an EF_RP read the flash refuses now fails the host walk (credmgmt.rs:393) and still drops the slot from the display's (passkeys.rs:112), and both surfaces drop one when `n < RP_PREFIX \|\| buf[0] == 0` (credmgmt.rs:401, passkeys.rs:116) and when `unseal_rp_id` fails (credmgmt.rs:436, passkeys.rs:121) — and `store.rpent` is plain set membership, so a record that exists and is skipped satisfies the invariant while being exactly what the clause forbids. The two surfaces do not even agree with each other on the third: `enumerate_rps` answers `CtapError::Other` for the WHOLE walk, so one unsealable record hides every other relying party from the host, while `for_each_rp` skips that one and lists the rest
 
 #### Method 6 — the five sites the tree already records as open in this class, and whether the model's abstraction hides them
 
@@ -578,7 +584,7 @@ Every one of the 11 is a `p0-launch` row of `assurance/configurations.toml`, all
 | `bound_driven_here` | `1` | the other two verdicts as OBSERVATIONS. One of the three was re-driven for this bundle; the other two are transcribed from the register, so their kills are recorded rather than re-measured |
 | `bound_credited_configurations` | `3` | what the killing tests are ABOUT. The credit is three because the index reads solo configurations by invariant name; the tests that fall are named for this property's shape and not for the property, and no derived column counts them |
 
-> **Row note (`shipped_relation`).** three twins are registered — one per model switch, at formal/comutants.toml:96, :125 and :343 — and all three carry `expect = "killed"`, which is a RECORDED verdict per that file's own status vocabulary (:19-21) and not a plan. ONE of the three was re-driven for this bundle, BugCredBeforeRp, whose two hunks defer `bump_rp` past the EF_CRED write in the shipped file; the other two are transcribed from the register and are marked as such in the mutation table. The credit is three because `comutate.solo_index` reads the Solo_ configuration BY INVARIANT NAME (scripts/comutate.py:337-365) and all three switches target this invariant. What the column does NOT say, and the source does: the killing tests are named for this property's shape but not for the property, and no derived column counts them
+> **Row note (`shipped_relation`).** three twins are registered — one per model switch, at formal/comutants.toml:96, :131 and :352 — and all three carry `expect = "killed"`, which is a RECORDED verdict per that file's own status vocabulary (:19-21) and not a plan. ONE of the three was re-driven for this bundle, BugCredBeforeRp, whose two hunks defer `bump_rp` past the EF_CRED write in the shipped file; the other two are transcribed from the register and are marked as such in the mutation table. The credit is three because `comutate.solo_index` reads the Solo_ configuration BY INVARIANT NAME (scripts/comutate.py:338-366) and all three switches target this invariant. What the column does NOT say, and the source does: the killing tests are named for this property's shape but not for the property, and no derived column counts them
 
 ### `SEC-FIDO-006` — `ResetNeverWeakensSurvivingState`
 
@@ -595,7 +601,7 @@ Every one of the 11 is a `p0-launch` row of `assurance/configurations.toml`, all
 | `bound_max_clock` | `1` | any prefix that needs two units of elapsed time — and, with the window at zero, one Tick is also what closes the window, so the two bounds bite together on this row |
 | `bound_reset_window` | `0` | the whole of the shipped power-up window but its first instant. `InResetWindowGuard` is `sys.clock <= ResetWindow`, so a reset may START only at clock 0 and one Tick refuses it: a reset begun late inside the shipped RESET_WINDOW_MS is a prefix no configuration here tears. What is NOT skipped is the touch — the ceremony runs unconditionally after the window check |
 
-> **Row note (`shipped_relation`).** MaxRetries and MismatchLimit ARE the shipped MAX_PIN_RETRIES (8) and PIN_MISMATCH_LIMIT (3) at crates/rsk-fido/src/consts.rs:368,372; RPs and Channels are 2 against an unbounded device; MaxClock 1 is the smallest value at which Tick is not dead. ResetWindow 0 is the one that costs THIS property something. `InResetWindowGuard` is `sys.clock <= ResetWindow` (RSKeySecurityState.tla:1264-1267), so with ResetWindow 0 and MaxClock 1 a reset may START only at clock 0 and one Tick refuses it: the CTAP 2.1 §6.6 power-up window is exercised at its narrowest, and a reset begun late inside the shipped RESET_WINDOW_MS — 10 000 ms at crates/rsk-fido/src/consts.rs:404 — is a prefix no configuration here tears. The touch is not the thing being skipped: crates/rsk-fido/src/reset.rs:37-51 runs the ceremony unconditionally after the window check, and TouchGuard is an enabling conjunct of ResetConfirmed
+> **Row note (`shipped_relation`).** MaxRetries and MismatchLimit ARE the shipped MAX_PIN_RETRIES (8) and PIN_MISMATCH_LIMIT (3) at crates/rsk-fido/src/consts.rs:371,375; RPs and Channels are 2 against an unbounded device; MaxClock 1 is the smallest value at which Tick is not dead. ResetWindow 0 is the one that costs THIS property something. `InResetWindowGuard` is `sys.clock <= ResetWindow` (RSKeySecurityState.tla:1264-1267), so with ResetWindow 0 and MaxClock 1 a reset may START only at clock 0 and one Tick refuses it: the CTAP 2.1 §6.6 power-up window is exercised at its narrowest, and a reset begun late inside the shipped RESET_WINDOW_MS — 10 000 ms at crates/rsk-fido/src/consts.rs:407 — is a prefix no configuration here tears. The touch is not the thing being skipped: crates/rsk-fido/src/reset.rs:37-51 runs the ceremony unconditionally after the window check, and TouchGuard is an enabling conjunct of ResetConfirmed
 
 #### Method 2 — the same conjunction on the other arms of the three registered scope constants
 
@@ -654,7 +660,7 @@ Every one of the 11 is a `p0-launch` row of `assurance/configurations.toml`, all
 
 #### Method 6 — the production side: which sites own the ordering, and what the five tags and the three columns actually count
 
-`review` over crates/rsk-fido/src/reset.rs::reset crates/rsk-fido/src/reset.rs::sweep crates/rsk-fido/src/reset.rs::is_fido_gate_record crates/rsk-fido/src/state.rs::reset crates/rsk-fido/src/lib.rs::load_keydev crates/rsk-fido/src/reset_assurance.rs::well_formed. cfg: none — every site above is unconditional production code; `reset_assurance.rs` is the exception and is proved absent from every image by `scripts/check.sh:576`. features: none.
+`review` over crates/rsk-fido/src/reset.rs::reset crates/rsk-fido/src/reset.rs::sweep crates/rsk-fido/src/reset.rs::is_fido_gate_record crates/rsk-fido/src/state.rs::reset crates/rsk-fido/src/lib.rs::load_keydev crates/rsk-fido/src/reset_assurance.rs::well_formed. cfg: none — every site above is unconditional production code; `reset_assurance.rs` is the exception and is proved absent from every image by `scripts/check.sh:588`. features: none.
 
 | Bound | Value | What stops being proved |
 |---|---|---|
@@ -691,7 +697,7 @@ Every one of the 11 is a `p0-launch` row of `assurance/configurations.toml`, all
 | `bound_snapshot_valuations` | `1` | the seven other snapshot valuations. The fixture writes all four records before the reset, so three snapshot booleans are TRUE by construction and the eight combinations the Kani harnesses draw symbolically are never explored here |
 | `bound_cut_budget_bytes` | `1048575` | a power cut later than the budget allows. The cut point is drawn from three bytes, so a tear further into the reset than that is not a prefix this target can produce |
 
-> **Row note (`shipped_relation`).** the probe drives the REAL `rsk_fido::reset::reset` over the real `SeqStorage` on a mock NOR that can lose power inside a write, then mounts a fresh `Fs`, scans, runs `ensure_seed` and boots a second time. That is the strongest rung below the board. What it does NOT have is the split the two tiers above it do: `reset_property_holds` folds all three clauses into ONE boolean expression (fuzz/fuzz_targets/power_cut.rs:202-204), so a failure names the function and never the clause — while the module doc at :28-31 lists all three clauses by name. And the fixture pins one snapshot valuation: EF_CRED, EF_PIN, EF_ALWAYS_UV and EF_BACKUP_SEALED are all written before the reset, so `snap.pin`, `snap.auv` and `snap.sealed` are TRUE by construction and the 2^3 the Kani harnesses draw symbolically is never explored. The cut budget is `data[1] & 0x0f` over three bytes, so 0..1 048 575 bytes
+> **Row note (`shipped_relation`).** the probe drives the REAL `rsk_fido::reset::reset` over the real `SeqStorage` on a mock NOR that can lose power inside a write, then mounts a fresh `Fs`, scans, runs `ensure_seed` and boots a second time. That is the strongest rung below the board. What it does NOT have is the split the two tiers above it do: `reset_property_holds` folds all three clauses into ONE boolean expression (fuzz/fuzz_targets/power_cut.rs:248-250), so a failure names the function and never the clause — while the module doc at :28-31 lists all three clauses by name. And the fixture pins one snapshot valuation: EF_CRED, EF_PIN, EF_ALWAYS_UV and EF_BACKUP_SEALED are all written before the reset, so `snap.pin`, `snap.auv` and `snap.sealed` are TRUE by construction and the 2^3 the Kani harnesses draw symbolically is never explored. The cut budget is `data[1] & 0x0f` over three bytes, so 0..1 048 575 bytes
 
 #### Method 9 — the board rung, and what its column is worth: the HIL witness is OWNED and has never been recorded
 
@@ -730,7 +736,7 @@ Every one of the 11 is a `p0-launch` row of `assurance/configurations.toml`, all
 | Bound | Value | What stops being proved |
 |---|---|---|
 | `bound_invariants` | `2` | anything about the rest of the invariant set. TypeOK and this one clause is the whole of what this row checks, which is exactly why its RED cannot be a neighbour's — and equally why it says nothing about whether a neighbour would have caught the same defect |
-| `bound_armed_switches` | `1` | any defect the one switch does not build. One armed switch is also what makes the runner compare the reported name: `formal/floors.txt:SoloClause_*.cfg` gives this family `RED -` with no invariant column, and `formal/run-tlc.sh:226-234` then DERIVES the expected name from the configuration's own INVARIANTS block whenever `armed_count` is 1 — which it is here, measured |
+| `bound_armed_switches` | `1` | any defect the one switch does not build. One armed switch is also what makes the runner compare the reported name: `formal/floors.txt:SoloClause_*.cfg` gives this family `RED -` with no invariant column, and `formal/run-tlc.sh:229-237` then DERIVES the expected name from the configuration's own INVARIANTS block whenever `armed_count` is 1 — which it is here, measured |
 | `bound_clauses` | `1` | the other two conjuncts of the parent. This row is about one third of `ResetNeverWeakensSurvivingState` and is silent on the rest |
 | `bound_depth` | `16` | nothing — sixteen is a MEASURED trace length and not a cap. What it says is why the parent cannot report this clause: the third conjunct falls at depth 8, so a search that checks all three reports the third every time |
 | `bound_distinct_states` | `918170` | nothing by omission; the search stopped on the counterexample with 333 663 states still on the queue, so this is the space explored before the first violation and not the space of the configuration |
@@ -783,12 +789,12 @@ Every one of the 11 is a `p0-launch` row of `assurance/configurations.toml`, all
 
 | Bound | Value | What stops being proved |
 |---|---|---|
-| `bound_tagged_sites` | `1` | any owner outside the one tagged site. This is a count of SITES and a review has no other unit; the site that the clause is ABOUT — the five-line order at reset.rs:104-121 and reset.rs:72 — carries no tag at all |
-| `bound_gate_records` | `5` | the four members this clause does not name. `EF_DEVICE_PIN` and `EF_MINPINLEN` are in the phase and in no clause of any property, which the source says out loud at reset.rs:237-243, so a torn reset that drops either early is unobserved by every rung here |
+| `bound_tagged_sites` | `1` | any owner outside the one tagged site. This is a count of SITES and a review has no other unit; the site that the clause is ABOUT — the five-line order at reset.rs:107-128 and reset.rs:72 — carries no tag at all |
+| `bound_gate_records` | `5` | the four members this clause does not name. `EF_DEVICE_PIN` and `EF_MINPINLEN` are in the phase and in no clause of any property, which the source says out loud at reset.rs:244-250, so a torn reset that drops either early is unobserved by every rung here |
 | `bound_clause_records` | `1` | everything but `EF_PIN` = 0x1080. One record is the whole of what this clause is about at the FID level |
-| `bound_destroying_sites` | `2` | any third way the record can go. The gate sweep at reset.rs:121 is the reset's own destroyer; the device-wide `Fs::factory_wipe` is the second, and is the reason `is_fido_gate_fid` is `pub`. Neither is reached by the model, which has an ordering over completed writes and no factory wipe at all |
+| `bound_destroying_sites` | `2` | any third way the record can go. The gate sweep at reset.rs:128 is the reset's own destroyer; the device-wide `Fs::factory_wipe` is the second, and is the reason `is_fido_gate_fid` is `pub`. Neither is reached by the model, which has an ordering over completed writes and no factory wipe at all |
 
-> **Row note (`shipped_relation`).** the clause is a statement about five consecutive lines and their order is enforced by nothing but their sequence. `sweep` at reset.rs:134 is batched at 64 with a progress backstop and returns `Err` when the walk did not complete, so an un-yielded FID counts as absent only on a finished walk — which is the mechanism the clause's consequent depends on and which no configuration models
+> **Row note (`shipped_relation`).** the clause is a statement about five consecutive lines and their order is enforced by nothing but their sequence. `sweep` at reset.rs:141 is batched at 64 with a progress backstop and returns `Err` when the walk did not complete, so an un-yielded FID counts as absent only on a finished walk — which is the mechanism the clause's consequent depends on and which no configuration models
 
 #### Method 7 — what the two runtime columns of this row's vector actually assert about THIS clause
 
@@ -813,11 +819,11 @@ Every one of the 11 is a `p0-launch` row of `assurance/configurations.toml`, all
 | `bound_rps` | `2` | a torn prefix that first goes wrong over a third relying party. The clause needs only `snap.surv # {}`, so two is reach and not a term of the claim |
 | `bound_channels` | `2` | a torn prefix that first goes wrong over a third concurrent channel |
 | `bound_max_clock` | `1` | any prefix needing two units of elapsed time — and with `ResetWindow = 0` one Tick is also what closes the reset window, so the two bounds bite together on this row |
-| `bound_reset_window` | `0` | the whole of the shipped power-up window but its first instant: a reset may START only at clock 0, so a reset begun late inside the shipped RESET_WINDOW_MS — 10 000 ms at crates/rsk-fido/src/consts.rs:404 — is a prefix this row never tears. The touch is NOT what is skipped; crates/rsk-fido/src/reset.rs:37-51 runs the ceremony unconditionally after the window check |
+| `bound_reset_window` | `0` | the whole of the shipped power-up window but its first instant: a reset may START only at clock 0, so a reset begun late inside the shipped RESET_WINDOW_MS — 10 000 ms at crates/rsk-fido/src/consts.rs:407 — is a prefix this row never tears. The touch is NOT what is skipped; crates/rsk-fido/src/reset.rs:37-51 runs the ceremony unconditionally after the window check |
 | `bound_invariants` | `12` | nothing about this clause by omission — twelve is what this configuration's INVARIANTS block names, TypeOK and eleven invariants, and the last three are the clauses. It is worth the count because two other bundles describe this same block as nine, which was true at `b819ee5` and is false at the commit these runs were taken at |
 | `bound_green_bases` | `1` | any second green configuration. Of the two hundred and ten configurations, forty name the parent invariant and exactly two name this clause; only one of those two is green, so this row is the whole of the clause's positive model evidence and there is no independent arm to corroborate it |
 
-> **Row note (`shipped_relation`).** MaxRetries 8 and MismatchLimit 3 ARE the shipped MAX_PIN_RETRIES and PIN_MISMATCH_LIMIT at crates/rsk-fido/src/consts.rs:368,372; RPs and Channels are 2 against an unbounded device. The constant that matters to THIS clause is `AlwaysUvShipped = FALSE`, and it is the shipped image's own value: firmware/Cargo.toml's default feature set does not name `always-uv`. On that value the record exists exactly when the flag is on, so the model's consequent `gate.alwaysUv` and the firmware's `EF_ALWAYS_UV` presence are the same fact — which is the correspondence the whole ladder below rests on and which the other arm breaks
+> **Row note (`shipped_relation`).** MaxRetries 8 and MismatchLimit 3 ARE the shipped MAX_PIN_RETRIES and PIN_MISMATCH_LIMIT at crates/rsk-fido/src/consts.rs:371,375; RPs and Channels are 2 against an unbounded device. The constant that matters to THIS clause is `AlwaysUvShipped = FALSE`, and it is the shipped image's own value: firmware/Cargo.toml's default feature set does not name `always-uv`. On that value the record exists exactly when the flag is on, so the model's consequent `gate.alwaysUv` and the firmware's `EF_ALWAYS_UV` presence are the same fact — which is the correspondence the whole ladder below rests on and which the other arm breaks
 
 #### Method 2 — non-degeneracy: that the clause has a falsifying state at all on the constants its green run uses, and that the state is this clause's and not a sibling's
 
@@ -867,10 +873,10 @@ Every one of the 11 is a `p0-launch` row of `assurance/configurations.toml`, all
 
 | Bound | Value | What stops being proved |
 |---|---|---|
-| `bound_tagged_sites` | `1` | every site the tag is not on, which is where the property lives. The one tag is on the CLASSIFIER; the ordering that makes the clause true is two untagged lines at crates/rsk-fido/src/reset.rs:120-121, and the writer that decides what the record MEANS is in another file entirely |
+| `bound_tagged_sites` | `1` | every site the tag is not on, which is where the property lives. The one tag is on the CLASSIFIER; the ordering that makes the clause true is two untagged lines at crates/rsk-fido/src/reset.rs:127-128, and the writer that decides what the record MEANS is in another file entirely |
 | `bound_gate_records` | `5` | the two members no clause names. `is_fido_gate_record` matches EF_PIN, EF_DEVICE_PIN, EF_ALWAYS_UV, EF_MINPINLEN and EF_BACKUP_SEALED; three clauses cover three of them, and a torn reset that drops either of the other two early is unobserved by every artifact in this bundle |
-| `bound_flag_writers` | `2` | any site outside the two. `toggle_always_uv` creates and removes the record; the gate sweep removes it. `crates/rsk-fido/src/config.rs:327-329`'s `always_uv_enabled` READS it and resolves a faulted read to ON rather than to the default, which is a strictness this clause does not model at all |
-| `bound_feature_sites` | `2` | any dependence the two sites do not carry. `git grep 'feature = "always-uv"' crates/rsk-fido/src` returns exactly crates/rsk-fido/src/config.rs:315 and crates/rsk-fido/src/conformance/config.rs:77 — neither is in reset.rs or reset_assurance.rs, so no verification-side file in this bundle can tell the two builds apart |
+| `bound_flag_writers` | `2` | any site outside the two. `toggle_always_uv` creates and removes the record; the gate sweep removes it. `crates/rsk-fido/src/config.rs:328-330`'s `always_uv_enabled` READS it and resolves a faulted read to ON rather than to the default, which is a strictness this clause does not model at all |
+| `bound_feature_sites` | `2` | any dependence the two sites do not carry. `git grep 'feature = "always-uv"' crates/rsk-fido/src` returns exactly crates/rsk-fido/src/config.rs:316 and crates/rsk-fido/src/conformance/config.rs:77 — neither is in reset.rs or reset_assurance.rs, so no verification-side file in this bundle can tell the two builds apart |
 
 > **Row note (`shipped_relation`).** the review is over the shipped source at `b185fc3` with `crates/rsk-fido/` clean in the working tree, and its result is a split: the model's consequent is the FLAG and the Rust α's is the RECORD, and `toggle_always_uv` is what makes the two coincide — it deletes the record when the new value equals `DEFAULT_ALWAYS_UV` and writes it otherwise, so record-present means flag-on exactly while that default is off
 
@@ -898,7 +904,7 @@ Every one of the 11 is a `p0-launch` row of `assurance/configurations.toml`, all
 | `bound_negative_controls` | `1` | any control over the WIPE. The one per-clause control sets `persistent.always_uv = false` by hand after `begin()` and asserts the clause method returns false — it proves the method can fail, not that the phase order is what keeps it true |
 | `bound_feature_flavours` | `2` | nothing, and that is the finding rather than a gap in the row: both flavours were driven and both are green, so the pair bounds no defect and instead measures that the α cannot tell them apart |
 
-> **Row note (`shipped_relation`).** the twin patches the shipped file at the shipped lines: `formal/comutants.toml:331-338`'s `find` is `crates/rsk-fido/src/reset.rs:120-121` verbatim, and its `replace` is the same two lines exchanged. The flavour probe drives the shipped test module unmodified under two feature sets, which is why its verdict is about the abstraction and not about a patch
+> **Row note (`shipped_relation`).** the twin patches the shipped file at the shipped lines: `formal/comutants.toml:340-347`'s `find` is `crates/rsk-fido/src/reset.rs:127-128` verbatim, and its `replace` is the same two lines exchanged. The flavour probe drives the shipped test module unmodified under two feature sets, which is why its verdict is about the abstraction and not about a patch
 
 ### `SEC-FIDO-006C` — `ResetKeepsTheBackupSeal`
 
@@ -910,13 +916,13 @@ Every one of the 11 is a `p0-launch` row of `assurance/configurations.toml`, all
 |---|---|---|
 | `bound_rps` | `2` | a torn prefix that first goes wrong over a third relying party — and for THIS clause that costs less than for its siblings, because its antecedent names no credential at all: `snap.seed /\ snap.sealed` is true with `store.cred` empty, which the recorded counterexample confirms |
 | `bound_channels` | `2` | a torn prefix that first goes wrong over a third concurrent channel |
-| `bound_max_retries` | `8` | nothing by shrinking, and eight IS the shipped ladder at crates/rsk-fido/src/consts.rs:368. This clause names no retry count |
+| `bound_max_retries` | `8` | nothing by shrinking, and eight IS the shipped ladder at crates/rsk-fido/src/consts.rs:371. This clause names no retry count |
 | `bound_mismatch_limit` | `3` | nothing by shrinking, for the same reason as the ladder it pairs with |
 | `bound_max_clock` | `1` | any prefix that needs two units of elapsed time; with the window at zero one Tick is also what closes the window, so the two bounds bite together here |
-| `bound_reset_window` | `0` | the whole of the shipped power-up window but its first instant. A reset may START only at clock 0, so a reset begun late inside the shipped RESET_WINDOW_MS — 10 000 ms at crates/rsk-fido/src/consts.rs:404 — is a prefix this configuration never tears. The touch is not what is skipped: crates/rsk-fido/src/reset.rs:43-51 runs the ceremony unconditionally after the window check |
+| `bound_reset_window` | `0` | the whole of the shipped power-up window but its first instant. A reset may START only at clock 0, so a reset begun late inside the shipped RESET_WINDOW_MS — 10 000 ms at crates/rsk-fido/src/consts.rs:407 — is a prefix this configuration never tears. The touch is not what is skipped: crates/rsk-fido/src/reset.rs:43-51 runs the ceremony unconditionally after the window check |
 | `bound_invariant_names` | `12` | any obligation outside the twelve. TypeOK and eleven invariants is what this configuration checks, and this clause is one of the three added to that block after the existing bundles' runs were recorded — a sibling bundle describing the block as nine names is describing a different file |
 
-> **Row note (`shipped_relation`).** MaxRetries and MismatchLimit ARE the shipped MAX_PIN_RETRIES and PIN_MISMATCH_LIMIT at crates/rsk-fido/src/consts.rs:368 and :368; RPs and Channels are two against an unbounded device. The clause held at every reachable state of this run, and that is a stronger reading than it looks: TLC evaluates an invariant at every state, so GREEN here is a verdict about `(Idle /\ snap.seen) => ((snap.seed /\ snap.sealed) => gate.backupSealed)` over the whole set and not about a sampled prefix. Measured against `sed -n '/^INVARIANTS/,/^SYMMETRY/p' formal/Shipped.cfg`, which lists TypeOK and eleven names
+> **Row note (`shipped_relation`).** MaxRetries and MismatchLimit ARE the shipped MAX_PIN_RETRIES and PIN_MISMATCH_LIMIT at crates/rsk-fido/src/consts.rs:371 and :375; RPs and Channels are two against an unbounded device. The clause held at every reachable state of this run, and that is a stronger reading than it looks: TLC evaluates an invariant at every state, so GREEN here is a verdict about `(Idle /\ snap.seen) => ((snap.seed /\ snap.sealed) => gate.backupSealed)` over the whole set and not about a sampled prefix. Measured against `sed -n '/^INVARIANTS/,/^SYMMETRY/p' formal/Shipped.cfg`, which lists TypeOK and eleven names
 
 #### Method 2 — non-degeneracy: the clause alone, with its own defect armed, so a RED cannot belong to a sibling conjunct
 
@@ -964,13 +970,13 @@ Every one of the 11 is a `p0-launch` row of `assurance/configurations.toml`, all
 
 | Bound | Value | What stops being proved |
 |---|---|---|
-| `bound_tagged_sites` | `1` | every owner outside the one tagged site. The clause's whole `rust` column is one `Refines` line on `is_fido_gate_record`, so the ordering block that the property actually lives in — crates/rsk-fido/src/reset.rs:104-121 — carries no tag of its own and is invisible to the derivation |
+| `bound_tagged_sites` | `1` | every owner outside the one tagged site. The clause's whole `rust` column is one `Refines` line on `is_fido_gate_record`, so the ordering block that the property actually lives in — crates/rsk-fido/src/reset.rs:107-128 — carries no tag of its own and is invisible to the derivation |
 | `bound_gate_records` | `5` | the four gate records this clause does not name. The phase holds five and this clause is about one, so a torn prefix that drops `EF_DEVICE_PIN` or `EF_MINPINLEN` early is outside this argument entirely |
-| `bound_consumers` | `2` | a third reader of the marker. Two exist — the host export at crates/rsk-fido/src/vendor.rs:847 and the on-device reveal at crates/rsk-display/src/backup.rs:47 — and the second is compiled in only on a display build, so on the default image this clause guards one surface and on a display image it guards two. The model has one boolean and no consumer at all |
+| `bound_consumers` | `2` | a third reader of the marker. Two exist — the host export at crates/rsk-fido/src/vendor.rs:874 and the on-device reveal at crates/rsk-display/src/backup.rs:47 — and the second is compiled in only on a display build, so on the default image this clause guards one surface and on a display image it guards two. The model has one boolean and no consumer at all |
 | `bound_writers` | `2` | any path that could set the marker other than the two finalize surfaces. Both write the same one byte, so no reader can tell which wrote it, and neither can the model |
 | `bound_crates` | `1` | the display crate, which is where the second consumer lives. Everything else in this argument is in `rsk-fido`, which is what makes `rust = 1` a count of one file rather than a spread |
 
-> **Row note (`shipped_relation`).** the marker's phase is decided at exactly one site — the `matches!` arm at crates/rsk-fido/src/reset.rs:251 — and consumed at two, in two different crates, one of them behind a feature. The runtime consumer is FAIL-CLOSED where this clause is fail-open: `backup_sealed` at crates/rsk-fido/src/vendor.rs:1035 answers `true` for a probe the medium could not complete, precisely because the absent arm hands out the master seed. So the only way the window re-opens on a live seed is a reset that removed the record, which is the behaviour this clause constrains and the reason it has no runtime backstop
+> **Row note (`shipped_relation`).** the marker's phase is decided at exactly one site — the `matches!` arm at crates/rsk-fido/src/reset.rs:258 — and consumed at two, in two different crates, one of them behind a feature. The runtime consumer is FAIL-CLOSED where this clause is fail-open: `backup_sealed` at crates/rsk-fido/src/vendor.rs:1073 answers `true` for a probe the medium could not complete, precisely because the absent arm hands out the master seed. So the only way the window re-opens on a live seed is a reset that removed the record, which is the behaviour this clause constrains and the reason it has no runtime backstop
 
 #### Method 6 — the code twin: the model switch as the real defect in production Rust, and what the tree's own suite is actually detecting when it kills it
 
@@ -984,7 +990,7 @@ Every one of the 11 is a `p0-launch` row of `assurance/configurations.toml`, all
 | `bound_slice_crates` | `1` | any test outside `cargo test -p rsk-fido`, and any schedule but the weekly one — no row of `scripts/check.sh` re-drives this |
 | `bound_deterministic_killers` | `1` | the two transcribers and the coin flip, which is the whole point of the count. Three tests in the slice go red on this patch and only one of them is about the defect; the other three killers are recorded in the mutation register rather than counted here |
 
-> **Row note (`shipped_relation`).** `formal/comutants.toml:188` carries `status = "patch"` and `expect = "killed"`, which that file's own vocabulary at formal/comutants.toml:19-21 defines as a RECORDED verdict and not a plan. It is re-driven by the weekly `comutate run` and by no row of `scripts/check.sh`. THE ROW ALSO CARRIES ITS OWN CORRECTION, and it is the longest note in that file: it was `status = "unreachable"` on a verdict MEASURED IN THE MODEL AND WRITTEN ABOUT THE CODE. What the code answers is recorded in the register below, with which part of it this bundle re-measured and which it inherited
+> **Row note (`shipped_relation`).** `formal/comutants.toml:194` carries `status = "patch"` and `expect = "killed"`, which that file's own vocabulary at formal/comutants.toml:19-21 defines as a RECORDED verdict and not a plan. It is re-driven by the weekly `comutate run` and by no row of `scripts/check.sh`. THE ROW ALSO CARRIES ITS OWN CORRECTION, and it is the longest note in that file: it was `status = "unreachable"` on a verdict MEASURED IN THE MODEL AND WRITTEN ABOUT THE CODE. What the code answers is recorded in the register below, with which part of it this bundle re-measured and which it inherited
 
 #### Method 7 — the fuzz rung: what the byte-granular probe's oracle asserts about this clause, read rather than run
 
@@ -992,12 +998,12 @@ Every one of the 11 is a `p0-launch` row of `assurance/configurations.toml`, all
 
 | Bound | Value | What stops being proved |
 |---|---|---|
-| `bound_oracle_conjuncts` | `2` | any verdict finer than the two. The oracle at fuzz/fuzz_targets/power_cut.rs:194-204 is one boolean expression whose first conjunct folds the two sibling clauses and whose second is this one, so a failure names the function and the reader has to know which conjunct is which |
+| `bound_oracle_conjuncts` | `2` | any verdict finer than the two. The oracle at fuzz/fuzz_targets/power_cut.rs:240-250 is one boolean expression whose first conjunct folds the two sibling clauses and whose second is this one, so a failure names the function and the reader has to know which conjunct is which |
 | `bound_separable_asserts` | `1` | the separation the two tiers above have. One assertion covers all three clauses, so a passing run cannot distinguish a clause that was exercised from one the fixture made vacuously true |
-| `bound_snapshot_valuations` | `1` | the other snapshot valuations. `reset_probe` writes `EF_CRED`, `EF_PIN`, `EF_ALWAYS_UV` and `EF_BACKUP_SEALED` before the reset at fuzz/fuzz_targets/power_cut.rs:229-232, so `snap.sealed` is TRUE by construction and the symbolic draw the Kani harness makes over it never happens here |
-| `bound_cut_budget_bytes` | `1048575` | a power cut later in the write stream than the budget allows. The cut point is `u32::from_be_bytes([0, data[1] & 0x0f, data[2], data[3]])` at fuzz/fuzz_targets/power_cut.rs:236-241, so a tear further in than that is not a prefix this target can produce |
+| `bound_snapshot_valuations` | `1` | the other snapshot valuations. `reset_probe` writes `EF_CRED`, `EF_PIN`, `EF_ALWAYS_UV` and `EF_BACKUP_SEALED` before the reset at fuzz/fuzz_targets/power_cut.rs:276-279, so `snap.sealed` is TRUE by construction and the symbolic draw the Kani harness makes over it never happens here |
+| `bound_cut_budget_bytes` | `1048575` | a power cut later in the write stream than the budget allows. The cut point is `u32::from_be_bytes([0, data[1] & 0x0f, data[2], data[3]])` at fuzz/fuzz_targets/power_cut.rs:283-288, so a tear further in than that is not a prefix this target can produce |
 
-> **Row note (`shipped_relation`).** the probe drives the REAL `rsk_fido::reset::reset` over a cuttable mock NOR, then mounts a fresh store, runs boot-time seed provisioning and boots a second time. It is the strongest rung below the board, and it is the ONLY rung of this clause's ladder where the RAM copy of the seed is drawn: `data[4] & 1` loads `state.keydev_dec` at fuzz/fuzz_targets/power_cut.rs:244-246, which is what makes `owner_reachable` in the oracle mean more than the flash record. No log of any run is in the tree and none is in this bundle
+> **Row note (`shipped_relation`).** the probe drives the REAL `rsk_fido::reset::reset` over a cuttable mock NOR, then mounts a fresh store, runs boot-time seed provisioning and boots a second time. It is the strongest rung below the board, and it is the ONLY rung of this clause's ladder where the RAM copy of the seed is drawn: `data[4] & 1` loads `state.keydev_dec` at fuzz/fuzz_targets/power_cut.rs:291-293, which is what makes `owner_reachable` in the oracle mean more than the flash record. No log of any run is in the tree and none is in this bundle
 
 #### Method 8 — the board rung, and what its column is worth: this clause OWNS an assertion on hardware, and no run of it has ever been recorded
 
@@ -1026,7 +1032,7 @@ Every one of the 11 is a `p0-launch` row of `assurance/configurations.toml`, all
 | `bound_max_clock` | `1` | nothing this invariant can express. What one Tick costs is reach: a falsifying state needing a second unit of elapsed time is not in the set searched |
 | `bound_reset_window` | `0` | nothing this invariant can express. What zero costs is reach: a reset started inside the shipped window is a prefix no run here produces |
 
-> **Row note (`shipped_relation`).** MaxRetries and MismatchLimit ARE the shipped MAX_PIN_RETRIES (8) and PIN_MISMATCH_LIMIT (3) at crates/rsk-fido/src/consts.rs:368,372; RPs and Channels are 2 against an unbounded device; MaxClock 1 is the smallest value at which Tick is not dead; ResetWindow 0 runs the window closed only. AND NONE OF THE SIX IS ON THIS PROPERTY'S PATH: `ram => store.seed` names two booleans and no constant, so what the six buy is the reachable set a falsifying state would have to appear in, and what they cost this invariant is nothing it can express. That is the honest difference from SEC-FIDO-001, where MaxRetries IS the retry ladder the invariant is about
+> **Row note (`shipped_relation`).** MaxRetries and MismatchLimit ARE the shipped MAX_PIN_RETRIES (8) and PIN_MISMATCH_LIMIT (3) at crates/rsk-fido/src/consts.rs:371,375; RPs and Channels are 2 against an unbounded device; MaxClock 1 is the smallest value at which Tick is not dead; ResetWindow 0 runs the window closed only. AND NONE OF THE SIX IS ON THIS PROPERTY'S PATH: `ram => store.seed` names two booleans and no constant, so what the six buy is the reachable set a falsifying state would have to appear in, and what they cost this invariant is nothing it can express. That is the honest difference from SEC-FIDO-001, where MaxRetries IS the retry ladder the invariant is about
 
 #### Method 2 — the same invariant on the arm of AlwaysUvShipped the default image does not build
 
@@ -1069,7 +1075,7 @@ Every one of the 11 is a `p0-launch` row of `assurance/configurations.toml`, all
 | `bound_files_in_argument` | `6` | anything in a seventh file — and the measurement is the point: the slice page estimated three files, named the tag's file, and missed both writers and the ordering site |
 | `bound_crates` | `2` | a site outside the two crates. A holder of the RAM copy in a third would be outside the argument |
 
-> **Row note (`shipped_relation`).** the four writers are one producer (vendor.rs:592) and three destroyers (vendor.rs:591, config.rs:428, and reset.rs:104 through FidoState::reset -> Drop); the four readers are crates/rsk-fido/src/lib.rs:106, config.rs:415, config.rs:421 and vendor.rs:967; the two projection sites are crates/rsk-device/src/ctap.rs:221 and crates/rsk-fido/src/reset_assurance.rs:49 and BOTH are cfg-gated, so neither is in a shipped image. Six files and two crates against the THREE files docs/authorization-slice.md:484-487 estimated (seed.rs, state.rs, lib.rs) — the estimate named the tag's file and missed both writers and the ordering site, and seed.rs is the one of the three that contains no `keydev_dec` at all. This bound is a count of sites, not a shrink of a shipped constant, because a review has no other unit
+> **Row note (`shipped_relation`).** the four writers are one producer (vendor.rs:608) and three destroyers (vendor.rs:607, config.rs:435, and reset.rs:107 through FidoState::reset -> Drop); the four readers are crates/rsk-fido/src/lib.rs:108, config.rs:421, config.rs:427 and vendor.rs:1005; the two projection sites are crates/rsk-device/src/ctap.rs:261 and crates/rsk-fido/src/reset_assurance.rs:49 and BOTH are cfg-gated, so neither is in a shipped image. Six files and two crates against the THREE files docs/authorization-slice.md:484-487 estimated (seed.rs, state.rs, lib.rs) — the estimate named the tag's file and missed both writers and the ordering site, and seed.rs is the one of the three that contains no `keydev_dec` at all. This bound is a count of sites, not a shrink of a shipped constant, because a review has no other unit
 
 #### Method 5 — the code twin: the same defect injected into production Rust is caught by the tree's own suite
 
@@ -1082,7 +1088,7 @@ Every one of the 11 is a `p0-launch` row of `assurance/configurations.toml`, all
 | `bound_slice_crates` | `1` | any test outside the one crate the slice runs |
 | `bound_credited_configurations` | `1` | what the killing TEST is about. The one credit exists only because the index reads solo configurations by invariant name; the test that falls is not a test of this property, and the source says so |
 
-> **Row note (`shipped_relation`).** the patch moves `ctx.state.reset()` from ahead of the flash work to behind `ensure_seed` (formal/comutants.toml:353-366) — the E76 regression, in the shipped file, not a model edit — and `expect = "killed"` is a RECORDED verdict per that file's own status vocabulary (:19-21), not a plan. The one credited configuration is Solo_RamNeverOutlivesFlashSeed.cfg, which `comutate.solo_index` reads BY INVARIANT NAME (scripts/comutate.py:337-365); without that reading the kill is credited to SEC-FIDO-006 and this row's column is the `co = 0` docs/authorization-slice.md:455-469 describes correcting. What the column does NOT say, and the source says so in as many words, is that the killing TEST is a test of this property
+> **Row note (`shipped_relation`).** the patch moves `ctx.state.reset()` from ahead of the flash work to behind `ensure_seed` (formal/comutants.toml:373-386) — the E76 regression, in the shipped file, not a model edit — and `expect = "killed"` is a RECORDED verdict per that file's own status vocabulary (:19-21), not a plan. The one credited configuration is Solo_RamNeverOutlivesFlashSeed.cfg, which `comutate.solo_index` reads BY INVARIANT NAME (scripts/comutate.py:338-366); without that reading the kill is credited to SEC-FIDO-006 and this row's column is the `co = 0` docs/authorization-slice.md:455-469 describes correcting. What the column does NOT say, and the source says so in as many words, is that the killing TEST is a test of this property
 
 ### `SEC-FIDO-008` — `NoLiveTokenWithoutPinRecord`
 
@@ -1142,7 +1148,7 @@ Every one of the 11 is a `p0-launch` row of `assurance/configurations.toml`, all
 | `bound_mismatch_limit` | `1` | the two mismatches between one and the shipped three, on that same approach |
 | `bound_gate_bits` | `5` | any gate state the record's five fields cannot hold. Five is a count of the MODEL's own structure and not a compressed shipped constant — the reset's gate-record list is five as well, and the two fives are not the same five |
 
-> **Row note (`shipped_relation`).** ForceChangeModelled TRUE puts `gate.forceChange` in play, and it is the one standing boolean of the three that lands directly on this property's antecedent: PLAT-MODEL-010 records that the flag REFUSES token issuance after a correct PIN, so this arm is the only one where a successful PinAttempt does not reach `tok' = [live \|-> TRUE, …]`. The five gate bits are the record fields `gate` carries (ppuat, ppuatStale, alwaysUv, backupSealed, forceChange), which is a count of the model's own structure and not a compressed shipped constant — the reset's own gate-record list is five too (reset.rs:251) and the two fives are not the same five
+> **Row note (`shipped_relation`).** ForceChangeModelled TRUE puts `gate.forceChange` in play, and it is the one standing boolean of the three that lands directly on this property's antecedent: PLAT-MODEL-010 records that the flag REFUSES token issuance after a correct PIN, so this arm is the only one where a successful PinAttempt does not reach `tok' = [live \|-> TRUE, …]`. The five gate bits are the record fields `gate` carries (ppuat, ppuatStale, alwaysUv, backupSealed, forceChange), which is a count of the model's own structure and not a compressed shipped constant — the reset's own gate-record list is five too (reset.rs:258) and the two fives are not the same five
 
 #### Method 5 — non-degeneracy: the invariant CAN go red, the red names it rather than a sibling, and the counterexample lands on the untagged half
 
@@ -1160,7 +1166,7 @@ Every one of the 11 is a `p0-launch` row of `assurance/configurations.toml`, all
 
 #### Method 6 — the production side: which sites own each half of the implication, and whether the one tag is on a half that can falsify it
 
-`review` over crates/rsk-fido/src/clientpin.rs::issue_token + crates/rsk-fido/src/state.rs::begin_using_token + crates/rsk-fido/src/reset.rs::reset. cfg: none — every site above is unconditional production code except crates/rsk-fido/src/conformance/mod.rs:165, which is cfg(test) and is counted apart in `owners_antecedent` rather than in these bounds. features: none.
+`review` over crates/rsk-fido/src/clientpin.rs::issue_token + crates/rsk-fido/src/state.rs::begin_using_token + crates/rsk-fido/src/reset.rs::reset. cfg: none — every site above is unconditional production code except crates/rsk-fido/src/conformance/mod.rs:177, which is cfg(test) and is counted apart in `owners_antecedent` rather than in these bounds. features: none.
 
 | Bound | Value | What stops being proved |
 |---|---|---|
@@ -1171,7 +1177,7 @@ Every one of the 11 is a `p0-launch` row of `assurance/configurations.toml`, all
 | `bound_files_in_argument` | `5` | anything in a sixth file — and the measurement is the point: the slice page estimated ONE file, the tag's, which is the antecedent half only |
 | `bound_crates` | `2` | a site outside the two crates, including any other holder of the record the consequent names |
 
-> **Row note (`shipped_relation`).** the four antecedent sites are the definition (state.rs:506), its one in-image caller (clientpin.rs:425), the door above it (clientpin.rs:345) and the record gate that door runs first (clientpin.rs:685-693); the five consequent sites are reset.rs:104, the phase-2 sweep at :121, the membership predicate at :228-252, `Fs::factory_wipe` at crates/rsk-fs/src/fs.rs:477 and the overwriting writer at clientpin.rs:845-846. Five files over two crates, against the ONE file `docs/authorization-slice.md:462-467` estimated (`crates/rsk-fido/src/clientpin.rs`) — the estimate named the tag's file, which is the antecedent half only, and the half with the recorded history is in a file it did not name. THIS BOUND IS A COUNT OF SITES, not a shrink of a shipped constant, because a review has no other unit; the same weakness the counterpart recorded, at the same group
+> **Row note (`shipped_relation`).** the four antecedent sites are the definition (state.rs:626), its one in-image caller (clientpin.rs:469), the door above it (clientpin.rs:369) and the record gate that door runs first (clientpin.rs:750-758); the five consequent sites are reset.rs:107, the phase-2 sweep at :128, the membership predicate at :235-259, `Fs::factory_wipe` at crates/rsk-fs/src/fs.rs:543 and the overwriting writer at clientpin.rs:914-915. Five files over two crates, against the ONE file `docs/authorization-slice.md:462-467` estimated (`crates/rsk-fido/src/clientpin.rs`) — the estimate named the tag's file, which is the antecedent half only, and the half with the recorded history is in a file it did not name. THIS BOUND IS A COUNT OF SITES, not a shrink of a shipped constant, because a review has no other unit; the same weakness the counterpart recorded, at the same group
 
 #### Method 7 — the code twin: what the `co = 1` column credits, which configuration attributes it, and what the killing assertion is actually about
 
@@ -1185,7 +1191,7 @@ Every one of the 11 is a `p0-launch` row of `assurance/configurations.toml`, all
 | `bound_tests_asserting_the_token_half` | `0` | everything the co-refutation column implies about THIS property. Zero tests assert the token half: the twin's one falling test asserts a seed field, and the only test that asserts both `EF_PIN` gone and the permissions cleared tears nothing, so the mutant leaves it green — the kill is credited here and is not a kill of this invariant |
 | `bound_slice_crates` | `1` | any test outside the one crate the slice runs — and this row was not re-driven here, so the verdict it records is the tree's own recorded status |
 
-> **Row note (`shipped_relation`).** the patch moves `ctx.state.reset()` from ahead of the flash work to behind `ensure_seed` (formal/comutants.toml:364-377) — the E76 regression, in the shipped file — and `expect = "killed"` is a RECORDED verdict in that file's own status vocabulary. The one credited configuration is Solo_NoLiveTokenWithoutPinRecord.cfg, reached only because `comutate.solo_index` reads solo-style configurations BY INVARIANT NAME; `comutate.solo_invariant`, the older single-answer path, resolves this bug to Solo_BugStateResetAfterWipe.cfg and answers ResetNeverWeakensSurvivingState, so the kill is credited to SEC-FIDO-006 alone. AND THE FOURTH BOUND IS THE FINDING: ZERO tests in this tree assert the token half. The twin's one falling test asserts `state.keydev_dec.is_none()`; the only test that asserts both `!fs.has_data(EF_PIN)` and `paut.permissions == 0` tears nothing, so the mutant leaves it green. This row was NOT re-run here — `comutate.py run` patches a shared working tree and other agents are in it — so the verdict this bundle records for it is the tree's own recorded status, and the mutation group says so
+> **Row note (`shipped_relation`).** the patch moves `ctx.state.reset()` from ahead of the flash work to behind `ensure_seed` (formal/comutants.toml:373-386) — the E76 regression, in the shipped file — and `expect = "killed"` is a RECORDED verdict in that file's own status vocabulary. The one credited configuration is Solo_NoLiveTokenWithoutPinRecord.cfg, reached only because `comutate.solo_index` reads solo-style configurations BY INVARIANT NAME; `comutate.solo_invariant`, the older single-answer path, resolves this bug to Solo_BugStateResetAfterWipe.cfg and answers ResetNeverWeakensSurvivingState, so the kill is credited to SEC-FIDO-006 alone. AND THE FOURTH BOUND IS THE FINDING: ZERO tests in this tree assert the token half. The twin's one falling test asserts `state.keydev_dec.is_none()`; the only test that asserts both `!fs.has_data(EF_PIN)` and `paut.permissions == 0` tears nothing, so the mutant leaves it green. This row was NOT re-run here — `comutate.py run` patches a shared working tree and other agents are in it — so the verdict this bundle records for it is the tree's own recorded status, and the mutation group says so
 
 #### Method 8 — the two arguments that rest on this invariant, and the measurement that says the guard it makes redundant is inert while the invariant is not
 
@@ -1198,4 +1204,376 @@ Every one of the 11 is a `p0-launch` row of `assurance/configurations.toml`, all
 | `bound_states_changed_by_removal` | `0` | anything about the INVARIANT. The zero says the GUARD disables nothing; the invariant itself has a reachable falsifying state the moment one switch is armed, and reading the zero as a claim about the property is the confusion this row exists to refuse |
 | `bound_transitions_changed_by_removal` | `0` | the currency of the measurement. Both zeros are the review's, recorded in `formal/README.md` and not re-taken here — no TLC run was performed for this bundle |
 
-> **Row note (`shipped_relation`).** three sites in the module rest on this sentence: `ConfigGuard` at :1091 carries no `pin.set` conjunct because config.rs:243-245 tests the MAC and PERM_ACFG and nothing else, and the two `~(gate.alwaysUv /\ ~pin.set)` conjuncts at :935 and :1056 are kept only because the Rust has them. formal/README.md:929-935 records the measurement: removed from BOTH call sites the reachable space is bit-identical AND the transition count is unchanged, so the conjunct disables nothing. THE DISTINCTION THIS ROW EXISTS FOR: it is the GUARD that is inert, not the invariant. The invariant has a reachable falsifying state — 98 069 distinct, depth 12 — the moment one switch is armed. The two zeros are that measurement's, taken by the review formal/README.md records and NOT re-taken here; no TLC run was performed for this bundle
+> **Row note (`shipped_relation`).** three sites in the module rest on this sentence: `ConfigGuard` at :1091 carries no `pin.set` conjunct because config.rs:245-247 tests the MAC and PERM_ACFG and nothing else, and the two `~(gate.alwaysUv /\ ~pin.set)` conjuncts at :935 and :1056 are kept only because the Rust has them. formal/README.md:950-954 records the measurement: removed from BOTH call sites the reachable space is bit-identical AND the transition count is unchanged, so the conjunct disables nothing. THE DISTINCTION THIS ROW EXISTS FOR: it is the GUARD that is inert, not the invariant. The invariant has a reachable falsifying state — 98 069 distinct, depth 12 — the moment one switch is armed. The two zeros are that measurement's, taken by the review formal/README.md records and NOT re-taken here; no TLC run was performed for this bundle
+
+### `SEC-STORE-001` — `RSKeyStore!NoOrphanedMetadata`
+
+#### Method 1 — show that `NoOrphanedMetadata` holds of every reachable state of the flash layer, over the whole action set and not one path through it
+
+`model-check` over Store.cfg formal/RSKeyStore.tla. cfg: none. features: none.
+
+| Bound | Value | What stops being proved |
+|---|---|---|
+| `bound_fids` | `2` | any shape that needs a third file — a three-way aliasing of the present map, or a metadata blob holding more records than the pair can put in it. AS-RESET-2 is the row that says why the pair is argued to be enough, and it is argued rather than shown |
+| `bound_values_per_fid` | `3` | nothing about a value the model never writes. Two stored values plus the absent sentinel is what makes an overwrite observable; a third would add no distinction this invariant reads |
+| `bound_variables` | `7` | every part of the real `Fs` outside these seven — the dynamic-fid vector, the write generation counter, the sealed-payload layer, and flash geometry of any kind |
+| `bound_invariants` | `6` | whatever is true of the store and is not one of these six. A GREEN run says nothing about a clause nobody wrote down |
+| `bound_bug_switches` | `9` | any defect outside the nine formal/gen-configs.sh emits a switch for. The mutation score below is out of those nine and not out of the defects the store can have |
+| `bound_next_disjuncts` | `7` | any action the model does not have. There is no compaction, no `factory_wipe`, and no concurrent second caller in this Next |
+
+> **Row note (`shipped_relation`).** the model is `Fs` over a `Storage`, with the medium's failure modes as switches and the geometry left out. What is shipped is one instance of that shape at 16-bit FIDs; what is checked is two FIDs, and AS-RESET-2 is the row that argues the step between them
+
+#### Method 2 — show that the GREEN above is not vacuous — that a configuration which BREAKS `NoOrphanedMetadata` is refused, and refused BY NAME
+
+`mutation` over StoreMut_BugDeleteValueBeforeMeta.cfg StoreSolo_BugDeleteValueBeforeMeta.cfg StoreMut_BugDeleteMetaOnlyUnderPresent.cfg StoreSolo_BugDeleteMetaOnlyUnderPresent.cfg. cfg: none. features: none.
+
+| Bound | Value | What stops being proved |
+|---|---|---|
+| `bound_bug_switches_for_this_invariant` | `2` | the other switches of the nine. A switch that breaks a sibling invariant is evidence about that sibling, and this row does not borrow it |
+| `bound_tiers` | `2` | nothing about a tier this property has no configuration in. Where the count is 1 there is no Solo_ half and the row says so instead of implying one |
+| `bound_recorded_runs` | `4` | every run not in the `[[artifact]]` rows below. A verdict with no log beside it is a sentence, and this bundle carries none |
+| `bound_killed` | `4` | whether the kill was for the modelled defect rather than its inverse. That is the `direction` column of every `[[mutation]]` row, read one at a time, and two of twenty-four co-refutation patches in this tree failed exactly there |
+| `bound_store_configurations` | `22` | any configuration formal/gen-configs.sh does not emit. The roster is generated, so a defect nobody wrote a switch for has no row anywhere in it |
+| `bound_distinct_states_green` | `364` | everything the mutants explore beyond the clean run's space. A RED row stops at its first violation, so its own state count is a property of when TLC found the bug and not of the space |
+
+> **Row note (`shipped_relation`).** a switch is a defect the shipped tree does not have: gen-configs.sh writes every `Bug*` FALSE in Store.cfg, so the mutants say what the model would catch and not what the code does
+
+#### Method 3 — read the production sites the model claims to abstract, and say whether the ordering the invariant rests on is the ordering the code has
+
+`review` over crates/rsk-fs/src/fs.rs::delete crates/rsk-fs/src/fs.rs::force_delete crates/rsk-fs/src/fs.rs::force_delete_halves crates/rsk-fs/src/powercut.rs::delete_landed crates/rsk-fs/src/store_assurance.rs::delete_orphaned_metadata. cfg: none. features: none.
+
+| Bound | Value | What stops being proved |
+|---|---|---|
+| `bound_refinement_markers` | `5` | every site that refines this invariant and says so nowhere. The markers are doc comments, so a site that drifts out of one is invisible to this count |
+| `bound_fs_removal_sites` | `4` | removals outside `Fs`. assurance/deleters.toml's own header says its two scope rules cannot see these four, which is why they are a separate table |
+| `bound_fs_source_lines` | `895` | everything read as prose rather than as code. A line count is the size of what was read, not evidence that it was read correctly |
+| `bound_reviewers` | `1` | independence. One reader wrote this bundle and read these sites, so nothing here is a second opinion and the row says so rather than leaving the count out |
+| `bound_files_read` | `3` | the rest of the crate. rsk-fs is fifteen source files and this row opened the ones the subjects name |
+| `bound_crate_kani_proofs` | `13` | whether any of them is about THIS invariant. The count is the crate's; the attribution is the registry's NAME match, and this bundle records where the two disagree |
+
+> **Row note (`shipped_relation`).** this is the only row of the four that touches shipped Rust, and it is a READING rather than a proof. TCB-1 is what carries it to the image
+
+#### Method 4 — carry `NoOrphanedMetadata` out of the model and onto something the host runs: the model's Delete-step violation predicate, projected onto a real `StoreView`
+
+`trace` over crates/rsk-fs/src/store_assurance.rs::delete_orphaned_metadata. cfg: none. features: none.
+
+| Bound | Value | What stops being proved |
+|---|---|---|
+| `bound_view_fids` | `3` | any shape needing a fourth file. `store_assurance::VIEW_FIDS` is a three-element array, so the host sweep's projection is as narrow as the model's pair plus one |
+| `bound_step_predicates` | `3` | the fourth invariant, which has none. crates/rsk-fs/src/store_assurance.rs says why: NoSilentOrphan forbids an answer rather than a state |
+| `bound_kani_proofs_in_crate` | `13` | every clause no harness in the crate states. Thirteen proofs is the crate's whole bounded surface, and only five of them ran for this bundle |
+| `bound_harnesses_run` | `5` | the eight this bundle did not run — the four in powercut_kani.rs, the one in fs_kani.rs, and three more of the refinement file. Their verdicts are not here |
+| `bound_symbolic_fids` | `24` | the shipped 65536. Under `cfg(kani)` `FID_PRESENT_BYTES` is 3, so the map is 24 bits and EF_META is re-aliased to 0x0017 to sit inside it — a shrink crates/rsk-fs/src/store_meta_kani.rs itself lists three consequences of |
+| `bound_cover_properties` | `2` | whether the harness reached anything a cover does not name. Two satisfied covers say the assumed domain is non-empty, not that it is the right one |
+
+> **Row note (`shipped_relation`).** the projection is verification-only and excluded from production builds, so this row says the shipped primitives satisfy the model's clauses — not that the shipped image was checked
+
+### `SEC-STORE-002` — `RSKeyStore!NoFalseAbsent`
+
+#### Method 1 — show that `NoFalseAbsent` holds of every reachable state of the flash layer, over the whole action set and not one path through it
+
+`model-check` over Store.cfg formal/RSKeyStore.tla. cfg: none. features: none.
+
+| Bound | Value | What stops being proved |
+|---|---|---|
+| `bound_fids` | `2` | any shape that needs a third file — a three-way aliasing of the present map, or a metadata blob holding more records than the pair can put in it. AS-RESET-2 is the row that says why the pair is argued to be enough, and it is argued rather than shown |
+| `bound_values_per_fid` | `3` | nothing about a value the model never writes. Two stored values plus the absent sentinel is what makes an overwrite observable; a third would add no distinction this invariant reads |
+| `bound_variables` | `7` | every part of the real `Fs` outside these seven — the dynamic-fid vector, the write generation counter, the sealed-payload layer, and flash geometry of any kind |
+| `bound_invariants` | `6` | whatever is true of the store and is not one of these six. A GREEN run says nothing about a clause nobody wrote down |
+| `bound_bug_switches` | `9` | any defect outside the nine formal/gen-configs.sh emits a switch for. The mutation score below is out of those nine and not out of the defects the store can have |
+| `bound_next_disjuncts` | `7` | any action the model does not have. There is no compaction, no `factory_wipe`, and no concurrent second caller in this Next |
+
+> **Row note (`shipped_relation`).** the model is `Fs` over a `Storage`, with the medium's failure modes as switches and the geometry left out. What is shipped is one instance of that shape at 16-bit FIDs; what is checked is two FIDs, and AS-RESET-2 is the row that argues the step between them
+
+#### Method 2 — show that the GREEN above is not vacuous — that a configuration which BREAKS `NoFalseAbsent` is refused, and refused BY NAME
+
+`mutation` over StoreMut_BugCacheFaultAsAbsent.cfg StoreSolo_BugCacheFaultAsAbsent.cfg StoreMut_BugTruncatedScanDecidesAll.cfg StoreSolo_BugTruncatedScanDecidesAll.cfg. cfg: none. features: none.
+
+| Bound | Value | What stops being proved |
+|---|---|---|
+| `bound_bug_switches_for_this_invariant` | `2` | the other switches of the nine. A switch that breaks a sibling invariant is evidence about that sibling, and this row does not borrow it |
+| `bound_tiers` | `2` | nothing about a tier this property has no configuration in. Where the count is 1 there is no Solo_ half and the row says so instead of implying one |
+| `bound_recorded_runs` | `4` | every run not in the `[[artifact]]` rows below. A verdict with no log beside it is a sentence, and this bundle carries none |
+| `bound_killed` | `4` | whether the kill was for the modelled defect rather than its inverse. That is the `direction` column of every `[[mutation]]` row, read one at a time, and two of twenty-four co-refutation patches in this tree failed exactly there |
+| `bound_store_configurations` | `22` | any configuration formal/gen-configs.sh does not emit. The roster is generated, so a defect nobody wrote a switch for has no row anywhere in it |
+| `bound_distinct_states_green` | `364` | everything the mutants explore beyond the clean run's space. A RED row stops at its first violation, so its own state count is a property of when TLC found the bug and not of the space |
+
+> **Row note (`shipped_relation`).** a switch is a defect the shipped tree does not have: gen-configs.sh writes every `Bug*` FALSE in Store.cfg, so the mutants say what the model would catch and not what the code does
+
+#### Method 3 — read the production sites the model claims to abstract, and say whether the ordering the invariant rests on is the ordering the code has
+
+`review` over crates/rsk-fs/src/fs.rs::known_absent crates/rsk-fs/src/fs.rs::settle crates/rsk-fs/src/fs.rs::scan crates/rsk-fs/src/fs.rs::try_read. cfg: none. features: none.
+
+| Bound | Value | What stops being proved |
+|---|---|---|
+| `bound_refinement_markers` | `2` | every site that refines this invariant and says so nowhere. The markers are doc comments, so a site that drifts out of one is invisible to this count |
+| `bound_fs_removal_sites` | `4` | removals outside `Fs`. assurance/deleters.toml's own header says its two scope rules cannot see these four, which is why they are a separate table |
+| `bound_fs_source_lines` | `895` | everything read as prose rather than as code. A line count is the size of what was read, not evidence that it was read correctly |
+| `bound_reviewers` | `1` | independence. One reader wrote this bundle and read these sites, so nothing here is a second opinion and the row says so rather than leaving the count out |
+| `bound_files_read` | `2` | the rest of the crate. rsk-fs is fifteen source files and this row opened the ones the subjects name |
+| `bound_crate_kani_proofs` | `13` | whether any of them is about THIS invariant. The count is the crate's; the attribution is the registry's NAME match, and this bundle records where the two disagree |
+
+> **Row note (`shipped_relation`).** this is the only row of the four that touches shipped Rust, and it is a READING rather than a proof. TCB-1 is what carries it to the image
+
+#### Method 4 — carry `NoFalseAbsent` out of the model and onto something the host runs: the three harnesses the registry counts as this row's kani=3, run for this bundle
+
+`bounded proof` over crates/rsk-fs/src/store_refinement_kani.rs::no_false_absent_from_a_neighbours_delete crates/rsk-fs/src/store_refinement_kani.rs::no_false_absent_survives_a_faulted_confirm crates/rsk-fs/src/store_refinement_kani.rs::no_false_absent_reader_trusts_only_a_decided_bit. cfg: kani. features: none.
+
+| Bound | Value | What stops being proved |
+|---|---|---|
+| `bound_view_fids` | `3` | any shape needing a fourth file. `store_assurance::VIEW_FIDS` is a three-element array, so the host sweep's projection is as narrow as the model's pair plus one |
+| `bound_step_predicates` | `3` | the fourth invariant, which has none. crates/rsk-fs/src/store_assurance.rs says why: NoSilentOrphan forbids an answer rather than a state |
+| `bound_kani_proofs_in_crate` | `13` | every clause no harness in the crate states. Thirteen proofs is the crate's whole bounded surface, and only five of them ran for this bundle |
+| `bound_harnesses_run` | `5` | the eight this bundle did not run — the four in powercut_kani.rs, the one in fs_kani.rs, and three more of the refinement file. Their verdicts are not here |
+| `bound_symbolic_fids` | `24` | the shipped 65536. Under `cfg(kani)` `FID_PRESENT_BYTES` is 3, so the map is 24 bits and EF_META is re-aliased to 0x0017 to sit inside it — a shrink crates/rsk-fs/src/store_meta_kani.rs itself lists three consequences of |
+| `bound_cover_properties` | `2` | whether the harness reached anything a cover does not name. Two satisfied covers say the assumed domain is non-empty, not that it is the right one |
+
+> **Row note (`shipped_relation`).** the projection is verification-only and excluded from production builds, so this row says the shipped primitives satisfy the model's clauses — not that the shipped image was checked
+
+### `SEC-STORE-003` — `RSKeyStore!NoRecordLostToMetaWrite`
+
+#### Method 1 — show that `NoRecordLostToMetaWrite` holds of every reachable state of the flash layer, over the whole action set and not one path through it
+
+`model-check` over Store.cfg formal/RSKeyStore.tla. cfg: none. features: none.
+
+| Bound | Value | What stops being proved |
+|---|---|---|
+| `bound_fids` | `2` | any shape that needs a third file — a three-way aliasing of the present map, or a metadata blob holding more records than the pair can put in it. AS-RESET-2 is the row that says why the pair is argued to be enough, and it is argued rather than shown |
+| `bound_values_per_fid` | `3` | nothing about a value the model never writes. Two stored values plus the absent sentinel is what makes an overwrite observable; a third would add no distinction this invariant reads |
+| `bound_variables` | `7` | every part of the real `Fs` outside these seven — the dynamic-fid vector, the write generation counter, the sealed-payload layer, and flash geometry of any kind |
+| `bound_invariants` | `6` | whatever is true of the store and is not one of these six. A GREEN run says nothing about a clause nobody wrote down |
+| `bound_bug_switches` | `9` | any defect outside the nine formal/gen-configs.sh emits a switch for. The mutation score below is out of those nine and not out of the defects the store can have |
+| `bound_next_disjuncts` | `7` | any action the model does not have. There is no compaction, no `factory_wipe`, and no concurrent second caller in this Next |
+
+> **Row note (`shipped_relation`).** the model is `Fs` over a `Storage`, with the medium's failure modes as switches and the geometry left out. What is shipped is one instance of that shape at 16-bit FIDs; what is checked is two FIDs, and AS-RESET-2 is the row that argues the step between them
+
+#### Method 2 — show that the GREEN above is not vacuous — that a configuration which BREAKS `NoRecordLostToMetaWrite` is refused, and refused BY NAME
+
+`mutation` over StoreMut_BugMetaAddDropsOnFault.cfg StoreMut_BugMetaWriteTearsBlob.cfg StoreMut_BugMetaDeleteTearsBlob.cfg StoreInductionMut_BugMetaAddDropsOnFault.cfg. cfg: none. features: none.
+
+| Bound | Value | What stops being proved |
+|---|---|---|
+| `bound_bug_switches_for_this_invariant` | `3` | the other switches of the nine. A switch that breaks a sibling invariant is evidence about that sibling, and this row does not borrow it |
+| `bound_tiers` | `2` | nothing about a tier this property has no configuration in. Where the count is 1 there is no Solo_ half and the row says so instead of implying one |
+| `bound_recorded_runs` | `4` | every run not in the `[[artifact]]` rows below. A verdict with no log beside it is a sentence, and this bundle carries none |
+| `bound_killed` | `4` | whether the kill was for the modelled defect rather than its inverse. That is the `direction` column of every `[[mutation]]` row, read one at a time, and two of twenty-four co-refutation patches in this tree failed exactly there |
+| `bound_store_configurations` | `22` | any configuration formal/gen-configs.sh does not emit. The roster is generated, so a defect nobody wrote a switch for has no row anywhere in it |
+| `bound_distinct_states_green` | `364` | everything the mutants explore beyond the clean run's space. A RED row stops at its first violation, so its own state count is a property of when TLC found the bug and not of the space |
+
+> **Row note (`shipped_relation`).** a switch is a defect the shipped tree does not have: gen-configs.sh writes every `Bug*` FALSE in Store.cfg, so the mutants say what the model would catch and not what the code does
+
+#### Method 3 — read the production sites the model claims to abstract, and say whether the ordering the invariant rests on is the ordering the code has
+
+`review` over crates/rsk-fs/src/fs.rs::meta_add_reserve crates/rsk-fs/src/fs.rs::rebuild_meta crates/rsk-fs/src/fs.rs::meta_delete crates/rsk-fs/src/store_assurance.rs::meta_add_lost_a_record crates/rsk-fs/src/powercut.rs::meta_add_landed. cfg: none. features: none.
+
+| Bound | Value | What stops being proved |
+|---|---|---|
+| `bound_refinement_markers` | `2` | every site that refines this invariant and says so nowhere. The markers are doc comments, so a site that drifts out of one is invisible to this count |
+| `bound_fs_removal_sites` | `4` | removals outside `Fs`. assurance/deleters.toml's own header says its two scope rules cannot see these four, which is why they are a separate table |
+| `bound_fs_source_lines` | `895` | everything read as prose rather than as code. A line count is the size of what was read, not evidence that it was read correctly |
+| `bound_reviewers` | `1` | independence. One reader wrote this bundle and read these sites, so nothing here is a second opinion and the row says so rather than leaving the count out |
+| `bound_files_read` | `3` | the rest of the crate. rsk-fs is fifteen source files and this row opened the ones the subjects name |
+| `bound_crate_kani_proofs` | `13` | whether any of them is about THIS invariant. The count is the crate's; the attribution is the registry's NAME match, and this bundle records where the two disagree |
+
+> **Row note (`shipped_relation`).** this is the only row of the four that touches shipped Rust, and it is a READING rather than a proof. TCB-1 is what carries it to the image
+
+#### Method 4 — carry `NoRecordLostToMetaWrite` out of the model and onto something the host runs: the model's MetaAdd-step violation predicate, projected onto a real `StoreView`
+
+`trace` over crates/rsk-fs/src/store_assurance.rs::meta_add_lost_a_record. cfg: none. features: none.
+
+| Bound | Value | What stops being proved |
+|---|---|---|
+| `bound_view_fids` | `3` | any shape needing a fourth file. `store_assurance::VIEW_FIDS` is a three-element array, so the host sweep's projection is as narrow as the model's pair plus one |
+| `bound_step_predicates` | `3` | the fourth invariant, which has none. crates/rsk-fs/src/store_assurance.rs says why: NoSilentOrphan forbids an answer rather than a state |
+| `bound_kani_proofs_in_crate` | `13` | every clause no harness in the crate states. Thirteen proofs is the crate's whole bounded surface, and only five of them ran for this bundle |
+| `bound_harnesses_run` | `5` | the eight this bundle did not run — the four in powercut_kani.rs, the one in fs_kani.rs, and three more of the refinement file. Their verdicts are not here |
+| `bound_symbolic_fids` | `24` | the shipped 65536. Under `cfg(kani)` `FID_PRESENT_BYTES` is 3, so the map is 24 bits and EF_META is re-aliased to 0x0017 to sit inside it — a shrink crates/rsk-fs/src/store_meta_kani.rs itself lists three consequences of |
+| `bound_cover_properties` | `2` | whether the harness reached anything a cover does not name. Two satisfied covers say the assumed domain is non-empty, not that it is the right one |
+
+> **Row note (`shipped_relation`).** the projection is verification-only and excluded from production builds, so this row says the shipped primitives satisfy the model's clauses — not that the shipped image was checked
+
+### `SEC-STORE-004` — `RSKeyStore!NoFalseMetaAbsent`
+
+#### Method 1 — show that `NoFalseMetaAbsent` holds of every reachable state of the flash layer, over the whole action set and not one path through it
+
+`model-check` over Store.cfg formal/RSKeyStore.tla. cfg: none. features: none.
+
+| Bound | Value | What stops being proved |
+|---|---|---|
+| `bound_fids` | `2` | any shape that needs a third file — a three-way aliasing of the present map, or a metadata blob holding more records than the pair can put in it. AS-RESET-2 is the row that says why the pair is argued to be enough, and it is argued rather than shown |
+| `bound_values_per_fid` | `3` | nothing about a value the model never writes. Two stored values plus the absent sentinel is what makes an overwrite observable; a third would add no distinction this invariant reads |
+| `bound_variables` | `7` | every part of the real `Fs` outside these seven — the dynamic-fid vector, the write generation counter, the sealed-payload layer, and flash geometry of any kind |
+| `bound_invariants` | `6` | whatever is true of the store and is not one of these six. A GREEN run says nothing about a clause nobody wrote down |
+| `bound_bug_switches` | `9` | any defect outside the nine formal/gen-configs.sh emits a switch for. The mutation score below is out of those nine and not out of the defects the store can have |
+| `bound_next_disjuncts` | `7` | any action the model does not have. There is no compaction, no `factory_wipe`, and no concurrent second caller in this Next |
+
+> **Row note (`shipped_relation`).** the model is `Fs` over a `Storage`, with the medium's failure modes as switches and the geometry left out. What is shipped is one instance of that shape at 16-bit FIDs; what is checked is two FIDs, and AS-RESET-2 is the row that argues the step between them
+
+#### Method 2 — show that the GREEN above is not vacuous — that a configuration which BREAKS `NoFalseMetaAbsent` is refused, and refused BY NAME
+
+`mutation` over StoreMut_BugMetaDeleteDropsOnFault.cfg StoreSolo_BugMetaDeleteDropsOnFault.cfg. cfg: none. features: none.
+
+| Bound | Value | What stops being proved |
+|---|---|---|
+| `bound_bug_switches_for_this_invariant` | `1` | the other switches of the nine. A switch that breaks a sibling invariant is evidence about that sibling, and this row does not borrow it |
+| `bound_tiers` | `2` | nothing about a tier this property has no configuration in. Where the count is 1 there is no Solo_ half and the row says so instead of implying one |
+| `bound_recorded_runs` | `2` | every run not in the `[[artifact]]` rows below. A verdict with no log beside it is a sentence, and this bundle carries none |
+| `bound_killed` | `2` | whether the kill was for the modelled defect rather than its inverse. That is the `direction` column of every `[[mutation]]` row, read one at a time, and two of twenty-four co-refutation patches in this tree failed exactly there |
+| `bound_store_configurations` | `22` | any configuration formal/gen-configs.sh does not emit. The roster is generated, so a defect nobody wrote a switch for has no row anywhere in it |
+| `bound_distinct_states_green` | `364` | everything the mutants explore beyond the clean run's space. A RED row stops at its first violation, so its own state count is a property of when TLC found the bug and not of the space |
+
+> **Row note (`shipped_relation`).** a switch is a defect the shipped tree does not have: gen-configs.sh writes every `Bug*` FALSE in Store.cfg, so the mutants say what the model would catch and not what the code does
+
+#### Method 3 — read the production sites the model claims to abstract, and say whether the ordering the invariant rests on is the ordering the code has
+
+`review` over crates/rsk-fs/src/fs.rs::meta_delete crates/rsk-fs/src/fs.rs::mark_absent crates/rsk-fs/src/store_assurance.rs::meta_delete_false_absent crates/rsk-fs/src/store_meta_kani.rs::a_faulted_meta_read_is_never_cached_as_an_absent_blob crates/rsk-fs/src/powercut.rs::meta_delete_landed. cfg: none. features: none.
+
+| Bound | Value | What stops being proved |
+|---|---|---|
+| `bound_refinement_markers` | `2` | every site that refines this invariant and says so nowhere. The markers are doc comments, so a site that drifts out of one is invisible to this count |
+| `bound_fs_removal_sites` | `4` | removals outside `Fs`. assurance/deleters.toml's own header says its two scope rules cannot see these four, which is why they are a separate table |
+| `bound_fs_source_lines` | `895` | everything read as prose rather than as code. A line count is the size of what was read, not evidence that it was read correctly |
+| `bound_reviewers` | `1` | independence. One reader wrote this bundle and read these sites, so nothing here is a second opinion and the row says so rather than leaving the count out |
+| `bound_files_read` | `4` | the rest of the crate. rsk-fs is fifteen source files and this row opened the ones the subjects name |
+| `bound_crate_kani_proofs` | `13` | whether any of them is about THIS invariant. The count is the crate's; the attribution is the registry's NAME match, and this bundle records where the two disagree |
+
+> **Row note (`shipped_relation`).** this is the only row of the four that touches shipped Rust, and it is a READING rather than a proof. TCB-1 is what carries it to the image
+
+#### Method 4 — carry `NoFalseMetaAbsent` out of the model and onto something the host runs: the harness at the fault site, beside the step predicate it does not replace
+
+`bounded proof` over crates/rsk-fs/src/store_meta_kani.rs::a_faulted_meta_read_is_never_cached_as_an_absent_blob crates/rsk-fs/src/store_assurance.rs::meta_delete_false_absent. cfg: kani. features: none.
+
+| Bound | Value | What stops being proved |
+|---|---|---|
+| `bound_view_fids` | `3` | any shape needing a fourth file. `store_assurance::VIEW_FIDS` is a three-element array, so the host sweep's projection is as narrow as the model's pair plus one |
+| `bound_step_predicates` | `3` | the fourth invariant, which has none. crates/rsk-fs/src/store_assurance.rs says why: NoSilentOrphan forbids an answer rather than a state |
+| `bound_kani_proofs_in_crate` | `13` | every clause no harness in the crate states. Thirteen proofs is the crate's whole bounded surface, and only five of them ran for this bundle |
+| `bound_harnesses_run` | `5` | the eight this bundle did not run — the four in powercut_kani.rs, the one in fs_kani.rs, and three more of the refinement file. Their verdicts are not here |
+| `bound_symbolic_fids` | `24` | the shipped 65536. Under `cfg(kani)` `FID_PRESENT_BYTES` is 3, so the map is 24 bits and EF_META is re-aliased to 0x0017 to sit inside it — a shrink crates/rsk-fs/src/store_meta_kani.rs itself lists three consequences of |
+| `bound_cover_properties` | `2` | whether the harness reached anything a cover does not name. Two satisfied covers say the assumed domain is non-empty, not that it is the right one |
+
+> **Row note (`shipped_relation`).** the projection is verification-only and excluded from production builds, so this row says the shipped primitives satisfy the model's clauses — not that the shipped image was checked
+
+### `SEC-STORE-005` — `RSKeyStore!CacheHonest`
+
+#### Method 1 — show that `CacheHonest` holds of every reachable state of the flash layer, over the whole action set and not one path through it
+
+`model-check` over Store.cfg formal/RSKeyStore.tla. cfg: none. features: none.
+
+| Bound | Value | What stops being proved |
+|---|---|---|
+| `bound_fids` | `2` | any shape that needs a third file — a three-way aliasing of the present map, or a metadata blob holding more records than the pair can put in it. AS-RESET-2 is the row that says why the pair is argued to be enough, and it is argued rather than shown |
+| `bound_values_per_fid` | `3` | nothing about a value the model never writes. Two stored values plus the absent sentinel is what makes an overwrite observable; a third would add no distinction this invariant reads |
+| `bound_variables` | `7` | every part of the real `Fs` outside these seven — the dynamic-fid vector, the write generation counter, the sealed-payload layer, and flash geometry of any kind |
+| `bound_invariants` | `6` | whatever is true of the store and is not one of these six. A GREEN run says nothing about a clause nobody wrote down |
+| `bound_bug_switches` | `9` | any defect outside the nine formal/gen-configs.sh emits a switch for. The mutation score below is out of those nine and not out of the defects the store can have |
+| `bound_next_disjuncts` | `7` | any action the model does not have. There is no compaction, no `factory_wipe`, and no concurrent second caller in this Next |
+
+> **Row note (`shipped_relation`).** the model is `Fs` over a `Storage`, with the medium's failure modes as switches and the geometry left out. What is shipped is one instance of that shape at 16-bit FIDs; what is checked is two FIDs, and AS-RESET-2 is the row that argues the step between them
+
+#### Method 2 — show that the GREEN above is not vacuous — that a configuration which BREAKS `CacheHonest` is refused, and refused BY NAME
+
+`mutation` over StoreSolo_CacheHonest.cfg. cfg: none. features: none.
+
+| Bound | Value | What stops being proved |
+|---|---|---|
+| `bound_bug_switches_for_this_invariant` | `1` | the other switches of the nine. A switch that breaks a sibling invariant is evidence about that sibling, and this row does not borrow it |
+| `bound_tiers` | `1` | nothing about a tier this property has no configuration in. Where the count is 1 there is no Solo_ half and the row says so instead of implying one |
+| `bound_recorded_runs` | `1` | every run not in the `[[artifact]]` rows below. A verdict with no log beside it is a sentence, and this bundle carries none |
+| `bound_killed` | `1` | whether the kill was for the modelled defect rather than its inverse. That is the `direction` column of every `[[mutation]]` row, read one at a time, and two of twenty-four co-refutation patches in this tree failed exactly there |
+| `bound_store_configurations` | `22` | any configuration formal/gen-configs.sh does not emit. The roster is generated, so a defect nobody wrote a switch for has no row anywhere in it |
+| `bound_distinct_states_green` | `364` | everything the mutants explore beyond the clean run's space. A RED row stops at its first violation, so its own state count is a property of when TLC found the bug and not of the space |
+
+> **Row note (`shipped_relation`).** a switch is a defect the shipped tree does not have: gen-configs.sh writes every `Bug*` FALSE in Store.cfg, so the mutants say what the model would catch and not what the code does
+
+#### Method 3 — read the production sites the model claims to abstract, and say whether the ordering the invariant rests on is the ordering the code has
+
+`review` over crates/rsk-fs/src/fs.rs::meta_delete crates/rsk-fs/src/fs.rs::mark_absent crates/rsk-fs/src/fs.rs::known_absent crates/rsk-fs/src/store_meta_kani.rs::a_faulted_meta_read_is_never_cached_as_an_absent_blob. cfg: none. features: none.
+
+| Bound | Value | What stops being proved |
+|---|---|---|
+| `bound_refinement_markers` | `1` | every site that refines this invariant and says so nowhere. The markers are doc comments, so a site that drifts out of one is invisible to this count |
+| `bound_fs_removal_sites` | `4` | removals outside `Fs`. assurance/deleters.toml's own header says its two scope rules cannot see these four, which is why they are a separate table |
+| `bound_fs_source_lines` | `895` | everything read as prose rather than as code. A line count is the size of what was read, not evidence that it was read correctly |
+| `bound_reviewers` | `1` | independence. One reader wrote this bundle and read these sites, so nothing here is a second opinion and the row says so rather than leaving the count out |
+| `bound_files_read` | `2` | the rest of the crate. rsk-fs is fifteen source files and this row opened the ones the subjects name |
+| `bound_crate_kani_proofs` | `13` | whether any of them is about THIS invariant. The count is the crate's; the attribution is the registry's NAME match, and this bundle records where the two disagree |
+
+> **Row note (`shipped_relation`).** this is the only row of the four that touches shipped Rust, and it is a READING rather than a proof. TCB-1 is what carries it to the image
+
+#### Method 4 — carry `CacheHonest` out of the model and onto something the host runs: the two harnesses at the fault site this invariant is the premise of
+
+`bounded proof` over crates/rsk-fs/src/store_meta_kani.rs::a_faulted_meta_read_is_refused_rather_than_rebuilt_from_empty crates/rsk-fs/src/store_meta_kani.rs::a_faulted_meta_read_is_never_cached_as_an_absent_blob. cfg: kani. features: none.
+
+| Bound | Value | What stops being proved |
+|---|---|---|
+| `bound_view_fids` | `3` | any shape needing a fourth file. `store_assurance::VIEW_FIDS` is a three-element array, so the host sweep's projection is as narrow as the model's pair plus one |
+| `bound_step_predicates` | `3` | the fourth invariant, which has none. crates/rsk-fs/src/store_assurance.rs says why: NoSilentOrphan forbids an answer rather than a state |
+| `bound_kani_proofs_in_crate` | `13` | every clause no harness in the crate states. Thirteen proofs is the crate's whole bounded surface, and only five of them ran for this bundle |
+| `bound_harnesses_run` | `5` | the eight this bundle did not run — the four in powercut_kani.rs, the one in fs_kani.rs, and three more of the refinement file. Their verdicts are not here |
+| `bound_symbolic_fids` | `24` | the shipped 65536. Under `cfg(kani)` `FID_PRESENT_BYTES` is 3, so the map is 24 bits and EF_META is re-aliased to 0x0017 to sit inside it — a shrink crates/rsk-fs/src/store_meta_kani.rs itself lists three consequences of |
+| `bound_cover_properties` | `2` | whether the harness reached anything a cover does not name. Two satisfied covers say the assumed domain is non-empty, not that it is the right one |
+
+> **Row note (`shipped_relation`).** the projection is verification-only and excluded from production builds, so this row says the shipped primitives satisfy the model's clauses — not that the shipped image was checked
+
+### `SEC-STORE-006` — `RSKeyStore!NoSilentOrphan`
+
+#### Method 1 — show that `NoSilentOrphan` holds of every reachable state of the flash layer, over the whole action set and not one path through it
+
+`model-check` over Store.cfg formal/RSKeyStore.tla. cfg: none. features: none.
+
+| Bound | Value | What stops being proved |
+|---|---|---|
+| `bound_fids` | `2` | any shape that needs a third file — a three-way aliasing of the present map, or a metadata blob holding more records than the pair can put in it. AS-RESET-2 is the row that says why the pair is argued to be enough, and it is argued rather than shown |
+| `bound_values_per_fid` | `3` | nothing about a value the model never writes. Two stored values plus the absent sentinel is what makes an overwrite observable; a third would add no distinction this invariant reads |
+| `bound_variables` | `7` | every part of the real `Fs` outside these seven — the dynamic-fid vector, the write generation counter, the sealed-payload layer, and flash geometry of any kind |
+| `bound_invariants` | `6` | whatever is true of the store and is not one of these six. A GREEN run says nothing about a clause nobody wrote down |
+| `bound_bug_switches` | `9` | any defect outside the nine formal/gen-configs.sh emits a switch for. The mutation score below is out of those nine and not out of the defects the store can have |
+| `bound_next_disjuncts` | `7` | any action the model does not have. There is no compaction, no `factory_wipe`, and no concurrent second caller in this Next |
+
+> **Row note (`shipped_relation`).** the model is `Fs` over a `Storage`, with the medium's failure modes as switches and the geometry left out. What is shipped is one instance of that shape at 16-bit FIDs; what is checked is two FIDs, and AS-RESET-2 is the row that argues the step between them
+
+#### Method 2 — show that the GREEN above is not vacuous — that a configuration which BREAKS `NoSilentOrphan` is refused, and refused BY NAME
+
+`mutation` over StoreMut_BugDeleteHidesFaultedDrop.cfg StoreSolo_BugDeleteHidesFaultedDrop.cfg. cfg: none. features: none.
+
+| Bound | Value | What stops being proved |
+|---|---|---|
+| `bound_bug_switches_for_this_invariant` | `1` | the other switches of the nine. A switch that breaks a sibling invariant is evidence about that sibling, and this row does not borrow it |
+| `bound_tiers` | `2` | nothing about a tier this property has no configuration in. Where the count is 1 there is no Solo_ half and the row says so instead of implying one |
+| `bound_recorded_runs` | `2` | every run not in the `[[artifact]]` rows below. A verdict with no log beside it is a sentence, and this bundle carries none |
+| `bound_killed` | `2` | whether the kill was for the modelled defect rather than its inverse. That is the `direction` column of every `[[mutation]]` row, read one at a time, and two of twenty-four co-refutation patches in this tree failed exactly there |
+| `bound_store_configurations` | `22` | any configuration formal/gen-configs.sh does not emit. The roster is generated, so a defect nobody wrote a switch for has no row anywhere in it |
+| `bound_distinct_states_green` | `364` | everything the mutants explore beyond the clean run's space. A RED row stops at its first violation, so its own state count is a property of when TLC found the bug and not of the space |
+
+> **Row note (`shipped_relation`).** a switch is a defect the shipped tree does not have: gen-configs.sh writes every `Bug*` FALSE in Store.cfg, so the mutants say what the model would catch and not what the code does
+
+#### Method 3 — read the production sites the model claims to abstract, and say whether the ordering the invariant rests on is the ordering the code has
+
+`review` over crates/rsk-fs/src/fs.rs::delete crates/rsk-fs/src/fs.rs::force_delete crates/rsk-fs/src/fs.rs::force_delete_halves crates/rsk-fs/src/powercut.rs::delete_landed. cfg: none. features: none.
+
+| Bound | Value | What stops being proved |
+|---|---|---|
+| `bound_refinement_markers` | `4` | every site that refines this invariant and says so nowhere. The markers are doc comments, so a site that drifts out of one is invisible to this count |
+| `bound_fs_removal_sites` | `4` | removals outside `Fs`. assurance/deleters.toml's own header says its two scope rules cannot see these four, which is why they are a separate table |
+| `bound_fs_source_lines` | `895` | everything read as prose rather than as code. A line count is the size of what was read, not evidence that it was read correctly |
+| `bound_reviewers` | `1` | independence. One reader wrote this bundle and read these sites, so nothing here is a second opinion and the row says so rather than leaving the count out |
+| `bound_files_read` | `2` | the rest of the crate. rsk-fs is fifteen source files and this row opened the ones the subjects name |
+| `bound_crate_kani_proofs` | `13` | whether any of them is about THIS invariant. The count is the crate's; the attribution is the registry's NAME match, and this bundle records where the two disagree |
+
+> **Row note (`shipped_relation`).** this is the only row of the four that touches shipped Rust, and it is a READING rather than a proof. TCB-1 is what carries it to the image
+
+#### Method 4 — carry `NoSilentOrphan` out of the model and onto something the host runs: the ghost `viol` the faulted Delete arm writes, against the production pair that keeps the two failures apart
+
+`trace` over formal/RSKeyStore.tla crates/rsk-fs/src/fs.rs::force_delete_halves. cfg: none. features: none.
+
+| Bound | Value | What stops being proved |
+|---|---|---|
+| `bound_view_fids` | `3` | any shape needing a fourth file. `store_assurance::VIEW_FIDS` is a three-element array, so the host sweep's projection is as narrow as the model's pair plus one |
+| `bound_step_predicates` | `3` | the fourth invariant, which has none. crates/rsk-fs/src/store_assurance.rs says why: NoSilentOrphan forbids an answer rather than a state |
+| `bound_kani_proofs_in_crate` | `13` | every clause no harness in the crate states. Thirteen proofs is the crate's whole bounded surface, and only five of them ran for this bundle |
+| `bound_harnesses_run` | `5` | the eight this bundle did not run — the four in powercut_kani.rs, the one in fs_kani.rs, and three more of the refinement file. Their verdicts are not here |
+| `bound_symbolic_fids` | `24` | the shipped 65536. Under `cfg(kani)` `FID_PRESENT_BYTES` is 3, so the map is 24 bits and EF_META is re-aliased to 0x0017 to sit inside it — a shrink crates/rsk-fs/src/store_meta_kani.rs itself lists three consequences of |
+| `bound_cover_properties` | `2` | whether the harness reached anything a cover does not name. Two satisfied covers say the assumed domain is non-empty, not that it is the right one |
+
+> **Row note (`shipped_relation`).** the projection is verification-only and excluded from production builds, so this row says the shipped primitives satisfy the model's clauses — not that the shipped image was checked

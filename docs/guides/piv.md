@@ -1,21 +1,39 @@
 # PIV
 
+Build `0x0BE1` lets the background RSA prime search observe cancellation inside
+its Lucas test after a key is complete. Prime acceptance, key formats and
+authorization are unchanged; the abandoned candidate is wiped before core1 idles.
+
 A PIV smart-card (NIST SP 800-73-4) over CCID: X.509 client certificates,
 S/MIME, PIV-aware OS login, SSH and `age` through PKCS#11. Driven with
 `ykman piv` or `yubico-piv-tool`; the applet also speaks the Yubico extensions
 (metadata, serial, attestation, move/delete, set-retries) those tools use.
 `ykman piv` and `yubico-piv-tool` gate on the "Yubico YubiKey" reader name,
-which the default RS-Key build (VID:PID `0x1209:0x0001`) does not present. They
+which the default RS-Key build (VID:PID `0x1209:0xF1D2`) does not present. They
 need the opt-in `VIDPID=Yubikey5` interop build ([build.md](../build.md)). The
 PKCS#11 / OpenSC and OS-native (macOS CryptoTokenKit, Windows) routes below
 identify the card by its applet, not the reader name, so they work on the default
 build.
 
-> **Windows note:** the card serves a default CHUID automatically — the Windows
-> PIV minidriver needs it to enumerate the certificate containers — and the
-> mandatory Card Capability Container (`5FC107`) on the same terms, so neither
-> `ykman piv objects generate chuid` nor `ykman piv objects generate ccc` is
-> required on firmware 0x09DB or later.
+SELECT preserves damaged empty PIN, PUK, retry and private-key records rather
+than provisioning factory credentials over them. A missing or damaged public
+attestation certificate remains repairable from its unchanged private key.
+The first SELECT loads each existing management and attestation key once.
+Build `0x0AC8` accelerates P-384 public-key derivation with four signed fixed-base
+comb groups and specialized complete doubling. It still checks the attestation
+private key against its certificate before making the key available.
+Build `0x0ACA` also uses compact SHA-2 rounds for deterministic ECDSA nonces,
+reducing P-384 signing latency without changing signatures or key validation.
+Build `0x0ACB` accelerates P-384 ECDH with constant-time Jacobian multiplication,
+retaining peer-point validation and the same shared secret.
+Build `0x0ACC` also accelerates P-384 field arithmetic on 32-bit boards, including
+signing and the public-key derivation performed during attestation validation.
+A failed management-key read refuses that SELECT and can be retried; a
+malformed management-key seal keeps certificate access and recovery available.
+
+> **Windows.** The PIV minidriver uses the CHUID to enumerate the card's
+> containers and reads the Card Capability Container (`5FC107`) when opening
+> one. RS-Key supplies defaults for both objects.
 
 Prereqs: on Linux, `pcscd` plus the polkit rule from [linux.md](../linux.md);
 if you also use GnuPG, the `disable-ccid` line so `scdaemon` and `pcscd` stop
@@ -34,6 +52,18 @@ ykman piv info            # PIV version 5.8.0, slot + PIN/PUK/mgmt-key state
 | PUK | `12345678` | 6–8 chars; unblocks a blocked PIN |
 | Management key | `010203040506070801020304050607080102030405060708` | AES-192, the well-known YubiKey 5.7-era default |
 | PIN / PUK retries | 3 / 3 | resets to full on each correct entry |
+
+Build `0x0B83` reduces repeated directory HMAC setup in the storage checks behind PIN
+updates. Each attempt still becomes durable before comparison; successful
+verification restores the counter before granting authorization.
+
+From `0x0BA8`, PIN and PUK retry updates use the mirrored counter journal.
+Existing PINs and remaining attempts are preserved during the first update.
+After this migration, earlier v2 firmware opens only recovery mode; reinstalling
+`0x0BA8` or later resumes the existing store without resetting the key.
+
+Build `0x0BB0` combines counter header and value programming to shorten PIN
+updates. Retry ordering and the existing `0x0BA8` storage format are unchanged.
 
 Change all three before real use:
 
@@ -137,10 +167,9 @@ time if you want it gated like the rest.
 **RSA-1024** (disabled under the FIPS-style build, SP 800-131A), **ECC P-256 /
 P-384**, and the Curve25519 pair **Ed25519** (signing) and **X25519** (key
 agreement), the Yubico 5.7 PIV algorithm ids `0xE0` / `0xE1`, so `ykman` drives
-them as `--algorithm ED25519` / `X25519`. An Ed25519 key generates with a
-self-signed certificate like the other curves; an X25519 key is key-agreement-only
-and can't self-sign, so generation writes **no** auto-certificate (provision one
-from a CA via `ykman piv certificates import`). RSA-3072/4096 keygen is slow on
+them as `--algorithm ED25519` / `X25519`. Generation writes no certificate for
+any of them, as on a YubiKey: make one with `ykman piv certificates generate`, or
+import one a CA issued (an X25519 key can't sign its own). RSA-3072/4096 keygen is slow on
 this hardware (tens of seconds to a minute-plus).
 
 ## Generate a key on-card
@@ -151,9 +180,11 @@ ykman piv certificates generate --subject "CN=me" 9a pub.pem   # self-signed cer
 ykman piv info
 ```
 
-Generating in a slot already writes a self-signed certificate into that slot's
-certificate object, so a GET DATA serves one immediately even before you run
-`certificates generate`. Management-key auth is required to generate.
+Generating writes the key alone, as on a YubiKey: the slot's certificate object
+is left as it was, empty on a fresh slot, until `certificates generate` or
+`certificates import` fills it. A certificate already there stays through a new
+key, one an older RS-Key build wrote included, so replace it with the new key's.
+Management-key auth is required to generate.
 
 For a real CA, emit a CSR instead of a self-signed cert:
 
@@ -179,7 +210,10 @@ ykman piv certificates import 9d existing-cert.pem
 ```
 
 Import is management-key gated and also accepts RSA-2048/1024, P-256/P-384 and
-Ed25519/X25519.
+Ed25519/X25519. A host sends each prime of an RSA key at exactly half the
+modulus width, and the key signs one trial block before it replaces anything; a
+pair that is not a working key (`p = q`, composite factors) is refused `6A80` and
+the slot keeps its key, as on a YubiKey.
 An imported key keeps whatever copy you imported it from. Your call which way
 the trade-off goes. Imported keys **cannot be attested** (see below): attestation
 proves on-card *generation*, which import didn't do.
@@ -222,6 +256,18 @@ management key's own policy with `ykman piv access change-management-key
 > `CACHED` is treated as `ALWAYS`. The device has no wall clock, so it cannot
 > honour the 15-second touch cache a real YubiKey offers; it errs strict and
 > asks every time. If you set `CACHED`, expect `ALWAYS` behaviour.
+
+## Data objects
+
+`ykman piv objects import <id> <file>` stores any `5Fxxxx` object a YubiKey
+stores — the standard `5FC1xx` set, `5FFF00`, and any other id, such as the
+`5FFF10`–`5FFF15` the Yubico minidriver keeps its container map in — except the
+attestation certificate `5FFF01`, which no host may replace. An object is up to
+3063 bytes, `6700` past that, as on a YubiKey. ykman sends one in a single
+extended APDU, which carries 3046; a larger one does not fit one CCID frame, so
+store it with a tool that chains its command. Ids outside the standard set share room for 256 objects and 32 KiB;
+the next one answers `6A84`, as a full YubiKey does, until one is deleted.
+`ykman piv objects export` reads any of them back.
 
 ## Data objects that need the PIN to read
 
@@ -270,12 +316,25 @@ ykman piv keys attest 9a attestation.pem
 Proves a slot key was generated on-device, not imported. The attestation
 certificate is signed on-card by the `f9` key (a P-384 CA key, self-signed at
 first boot) and carries the standard Yubico OIDs: firmware version, device
-serial, and the slot's pin/touch policy. Subject/issuer names are
-`C=ES, O=RS-Key, CN=RS-Key PIV …`. Read the `f9` CA cert with:
+serial, the slot's pin/touch policy and the form factor. It names no key usage,
+as a YubiKey's OpenPGP statement names none: it says where the key came from, not
+what the key is for. Subject/issuer
+names are `C=ES, O=RS-Key, CN=RS-Key PIV …`. Read the `f9` CA cert with:
 
 ```sh
 ykman piv certificates export f9 attestation-ca.pem
 ```
+
+SELECT rebuilds a missing, empty, truncated or preceding-key F9 certificate
+using the stored key. It also retires a stale public cache left by an older
+build, retaining a certificate that already names that key. Recreating a missing
+F9 key removes the preceding certificate before saving the replacement. A
+storage failure returns `6581`; retry after the storage fault is resolved.
+
+An unreadable or non-P-384 F9 key makes PIV SELECT answer `6581`.
+It is preserved, never regenerated. A replug retries boot migration of a key
+still sealed under the earlier root. The dispatcher retains selection after
+this refusal; raw APDUs can still reach PIV's command handlers and their gates.
 
 Attestation only works for **generated** keys; an imported key returns
 `6A80` / `WRONG DATA` (there is nothing to attest). For the FIDO side of
@@ -287,21 +346,45 @@ metadata is dropped before the new key is written, so a power cut between the tw
 leaves a slot that reads as empty (`GET METADATA` → `6A88`) rather than one whose
 key and its recorded provenance disagree. Re-run the import; the slot works again
 once it completes. That ordering is what keeps attestation honest — it can never
-certify an imported key as generated on-device.
+certify an imported key as generated on-device. An interrupted move keeps its
+source key, and the copy it left at the destination has no metadata and blocks a
+move onto that slot: delete it (`ykman piv keys delete`) and move again.
+
+Key replacement and MOVE also retire the destination's old public-point cache
+before writing the key. If a cache refresh fails, GET METADATA uses the new
+metadata's point or derives it from that key. A refused cache retirement stops
+the operation with `6581`; existing key and cache record formats stay readable.
 
 ## Move and delete keys
 
-`ykman piv` 5.7 can move a key (with its certificate and metadata) between
-slots, or delete it:
+`ykman piv` 5.7 can move a key (with its metadata) between slots, or delete it:
 
 ```sh
-ykman piv keys move 9a 82          # 9a → retired slot 82, cert + metadata follow
+ykman piv keys move 9a 82          # 9a → retired slot 82, metadata follows
 ykman piv keys delete 9c           # wipe the signature slot's key
 ```
 
+Certificates stay where they are, as on a YubiKey: a move leaves the source
+slot's certificate behind and the destination's in place, and a delete keeps the
+slot's certificate. To carry it to the key, export it and import it there, then
+delete the one left behind:
+
+```sh
+ykman piv certificates export 9a cert.pem
+ykman piv certificates import 82 cert.pem
+ykman piv certificates delete 9a
+```
+
+A key generated or imported into the slot later keeps that certificate too. On a
+display build, the panel's **Generate key** skips a retired slot that still holds
+a certificate: delete it to free the slot.
+
 Moves go both ways — a key parked in a retired slot can come back to an active
-one. Moving a key onto its own slot is refused, because the source-delete would
-erase what the move just wrote. Both operations require management-key auth.
+one. A move onto a slot that already holds a key is refused, as on a YubiKey
+(`ykman` says `DEST slot is not empty`): delete that key first if that is what
+you mean. Moving a key onto its own slot is refused too, because the
+source-delete would erase what the move just wrote. Both operations require
+management-key auth.
 
 ## Use it
 
@@ -336,7 +419,7 @@ The card shows up as a standard PIV token; nothing here is RS-Key-specific.
 
 - **Windows / macOS native** smart-card stacks pick the PIV applet up as-is;
   macOS CryptoTokenKit binds its `pivtoken.appex` to the reader
-  ([interop.md](../interop.md#piv)).
+  ([PIV interop results](https://github.com/TheMaxMur/RS-Key/blob/main/assurance/reports/interop.md#piv)).
 
 ## At rest
 

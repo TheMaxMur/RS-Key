@@ -28,12 +28,21 @@ from .backup import (
     CONFIG_READ,
     CONFIG_TARGET_PHY,
     CONFIG_WRITE,
+    ERR_NOT_ALLOWED,
     _die_pin_required,
     _die_touch_denied,
     _gated,
     _vendor,
 )
-from .common import add_pin_arg, connect_fido, device_has_pin, die, resolve_pin, sanitize
+from .common import (
+    add_pin_arg,
+    connect_fido,
+    device_has_pin,
+    die,
+    die_config_locked,
+    resolve_pin,
+    sanitize,
+)
 from .status import RESCUE_AID, rescue_read
 
 # phy TLV tags — must match crates/rsk-phy/src/lib.rs.
@@ -61,7 +70,8 @@ YK_TOKEN_SUFFIX_LEN = len(" OTP+FIDO+CCID")
 
 # Driver numbering follows PicoForge's LedDriverType.
 DRIVERS = {"gpio": 1, "pimoroni": 2, "ws2812": 3}
-DRIVER_NAMES = {v: k for k, v in DRIVERS.items()}
+ROMU_LED_DRIVER = 4
+DRIVER_NAMES = {**{v: k for k, v in DRIVERS.items()}, ROMU_LED_DRIVER: "rgb_gpio"}
 ORDERS = {"rgb": 0, "grb": 1}
 ORDER_NAMES = {v: k for k, v in ORDERS.items()}
 
@@ -192,7 +202,10 @@ def _show(tlvs):
     print(
         "phy config ('(build default)' = field absent, firmware build value used):"
     )
-    print(f"  pin     {pin[0] if pin else '(build default)'}")
+    pin_label = pin[0] if pin else "(build default)"
+    if drv and drv[0] == ROMU_LED_DRIVER:
+        pin_label = "(fixed by board)"
+    print(f"  pin     {pin_label}")
     print(f"  driver  {DRIVER_NAMES.get(drv[0], drv[0]) if drv else '(build default)'}")
     print(
         f"  order   {ORDER_NAMES.get(order[0], order[0]) if order else '(build default)'}"
@@ -299,6 +312,8 @@ def _run_ccid(args):
             "phy write declined on the device (no confirmation). Approve on the "
             "device when prompted, then retry."
         )
+    if (s1, s2) == ccid.SW_COMMAND_NOT_ALLOWED:
+        die_config_locked("phy", f"{s1:02X}{s2:02X}")
     if (s1, s2) != ccid.SW_OK:
         raise SystemExit(f"WRITE phy failed: {s1:02X}{s2:02X}")
     print("phy LED config written ✓")
@@ -310,7 +325,7 @@ def _run_ccid(args):
         ccid.reboot(conn, bootsel=False)
 
 
-def _read_phy_fido(dev, cid):
+def _read_phy_fido(dev, cid, *, show_effective=False):
     """Read EF_PHY over CTAPHID (vendor CONFIG_READ, ungated) for read-modify-write."""
     st, m = _vendor(dev, cid, {1: CONFIG_READ, 2: {1: CONFIG_TARGET_PHY}})
     if st != 0:
@@ -324,7 +339,15 @@ def _read_phy_fido(dev, cid):
     # (matches led.py's CONFIG_READ guard).
     if not isinstance(v, (bytes, bytearray)):
         die("device returned a malformed PHY block (non-bytes CONFIG_READ value)")
-    return _parse_tlv(bytes(v))
+    tlvs = _parse_tlv(bytes(v))
+    effective = m.get(2) if isinstance(m, dict) else None
+    if (
+        show_effective
+        and isinstance(effective, dict)
+        and effective.get(TAG_LED_DRIVER) == ROMU_LED_DRIVER
+    ):
+        _upsert(tlvs, TAG_LED_DRIVER, ROMU_LED_DRIVER)
+    return tlvs
 
 
 def _run_fido(args):
@@ -332,8 +355,9 @@ def _run_fido(args):
     the PIN/touch-gated CONFIG_WRITE). Applies on the next boot — no reboot verb
     here, so the user re-plugs to apply."""
     dev, cid = connect_fido(exclusive=True)
-    tlvs = _read_phy_fido(dev, cid)
-    if args.get or not _would_set(args):
+    read_only = args.get or not _would_set(args)
+    tlvs = _read_phy_fido(dev, cid, show_effective=read_only)
+    if read_only:
         _show(tlvs)
         return
     _apply_args(tlvs, args)
@@ -348,6 +372,8 @@ def _run_fido(args):
     st, _ = _vendor(dev, cid, fields)
     _die_pin_required(st)
     _die_touch_denied(st)
+    if st == ERR_NOT_ALLOWED:
+        die_config_locked("phy", f"{st:#04x}")
     if st != 0:
         die(f"CONFIG_WRITE failed: {st:#x}")
     print("phy config written over FIDO ✓")

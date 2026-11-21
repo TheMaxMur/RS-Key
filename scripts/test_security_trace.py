@@ -3,6 +3,7 @@
 
 import copy
 import json
+import os
 import pathlib
 import shutil
 import subprocess
@@ -13,6 +14,8 @@ import pytest
 sys.path.insert(0, str(pathlib.Path(__file__).parent))
 import gate_lines
 import security_trace
+
+pytestmark = pytest.mark.assurance
 
 TRACE = pathlib.Path(__file__).parents[1] / "formal" / "traces" / "security-phase4.jsonl"
 
@@ -430,9 +433,9 @@ def test_a_configuration_floors_txt_names_no_verdict_for_is_fatal(monkeypatch, t
         security_trace.trace_verdicts()
 
 
-def test_check_sh_runs_this_row():
+def test_check_assurance_sh_runs_this_row():
     """`NAMED` says this table exists; only this says the guard is wired in."""
-    check = (pathlib.Path(__file__).parents[1] / "scripts/check.sh").read_text()
+    check = (pathlib.Path(__file__).parents[1] / "scripts/check-assurance.sh").read_text()
     assert gate_lines.runs(check, "scripts/security_trace.py --check-data")
 
 
@@ -838,7 +841,7 @@ def test_an_unexcused_shrug_names_the_event_and_the_direction_c_answered():
 
 
 def test_a_power_cycle_carrying_a_status_is_not_the_pseudo_command_excused():
-    """`tools/emu/src/device.rs:754-755` passes the literal 0 as the status of a
+    """`tools/emu/src/device.rs:813-814` passes the literal 0 as the status of a
     replug, so `delta_c` of it is a placeholder, not the device answering — and
     THAT is the class's whole reason, so the arm asserts it.
 
@@ -932,13 +935,13 @@ class Row:
         assert text.count(old) == count, f"anchor {old!r} appears {text.count(old)}x, not {count}"
         path.write_text(text.replace(old, new))
 
-    def run(self, flag="--check-data"):
+    def run(self, flag="--check-data", env=None):
         """The row's own command, argument for argument."""
         return subprocess.run(
             [sys.executable, str(self.root / "scripts/security_trace.py"), flag,
              str(self.root / "formal/TraceSecurityData.tla"),
              str(self.root / "formal/traces" / TRACE.name)],
-            capture_output=True, text=True, check=False,
+            capture_output=True, text=True, check=False, env=env,
         )
 
 
@@ -1009,6 +1012,16 @@ def test_the_check_sh_row_falls_for_each_shrug_mutant(tmp_path, name, patch, cod
     else:
         assert message not in done.stderr, done.stderr[-800:]
         assert "GREEN commands=40" in done.stdout, done.stdout[-800:]
+
+
+def test_the_row_keeps_a_java_io_tmpdir_of_its_own(tmp_path):
+    """SANY writes each standard module into java.io.tmpdir, so TLCs sharing one
+    parsed each other's half-written Naturals.tla (exit 150). A default nothing can
+    be written to stands in for a shared one, without a race."""
+    absent = tmp_path / "no-such-tmp"
+    poisoned = {**os.environ, "JAVA_TOOL_OPTIONS": f"-Djava.io.tmpdir={absent}"}
+    done = Row(tmp_path).run(env=poisoned)
+    assert done.returncode == 0, done.stderr[-800:]
 
 
 def test_the_unpatched_copy_of_the_row_is_green(tmp_path):

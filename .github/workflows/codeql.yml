@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # Copyright (C) 2026 RS-Key contributors
 
-# CodeQL static analysis, on pull requests.
+# CodeQL static analysis on develop pushes and pull requests.
 #
 # The merge gate already runs `cargo clippy -D warnings` and gitleaks, and
 # neither is SAST: clippy is a per-crate lint and gitleaks matches secrets, so
@@ -15,11 +15,7 @@
 # compilation, so the crates, the firmware glue and the Python host tooling are
 # all covered without a cross-compile toolchain here.
 #
-# Deliberately no `push:` and no `schedule:` — this reports on the change under
-# review and nothing else. It is advisory, not a merge gate; `check.sh` is the
-# gate (docs/testing.md, "CI parity"). The cost is real: with no default-branch
-# run, code scanning holds no baseline, so findings surface on the pull request
-# rather than in the repository's security tab.
+# The develop push runs give feedback before a pull request is opened.
 #
 # No `paths-ignore` either, which looks like a saving and is not: Scorecard
 # scores SAST over the commits whose pull request carried an analysis, so a
@@ -30,6 +26,8 @@ name: codeql
 
 on:
   workflow_dispatch:
+  push:
+    branches: [develop]
   pull_request:
 
 # Deny by default at the workflow level; the job below grants exactly the two

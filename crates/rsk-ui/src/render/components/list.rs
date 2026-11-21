@@ -177,3 +177,7 @@ pub fn row<D: DrawTarget<Color = Rgb565>>(
         )
     }
 }
+
+#[cfg(test)]
+#[path = "list_tests.rs"]
+mod tests;

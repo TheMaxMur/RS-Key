@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 RS-Key contributors
 
-#![no_main]
+#![cfg_attr(not(test), no_main)]
 
 //! Storage-layer power-cut durability: does `sequential-storage` itself lose (or
 //! roll back) a COMMITTED value across a power-cut during page migration?
@@ -28,6 +28,7 @@ use std::rc::Rc;
 
 use embassy_futures::block_on;
 use embedded_storage_async::nor_flash::{ErrorType, MultiwriteNorFlash, NorFlash, ReadNorFlash};
+#[cfg(not(test))]
 use libfuzzer_sys::fuzz_target;
 use sequential_storage::cache::Cache as SsCache;
 use sequential_storage::cache::key_pointers::ArrayKeyPointers;
@@ -35,6 +36,10 @@ use sequential_storage::cache::page_pointers::ArrayPagePointers;
 use sequential_storage::cache::page_states::ArrayPageStates;
 use sequential_storage::map::{MapConfig, MapStorage};
 use sequential_storage::mock_flash::{MockFlashBase, MockFlashError, Operation, WriteCountCheck};
+
+// The map's scratch must be word-aligned for the flash write, exactly as the
+// device's `rsk-store` buffer is; a bare `[u8; _]` is align 1.
+use rsk_store::FlashBuf;
 
 const WORD: usize = 4;
 const PAGE_WORDS: usize = 1024;
@@ -122,7 +127,7 @@ fn reboot_verify(
                 ArrayKeyPointers::new(),
             ),
         );
-        let mut buf = [0u8; KV_BUF];
+        let mut buf = FlashBuf::<KV_BUF>::new();
 
         // Resolve the interrupted op from what the flash actually holds.
         match &pending {
@@ -180,7 +185,7 @@ fn reboot_verify(
     }
 }
 
-fuzz_target!(|data: &[u8]| {
+pub fn run(data: &[u8]) {
     let flash = Rc::new(RefCell::new(Mock::new(
         WriteCountCheck::Disabled,
         None,
@@ -197,7 +202,7 @@ fuzz_target!(|data: &[u8]| {
             ArrayKeyPointers::new(),
         ),
     );
-    let mut buf = [0u8; KV_BUF];
+    let mut buf = FlashBuf::<KV_BUF>::new();
 
     let mut committed: HashMap<u16, Vec<u8>> = HashMap::new();
     let mut tag: u8 = 0;
@@ -274,4 +279,7 @@ fuzz_target!(|data: &[u8]| {
             );
         }
     }
-});
+}
+
+#[cfg(not(test))]
+fuzz_target!(|data: &[u8]| run(data));

@@ -70,7 +70,7 @@ EXPORT = Path("formal/generated/token_relation.txt")
 # derivation; re-deriving the axis is what item 0 exists to prevent.
 MATRIX = Path("docs/assurance-matrix.md")
 
-# Roadmap stage 4 п.4: every production writer is one of these three.
+# Roadmap stage 4 item 4: every production writer is one of these three.
 DISPOSITIONS = ("step", "stutter", "out-of-scope")
 #: Three writer axes and three GUARD axes. The token half was ledgered and the
 #: other three clauses of `NoAuthorizationBypass` — the walk's owning channel,
@@ -588,7 +588,7 @@ def discovered_volatile(
     typed = re.compile(WHOLE_TYPED.format(state=state)) if state else None
     # `mem::replace(st, FidoState::new())` moves the same bits with no `=` in
     # sight. Scoped to the swap primitives naming the type, NOT to the type
-    # anywhere: `RefCell::new(FidoState::new())` at `firmware/src/main.rs:1170`
+    # anywhere: `RefCell::new(FidoState::new())` at `firmware/src/main.rs:1308`
     # BUILDS the one session cell at boot and replaces nothing, and a rule reading
     # `FidoState::new` alone owns it. Measured: this alternative adds 0 sites.
     swapped = re.compile(SWAP.format(state=state)) if state else None

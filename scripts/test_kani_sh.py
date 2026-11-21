@@ -31,6 +31,7 @@ RUNNER = kani_gate.ROOT / kani_gate.RUNNER
 #: The stub the script calls instead of the verifier. Prints a fixture log and
 #: exits with the code the test asked for, so `pipefail` is exercised too.
 CARGO = """#!/usr/bin/env bash
+printf 'cargo arg: %s\\n' "$@"
 cat "$KANI_FIXTURE"
 exit "${KANI_RC:-0}"
 """
@@ -139,14 +140,17 @@ def run(tmp_path):
 # --- the row has to go green, or it gets deleted as fast as one that can't fail -
 
 
-@pytest.mark.parametrize("tier", ["pr", "state", "all"])
-def test_a_clean_run_passes_and_says_what_it_read(run, tier):
-    """Every tier, not just `pr` — `all` is the one no real run has ever reached."""
+@pytest.mark.parametrize("tier, auto_reach_checks", [
+    ("pr", True), ("state", False), ("all", False), ("light1", False),
+    ("light2", True), ("light3", True), ("heavy", True),
+])
+def test_a_clean_run_passes_and_says_what_it_read(run, tier, auto_reach_checks):
     r = run(green(tier), tier=tier)
     assert r.returncode == 0, r.stderr
     f = floors()
     assert f"{f[f'FLOOR_{tier}']} harnesses proved" in r.stdout
     assert f"{f[f'COVERS_{tier}']} covers reached" in r.stdout
+    assert ("cargo arg: --no-assertion-reach-checks" not in r.stdout) == auto_reach_checks
 
 
 def test_one_dead_copy_of_a_live_cover_is_not_a_failure(run):

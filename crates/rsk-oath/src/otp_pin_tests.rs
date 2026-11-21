@@ -247,12 +247,13 @@ fn a_change_after_the_otp_burn_rearms_the_at_rest_lap() {
         serial_hash: &[0x22; 32],
         serial_id: &SERIAL,
         otp_key: None,
+        latched: false,
     };
     let mut rec = [0u8; OTP_PIN_REC_V1];
     assert_eq!(fs.read(EF_OTP_PIN, &mut rec), Some(OTP_PIN_REC_V1));
     assert_eq!(
         &rec[2..],
-        &nootp.pin_derive_verifier(b"1234")[..],
+        &nootp.pin_derive_verifier(b"1234").expose()[..],
         "the record CHANGE is about to supersede is chip-serial-rooted",
     );
 
@@ -270,7 +271,13 @@ fn a_change_after_the_otp_burn_rearms_the_at_rest_lap() {
         .value(EF_OTP_PIN)
         .expect("fixture: EF_OTP_PIN is on the medium");
     medium.clear_ops();
-    let mut app = OathApplet::new(SERIAL, [0x22; 32], Some(test_mkek), &rng, &touch);
+    let mut app = OathApplet::new(
+        SERIAL,
+        [0x22; 32],
+        Some(rsk_crypto::FusedKey::open(test_mkek)),
+        &rng,
+        &touch,
+    );
     assert_eq!(change(&mut app, &mut fs, b"1234", b"5678"), Sw::OK);
     medium.assert_re_armed_before(
         EF_OTP_PIN,
@@ -291,7 +298,7 @@ fn a_change_after_the_otp_burn_rearms_the_at_rest_lap() {
     assert_eq!(fs.read(EF_OTP_PIN, &mut rec), Some(OTP_PIN_REC_V1));
     assert_eq!(
         &rec[2..],
-        &otp.pin_derive_verifier(b"5678")[..],
+        &otp.pin_derive_verifier(b"5678").expose()[..],
         "the new verifier is stored under the OTP arm",
     );
 }
@@ -326,12 +333,13 @@ fn a_change_whose_re_arm_the_medium_refuses_does_not_re_key() {
         serial_hash: &[0x22; 32],
         serial_id: &SERIAL,
         otp_key: None,
+        latched: false,
     };
     let mut rec = [0u8; OTP_PIN_REC_V1];
     assert_eq!(fs.read(EF_OTP_PIN, &mut rec), Some(OTP_PIN_REC_V1));
     assert_eq!(
         &rec[2..],
-        &nootp.pin_derive_verifier(b"1234")[..],
+        &nootp.pin_derive_verifier(b"1234").expose()[..],
         "fixture: the record CHANGE would supersede is chip-serial-rooted",
     );
     fs.put(rsk_fs::EF_HARDENED, &[1]).unwrap();
@@ -341,7 +349,13 @@ fn a_change_whose_re_arm_the_medium_refuses_does_not_re_key() {
     );
     medium.refuse(Some(rsk_fs::EF_HARDENED));
 
-    let mut app = OathApplet::new(SERIAL, [0x22; 32], Some(test_mkek), &rng, &touch);
+    let mut app = OathApplet::new(
+        SERIAL,
+        [0x22; 32],
+        Some(rsk_crypto::FusedKey::open(test_mkek)),
+        &rng,
+        &touch,
+    );
     let sw = change(&mut app, &mut fs, b"1234", b"5678");
     assert!(
         medium.live(rsk_fs::EF_HARDENED),
@@ -357,7 +371,7 @@ fn a_change_whose_re_arm_the_medium_refuses_does_not_re_key() {
     assert_eq!(fs.read(EF_OTP_PIN, &mut rec), Some(OTP_PIN_REC_V1));
     assert_eq!(
         &rec[2..],
-        &nootp.pin_derive_verifier(b"1234")[..],
+        &nootp.pin_derive_verifier(b"1234").expose()[..],
         "the refused re-arm must leave the pre-existing verifier in force, not a \
          re-keyed one the lap can no longer reach",
     );
@@ -372,7 +386,7 @@ fn a_change_whose_re_arm_the_medium_refuses_does_not_re_key() {
         ..nootp
     };
     assert_eq!(fs.read(EF_OTP_PIN, &mut rec), Some(OTP_PIN_REC_V1));
-    assert_eq!(&rec[2..], &otp.pin_derive_verifier(b"5678")[..]);
+    assert_eq!(&rec[2..], &otp.pin_derive_verifier(b"5678").expose()[..]);
 }
 
 /// The OTP-PIN gate is `has_data(EF_OTP_PIN)`, and `Fs::has_data` answers the same

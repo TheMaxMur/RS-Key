@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: AGPL-3.0-only
 # Copyright (C) 2026 RS-Key contributors
-"""Hold `docs/testing.md`'s roster of `cfg(kani)` shrinks to the crates, both ways.
+"""Hold `assurance/reports/testing-evidence.md`'s roster of `cfg(kani)` shrinks to the crates, both ways.
 
 A shrink is production source that means something different under Kani than in
 the shipped build — an array cut to 16 so CBMC does not bit-blast 2 KiB, a file
@@ -37,7 +37,8 @@ Every item in production source whose `cfg` mentions `kani`, less two kinds:
   exactly as much as `#[cfg(kani)]` does.
 
 Which files are production is walked, not listed: from each crate's `lib.rs`
-through its `mod` declarations, and a module reached only through a cfg naming
+through its `mod` declarations and literal `include!` sources. Includes inherit
+their containing file's classification. A module reached only through a cfg naming
 `kani` or `test` is verification source along with everything below it. Every
 `.rs` under `crates/*/src` has to be reached by that walk — one that is not is a
 file this guard cannot classify, so it is a failure rather than a skip.
@@ -59,7 +60,7 @@ block. It is keyword-matching in both directions — `// kani` satisfies it and
 
 ## What this is not
 
-It does not read values. That `CHAIN_BUF_SIZE` is 16 under Kani and 2038 shipped
+It does not read values. What `CHAIN_BUF_SIZE` is under Kani and what it ships at
 is in the code and in the comment beside it; copying either into the docs would
 make the page a third place for them to rot, which is the failure this file
 exists to end. The roster is names.
@@ -87,7 +88,7 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 #: The page that owes the roster, and the table in it. Three columns so a row is
 #: decidable on its own: two files can shrink the same name, and one file can
 #: hold two anonymous assertions, so neither the name nor the file is a key.
-ROSTER_PAGE = pathlib.Path("docs/testing.md")
+ROSTER_PAGE = pathlib.Path("assurance/reports/testing-evidence.md")
 ROW = re.compile(r"^\|\s*`(rsk-[a-z0-9-]+)`\s*\|\s*`([^`|]+)`\s*\|\s*`([^`|]+)`\s*\|\s*$", re.M)
 
 #: Where the crates are, and the file each crate's walk starts from.
@@ -136,6 +137,7 @@ KEYWORD = re.compile(
 NAME = re.compile(r"\s*([A-Za-z_][A-Za-z0-9_]*)")
 PATH_ATTR = re.compile(r'^\s*path\s*=\s*"([^"]+)"\s*$')
 MOD_DECL = re.compile(r"(?m)^[ \t]*(?:pub(?:\([^)]*\))?\s+)?mod\s+([A-Za-z_][A-Za-z0-9_]*)\s*;")
+INCLUDE_DECL = re.compile(r'(?<![\w:])include!\s*\(\s*"([^"\\]+)"\s*\)\s*;')
 CFG_BANG = re.compile(r"(?<![\w:])cfg!\s*\(")
 KANI_WORD = re.compile(r"(?<![\w:])kani(?![\w:])")
 
@@ -273,7 +275,7 @@ def child_dir(path):
 
 
 def module_targets(path, raw):
-    """(name, attribute bodies, file) for every non-inline `mod` declared here."""
+    """(name, attribute bodies, file) for declared modules and literal includes."""
     code = gate_lines.rust_code(raw)
     attributed = {}
     for group, start, inner, _above in attribute_groups(code):
@@ -299,12 +301,15 @@ def module_targets(path, raw):
             if not target.is_file() and (below / name / "mod.rs").is_file():
                 target = below / name / "mod.rs"
         out.append((name, bodies, target))
+    for found in INCLUDE_DECL.finditer(raw):
+        if code.startswith("include!", found.start()):
+            out.append(("include!", [], path.parent / found.group(1)))
     return out
 
 
 def classify_files(root):
     """(production, verification, problems) over `crates/*/src`, walked from each
-    crate root through its `mod` declarations."""
+    crate root through its declarations and literal includes."""
     production, verification, problems, seen = set(), set(), [], set()
     for crate_root in sorted((root / CRATES).glob(f"*/{CRATE_ROOT}")):
         pending = [(crate_root, True)]

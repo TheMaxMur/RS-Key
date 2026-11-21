@@ -281,9 +281,7 @@ checksum = "790eea4361631c5e7d22598ecd5723ff611904e3344ce8720784c93e3d83d40b"
 
 [[package]]
 name = "crypto-bigint"
-version = "0.7.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1a52aa3fcda4e6302a9f48734f234d35d4721b96f8fe07d073f07ce9df4f0271"
+version = "0.7.10"
 dependencies = [
  "cpubits",
  "ctutils",
@@ -325,9 +323,9 @@ dependencies = [
 
 [[package]]
 name = "ctutils"
-version = "0.4.2"
+version = "0.4.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7d5515a3834141de9eafb9717ad39eea8247b5674e6066c404e8c4b365d2a29e"
+checksum = "a2376ffd6f96d8a9db59875b4b6b0237d6900b5baf64279714e05493ce64828a"
 dependencies = [
  "cmov",
  "subtle",
@@ -1165,8 +1163,6 @@ checksum = "c08d65885ee38876c4f86fa503fb49d7b507c2b62552df7c70b2fce627e06381"
 [[package]]
 name = "p256"
 version = "0.14.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d2c9239b2dbc807adbbe147e8cf72ea7450c3a0aabe62cb8e75ff4ec22e1f72a"
 dependencies = [
  "ecdsa",
  "elliptic-curve",
@@ -1178,8 +1174,6 @@ dependencies = [
 [[package]]
 name = "p384"
 version = "0.14.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d17b851e6b3e378ab4ecb07fa2ed23f4d15f075735f8fec9fa1e7bdce5f8301f"
 dependencies = [
  "ecdsa",
  "elliptic-curve",
@@ -1375,18 +1369,21 @@ dependencies = [
  "ml-kem",
  "p256",
  "rsk-mldsa",
+ "rsk-secret",
+ "rsk-sha256",
  "rsk-sha512",
  "sha1",
  "sha2 0.10.9",
- "zeroize",
 ]
 
 [[package]]
 name = "rsk-devconf"
 version = "0.1.0"
 dependencies = [
+ "rsk-crypto",
  "rsk-fs",
  "rsk-sdk",
+ "rsk-secret",
 ]
 
 [[package]]
@@ -1424,7 +1421,9 @@ dependencies = [
  "p256",
  "p384",
  "p521",
+ "primeorder",
  "rfc6979",
+ "rsk-secret",
  "x25519-dalek",
  "zeroize",
 ]
@@ -1446,6 +1445,7 @@ dependencies = [
  "rsk-led",
  "rsk-phy",
  "rsk-sdk",
+ "rsk-secret",
  "zeroize",
 ]
 
@@ -1483,6 +1483,7 @@ dependencies = [
  "rsk-rescue",
  "rsk-rsa",
  "rsk-sdk",
+ "rsk-secret",
  "rsk-sha512",
  "rsk-store",
  "rsk-ui",
@@ -1509,6 +1510,7 @@ dependencies = [
 name = "rsk-mldsa"
 version = "0.1.0"
 dependencies = [
+ "rsk-secret",
  "sha3 0.10.9",
  "zeroize",
 ]
@@ -1520,7 +1522,7 @@ dependencies = [
  "rsk-crypto",
  "rsk-fs",
  "rsk-sdk",
- "zeroize",
+ "rsk-secret",
 ]
 
 [[package]]
@@ -1532,6 +1534,8 @@ dependencies = [
  "rsk-fs",
  "rsk-rsa",
  "rsk-sdk",
+ "rsk-secret",
+ "rsk-x509",
  "zeroize",
 ]
 
@@ -1543,7 +1547,7 @@ dependencies = [
  "rsk-devconf",
  "rsk-fs",
  "rsk-sdk",
- "zeroize",
+ "rsk-secret",
 ]
 
 [[package]]
@@ -1563,6 +1567,8 @@ dependencies = [
  "rsk-fs",
  "rsk-rsa",
  "rsk-sdk",
+ "rsk-secret",
+ "rsk-x509",
  "zeroize",
 ]
 
@@ -1572,19 +1578,20 @@ version = "0.1.0"
 dependencies = [
  "k256",
  "rsk-crypto",
+ "rsk-devconf",
  "rsk-fs",
  "rsk-phy",
  "rsk-sdk",
- "zeroize",
+ "rsk-secret",
 ]
 
 [[package]]
 name = "rsk-rsa"
 version = "0.1.0"
 dependencies = [
- "cc",
  "num-bigint-dig",
  "num-integer",
+ "rsk-secret",
  "zeroize",
 ]
 
@@ -1592,7 +1599,23 @@ dependencies = [
 name = "rsk-sdk"
 version = "0.1.0"
 dependencies = [
+ "rsk-secret",
  "zeroize",
+]
+
+[[package]]
+name = "rsk-secret"
+version = "0.1.0"
+dependencies = [
+ "zeroize",
+]
+
+[[package]]
+name = "rsk-sha256"
+version = "0.1.0"
+dependencies = [
+ "rsk-secret",
+ "sha2 0.10.9",
 ]
 
 [[package]]
@@ -1608,9 +1631,13 @@ version = "0.1.0"
 dependencies = [
  "embassy-futures 0.1.2 (git+https://github.com/embassy-rs/embassy?branch=main)",
  "embedded-storage-async",
+ "heapless 0.8.0",
+ "rsk-crypto",
  "rsk-fs",
  "rsk-sdk",
+ "rsk-secret",
  "sequential-storage",
+ "zeroize",
 ]
 
 [[package]]
@@ -1629,6 +1656,7 @@ dependencies = [
  "embassy-time",
  "embassy-usb",
  "rsk-sdk",
+ "rsk-secret",
  "zeroize",
 ]
 
@@ -1636,8 +1664,18 @@ dependencies = [
 name = "rsk-vendor"
 version = "0.1.0"
 dependencies = [
+ "rsk-devconf",
  "rsk-fs",
  "rsk-led",
+ "rsk-sdk",
+]
+
+[[package]]
+name = "rsk-x509"
+version = "0.1.0"
+dependencies = [
+ "rsk-crypto",
+ "rsk-ec",
  "rsk-sdk",
 ]
 
@@ -2003,17 +2041,3 @@ name = "zeroize"
 version = "1.8.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b97154e67e32c85465826e8bcc1c59429aaaf107c1e4a9e53c8d8ccd5eff88d0"
-dependencies = [
- "zeroize_derive",
-]
-
-[[package]]
-name = "zeroize_derive"
-version = "1.4.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "85a5b4158499876c763cb03bc4e49185d3cccbabb15b33c627f7884f43db852e"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn",
-]

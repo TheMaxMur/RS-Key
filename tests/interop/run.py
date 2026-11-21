@@ -7,8 +7,8 @@
 Unlike `tests/*.py` (which speak APDU/CBOR to the device directly) and the
 `third_party/` suites (upstream protocol conformance), this runner shells out
 to the *real* consumer software — libfido2, gpg, ykman, OpenSC — and records
-whether the device works end-to-end with each. It is the executable half of
-[docs/interop.md](../../docs/interop.md).
+whether the device works end-to-end with each. Results are recorded in
+assurance/reports/interop.md.
 
     nix develop -c python tests/interop/run.py            # read-only CLI cells
     nix develop -c python tests/interop/run.py --touch    # also touch cells
@@ -62,7 +62,7 @@ def discover():
         rc, out = run(["fido2-token", "-L"])
         if rc == 0 and out.strip():
             # `<path>: vendor (0xXXXX) product (0xXXXX) ...` — the default build
-            # reports the RS-Key id 0x1209:0x0001 (the opt-in Yubico flavor reports
+            # reports the RS-Key id 0x1209:0xF1D2 (the opt-in Yubico flavor reports
             # 0x1050:0x0407). The path is the first whitespace-free token (macOS
             # `ioreg://…:`, Linux `/dev/hidraw0`); the `: ` separator leaves a
             # trailing colon. ykman discovery below only finds the Yubico flavor.

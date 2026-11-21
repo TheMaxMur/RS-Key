@@ -7,6 +7,44 @@ use crate::fixtures::{
 };
 use crate::vectors::SIGN_SHA256;
 
+#[test]
+fn crt_plaintext_refuses_short_output_and_degenerate_collision_without_panicking() {
+    let key = test_key();
+    let mut out = [0xa5; 640];
+    assert_eq!(
+        crt_plaintext(&key, &mut out[..639]),
+        Err(RsaError::BadWidth)
+    );
+    assert_eq!(out, [0xa5; 640]);
+    for value in [0, 1] {
+        let mut ambiguous = [0; 320];
+        ambiguous[63] = value;
+        assert_eq!(parse_rsa_blob(&ambiguous), Ok((160, false)));
+    }
+}
+
+#[test]
+fn an_exact_crt_buffer_accepts_each_five_field_blob() {
+    for key in [test_key_1024(), test_key()] {
+        let length = key.size() / 2 * 5;
+        let mut output = vec![0; length + 1];
+        output[length] = 0xa5;
+        assert_eq!(crt_plaintext(&key, &mut output[..length]), Ok(length));
+        assert_eq!(output[length], 0xa5);
+        let crt = crt_from_plain(&output[..length]).unwrap();
+        assert_eq!(crt.modulus_len(), key.size());
+    }
+}
+
+#[test]
+fn the_layout_discriminator_accepts_the_smallest_modulus_with_an_inverse() {
+    let mut record = [0; 320];
+    record[63] = 2;
+    record[127] = 3;
+    record[319] = 1;
+    assert_eq!(parse_rsa_blob(&record), Ok((64, true)));
+}
+
 // A 256-byte PKCS#1-shaped block guaranteed < n (leads 00 01), so the raw private
 // op is well-defined and the fault check passes.
 fn sample_block() -> [u8; 256] {
@@ -27,7 +65,7 @@ fn parse_rsa_blob_discriminates_layouts() {
     assert_eq!(parse_rsa_blob(&[0u8; 512]).unwrap(), (256, false));
     assert_eq!(parse_rsa_blob(&[0u8; 1280]).unwrap(), (256, true));
     // A non-standard even width (RSA-1600, half=100) reads as 2-field so it can
-    // still DECIPHER on num-bigint; the asm sign path rejects it separately.
+    // still DECIPHER on num-bigint; the CRT sign path rejects it separately.
     assert_eq!(parse_rsa_blob(&[0u8; 200]).unwrap(), (100, false));
     // Out of range fails closed — as `BadBlob`, which the applets answer
     // `MEMORY_FAILURE` to. The variant is the wire surface: pin it, not `is_err`.
@@ -96,10 +134,15 @@ fn private_op_refuses_a_faulted_crt_intermediate() {
         faulted[(field + 1) * 128 - 1] ^= 0x01;
         assert_eq!(parse_rsa_blob(&faulted[..n]).unwrap(), (128, true));
         let crt = crt_from_plain(&faulted[..n]).unwrap();
+        sig.fill(0xa5);
         assert_eq!(
             private_op(&crt, &c, &mut SeqRng(1), &mut sig),
             Err(RsaError::Failed),
             "a signature over a faulted {what} left private_op"
+        );
+        assert_eq!(
+            sig, [0xa5; MAX_RSA_BYTES],
+            "faulted {what} published output"
         );
     }
 }
@@ -131,7 +174,7 @@ fn private_op_legacy_two_field_recomputes_and_matches() {
 
 #[test]
 fn private_op_reproduces_an_openssl_signature() {
-    // The asm CRT core, driven exactly as PSO:CDS drives it, against OpenSSL's
+    // The fixed-width CRT core, driven exactly as PSO:CDS drives it, against OpenSSL's
     // own PKCS#1 v1.5 signatures over the same key. Byte-for-byte, not
     // "verifies": a signer that is merely self-consistent passes the latter.
     let key = test_key();
@@ -141,13 +184,13 @@ fn private_op_reproduces_an_openssl_signature() {
 
     for (i, (digest, want)) in SIGN_SHA256.iter().enumerate() {
         let hash = hex(digest);
-        let dlen = crate::pkcs1v15::DI_SHA256.len() + hash.len();
+        let dlen = crate::fixtures::DI_SHA256.len() + hash.len();
         let mlen = 256;
         let mut em = [0xffu8; MAX_RSA_BYTES];
         em[0] = 0x00;
         em[1] = 0x01;
         em[mlen - dlen - 1] = 0x00;
-        em[mlen - dlen..mlen - hash.len()].copy_from_slice(crate::pkcs1v15::DI_SHA256);
+        em[mlen - dlen..mlen - hash.len()].copy_from_slice(crate::fixtures::DI_SHA256);
         em[mlen - hash.len()..mlen].copy_from_slice(&hash);
 
         let mut sig = [0u8; MAX_RSA_BYTES];
@@ -191,7 +234,7 @@ fn parse_disambiguates_320_byte_collision() {
 
 #[test]
 fn crt_plaintext_rejects_non_mult32_width() {
-    // A non-32-multiple prime width (RSA-640 → 40-byte primes) has no asm CRT
+    // A non-32-multiple prime width (RSA-640 → 40-byte primes) has no fixed-width CRT
     // path; sealing must fail loud, not seal a blob the loader would refuse.
     let k = test_key_640();
     let mut buf = [0u8; MAX_CRT_PLAIN];
@@ -201,6 +244,31 @@ fn crt_plaintext_rejects_non_mult32_width() {
 #[test]
 fn crt_from_plain_rejects_non_mult32_width() {
     // The loader half of the same rule, and the one PSO:CDS reports: a legacy
-    // `P‖Q` blob of a width the asm cannot take answers `WRONG_LENGTH`.
+    // `P‖Q` blob of a width the CRT signer refuses answers `WRONG_LENGTH`.
     assert_eq!(crt_from_plain(&[0u8; 200]).err(), Some(RsaError::BadWidth));
+}
+
+#[test]
+fn a_key_on_composite_factors_fails_the_pairwise_test() {
+    // A 1024-bit product of two primes as `p`, beside a real prime: the pair
+    // assembles -- `d` exists modulo lcm(p - 1, q - 1) -- and cannot sign.
+    let composite = hex(crate::vectors::N1024_HEX);
+    let key = crate::rsa_from_pqe(crate::RSA_PUB_EXP_BE, &composite, &hex(P_HEX))
+        .expect("the pair assembles, so only the trial signature can refuse it");
+    let mut rng = SeqRng(1);
+    assert_eq!(pairwise_consistent(&key, &mut rng), Err(RsaError::Failed));
+    assert_eq!(pairwise_consistent(&test_key(), &mut rng), Ok(()));
+    assert_eq!(pairwise_consistent(&test_key_1024(), &mut rng), Ok(()));
+}
+
+#[test]
+fn a_direct_crt_field_copy_refuses_a_short_destination_without_writing() {
+    let mut output = [0xa5; 4];
+    assert_eq!(
+        put_field(&mut output[..1], &[0x12, 0x34]),
+        Err(RsaError::BadWidth)
+    );
+    assert_eq!(output, [0xa5; 4]);
+    assert_eq!(put_field(&mut output, &[0x12, 0x34]), Ok(()));
+    assert_eq!(output, [0xa5, 0xa5, 0x12, 0x34]);
 }

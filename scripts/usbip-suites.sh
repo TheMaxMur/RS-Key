@@ -3,12 +3,14 @@
 # Copyright (C) 2026 RS-Key contributors
 
 # The other half of `emu-suites.sh`: the suites that need a real USB stack.
+# PICOBOOT and MSC also run the firmware image inside the isolated guest.
 #
 # `emu-suites.sh` runs everything the emulator can serve over a socket. These
-# five (`02`, `61`, `65`, `73`, `77`) and the pico-fido conformance suite cannot
-# be served that way — they read USB descriptors, or go through python-fido2's and
-# pyscard's own transports, which want a device the kernel enumerated. So the
-# emulator serves USB/IP here, and a Linux guest with `vhci_hcd` attaches it:
+# five (`02`, `61`, `65`, `73`, `77`), the pico-fido conformance suite and OpenSC's
+# p11test cannot be served that way — they read USB descriptors, or go through
+# python-fido2's, pyscard's and pcsc-lite's own transports, which want a device
+# the kernel enumerated. So the emulator serves USB/IP here, and a Linux guest
+# with `vhci_hcd` attaches it:
 #
 #   [ this host ]  rsk-emu --usbip  <--- TCP 3240 --->  [ VM ]  vhci_hcd -> /dev/hidraw*
 #
@@ -32,8 +34,19 @@ if [ "$(uname)" != "Linux" ]; then
   exit 77
 fi
 
+OUT="${1:-target/usbip-assurance-$(date +%Y%m%d-%H%M%S)-$$}"
+mkdir -p "$(dirname "$OUT")"
+mkdir "$OUT"
+OUT="$(cd "$OUT" && pwd)"
+
 echo "== building the emulator"
-cargo build --release --manifest-path tools/emu/Cargo.toml --target "$HOST_TARGET"
+# Assertions and overflow checks on, as `emu-suites.sh` builds it: the suites are the oracle.
+CARGO_PROFILE_RELEASE_DEBUG_ASSERTIONS=true CARGO_PROFILE_RELEASE_OVERFLOW_CHECKS=true \
+  cargo build --locked --release --manifest-path tools/emu/Cargo.toml --target "$HOST_TARGET"
+
+echo "== building the partitioned no-touch image"
+bash scripts/build.sh --features no-touch
+cp "${RSK_TZ_OUT:-${CARGO_TARGET_DIR:-target}/trustzone}/combined.elf" "$WORK/firmware-pt.elf"
 
 echo "== building the guest"
 nix build .#usbip-vm --no-link --print-out-paths >"$WORK/vm-path"
@@ -43,7 +56,7 @@ echo "== starting the emulators (USB/IP + the card socket the reset window needs
 # Bound to every interface, not loopback: the guest reaches this host as a peer
 # on QEMU's user network, so a 127.0.0.1 bind would be invisible to it.
 #
-# Two of them, on separate ports, because two suites need the Yubico identity and
+# Two of them, on separate ports, because three suites need the Yubico identity and
 # the rest must NOT have it (the default identity is the one whose CCID interface
 # a stock driver skips — see `scripts/usbip-guest.sh`). Both at once rather than
 # in sequence so the guest boots once: under TCG a boot costs more than a process.
@@ -71,12 +84,37 @@ start_emu yubico 7801 7802 3241 --yubico --touch
 
 echo "== booting the guest (no KVM: this is software emulation, give it a minute)"
 mkdir -p "$WORK/out"
+cp "$EMU" "$WORK/out/rsk-emu"
+cp "$WORK/firmware-pt.elf" "$WORK/out/firmware-pt.elf"
+# The default ROM path is compiled from Cargo's checkout, absent in the guest.
+cargo metadata --locked --manifest-path tools/emu/Cargo.toml --filter-platform "$HOST_TARGET" --format-version 1 | python -c '
+import hashlib, json, shutil, sys
+from pathlib import Path
+package = next(p for p in json.load(sys.stdin)["packages"] if p["name"] == "rp2350-emu")
+rom = Path(package["manifest_path"]).parents[2] / "roms/rp2350/bootrom-combined.bin"
+expected = Path(str(rom) + ".sha256").read_text().strip()
+assert hashlib.sha256(rom.read_bytes()).hexdigest() == expected, "picoem bootrom pin differs"
+shutil.copyfile(rom, sys.argv[1])
+' "$WORK/out/bootrom.bin"
 # `$RSK_REPO` / `$RSK_OUT` are read by the VM's own run script when it expands the
 # 9p shares — that indirection is what lets one built guest serve any checkout.
 RSK_REPO="$PWD" RSK_OUT="$WORK/out" \
-  "$VM"/bin/run-*-vm </dev/null 2>&1 | tee "$WORK/vm.log" || true
+  "$VM"/bin/run-*-vm </dev/null 2>&1 | tee "$OUT/guest.log" || true
+
+cp "$WORK/default.log" "$WORK/yubico.log" "$OUT/"
+if [ -d "$WORK/out/image" ]; then
+  mkdir "$OUT/image"
+  # Retain evidence, never the emulated flash, OTP or executable fixtures.
+  (cd "$WORK/out/image" && find . -type f \( -name '*.log' -o -name report.json \) \
+    -exec cp --parents '{}' "$OUT/image/" \;)
+fi
 
 status="$(cat "$WORK/out/status" 2>/dev/null || echo "")"
+# p11test's JSONs outlive `$WORK`: they are what a reference update copies in.
+rm -rf target/p11test
+if [ -d "$WORK/out/p11test" ]; then
+  mkdir -p target/p11test && cp "$WORK/out/p11test"/*.json target/p11test/ 2>/dev/null || true
+fi
 if [ -z "$status" ]; then
   echo
   echo "FAIL: the guest never wrote a status — it did not reach the suites" >&2

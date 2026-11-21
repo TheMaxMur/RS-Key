@@ -25,11 +25,102 @@ impl Rng for SeqRng {
 const CDH: [u8; 32] = [0xCD; 32];
 const TOKEN: [u8; 32] = [0x99; 32];
 
+#[test]
+fn unknown_nested_management_fields_and_transports_preserve_the_owner_ids() {
+    let mut buffer = [0; 256];
+    let mut e = Encoder::new(Cursor::new(&mut buffer[..]));
+    e.map(4)
+        .unwrap()
+        .u8(1)
+        .unwrap()
+        .u8(1)
+        .unwrap()
+        .u8(2)
+        .unwrap()
+        .map(3)
+        .unwrap();
+    e.u8(2)
+        .unwrap()
+        .map(2)
+        .unwrap()
+        .str("transports")
+        .unwrap()
+        .array(2)
+        .unwrap();
+    e.str("usb")
+        .unwrap()
+        .str("nfc")
+        .unwrap()
+        .str("id")
+        .unwrap()
+        .bytes(b"credential")
+        .unwrap();
+    e.u8(3)
+        .unwrap()
+        .map(2)
+        .unwrap()
+        .str("future")
+        .unwrap()
+        .array(2)
+        .unwrap()
+        .map(0)
+        .unwrap()
+        .null()
+        .unwrap();
+    e.str("id").unwrap().bytes(b"user").unwrap();
+    e.u8(99)
+        .unwrap()
+        .array(2)
+        .unwrap()
+        .map(0)
+        .unwrap()
+        .null()
+        .unwrap();
+    let end = e.writer().position();
+    e.u8(5)
+        .unwrap()
+        .array(2)
+        .unwrap()
+        .map(0)
+        .unwrap()
+        .null()
+        .unwrap()
+        .u8(6)
+        .unwrap()
+        .null()
+        .unwrap();
+    let n = e.writer().position();
+    let req = parse(&buffer[..n]).unwrap();
+    assert_eq!(req.cred_id, Some(&b"credential"[..]));
+    assert_eq!(req.user_id, Some(&b"user"[..]));
+    assert_eq!(req.raw_subpara, &buffer[4..end]);
+    for (case, truncated) in [
+        &[0xa2, 1, 1, 5, 0x82, 0xf6][..],
+        &[0xa2, 1, 1, 2, 0xa1, 0x18, 99, 0x82, 0xf6][..],
+        &[0xa2, 1, 1, 2, 0xa1, 3, 0xa1, 0x61, b'x', 0x82, 0xf6][..],
+        &[
+            0xa2, 1, 1, 2, 0xa1, 2, 0xa1, 0x6a, b't', b'r', b'a', b'n', b's', b'p', b'o', b'r',
+            b't', b's', 0x81, 0xf6,
+        ][..],
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let expected = if case == 3 {
+            CtapError::CborUnexpectedType
+        } else {
+            CtapError::InvalidCbor
+        };
+        assert!(matches!(parse(truncated), Err(error) if error == expected));
+    }
+}
+
 fn dev() -> Device<'static> {
     Device {
         serial_hash: &[0xAB; 32],
         serial_id: &[1, 2, 3, 4, 5, 6, 7, 8],
         otp_key: None,
+        latched: false,
     }
 }
 
@@ -76,13 +167,14 @@ fn mc_request(rp_id: &str, uid: &[u8], name: &str) -> std::vec::Vec<u8> {
 }
 
 // Register a resident credential, returning its (resident_id, pubkey x, y).
-fn register(
-    fs: &mut Fs<RamStorage>,
+fn register<S: rsk_fs::Storage>(
+    fs: &mut Fs<S>,
     rng: &mut SeqRng,
     rp_id: &str,
     uid: &[u8],
     name: &str,
 ) -> (std::vec::Vec<u8>, [u8; 32], [u8; 32]) {
+    crate::tests::uv_optional(fs);
     let mut out = [0u8; 1024];
     let mut state = FidoState::new();
     let n = {
@@ -129,6 +221,7 @@ fn parse_mc(resp: &[u8]) -> (std::vec::Vec<u8>, [u8; 32], [u8; 32]) {
 
 fn setup() -> (Fs<RamStorage>, SeqRng) {
     let mut fs = Fs::new(RamStorage::new());
+    crate::tests::uv_optional(&mut fs);
     let mut rng = SeqRng(1);
     ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
     (fs, rng)
@@ -144,10 +237,10 @@ fn grant_pcmr(fs: &mut Fs<RamStorage>, rng: &mut SeqRng) -> [u8; 32] {
     // would get that instead of a PIN check.
     let mut pin_file = [0u8; crate::clientpin::PIN_FILE_LEN];
     pin_file[0] = 8; // retries
-    pin_file[1] = 4; // min length
+    pin_file[1] = 4; // the PIN's own length, in code points
     pin_file[2] = 1;
     fs.put(EF_PIN, &pin_file).unwrap();
-    ensure_ppuat(&dev(), fs, rng).unwrap()
+    *ensure_ppuat(&dev(), fs, rng).unwrap().expose()
 }
 
 // Encode a subCommandParams map, returning its raw CBOR bytes.
@@ -235,7 +328,7 @@ fn run<S: rsk_fs::Storage>(
     req: &[u8],
     out: &mut [u8],
 ) -> CtapResult {
-    let mut rng = SeqRng(7);
+    let mut rng = command_rng(fs);
     let mut presence = crate::AlwaysConfirm;
     let mut ctx = Ctx {
         presence: &mut presence,
@@ -623,7 +716,7 @@ fn enumerate_emits_extension_fields() {
     let mut rec = [0u8; 1024];
     let _m = fs.read(EF_CRED, &mut rec).unwrap();
     let seed = crate::seed::load_keydev(&dev(), &mut fs).unwrap();
-    let expected = derive_large_blob_key(&seed, &rec[32..RECORD_PREFIX]);
+    let expected = derive_large_blob_key(seed.expose(), &rec[32..RECORD_PREFIX]);
     assert_eq!(lbk.as_deref(), Some(&expected[..]));
 }
 
@@ -783,7 +876,7 @@ fn delete_credential_drops_count_and_rp() {
 /// getInfo's `encCredStoreState` (0x1E) is only worth anything if the tag under it
 /// moves on **every** change to the discoverable set — a platform that trusts a
 /// stale tag keeps a cache the device has already invalidated. This drives the real
-/// commands rather than the bump helper: the helper being correct says nothing about
+/// commands rather than the renewal helper: it being correct says nothing about
 /// whether the three host paths call it. The on-device delete is the fourth path and
 /// has its own test, in `passkeys_tests.rs`.
 #[test]
@@ -792,7 +885,7 @@ fn every_credential_mutation_moves_the_store_tag() {
 
     let (mut fs, mut rng) = setup();
     let empty = cred_store_state(&mut fs).unwrap();
-    assert_eq!(empty, [0u8; 16], "a store nothing has written to is zero");
+    assert_ne!(empty, [0u8; 16], "a new store is not zero");
 
     let (id_a, ..) = register(&mut fs, &mut rng, "example.com", &[1, 1], "alice");
     let after_create = cred_store_state(&mut fs).unwrap();
@@ -862,6 +955,7 @@ fn the_store_tag_survives_a_remount() {
     assert_ne!(live, [0u8; 16]);
 
     let mut fs = Fs::new(fs.into_storage());
+    crate::tests::uv_optional(&mut fs);
     assert_eq!(
         cred_store_state(&mut fs).unwrap(),
         live,
@@ -870,7 +964,7 @@ fn the_store_tag_survives_a_remount() {
 }
 
 /// A refused mutation must not leave the tag where a successful one would have — but
-/// it may move it, and that is the direction to be wrong in: the bump is written
+/// it may move it, and that is the direction to be wrong in: the tag is renewed
 /// ahead of the change it describes, so what a failure (or a power cut) leaves is a
 /// tag that over-reports. The platform re-enumerates once; the alternative is a
 /// cache nothing corrects.
@@ -893,8 +987,8 @@ fn a_refused_delete_never_under_reports() {
         ),
         Err(CtapError::NoCredentials)
     );
-    // It never reached the bump — the lookup refused first — so the tag stands. What
-    // matters is the direction: it must not have moved *backwards*.
+    // It never reached the renewal — the lookup refused first — so the tag stands: a
+    // refused change claims no change.
     assert_eq!(cred_store_state(&mut fs).unwrap(), before);
 }
 
@@ -1092,6 +1186,7 @@ fn rp_present(fs: &mut Fs<RamStorage>, state: &mut FidoState, rp_hash: &[u8; 32]
 #[test]
 fn missing_param_is_puat_required() {
     let mut fs = Fs::new(RamStorage::new());
+    crate::tests::uv_optional(&mut fs);
     let mut state = armed(PERM_CM);
     let mut out = [0u8; 64];
     // {1: 1} — getCredsMetadata with no pinUvAuthParam.
@@ -1275,6 +1370,7 @@ fn legacy_plaintext_rp_migrates_and_stays_usable() {
 fn a_faulted_migration_probe_costs_one_boot_not_the_seal() {
     let (backend, medium) = rsk_fs::storage::faults::ProbeStuck::new();
     let mut fs = Fs::new(backend);
+    crate::tests::uv_optional(&mut fs);
     let mut rng = SeqRng(1);
     ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
     // Two pre-migration records: count(1) ‖ rpIdHash(32) ‖ cleartext domain.
@@ -1758,6 +1854,7 @@ impl Storage for CountingStorage {
 }
 
 fn register_into<S: Storage>(fs: &mut Fs<S>, rng: &mut SeqRng, rp: &str, uid: &[u8], name: &str) {
+    crate::tests::uv_optional(fs);
     let mut out = [0u8; 1024];
     let mut state = FidoState::new();
     let mut presence = crate::AlwaysConfirm;
@@ -1778,7 +1875,7 @@ fn run_into<S: Storage>(
     req: &[u8],
     out: &mut [u8],
 ) -> CtapResult {
-    let mut rng = SeqRng(7);
+    let mut rng = command_rng(fs);
     let mut presence = crate::AlwaysConfirm;
     let mut ctx = Ctx {
         presence: &mut presence,
@@ -2032,7 +2129,10 @@ fn clearing_the_persistent_token_revokes_the_grant() {
         run(&mut fs, &mut state, &cm_request(0x02, None, &old), &mut out),
         Err(CtapError::PinAuthInvalid)
     );
-    assert_ne!(ensure_ppuat(&dev(), &mut fs, &mut rng).unwrap(), old);
+    assert_ne!(
+        crate::bare(ensure_ppuat(&dev(), &mut fs, &mut rng).unwrap()),
+        crate::bare(&old)
+    );
 }
 
 /// A subcommand this command does not implement. Pinned to a YubiKey 5.7.4,
@@ -2081,6 +2181,7 @@ fn the_protocol_is_judged_before_the_token_and_absent_is_not_zero() {
         let mut req = std::vec![0xA2, 0x01, 0x01, 0x03];
         req.extend_from_slice(&proto);
         let mut fs = Fs::new(RamStorage::new());
+        crate::tests::uv_optional(&mut fs);
         let mut state = armed(PERM_CM);
         assert_eq!(
             run(&mut fs, &mut state, &req, &mut out),
@@ -2093,6 +2194,7 @@ fn the_protocol_is_judged_before_the_token_and_absent_is_not_zero() {
     let mut req = std::vec![0xA2, 0x01, 0x01, 0x04, 0x50];
     req.extend_from_slice(&[0xAA; 16]);
     let mut fs = Fs::new(RamStorage::new());
+    crate::tests::uv_optional(&mut fs);
     let mut state = armed(PERM_CM);
     assert_eq!(
         run(&mut fs, &mut state, &req, &mut out),
@@ -2100,6 +2202,7 @@ fn the_protocol_is_judged_before_the_token_and_absent_is_not_zero() {
     );
     // Control: neither present is still the token's own code.
     let mut fs = Fs::new(RamStorage::new());
+    crate::tests::uv_optional(&mut fs);
     let mut state = armed(PERM_CM);
     assert_eq!(
         run(&mut fs, &mut state, &[0xA1, 0x01, 0x01], &mut out),
@@ -2289,6 +2392,7 @@ fn a_torn_delete_never_leaves_a_credential_without_its_rp() {
         let mut medium = fs.into_storage();
         medium.budget = usize::MAX;
         let mut fs = Fs::new(medium);
+        crate::tests::uv_optional(&mut fs);
         fs.scan();
         if fs.has_data(EF_CRED) {
             assert!(
@@ -2299,4 +2403,657 @@ fn a_torn_delete_never_leaves_a_credential_without_its_rp() {
         }
     }
     assert!(saw_torn, "vacuous: no budget tore the delete");
+}
+
+/// updateUserInformation rewrites a credential's box, cut at every mutation. The
+/// name that comes back is the old one or the new one, and the store-state tag moves
+/// BEFORE the record does: a platform that cached the tag re-enumerates after a cut
+/// that landed the rewrite, where the other order would leave it holding a name the
+/// key no longer has.
+#[test]
+fn a_torn_update_user_never_changes_a_credential_behind_the_store_state() {
+    let before = std::cell::Cell::new(0u128);
+    let cred_id = std::cell::RefCell::new(std::vec::Vec::new());
+    assert!(!rsk_fs::cut::sweep_restarts(
+        || {
+            let (cut, medium) = rsk_fs::storage::faults::Cut::new();
+            let mut fs = Fs::new(cut);
+            crate::tests::uv_optional(&mut fs);
+            let mut rng = SeqRng(1);
+            ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
+            let (id, ..) = register(&mut fs, &mut rng, "example.com", &[1, 1], "alice");
+            *cred_id.borrow_mut() = id;
+            before.set(u128::from_le_bytes(
+                crate::credential::cred_store_state(&mut fs).unwrap(),
+            ));
+            (fs, medium)
+        },
+        |fs| {
+            let mut state = armed(PERM_CM);
+            let mut out = [0u8; 512];
+            let req = cm_request(
+                0x07,
+                Some(&subpara_update(
+                    &cred_id.borrow(),
+                    &[1, 1],
+                    "alice2",
+                    "Alice Two",
+                )),
+                &TOKEN,
+            );
+            run(fs, &mut state, &req, &mut out).is_ok()
+        },
+        |fs| {
+            let _ = crate::credmgmt::settle_rp_records(fs);
+        },
+        |fs, budget, _second, completed, medium| {
+            let mut state = armed(PERM_CM);
+            let mut out = [0u8; 512];
+            let rp_hash = sha256(b"example.com");
+            let n = run(
+                fs,
+                &mut state,
+                &cm_request(0x04, Some(&subpara_rpidhash(&rp_hash)), &TOKEN),
+                &mut out,
+            )
+            .unwrap_or_else(|e| {
+                panic!("budget {budget}: the credential no longer enumerates: {e:?}")
+            });
+            let name = cred_user_name(&out[..n]);
+            assert!(
+                name == "alice" || name == "alice2",
+                "budget {budget}: neither the old name nor the new one ({name}) — {:?}",
+                medium.ops()
+            );
+            let now = u128::from_le_bytes(crate::credential::cred_store_state(fs).unwrap());
+            if name == "alice2" {
+                assert_ne!(
+                    now,
+                    before.get(),
+                    "budget {budget}: the rewrite landed behind an unchanged store state — {:?}",
+                    medium.ops()
+                );
+            }
+            if completed {
+                assert_eq!(
+                    name, "alice2",
+                    "budget {budget}: the update reported success"
+                );
+            }
+        },
+    ));
+}
+
+/// Every live `EF_CRED` slot, in order.
+fn cred_slots<S: Storage>(fs: &mut Fs<S>) -> std::vec::Vec<u16> {
+    (0..MAX_RESIDENT_CREDENTIALS)
+        .filter(|&i| fs.has_data(EF_CRED + i))
+        .collect()
+}
+
+/// The stored count of every `EF_RP` record, in slot order.
+fn rp_counts<S: Storage>(fs: &mut Fs<S>) -> std::vec::Vec<u8> {
+    let mut buf = [0u8; RP_REC_MAX];
+    (0..MAX_RESIDENT_CREDENTIALS)
+        .filter_map(|j| fs.read(EF_RP + j, &mut buf).map(|_| buf[0]))
+        .collect()
+}
+
+/// A delete torn after the credential went and before its RP record did leaves an
+/// RP that `enumerateRPs` lists and whose `enumerateCredentialsBegin` answers
+/// NO_CREDENTIALS — until the boot pass settles it, which a power cut always reaches.
+#[test]
+fn the_rp_a_torn_last_delete_leaves_behind_is_settled_at_boot() {
+    let (mut fs, mut rng) = setup();
+    register(&mut fs, &mut rng, "example.com", &[1], "alice");
+    let slot = cred_slots(&mut fs)[0];
+    fs.delete(EF_CRED + slot).unwrap(); // the cut, after the credential went
+    let mut out = [0u8; 512];
+    let rps = cm_request(0x02, None, &TOKEN);
+    assert!(
+        run(&mut fs, &mut armed(PERM_CM), &rps, &mut out).is_ok(),
+        "precondition: the torn delete left an RP to list"
+    );
+    let rp_hash = sha256(b"example.com");
+    let creds = cm_request(0x04, Some(&subpara_rpidhash(&rp_hash)), &TOKEN);
+    assert_eq!(
+        run(&mut fs, &mut armed(PERM_CM), &creds, &mut out),
+        Err(CtapError::NoCredentials),
+        "precondition: and nothing under it"
+    );
+
+    settle_rp_records(&mut fs).unwrap();
+    assert_eq!(rp_counts(&mut fs), std::vec::Vec::<u8>::new());
+    assert_eq!(
+        run(&mut fs, &mut armed(PERM_CM), &rps, &mut out),
+        Err(CtapError::NoCredentials),
+        "the settled store still lists an RP with no credential"
+    );
+}
+
+#[test]
+fn settling_brings_a_count_left_high_back_to_the_credentials() {
+    let (mut fs, mut rng) = setup();
+    register(&mut fs, &mut rng, "example.com", &[1], "alice");
+    register(&mut fs, &mut rng, "example.com", &[2], "bob");
+    register(&mut fs, &mut rng, "other.example", &[3], "carol");
+    assert_eq!(rp_counts(&mut fs), [2, 1]);
+    let slot = cred_slots(&mut fs)[0];
+    fs.delete(EF_CRED + slot).unwrap();
+    settle_rp_records(&mut fs).unwrap();
+    assert_eq!(rp_counts(&mut fs), [1, 1]);
+}
+
+#[test]
+fn settling_a_consistent_store_writes_nothing() {
+    let (mut fs, mut rng) = setup();
+    register(&mut fs, &mut rng, "example.com", &[1], "alice");
+    register(&mut fs, &mut rng, "other.example", &[2], "bob");
+    let before = fs.write_gen();
+    settle_rp_records(&mut fs).unwrap();
+    assert_eq!(
+        fs.write_gen(),
+        before,
+        "a boot pass wrote over a store it had nothing to settle"
+    );
+}
+
+/// A credential the medium cannot read may be the one an RP still names, so the
+/// pass refuses outright rather than count it out and delete a live RP's record.
+#[test]
+fn a_credential_that_cannot_be_read_settles_nothing() {
+    let (backend, medium) = rsk_fs::storage::faults::ProbeStuck::new();
+    let mut fs = Fs::new(backend);
+    crate::tests::uv_optional(&mut fs);
+    fs.scan();
+    let mut rng = SeqRng(1);
+    ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
+    register(&mut fs, &mut rng, "example.com", &[1], "alice");
+    let slot = cred_slots(&mut fs)[0];
+    medium.stick(Some(EF_CRED + slot));
+    assert!(settle_rp_records(&mut fs).is_err());
+    medium.stick(None);
+    assert_eq!(
+        rp_counts(&mut fs),
+        [1],
+        "an unreadable credential's RP was settled away"
+    );
+}
+
+// The read-fault sweep lives in its own file; it needs this module's fixtures.
+#[path = "credmgmt_reads_tests.rs"]
+mod reads;
+
+// The compound sweep (a cut during the recovery of a cut) has its own file; it
+// needs this module's fixtures.
+#[path = "credmgmt_recovery_tests.rs"]
+mod recovery;
+
+#[path = "credmgmt_mutation_tests.rs"]
+mod mutation;
+
+/// deleteCredential and updateUserInformation name a credential by its id, and a
+/// record the flash would not serve may hold it: `NO_CREDENTIALS` there tells a
+/// platform to forget a passkey that is still stored, so the lookup fails instead.
+#[test]
+fn a_lookup_over_an_unread_record_fails_rather_than_deny_the_passkey() {
+    let (backend, medium) = rsk_fs::storage::faults::ProbeStuck::new();
+    let mut fs = Fs::new(backend);
+    crate::tests::uv_optional(&mut fs);
+    let mut rng = SeqRng(1);
+    ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
+    let (alice, ..) = register(&mut fs, &mut rng, "example.com", &[1, 1], "alice");
+    let (bob, ..) = register(&mut fs, &mut rng, "example.com", &[2, 2], "bob");
+    let [alice_slot, bob_slot] = cred_slots(&mut fs)[..] else {
+        panic!("two passkeys, two slots");
+    };
+    let mut out = [0u8; 256];
+    let update = |id: &[u8], uid: &[u8]| {
+        cm_request(
+            0x07,
+            Some(&subpara_update(id, uid, "renamed", "Renamed")),
+            &TOKEN,
+        )
+    };
+
+    medium.stick(Some(EF_CRED + alice_slot));
+    for req in [
+        cm_request(0x06, Some(&subpara_cred(&alice)), &TOKEN),
+        update(&alice, &[1, 1]),
+    ] {
+        assert_eq!(
+            run(&mut fs, &mut armed(PERM_CM), &req, &mut out),
+            Err(CtapError::Other),
+            "a passkey the flash would not serve was denied"
+        );
+    }
+    // Found past the unread record, bob is served; and read once more by the
+    // update itself, a fault there fails it the same way.
+    medium.stick_after(EF_CRED + bob_slot, 1);
+    assert_eq!(
+        run(
+            &mut fs,
+            &mut armed(PERM_CM),
+            &update(&bob, &[2, 2]),
+            &mut out
+        ),
+        Err(CtapError::Other)
+    );
+    medium.stick(Some(EF_CRED + alice_slot));
+    let delete_bob = cm_request(0x06, Some(&subpara_cred(&bob)), &TOKEN);
+    assert_eq!(
+        run(&mut fs, &mut armed(PERM_CM), &delete_bob, &mut out),
+        Ok(0)
+    );
+    medium.stick(None);
+    assert_eq!(cred_slots(&mut fs), [alice_slot], "alice is still stored");
+}
+
+/// A record the flash would not serve fails only the credential lists it could
+/// belong to: example.com's EF_RP count says its walk found every one of its
+/// passkeys, so other.com's unread record cannot be among them.
+#[test]
+fn an_unread_passkey_fails_only_the_lists_it_could_be_in() {
+    let (backend, medium) = rsk_fs::storage::faults::ProbeStuck::new();
+    let mut fs = Fs::new(backend);
+    crate::tests::uv_optional(&mut fs);
+    let mut rng = SeqRng(1);
+    ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
+    register(&mut fs, &mut rng, "other.com", &[3, 3], "carol");
+    register(&mut fs, &mut rng, "example.com", &[1, 1], "alice");
+    register(&mut fs, &mut rng, "example.com", &[2, 2], "bob");
+    let [carol_slot, alice_slot, _] = cred_slots(&mut fs)[..] else {
+        panic!("three passkeys, three slots");
+    };
+    let begin = |fs: &mut Fs<_>, rp: &[u8]| {
+        let mut out = [0u8; 512];
+        let req = cm_request(0x04, Some(&subpara_rpidhash(&sha256(rp))), &TOKEN);
+        run(fs, &mut armed(PERM_CM), &req, &mut out).map(|n| parse_cred(&out[..n], true).3)
+    };
+
+    medium.stick(Some(EF_CRED + carol_slot));
+    assert_eq!(begin(&mut fs, b"example.com"), Ok(Some(2)));
+    assert_eq!(begin(&mut fs, b"other.com"), Err(CtapError::Other));
+    medium.stick(Some(EF_CRED + alice_slot));
+    assert_eq!(begin(&mut fs, b"example.com"), Err(CtapError::Other));
+    medium.stick(None);
+    assert_eq!(begin(&mut fs, b"other.com"), Ok(Some(1)));
+}
+
+/// getNext walks the index its Begin built: a record the Begin counted and the
+/// flash then would not serve fails the leg, where a rebuild under the walk cached
+/// it as prefix 0 and answered the passkey after it, or none, in its place.
+#[test]
+fn a_get_next_over_a_counted_passkey_it_could_not_read_fails_the_leg() {
+    let (backend, medium) = rsk_fs::storage::faults::ProbeStuck::new();
+    let mut fs = Fs::new(backend);
+    crate::tests::uv_optional(&mut fs);
+    let mut rng = SeqRng(1);
+    ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
+    register(&mut fs, &mut rng, "other.com", &[3, 3], "carol");
+    register(&mut fs, &mut rng, "example.com", &[1, 1], "alice");
+    register(&mut fs, &mut rng, "example.com", &[2, 2], "bob");
+    register(&mut fs, &mut rng, "example.com", &[4, 4], "dave");
+    let [carol_slot, _, bob_slot, _] = cred_slots(&mut fs)[..] else {
+        panic!("four passkeys, four slots");
+    };
+    let mut state = armed(PERM_CM);
+    let mut out = [0u8; 512];
+    medium.stick(Some(EF_CRED + carol_slot));
+    let req = cm_request(
+        0x04,
+        Some(&subpara_rpidhash(&sha256(b"example.com"))),
+        &TOKEN,
+    );
+    let n = run(&mut fs, &mut state, &req, &mut out).unwrap();
+    assert_eq!(parse_cred(&out[..n], true).3, Some(3));
+    medium.stick_once(EF_CRED + bob_slot);
+    assert_eq!(
+        run(&mut fs, &mut state, &cm_next(0x05), &mut out),
+        Err(CtapError::Other)
+    );
+    let mut names = std::vec::Vec::new();
+    for _ in 0..2 {
+        let n = run(&mut fs, &mut state, &cm_next(0x05), &mut out).unwrap();
+        names.push(cred_user_name(&out[..n]));
+    }
+    assert_eq!(names, ["bob", "dave"], "the retried leg lost its place");
+}
+
+/// A write under a credential walk rebuilds the index, and the rebuild cannot use
+/// the Begin's count check: an unread record there ends the walk, and the next
+/// getNext answers as after any ended walk.
+#[test]
+fn an_unread_record_in_a_rebuild_under_the_walk_ends_it() {
+    let (backend, medium) = rsk_fs::storage::faults::ProbeStuck::new();
+    let mut fs = Fs::new(backend);
+    crate::tests::uv_optional(&mut fs);
+    let mut rng = SeqRng(1);
+    ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
+    register(&mut fs, &mut rng, "other.com", &[3, 3], "carol");
+    register(&mut fs, &mut rng, "example.com", &[1, 1], "alice");
+    register(&mut fs, &mut rng, "example.com", &[2, 2], "bob");
+    let carol_slot = cred_slots(&mut fs)[0];
+    let mut state = armed(PERM_CM);
+    let mut out = [0u8; 512];
+    let req = cm_request(
+        0x04,
+        Some(&subpara_rpidhash(&sha256(b"example.com"))),
+        &TOKEN,
+    );
+    run(&mut fs, &mut state, &req, &mut out).unwrap();
+    // Any write moves `write_gen`; one another command makes does too.
+    fs.put(
+        crate::consts::EF_LARGEBLOB,
+        &crate::consts::LARGEBLOB_INITIAL,
+    )
+    .unwrap();
+    medium.stick(Some(EF_CRED + carol_slot));
+    assert_eq!(
+        run(&mut fs, &mut state, &cm_next(0x05), &mut out),
+        Err(CtapError::Other)
+    );
+    medium.stick(None);
+    assert_eq!(
+        run(&mut fs, &mut state, &cm_next(0x05), &mut out),
+        Err(CtapError::NotAllowed)
+    );
+}
+
+/// A token scoped to example.com, deleting by id: another RP's stored passkey and
+/// an id stored nowhere answer alike with a record unread, as they do without one.
+#[test]
+fn a_scoped_token_learns_nothing_from_a_lookup_the_flash_failed() {
+    let (backend, medium) = rsk_fs::storage::faults::ProbeStuck::new();
+    let mut fs = Fs::new(backend);
+    crate::tests::uv_optional(&mut fs);
+    let mut rng = SeqRng(1);
+    ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
+    let (carol, ..) = register(&mut fs, &mut rng, "other.com", &[3, 3], "carol");
+    register(&mut fs, &mut rng, "example.com", &[1, 1], "alice");
+    register(&mut fs, &mut rng, "third.com", &[4, 4], "dave");
+    let dave_slot = cred_slots(&mut fs)[2];
+    let scoped = || {
+        let mut s = armed(PERM_CM);
+        s.paut.has_rp_id = true;
+        s.paut.rp_id_hash = sha256(b"example.com");
+        s
+    };
+    let mut out = [0u8; 256];
+    for (id, rename) in [
+        (&carol[..], false),
+        (&[0x55; 42][..], false),
+        (&carol[..], true),
+    ] {
+        let req = if rename {
+            cm_request(0x07, Some(&subpara_update(id, &[3, 3], "x", "X")), &TOKEN)
+        } else {
+            cm_request(0x06, Some(&subpara_cred(id)), &TOKEN)
+        };
+        medium.stick(None);
+        let healthy = run(&mut fs, &mut scoped(), &req, &mut out);
+        medium.stick(Some(EF_CRED + dave_slot));
+        let faulted = run(&mut fs, &mut scoped(), &req, &mut out);
+        assert_eq!(healthy, Err(CtapError::PinAuthInvalid));
+        assert_eq!(faulted, healthy, "{id:02X?}: the answer told a fault apart");
+    }
+}
+
+/// A RAM medium that fails one chosen read of each planned fid: `(fid, skip)` lets
+/// `skip` reads of `fid` through and fails the next.
+struct FaultPlan {
+    inner: rsk_fs::storage::ram::RamStorage,
+    plan: std::rc::Rc<std::cell::RefCell<std::vec::Vec<(u16, u32)>>>,
+    err: bool,
+}
+
+impl Storage for FaultPlan {
+    fn read(&mut self, fid: u16, buf: &mut [u8]) -> Option<usize> {
+        let mut plan = self.plan.borrow_mut();
+        self.err = false;
+        if let Some(i) = plan.iter().position(|&(f, _)| f == fid) {
+            if plan[i].1 == 0 {
+                plan.remove(i);
+                self.err = true;
+                return None;
+            }
+            plan[i].1 -= 1;
+        }
+        self.inner.read(fid, buf)
+    }
+    fn write(&mut self, fid: u16, data: &[u8]) -> rsk_sdk::error::Result<()> {
+        self.inner.write(fid, data)
+    }
+    fn remove(&mut self, fid: u16) -> rsk_sdk::error::Result<()> {
+        self.inner.remove(fid)
+    }
+    fn size(&mut self, fid: u16) -> Option<usize> {
+        self.err = false;
+        self.inner.size(fid)
+    }
+    fn for_each_key(&mut self, f: &mut dyn FnMut(u16)) -> bool {
+        self.inner.for_each_key(f)
+    }
+    fn last_error(&self) -> bool {
+        self.err
+    }
+}
+
+/// Two faults in one getNext: a rebuild under the walk that could not read one
+/// counted passkey, and a read of the walk itself that failed after it. The walk
+/// ends before the second can answer; it once left the index behind as current,
+/// and the legs after skipped the passkey the rebuild could not read.
+#[test]
+fn a_rebuild_that_missed_a_counted_passkey_ends_the_walk_before_it_reads() {
+    let plan = std::rc::Rc::new(std::cell::RefCell::new(std::vec::Vec::new()));
+    let mut fs = Fs::new(FaultPlan {
+        inner: rsk_fs::storage::ram::RamStorage::new(),
+        plan: plan.clone(),
+        err: false,
+    });
+    fs.scan();
+    let mut rng = SeqRng(1);
+    ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
+    for (uid, name) in [(1u8, "alice"), (2, "bob"), (3, "dave"), (4, "erin")] {
+        register(&mut fs, &mut rng, "example.com", &[uid, uid], name);
+    }
+    let [_, bob_slot, dave_slot, _] = cred_slots(&mut fs)[..] else {
+        panic!("four passkeys, four slots");
+    };
+    let mut state = armed(PERM_CM);
+    let mut out = [0u8; 512];
+    let req = cm_request(
+        0x04,
+        Some(&subpara_rpidhash(&sha256(b"example.com"))),
+        &TOKEN,
+    );
+    let n = run(&mut fs, &mut state, &req, &mut out).unwrap();
+    assert_eq!(parse_cred(&out[..n], true).3, Some(4));
+    fs.put(
+        crate::consts::EF_LARGEBLOB,
+        &crate::consts::LARGEBLOB_INITIAL,
+    )
+    .unwrap();
+    plan.borrow_mut()
+        .extend([(EF_CRED + dave_slot, 0), (EF_CRED + bob_slot, 1)]);
+    let legs: std::vec::Vec<_> = (0..4)
+        .map(|_| run(&mut fs, &mut state, &cm_next(0x05), &mut out).map(|_| ()))
+        .collect();
+    assert_eq!(
+        legs,
+        [
+            Err(CtapError::Other),
+            Err(CtapError::NotAllowed),
+            Err(CtapError::NotAllowed),
+            Err(CtapError::NotAllowed),
+        ]
+    );
+}
+
+/// `decrement_rp` refuses only when the RP it must decrement could be the record
+/// the flash would not serve: an unreadable record of another RP does not stop a
+/// delete from settling its own RP's count.
+#[test]
+fn a_delete_settles_its_rp_past_another_rps_unread_record() {
+    let (backend, medium) = rsk_fs::storage::faults::ProbeStuck::new();
+    let mut fs = Fs::new(backend);
+    crate::tests::uv_optional(&mut fs);
+    let mut rng = SeqRng(1);
+    ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
+    register(&mut fs, &mut rng, "other.com", &[3, 3], "carol");
+    let (alice, ..) = register(&mut fs, &mut rng, "example.com", &[1, 1], "alice");
+    register(&mut fs, &mut rng, "example.com", &[2, 2], "bob");
+    assert_eq!(
+        rp_counts(&mut fs),
+        [1, 2],
+        "control: other.com, then example.com"
+    );
+
+    medium.stick(Some(EF_RP)); // other.com's record
+    let mut out = [0u8; 256];
+    let req = cm_request(0x06, Some(&subpara_cred(&alice)), &TOKEN);
+    let deleted = run(&mut fs, &mut armed(PERM_CM), &req, &mut out);
+    medium.stick(None);
+    assert_eq!(
+        deleted,
+        Ok(0),
+        "another RP's unread record cannot be example.com's"
+    );
+    assert_eq!(
+        rp_counts(&mut fs),
+        [1, 1],
+        "and example.com's count went down"
+    );
+}
+
+/// Two credMgmt changes in a row each give the store tag (encCredStoreState) a value of
+/// its own: a second tag equal to the first would tell a platform that cached after the
+/// first change that nothing changed since.
+#[test]
+fn two_changes_in_a_row_leave_two_different_store_tags() {
+    use crate::credential::cred_store_state;
+
+    let (mut fs, mut rng) = setup();
+    let (alice, ..) = register(&mut fs, &mut rng, "example.com", &[1, 1], "alice");
+    let (bob, ..) = register(&mut fs, &mut rng, "example.com", &[2, 2], "bob");
+    let mut state = armed(PERM_CM);
+    let mut out = [0u8; 256];
+    let mut tags = std::vec![cred_store_state(&mut fs).unwrap()];
+    for id in [&alice, &bob] {
+        let req = cm_request(0x06, Some(&subpara_cred(id)), &TOKEN);
+        run(&mut fs, &mut state, &req, &mut out).unwrap();
+        tags.push(cred_store_state(&mut fs).unwrap());
+    }
+    assert!(
+        tags[1] != tags[0] && tags[2] != tags[1] && tags[2] != tags[0],
+        "the tag before, after one delete, after two: {tags:02x?}"
+    );
+}
+
+/// The RNG a credMgmt command runs with here, seeded by the store's write generation. A
+/// replay from the same start state draws what it drew, which `probe::sweep` holds a
+/// faulted run to, and a command after a change to the store draws afresh.
+fn command_rng<S: Storage>(fs: &Fs<S>) -> SeqRng {
+    SeqRng(7 + u64::from(fs.write_gen()))
+}
+
+#[path = "credmgmt_decisions_tests.rs"]
+mod decisions;
+
+#[path = "credential_restart_tests.rs"]
+mod credential_restarts;
+
+#[test]
+fn incomplete_slot_inventory_probes_absent_records_without_inventing_owners() {
+    let mut fs = Fs::new(rsk_fs::storage::faults::TruncatedWalk::new());
+    fs.scan();
+    let generation = fs.write_gen();
+    assert_eq!(find_resident(&mut fs, &[0x55; CRED_RESIDENT_LEN]), Ok(None));
+    assert_eq!(decrement_rp(&mut fs, &[0x66; 32]), Ok(()));
+    assert_eq!(fs.write_gen(), generation);
+}
+
+#[cfg(feature = "largeblob-ext")]
+#[test]
+fn legacy_large_blob_key_credentials_do_not_expose_the_retired_field() {
+    use crate::credential::{CredExt, credential_store};
+    let (mut fs, mut rng) = setup();
+    let rp_hash = sha256(b"example.com");
+    let seed = crate::seed::load_keydev(&dev(), &mut fs).unwrap();
+    let input = CredInput {
+        rp_id: "example.com",
+        user_id: b"legacy",
+        user_name: "alice",
+        user_display_name: "Alice",
+        use_sign_count: true,
+        rk: true,
+        created_ms: 1,
+        alg: ALG_ES256,
+        curve: i64::from(crate::consts::CURVE_P256),
+        ext: CredExt {
+            large_blob_key: true,
+            ..CredExt::default()
+        },
+    };
+    let mut boxed = [0; CRED_BOX_MAX];
+    let n = credential_create(
+        seed.expose(),
+        &dev(),
+        &input,
+        &rp_hash,
+        &[0x55; crate::credential::IV_LEN],
+        &mut boxed,
+    )
+    .unwrap();
+    let mut scratch = [0; CRED_REC_MAX];
+    assert!(
+        credential_load(seed.expose(), &boxed[..n], &rp_hash, &mut scratch)
+            .unwrap()
+            .ext
+            .large_blob_key
+    );
+    credential_store(
+        seed.expose(),
+        &dev(),
+        &mut fs,
+        &mut rng,
+        &boxed[..n],
+        &rp_hash,
+        input.rp_id,
+        input.user_id,
+        &[],
+    )
+    .unwrap();
+    let mut state = armed(PERM_CM);
+    let mut response = [0; 1024];
+    let n = run(
+        &mut fs,
+        &mut state,
+        &cm_request(0x04, Some(&subpara_rpidhash(&rp_hash)), &TOKEN),
+        &mut response,
+    )
+    .unwrap();
+    let mut decoder = Decoder::new(&response[..n]);
+    for _ in 0..decoder.map().unwrap().unwrap() {
+        assert_ne!(decoder.u8().unwrap(), 0x0B);
+        decoder.skip().unwrap();
+    }
+    assert_eq!(decoder.position(), n);
+}
+
+#[test]
+fn enumerate_credentials_refuses_a_present_but_short_rp_hash_without_writing() {
+    let (mut fs, _) = setup();
+    let mut state = armed(PERM_CM);
+    let mut parameters = vec![0xa1, 1, 0x58, 31];
+    parameters.extend([0xa5; 31]);
+    let request = cm_request(0x04, Some(&parameters), &TOKEN);
+    let generation = fs.write_gen();
+    let mut output = [0xa5; 256];
+    assert_eq!(
+        run(&mut fs, &mut state, &request, &mut output),
+        Err(CtapError::MissingParameter)
+    );
+    assert_eq!(fs.write_gen(), generation);
+    assert_eq!(output, [0xa5; 256]);
 }

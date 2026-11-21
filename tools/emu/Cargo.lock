@@ -188,16 +188,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "cc"
-version = "1.4.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5d262e149917187838d5b42777c8253bcb64500067342904e7d429499a6f277e"
-dependencies = [
- "find-msvc-tools",
- "shlex",
-]
-
-[[package]]
 name = "cfb-mode"
 version = "0.8.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -301,8 +291,6 @@ checksum = "790eea4361631c5e7d22598ecd5723ff611904e3344ce8720784c93e3d83d40b"
 [[package]]
 name = "crypto-bigint"
 version = "0.7.10"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9c035cb64cba03dad2fb921f3e218785e8cf9a41790da5eb3a1400f62fa2be11"
 dependencies = [
  "cpubits",
  "ctutils",
@@ -758,12 +746,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "64cd1e32ddd350061ae6edb1b082d7c54915b5c672c389143b9a63403a109f24"
 
 [[package]]
-name = "find-msvc-tools"
-version = "0.1.10"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "26b73573e6edcd2af0cdf47bd6cb58f0b3839491263c314eaad1ccf24430e1de"
-
-[[package]]
 name = "flate2"
 version = "1.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1207,6 +1189,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "once_cell"
+version = "1.21.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50"
+
+[[package]]
 name = "opaque-debug"
 version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1239,8 +1227,6 @@ dependencies = [
 [[package]]
 name = "p256"
 version = "0.14.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d2c9239b2dbc807adbbe147e8cf72ea7450c3a0aabe62cb8e75ff4ec22e1f72a"
 dependencies = [
  "ecdsa",
  "elliptic-curve",
@@ -1252,8 +1238,6 @@ dependencies = [
 [[package]]
 name = "p384"
 version = "0.14.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d17b851e6b3e378ab4ecb07fa2ed23f4d15f075735f8fec9fa1e7bdce5f8301f"
 dependencies = [
  "ecdsa",
  "elliptic-curve",
@@ -1275,6 +1259,16 @@ dependencies = [
  "primefield",
  "primeorder",
  "sha2 0.11.0",
+]
+
+[[package]]
+name = "picoem-common"
+version = "0.2.2"
+source = "git+https://github.com/TheMaxMur/picoem?rev=f1b0668dc22eff5b885f8f5f9d14e2ddb2b115ef#f1b0668dc22eff5b885f8f5f9d14e2ddb2b115ef"
+dependencies = [
+ "libc",
+ "tracing",
+ "winapi",
 ]
 
 [[package]]
@@ -1439,10 +1433,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "rp2350-emu"
+version = "0.2.6"
+source = "git+https://github.com/TheMaxMur/picoem?rev=f1b0668dc22eff5b885f8f5f9d14e2ddb2b115ef#f1b0668dc22eff5b885f8f5f9d14e2ddb2b115ef"
+dependencies = [
+ "picoem-common",
+ "sha2 0.10.9",
+ "tracing",
+]
+
+[[package]]
 name = "rsk-bip39"
 version = "0.1.0"
 dependencies = [
  "rsk-crypto",
+ "rsk-secret",
 ]
 
 [[package]]
@@ -1460,18 +1465,21 @@ dependencies = [
  "ml-kem",
  "p256",
  "rsk-mldsa",
+ "rsk-secret",
+ "rsk-sha256",
  "rsk-sha512",
  "sha1",
  "sha2 0.10.9",
- "zeroize",
 ]
 
 [[package]]
 name = "rsk-devconf"
 version = "0.1.0"
 dependencies = [
+ "rsk-crypto",
  "rsk-fs",
  "rsk-sdk",
+ "rsk-secret",
 ]
 
 [[package]]
@@ -1515,10 +1523,10 @@ dependencies = [
  "rsk-phy",
  "rsk-piv",
  "rsk-sdk",
+ "rsk-secret",
  "rsk-slip39",
  "rsk-ui",
  "rsk-vendor",
- "zeroize",
 ]
 
 [[package]]
@@ -1534,7 +1542,9 @@ dependencies = [
  "p256",
  "p384",
  "p521",
+ "primeorder",
  "rfc6979",
+ "rsk-secret",
  "x25519-dalek",
  "zeroize",
 ]
@@ -1550,6 +1560,7 @@ dependencies = [
  "embedded-graphics",
  "embedded-graphics-simulator",
  "embedded-storage-async",
+ "rp2350-emu",
  "rsk-crypto",
  "rsk-devconf",
  "rsk-device",
@@ -1565,11 +1576,13 @@ dependencies = [
  "rsk-rescue",
  "rsk-rsa",
  "rsk-sdk",
+ "rsk-secret",
  "rsk-store",
  "rsk-ui",
  "rsk-usb",
  "rsk-vendor",
  "sequential-storage",
+ "sha2 0.10.9",
 ]
 
 [[package]]
@@ -1589,6 +1602,7 @@ dependencies = [
  "rsk-led",
  "rsk-phy",
  "rsk-sdk",
+ "rsk-secret",
  "zeroize",
 ]
 
@@ -1617,6 +1631,7 @@ dependencies = [
 name = "rsk-mldsa"
 version = "0.1.0"
 dependencies = [
+ "rsk-secret",
  "sha3 0.10.9",
  "zeroize",
 ]
@@ -1628,7 +1643,7 @@ dependencies = [
  "rsk-crypto",
  "rsk-fs",
  "rsk-sdk",
- "zeroize",
+ "rsk-secret",
 ]
 
 [[package]]
@@ -1640,6 +1655,8 @@ dependencies = [
  "rsk-fs",
  "rsk-rsa",
  "rsk-sdk",
+ "rsk-secret",
+ "rsk-x509",
  "zeroize",
 ]
 
@@ -1651,7 +1668,7 @@ dependencies = [
  "rsk-devconf",
  "rsk-fs",
  "rsk-sdk",
- "zeroize",
+ "rsk-secret",
 ]
 
 [[package]]
@@ -1671,6 +1688,8 @@ dependencies = [
  "rsk-fs",
  "rsk-rsa",
  "rsk-sdk",
+ "rsk-secret",
+ "rsk-x509",
  "zeroize",
 ]
 
@@ -1680,19 +1699,20 @@ version = "0.1.0"
 dependencies = [
  "k256",
  "rsk-crypto",
+ "rsk-devconf",
  "rsk-fs",
  "rsk-phy",
  "rsk-sdk",
- "zeroize",
+ "rsk-secret",
 ]
 
 [[package]]
 name = "rsk-rsa"
 version = "0.1.0"
 dependencies = [
- "cc",
  "num-bigint-dig",
  "num-integer",
+ "rsk-secret",
  "zeroize",
 ]
 
@@ -1700,7 +1720,23 @@ dependencies = [
 name = "rsk-sdk"
 version = "0.1.0"
 dependencies = [
+ "rsk-secret",
  "zeroize",
+]
+
+[[package]]
+name = "rsk-secret"
+version = "0.1.0"
+dependencies = [
+ "zeroize",
+]
+
+[[package]]
+name = "rsk-sha256"
+version = "0.1.0"
+dependencies = [
+ "rsk-secret",
+ "sha2 0.10.9",
 ]
 
 [[package]]
@@ -1715,7 +1751,7 @@ name = "rsk-slip39"
 version = "0.1.0"
 dependencies = [
  "rsk-crypto",
- "zeroize",
+ "rsk-secret",
 ]
 
 [[package]]
@@ -1724,9 +1760,13 @@ version = "0.1.0"
 dependencies = [
  "embassy-futures",
  "embedded-storage-async",
+ "heapless 0.8.0",
+ "rsk-crypto",
  "rsk-fs",
  "rsk-sdk",
+ "rsk-secret",
  "sequential-storage",
+ "zeroize",
 ]
 
 [[package]]
@@ -1745,6 +1785,7 @@ dependencies = [
  "embassy-time",
  "embassy-usb",
  "rsk-sdk",
+ "rsk-secret",
  "zeroize",
 ]
 
@@ -1752,8 +1793,18 @@ dependencies = [
 name = "rsk-vendor"
 version = "0.1.0"
 dependencies = [
+ "rsk-devconf",
  "rsk-fs",
  "rsk-led",
+ "rsk-sdk",
+]
+
+[[package]]
+name = "rsk-x509"
+version = "0.1.0"
+dependencies = [
+ "rsk-crypto",
+ "rsk-ec",
  "rsk-sdk",
 ]
 
@@ -1904,12 +1955,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "shlex"
-version = "2.0.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f8fadd59c855ef2080decdef8ff161eb6661b86933c9d82e5ba29dc602a55aba"
-
-[[package]]
 name = "signature"
 version = "2.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2026,6 +2071,37 @@ dependencies = [
 ]
 
 [[package]]
+name = "tracing"
+version = "0.1.44"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "63e71662fa4b2a2c3a26f570f037eb95bb1f85397f3cd8076caed2f026a6d100"
+dependencies = [
+ "pin-project-lite",
+ "tracing-attributes",
+ "tracing-core",
+]
+
+[[package]]
+name = "tracing-attributes"
+version = "0.1.31"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7490cfa5ec963746568740651ac6781f701c9c5ea257c58e057f3ba8cf69e8da"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
+]
+
+[[package]]
+name = "tracing-core"
+version = "0.1.36"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "db97caf9d906fbde555dd62fa95ddba9eecfd14cb388e4f491a66d74cd5fb79a"
+dependencies = [
+ "once_cell",
+]
+
+[[package]]
 name = "typenum"
 version = "1.20.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2110,6 +2186,28 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6a02e4885ed3bc0f2de90ea6dd45ebcbb66dacffe03547fadbb0eeae2770887d"
 
 [[package]]
+name = "winapi"
+version = "0.3.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5c839a674fcd7a98952e593242ea400abe93992746761e38641405d28b00f419"
+dependencies = [
+ "winapi-i686-pc-windows-gnu",
+ "winapi-x86_64-pc-windows-gnu",
+]
+
+[[package]]
+name = "winapi-i686-pc-windows-gnu"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ac3b87c63620426dd9b991e5ce0329eff545bccbbb34f3be09ff6fb6ab51b7b6"
+
+[[package]]
+name = "winapi-x86_64-pc-windows-gnu"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "712e227841d057c1ee1cd2fb22fa7e5a5461ae8e48fa2ca79ec42cfc1931183f"
+
+[[package]]
 name = "wnaf"
 version = "0.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2161,17 +2259,3 @@ name = "zeroize"
 version = "1.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e13c156562582aa81c60cb29407084cdb54c4164760106ab78e6c5b0858cf64e"
-dependencies = [
- "zeroize_derive",
-]
-
-[[package]]
-name = "zeroize_derive"
-version = "1.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3c50655cbb0fe3fc43170059e702f1ce5e19b84cec58dc87b037a09935c2f328"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.119",
-]

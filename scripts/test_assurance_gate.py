@@ -19,6 +19,8 @@ import pytest
 sys.path.insert(0, str(pathlib.Path(__file__).parent))
 import assurance_gate
 
+pytestmark = pytest.mark.assurance
+
 PROPERTIES = """\
 [[property]]
 id = "SEC-T-001"
@@ -119,6 +121,11 @@ def build(root: pathlib.Path) -> pathlib.Path:
     (root / "Cargo.toml").write_text(
         '[workspace]\nmembers = ["crates/rsk-a", "crates/rsk-b"]\n'
     )
+
+    for name in ["rsk-a", "rsk-b"]:
+        directory = root / "crates" / name
+        directory.mkdir(parents=True)
+        (directory / "Cargo.toml").write_text(f'[package]\nname = "{name}"\n')
 
     a = root / "crates" / "rsk-a" / "src"
     a.mkdir(parents=True)
@@ -410,7 +417,16 @@ def test_member_missing_from_ledger_fails(tree, capsys):
         '"crates/rsk-a", "crates/rsk-b"',
         '"crates/rsk-a", "crates/rsk-b", "crates/rsk-new"',
     )
+    added = tree / "crates/rsk-new"
+    added.mkdir()
+    (added / "Cargo.toml").write_text('[package]\nname = "rsk-new"\n')
     red(tree, capsys, "workspace member not in the crate ledger: rsk-new")
+
+
+def test_member_directory_does_not_replace_its_package_name(tree, capsys):
+    (tree / "crates/rsk-a").rename(tree / "crates/renamed")
+    edit(tree / "Cargo.toml", '"crates/rsk-a"', '"crates/renamed"')
+    assert assurance_gate.run(tree) == 0
 
 
 def test_stale_ledger_entry_fails(tree, capsys):
@@ -573,7 +589,7 @@ def test_model_must_be_a_real_module(tree, capsys):
 def test_a_driven_code_mutant_shows_as_evidence_the_status_ladder_cannot(tree):
     """The column exists because MODELLED-ONLY was reading as "nothing below the
     model" for the rows that carry a code twin driven against the real suite. How
-    many that is belongs to `docs/assurance-vector.md`, which derives it."""
+    many that is belongs to `assurance/reports/assurance-vector.md`, which derives it."""
     root, _ = tree if isinstance(tree, tuple) else (tree, None)
     assurance_gate.co_refuted.cache_clear()
     assert assurance_gate.co_refuted(pathlib.Path(__file__).parents[1])["NoAuthWhenBlocked"] == [
@@ -1466,3 +1482,28 @@ def test_an_orphan_owns_its_tag_and_the_shipped_tree_has_none(tree, capsys):
         if f.resolve() not in reached and f.resolve() not in roots
     ]
     assert not orphans, [str(f) for f in orphans]
+
+
+@pytest.mark.parametrize("prefix", ["", "#[cfg(test)]", "mod inner { #[cfg(test)]"])
+def test_literal_include_inherits_cfg_and_resolves_beside_its_file(tree, prefix):
+    suffix = "}" if prefix.startswith("mod ") else ""
+    src = _rewrite(tree, f'{prefix} include!("shared.rs"); {suffix}\n')
+    leaf = src / "shared.rs"
+    leaf.write_text(TAGGED)
+    reached = {target.resolve() for _, target, _ in assurance_gate.declared_targets(tree)}
+    assert leaf.resolve() in reached
+    assert (leaf.resolve() in assurance_gate.cfg_excluded(tree)) == bool(prefix)
+
+
+@pytest.mark.parametrize("source", [
+    '// include!("shared.rs");',
+    'const TEXT: &str = "include!(\\\"shared.rs\\\");";',
+    '#[cfg(test)] fn helper() { include!("shared.rs"); }',
+    'macro_rules! unused { () => { include!("shared.rs"); } }',
+])
+def test_non_module_include_does_not_connect_a_file(tree, source):
+    src = _rewrite(tree, source)
+    leaf = src / "shared.rs"
+    leaf.write_text(TAGGED)
+    reached = {target.resolve() for _, target, _ in assurance_gate.declared_targets(tree)}
+    assert leaf.resolve() not in reached

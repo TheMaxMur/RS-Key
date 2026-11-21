@@ -7,7 +7,9 @@ use std::thread::JoinHandle;
 use std::time::Duration;
 
 use rsk_fs::KeyFid;
+use rsk_otp::SlotRecord;
 use rsk_otp::seal::{seal_put, seal_read};
+use rsk_secret::Secret;
 
 use super::*;
 
@@ -44,7 +46,7 @@ fn sealed_as() -> ([u8; 8], [u8; 32]) {
 }
 
 fn mount(path: &Path) -> Fs<crate::store::EmuStore> {
-    let mut fs = Fs::new(crate::store::open(Some(path.to_path_buf()), None).unwrap());
+    let mut fs = Fs::new(crate::store::open(Some(path.to_path_buf()), None, &SERIAL).unwrap());
     fs.scan();
     fs
 }
@@ -56,14 +58,16 @@ fn use_counter(path: &Path) -> Option<u16> {
         serial_hash: &serial_hash,
         serial_id: &serial_id,
         otp_key: None,
+        latched: false,
     };
-    let mut rec = [0u8; SLOT_RECORD];
+    let mut rec = Secret::<[u8; SLOT_RECORD]>::zeroed();
     let n = seal_read(&dev, &mut mount(path), KeyFid::new(SLOT1_FID), &mut rec)?;
+    let rec = rec.expose();
     (n == SLOT_RECORD).then(|| u16::from_be_bytes([rec[USE_COUNTER], rec[USE_COUNTER + 1]]))
 }
 
 /// A blank flash image holding one plain Yubico-OTP slot — every flag byte zero,
-/// which is the kind `power_up_bump` advances (HOTP / short / static it skips) —
+/// the kind a boot's first press advances (HOTP / short / static it skips) —
 /// with the device thread running against it.
 fn bench(name: &str) -> (PathBuf, Jobs, Arc<Signals>, JoinHandle<()>) {
     bench_with(name, PresenceMode::Instant)
@@ -80,6 +84,7 @@ fn bench_with(name: &str, presence: PresenceMode) -> (PathBuf, Jobs, Arc<Signals
         serial_hash: &serial_hash,
         serial_id: &serial_id,
         otp_key: None,
+        latched: false,
     };
     let mut rng = EmuRng::from_seed(&[0xa7; 32]);
     assert!(
@@ -88,15 +93,22 @@ fn bench_with(name: &str, presence: PresenceMode) -> (PathBuf, Jobs, Arc<Signals
             &mut mount(&path),
             &mut rng,
             KeyFid::new(SLOT1_FID),
-            &[0u8; SLOT_RECORD],
+            &SlotRecord::from_bytes(&[0u8; SLOT_RECORD]).unwrap(),
         ),
         "seal a slot into the image"
     );
     assert_eq!(use_counter(&path), Some(0), "a freshly programmed slot");
 
+    let (jobs, signals, device) = boot(&path, presence);
+    (path, jobs, signals, device)
+}
+
+/// Start the device thread over the image at `path` as it stands: a process start,
+/// which is also how a restart over `--store` meets the store it left behind.
+fn boot(path: &Path, presence: PresenceMode) -> (Jobs, Arc<Signals>, JoinHandle<()>) {
     let (jobs, requests) = job_queue();
     let cfg = Config {
-        store: Some(path.clone()),
+        store: Some(path.to_path_buf()),
         presence,
         display: false,
         usbip: None,
@@ -114,7 +126,7 @@ fn bench_with(name: &str, presence: PresenceMode) -> (PathBuf, Jobs, Arc<Signals
         let signals = signals.clone();
         std::thread::spawn(move || run(cfg, requests, signals, None, None))
     };
-    (path, jobs, signals, device)
+    (jobs, signals, device)
 }
 
 /// Send one job and wait for its answer.
@@ -133,52 +145,18 @@ fn shut_down(path: PathBuf, jobs: Jobs, device: JoinHandle<()>) {
     let _ = std::fs::remove_file(path);
 }
 
-/// A power cycle advances the Yubico-OTP use counter, on the bench as on the
-/// board.
-///
-/// `firmware/src/main.rs` runs `power_up_bump` at every cold boot and its own
-/// comment says why: the RAM session counter restarts at 0 on each power-up, so
-/// a persistent use counter that stood still would let the `(use, session)` pair
-/// a Yubico validation server orders OTPs by repeat — which is the replay. The
-/// emulator had zero references to it, so `OP_REPLUG` reset the session half and
-/// left the persistent half alone: the one arrangement the defence exists to
-/// prevent, reproduced on the bench built to test it.
-///
-/// Driven through `device::run`'s real job loop over the real store image, not by
-/// calling `rsk_otp::power_up_bump` again — that function has its own tests in
-/// its own crate, and exercising it here would leave both call sites unproven.
+/// Only a press advances the Yubico-OTP use counter — the first after each boot,
+/// as a YubiKey's first use does — and a host has no button. So no boot a host can
+/// cause walks the 15-bit counter to its ceiling: not a replug, not `INS_REBOOT`.
 #[test]
-fn a_power_cycle_advances_the_yubico_otp_use_counter() {
-    let (path, jobs, _signals, device) = bench("power-cycle");
-
+fn no_boot_moves_the_yubico_otp_use_counter() {
+    let (path, jobs, _signals, device) = bench("no-boot-bump");
     // Answering anything proves the boot block is behind us.
     ask(&jobs, Job::OtpStatus);
-    assert_eq!(
-        use_counter(&path),
-        Some(1),
-        "process start is a power-up too"
-    );
+    assert_eq!(use_counter(&path), Some(0), "process start");
 
-    ask(&jobs, Job::Replug(Unplug::Operator));
-    assert_eq!(
-        use_counter(&path),
-        Some(2),
-        "the replug left the counter where the last power-up did"
-    );
-
-    shut_down(path, jobs, device);
-}
-
-/// The other half of the same rule: a host-requested warm reboot must NOT bump.
-/// `INS_REBOOT` is ungated, so a bump on that path would hand any host a way to
-/// walk the 15-bit counter to its ceiling, where it saturates while the session
-/// counter keeps restarting — the same repeated pair, reached from the other
-/// side. `main.rs` states the rule as `if !pin_lock::was_warm_boot()`.
-#[test]
-fn a_warm_reboot_is_not_a_power_cycle() {
-    let (path, jobs, _signals, device) = bench("warm-reboot");
-    ask(&jobs, Job::OtpStatus);
-    assert_eq!(use_counter(&path), Some(1), "the boot bump");
+    ask(&jobs, Job::Replug(Unplug::Host));
+    assert_eq!(use_counter(&path), Some(0), "a replug");
 
     let mut select = vec![0x00, 0xA4, 0x04, 0x00, VENDOR_AID.len() as u8];
     select.extend_from_slice(&VENDOR_AID);
@@ -186,15 +164,10 @@ fn a_warm_reboot_is_not_a_power_cycle() {
     assert_eq!(r[r.len() - 2..], SW_OK, "the vendor applet is selected");
     let r = ask(&jobs, Job::Apdu(vec![0x00, INS_REBOOT, 0x00, 0x00]));
     assert_eq!(r[r.len() - 2..], SW_OK, "the reboot was accepted");
-
     // The reboot runs after the response is out, as it does on the device, so
     // one more round trip is what proves it has happened.
     ask(&jobs, Job::OtpStatus);
-    assert_eq!(
-        use_counter(&path),
-        Some(1),
-        "a warm reboot is not a power-up"
-    );
+    assert_eq!(use_counter(&path), Some(0), "a warm reboot");
 
     shut_down(path, jobs, device);
 }
@@ -246,6 +219,222 @@ fn every_boot_runs_the_boot_block() {
     }
 }
 
+/// The relying party and client data hash the store-restart test registers under.
+const RESTART_RP: &str = "example.com";
+const RESTART_CDH: [u8; 32] = [0x5a; 32];
+
+/// A CBOR text string short enough to be its own header.
+fn tstr(s: &str) -> Vec<u8> {
+    assert!(s.len() < 24, "not the single-byte text header");
+    let mut v = vec![0x60 | s.len() as u8];
+    v.extend_from_slice(s.as_bytes());
+    v
+}
+
+/// makeCredential for a discoverable ES256 credential of account `user`, keys in the
+/// canonical order the device insists on (length first, then bytewise).
+fn make_resident(user: u8) -> Vec<u8> {
+    use crate::pin_client::{bstr, map};
+    let mut rp = vec![0xA1];
+    rp.extend(tstr("id"));
+    rp.extend(tstr(RESTART_RP));
+    let mut account = vec![0xA2];
+    account.extend(tstr("id"));
+    account.extend(bstr(&[user; 32]));
+    account.extend(tstr("name"));
+    account.extend(tstr("account"));
+    let mut params = vec![0x81, 0xA2];
+    params.extend(tstr("alg"));
+    params.push(0x26); // -7, ES256
+    params.extend(tstr("type"));
+    params.extend(tstr("public-key"));
+    let mut options = vec![0xA1];
+    options.extend(tstr("rk"));
+    options.push(0xF5);
+    let mut v = vec![rsk_fido::consts::CTAP_MAKE_CREDENTIAL];
+    v.extend(map(&[
+        (1, bstr(&RESTART_CDH)),
+        (2, rp),
+        (3, account),
+        (4, params),
+        (7, options),
+    ]));
+    v
+}
+
+/// The silent `up:false` discovery a platform sends before it asks the user anything.
+fn discover() -> Vec<u8> {
+    use crate::pin_client::{bstr, map};
+    let mut options = vec![0xA1];
+    options.extend(tstr("up"));
+    options.push(0xF4);
+    let mut v = vec![rsk_fido::consts::CTAP_GET_ASSERTION];
+    v.extend(map(&[
+        (1, tstr(RESTART_RP)),
+        (2, bstr(&RESTART_CDH)),
+        (5, options),
+    ]));
+    v
+}
+
+/// How many resident credentials the image holds as a fresh mount reads them — a
+/// boot's view of the store, which is what a restarted device has to agree with.
+fn resident_records(path: &Path) -> usize {
+    use rsk_fido::consts::{EF_CRED, MAX_RESIDENT_CREDENTIALS};
+    let mut slots = [false; MAX_RESIDENT_CREDENTIALS as usize];
+    mount(path).present_slots(EF_CRED, &mut slots);
+    slots.into_iter().filter(|&occupied| occupied).count()
+}
+
+/// `main.rs` rebuilds the store's in-RAM file index before anything reads it. A device
+/// restarted over `--store` without that reads every slot free: its resident credential
+/// answers as absent, and the next registration takes that credential's slot.
+#[test]
+fn a_restart_over_the_store_keeps_its_resident_credentials() {
+    use crate::pin_client::CTAP2_OK;
+
+    let status = |jobs: &Jobs, data: Vec<u8>| ask(jobs, Job::Cbor { cid: CID, data })[0];
+    let (path, jobs, _signals, device) = bench("restart");
+    assert_eq!(
+        status(&jobs, make_resident(1)),
+        CTAP2_OK,
+        "the first registration"
+    );
+    assert_eq!(resident_records(&path), 1, "the image holds it");
+    drop(jobs);
+    device.join().unwrap();
+
+    let (jobs, _signals, device) = boot(&path, PresenceMode::Instant);
+    let found = status(&jobs, discover());
+    let registered = status(&jobs, make_resident(2));
+    assert_eq!(
+        (found, registered, resident_records(&path)),
+        (CTAP2_OK, CTAP2_OK, 2),
+        "a restarted device must find the credential it holds and register the next beside it"
+    );
+    shut_down(path, jobs, device);
+}
+
+/// Management INS `1E` answers `9000` and wipes nothing, and `1F` answers `6D00`, as a
+/// YubiKey 5.8.0 answers them. Both were a device-wide factory reset here, which the
+/// emulator ran once the answer was out.
+#[test]
+fn management_1e_and_1f_wipe_nothing() {
+    use crate::pin_client::CTAP2_OK;
+
+    let (path, jobs, _signals, device) = bench("management-1e-1f");
+    let registered = ask(
+        &jobs,
+        Job::Cbor {
+            cid: CID,
+            data: make_resident(1),
+        },
+    )[0];
+    assert_eq!(registered, CTAP2_OK, "a credential a wipe would take");
+    let selected = sw(&ask(&jobs, select(rsk_mgmt::MANAGEMENT_AID)));
+    assert_eq!(selected, SW_OK, "Management is selected");
+    let acknowledged = sw(&ask(&jobs, Job::Apdu(vec![0x00, 0x1E, 0x00, 0x00])));
+    let unknown = sw(&ask(&jobs, Job::Apdu(vec![0x00, 0x1F, 0x00, 0x00])));
+    // A wipe ran after its answer was out, so one more round trip would have landed it.
+    ask(&jobs, Job::OtpStatus);
+    assert_eq!(
+        (acknowledged, unknown, resident_records(&path)),
+        (SW_OK, SW_INS_NOT_SUPPORTED, 1),
+        "neither instruction may reset the device"
+    );
+    shut_down(path, jobs, device);
+}
+
+/// A board's worker polls its transport ahead of the idle tick, so a request already waiting
+/// when the panel queues a reboot is answered by the device as it stands, and the reboot
+/// follows. The host runs on the device loop's thread, where the panel's handle is.
+#[test]
+fn a_waiting_request_is_answered_before_the_panels_reboot() {
+    let fs: &'static RefCell<Fs<EmuStore>> = Box::leak(Box::new(RefCell::new(Fs::new(
+        crate::store::open(None, None, &SERIAL).expect("an in-memory store"),
+    ))));
+    let rng: &'static RefCell<EmuRng> =
+        Box::leak(Box::new(RefCell::new(EmuRng::from_seed(&[0x5e; 32]))));
+    let signals = Arc::new(Signals::default());
+    let presence = RefCell::new(EmuPresence::new(
+        PresenceMode::Instant,
+        None,
+        signals.clone(),
+    ));
+    let links = PanelLinks::default();
+    let (jobs, requests) = job_queue();
+    let cfg = Config {
+        store: None,
+        presence: PresenceMode::Instant,
+        display: false,
+        usbip: None,
+        seed: Some(vec![0x5e; 32]),
+        serial: SERIAL,
+        kv_total: crate::KV_TOTAL,
+        flash_size: crate::FLASH_SIZE,
+        trace: false,
+        security_trace: None,
+        yubico: false,
+        power_cut: None,
+    };
+    let version = || Job::Msg {
+        cid: CID,
+        data: U2F_VERSION.to_vec(),
+    };
+
+    let host = async {
+        let selected = reply(queue(
+            &jobs,
+            Job::Msg {
+                cid: CID,
+                data: select_vendor(),
+            },
+        ))
+        .await;
+        assert_eq!(sw(&selected), SW_OK, "the vendor AID selects over MSG");
+        // The device loop is parked on its idle timer, so both land before its next pass.
+        let waiting = queue(&jobs, version());
+        links.reboot.set(Some(false));
+        let before = reply(waiting).await;
+        let after = reply(queue(&jobs, version())).await;
+        (sw(&before), after, links.reboot.get())
+    };
+    let device = serve(cfg, requests, signals, links.clone(), fs, rng, &presence);
+    let embassy_futures::select::Either::Second((before, after, pending)) =
+        crate::park::block_on(embassy_futures::select::select(device, host))
+    else {
+        panic!("the device loop stopped before the host was done");
+    };
+    assert_eq!(
+        (before, after.as_slice(), pending),
+        (SW_INS_NOT_SUPPORTED, U2F_V2_OK, None),
+        "the waiting U2F command must still reach the selection, and the reboot drop it after"
+    );
+}
+
+/// The answer to a job [`queue`] sent, yielding to a device loop on this thread until it comes.
+async fn reply(answer: mpsc::Receiver<Option<Vec<u8>>>) -> Vec<u8> {
+    loop {
+        match answer.try_recv() {
+            Ok(body) => return body.expect("a body"),
+            Err(TryRecvError::Empty) => embassy_futures::yield_now().await,
+            Err(TryRecvError::Disconnected) => panic!("the device loop dropped the job"),
+        }
+    }
+}
+
+/// SELECT by AID, the way a host opens an application.
+fn select(aid: &[u8]) -> Job {
+    let mut apdu = vec![0x00, 0xA4, 0x04, 0x00, aid.len() as u8];
+    apdu.extend_from_slice(aid);
+    Job::Apdu(apdu)
+}
+
+/// The status word that closes a response APDU.
+fn sw(response: &[u8]) -> [u8; 2] {
+    [response[response.len() - 2], response[response.len() - 1]]
+}
+
 /// Every [`Job`] variant, and whether a queued one is a request the parked worker
 /// is owed the executor for (`rsk_display::Hooks::host_request_pending`). The
 /// membership is the `REQ` set of `firmware/src/worker.rs` — get it wrong in
@@ -273,6 +462,7 @@ fn every_job() -> Vec<(Job, bool, bool, &'static str)> {
         ),
         (
             Job::Vendor {
+                cid: CID,
                 cmd: 0x01,
                 data: Vec::new(),
             },
@@ -420,15 +610,6 @@ const TOUCH_HOLD_MS: u64 = 6_000;
 /// 50 ms; one that cannot see it at all waits out [`TOUCH_HOLD_MS`].
 const CANCEL_BOUND_MS: u64 = 2_000;
 const _: () = assert!(2 * CANCEL_BOUND_MS < TOUCH_HOLD_MS);
-/// What an *ungated* path may take — a different budget from the cancel one, and
-/// the reason it exists: a gated path cannot finish before [`TOUCH_HOLD_MS`], so
-/// half of that separates "did not wait" from "waited" with room on both sides.
-/// Borrowing [`CANCEL_BOUND_MS`] for it made a 2.9 % overshoot on a loaded runner
-/// read as a touch gate — 2.058 s against 2 s, where the thing being caught costs
-/// 6 s.
-const NO_TOUCH_BOUND_MS: u64 = TOUCH_HOLD_MS / 2;
-const _: () = assert!(CANCEL_BOUND_MS < NO_TOUCH_BOUND_MS && NO_TOUCH_BOUND_MS < TOUCH_HOLD_MS);
-
 fn touch_hold() -> Duration {
     Duration::from_millis(TOUCH_HOLD_MS)
 }
@@ -441,6 +622,8 @@ fn cancel_bound() -> Duration {
 /// (`rsk_device::ccid`'s crate-private `CTAP_READ_CONFIG`), named here as the
 /// other applet-private constants above are.
 const CTAP_READ_CONFIG: u8 = 0x42;
+/// …and its WRITE CONFIG (`CTAP_WRITE_CONFIG` there).
+const CTAP_WRITE_CONFIG: u8 = 0x43;
 
 /// A U2F REGISTER as `tests/13_u2f.py` sends it: the extended-length APDU whose
 /// 64-byte body is challenge ‖ application. Registration is the U2F command that
@@ -579,7 +762,8 @@ fn select_vendor() -> Vec<u8> {
     apdu.extend_from_slice(&VENDOR_AID);
     apdu
 }
-const U2F_VERSION: [u8; 5] = [0x00, 0x03, 0x00, 0x00, 0x00];
+// Bare: over CTAPHID_MSG a short `Le` is a wrong length, as on a YubiKey 5.8.0.
+const U2F_VERSION: [u8; 4] = [0x00, 0x03, 0x00, 0x00];
 const U2F_V2_OK: &[u8] = b"U2F_V2\x90\x00";
 
 /// A U2F command on a channel that did not make the selection does not inherit
@@ -637,30 +821,85 @@ fn a_u2f_command_on_another_channel_drops_the_selection() {
     shut_down(path, jobs, device);
 }
 
-/// Why `Job::Vendor` is deliberately *not* bracketed with `begin`/`end`: no
-/// vendor command is presence-gated, so there is no wait to own, and
-/// `rsk_usb::ctaphid::run_vendor` streams no keepalive and watches for no CANCEL
-/// — a board cannot cancel one either. This is that assumption, pinned: a vendor
-/// command that ever grows a touch gate reds this and has to be given a channel.
+/// A vendor READ asks for no touch. Only arming the config lock over `0x43` waits
+/// for one, which is why `Job::Vendor` is bracketed with `begin`/`end` now; a read
+/// that ever grows a touch gate reds this.
 #[test]
-fn a_vendor_command_asks_for_no_touch() {
-    let (path, jobs, _signals, device) =
+fn a_vendor_read_asks_for_no_touch() {
+    let (path, jobs, signals, device) =
         bench_with("vendor-no-touch", PresenceMode::Delayed(touch_hold()));
 
-    let sent = Instant::now();
     ask(
         &jobs,
         Job::Vendor {
+            cid: CID,
             cmd: CTAP_READ_CONFIG,
             data: Vec::new(),
         },
     );
+    assert!(
+        !signals.up_was_requested(),
+        "the vendor read asked for a touch"
+    );
+
+    shut_down(path, jobs, device);
+}
+
+/// A `CTAPHID_CANCEL` ends the touch a `0x43` write waits for when it arms the
+/// config lock, and the lock stays unset. Unbracketed, the cancel the transport
+/// raised met no channel, and a touch given after the host had given up armed a
+/// lock it had reported as failed.
+#[test]
+fn a_cancel_ends_a_config_lock_touch_on_its_own_channel() {
+    let (path, jobs, signals, device) =
+        bench_with("vendor-cancel", PresenceMode::Delayed(touch_hold()));
+
+    let mut arm = vec![18, 0x0A, 16];
+    arm.extend_from_slice(&[0xA5; 16]);
+    let answer = queue(
+        &jobs,
+        Job::Vendor {
+            cid: CID,
+            cmd: CTAP_WRITE_CONFIG,
+            data: arm,
+        },
+    );
+    assert!(
+        wait_for_touch(&signals),
+        "arming the lock never asked for a touch"
+    );
+
+    signals.request_cancel(CID);
+    let sent = Instant::now();
+    let body = answer
+        .recv_timeout(touch_hold() * 3)
+        .expect("the device answered");
     let took = sent.elapsed();
 
+    assert_eq!(body, None, "a cancelled lock write was answered as done");
     assert!(
-        took < Duration::from_millis(NO_TOUCH_BOUND_MS),
-        "the vendor read waited {took:?} — something on that path asked for a touch"
+        took < cancel_bound(),
+        "the wait took {took:?} to notice the cancel"
     );
+    let config = ask(
+        &jobs,
+        Job::Vendor {
+            cid: CID,
+            cmd: CTAP_READ_CONFIG,
+            data: Vec::new(),
+        },
+    );
+    // DeviceInfo is `len ‖ TLVs`; CONFIG_LOCK (`0A`) is one byte, `01` when set.
+    let mut tlv = &config[1..];
+    let mut lock = None;
+    while let [tag, len, rest @ ..] = tlv {
+        let (value, next) = rest.split_at(usize::from(*len).min(rest.len()));
+        if *tag == 0x0A {
+            lock = value.first().copied();
+        }
+        tlv = next;
+    }
+    assert_eq!(lock, Some(0), "a cancelled write armed the lock");
 
     shut_down(path, jobs, device);
 }

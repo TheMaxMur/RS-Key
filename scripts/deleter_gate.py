@@ -4,7 +4,8 @@
 """Hold the delete-family caller dispositions against the tree, both ways.
 
 `Fs::delete`, `Fs::delete_key`, `Fs::force_delete` and `Fs::force_delete_halves`
-all remove the value whatever their metadata drop did, and all four RETURN what
+(and `delete_over`/`delete_key_over`, the first two over a pre-OTP record)
+all remove the value whatever their metadata drop did, and all of them RETURN what
 the drop did — `Err` names a state (the value is gone, a record may still stand
 over it) rather than a no-op. Which callers may discard that answer and which may
 not is a judgement per call site, and `assurance/deleters.toml` is where those
@@ -69,7 +70,7 @@ tree. What is derived for each, and the direction:
 * the enclosing method, and the call text at the recorded line, the way the
   citations above are held. A new removal path in `Fs` arrives undisposed-of and
   the row goes red;
-* whether that method re-arms the at-rest scrub (`request_rescrub`, rsk-fs
+* whether that method re-arms the at-rest scrub (`request_rescrub` or `attempt_rescrub`, rsk-fs
   `EF_HARDENED`). DERIVED from the method BODY, so deleting the call flips the
   axis rather than passing as an unrelated edit — a tombstone appends like a
   re-seal, so a sweep that supersedes a pre-OTP-sealed record under a latched
@@ -97,7 +98,9 @@ LEDGER = pathlib.Path("assurance/deleters.toml")
 #: identical contract; `force_delete` differs only in that the backend removal is
 #: unconditional; `force_delete_halves` is that one with its two answers handed
 #: back apart, which is the shape a reset sweep needs (see their rustdoc).
-VERBS = ("delete", "delete_key", "force_delete", "force_delete_halves")
+#: `delete_over`/`delete_key_over` are the first two over a pre-OTP record.
+VERBS = ("delete", "delete_key", "force_delete", "force_delete_halves",
+         "delete_over", "delete_key_over")
 #: The leading `.` is the whole receiver test: it is what separates `fs.delete(`
 #: from `Foo::delete(` and from any `_delete(` suffix of a longer name. The
 #: second alternative is the SAME call spelled UFCS — `Fs::force_delete(fs, x)`,
@@ -171,7 +174,7 @@ FS_REMOVE = re.compile(r"\.storage\.remove\s*\(")
 FN = re.compile(r"^(\s*)(?:pub(?:\([^)]*\))?\s+)?(?:async\s+)?(?:unsafe\s+)?fn\s+(\w+)")
 
 #: The at-rest lap's re-arm (`crate::request_rescrub`, rsk-fs `EF_HARDENED`).
-REARM = re.compile(r"\brequest_rescrub\s*\(")
+REARM = re.compile(r"\b(?:request_rescrub|attempt_rescrub)\s*\(")
 
 
 #: What a `scrub` disposition claims, and the derived `rearms` it must agree with.
@@ -195,6 +198,8 @@ REMOVAL = {
     "delete_key": "conditional",
     "force_delete": "unconditional",
     "force_delete_halves": "unconditional",
+    "delete_over": "conditional",
+    "delete_key_over": "conditional",
 }
 
 

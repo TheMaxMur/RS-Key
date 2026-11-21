@@ -6,7 +6,7 @@
 # tree publishes, from a clean checkout, in tiers.
 #
 #   nix develop -c ./scripts/reproduce.sh quick   # minutes
-#   nix develop -c ./scripts/reproduce.sh merge   # the per-commit gate
+#   nix develop -c ./scripts/reproduce.sh merge   # both gate layers and the PR proofs
 #   nix develop -c ./scripts/reproduce.sh model   # the TLA+ tiers, hours
 #   nix develop -c ./scripts/reproduce.sh --list --refusals
 #
@@ -53,18 +53,20 @@ HOST_TRIPLE="${HOST_TARGET:-aarch64-apple-darwin}"
 PHASES=(
   "pages|quick|~1 min|the four generated assurance pages, re-derived from the tree and diffed against what is committed|python scripts/evidence_gate.py && python scripts/matrix_gate.py && python scripts/platform_gate.py && python scripts/assurance_gate.py"
   "docs|quick|~1 min|the documentation site builds and every relative link in it resolves offline|./scripts/docs.sh check"
-  "gate|merge|~25 min|the merge gate: fmt, clippy, rustdoc, host tests over every feature flavour, the firmware builds, the image gates, SCA, and every registry/citation/roster guard|./scripts/check.sh"
+  "gate|merge|~25 min|the per-commit gate: fmt, clippy, rustdoc, host tests over every feature flavour, the firmware builds, the image gates, SCA, and the roster guards|./scripts/check.sh"
+  "assurance|merge|~25 min|the gate's second layer, run once per pull request: the TLA+ plumbing and every registry and citation guard held against the prose, with their tables|./scripts/check-assurance.sh"
   "proofs|merge|~10 min|the two Kani tiers a pull request runs: bounded proofs over the applet crates, then over the security-state crates|./scripts/kani.sh pr && ./scripts/kani.sh state"
   "model-safety|model|~110 min|TLC over the safety tier: the eight modules, their mutants, the solo twins and the recorded floors|./formal/run-tlc.sh safety"
   "model-liveness|model|~35 min|TLC over the liveness tier: the temporal properties and one mutant per property|./formal/run-tlc.sh liveness"
   "comutants|deep|~60 min|co-refutation: every model defect injected into production Rust, each patch expected to redden a named test|python scripts/comutate.py run"
-  "emu|deep|~15 min|the on-device suites and the vendored OpenPGP conformance suite, against tools/emu instead of a board|./scripts/emu-suites.sh"
+  "emu|deep|~15 min|the on-device suites, the vendored OpenPGP and ykman suites and the diff against a frozen YubiKey 5.8.0, against tools/emu instead of a board|./scripts/emu-suites.sh"
+  "image|deep|~5 min|command stacks, known-secret lifetimes and interrupted writes in the partitioned firmware ELF on the emulated RP2350|./scripts/image-suites.sh"
   "proofs-all|deep|~8 h|the weekly Kani roster: every harness in every proven crate, in the four tiers CI shards it into|./scripts/kani.sh light1 && ./scripts/kani.sh light2 && ./scripts/kani.sh light3 && ./scripts/kani.sh heavy"
-  "coverage|deep|~20 min|host-crate line coverage against the floor the weekly job holds|cargo llvm-cov --summary-only --fail-under-lines 80 --target \$HOST_TRIPLE --workspace --exclude firmware --exclude rsk-wipe"
+  "coverage|deep|~20 min|the default host line floor and MC/DC witness report|cargo llvm-cov --summary-only --fail-under-lines 80 --target \$HOST_TRIPLE --workspace --exclude firmware --exclude firmware-ns --exclude rsk-wipe && ./scripts/mcdc.sh"
   "repro|deep|~30 min|the hermetic firmware build is bit-identical on a rebuild|nix build .#firmware -o result-repro && nix build .#firmware --rebuild"
   "miri|deep|~40 min|every fuzz target's logic under Miri's UB checker|nix develop .#fuzz -c ./scripts/miri-all.sh"
   "fuzz|deep|~2 h|a timed libFuzzer run over every fuzz target, from whatever corpus this checkout has|nix develop .#fuzz -c ./scripts/fuzz-all.sh"
-  "mutants|deep|~10 h|the advisory cargo-mutants sweep: would any test notice if this line changed|./scripts/mutants-all.sh"
+  "mutants|deep|~10 h|the cargo-mutants sweep, held against the accepted survivors in scripts/mutants-accepted.txt: would any test notice if this line changed|./scripts/mutants-container.sh"
 )
 
 #: Tier -> the phases it runs, cheapest first. `all` is every phase this
@@ -72,10 +74,10 @@ PHASES=(
 #: see REFUSED.
 TIERS=(
   "quick|pages docs"
-  "merge|gate proofs"
+  "merge|gate assurance proofs"
   "model|model-safety model-liveness"
-  "deep|comutants emu proofs-all coverage repro miri fuzz mutants"
-  "all|pages docs gate proofs model-safety model-liveness comutants emu proofs-all coverage repro miri fuzz mutants"
+  "deep|comutants emu image proofs-all coverage repro miri fuzz mutants"
+  "all|pages docs gate assurance proofs model-safety model-liveness comutants emu image proofs-all coverage repro miri fuzz mutants"
 )
 
 # --- what this checkout cannot produce ----------------------------------------
@@ -87,7 +89,7 @@ TIERS=(
 REFUSED=(
   "on-device suites|the numbered tests/*.py drive real USB and real flash on an RP2350 board; tools/emu covers 48 of them and the emu phase runs those"
   "USB-stack suites|tests that need a host USB stack run tools/emu --usbip inside a Linux guest with vhci_hcd and KVM (scripts/usbip-suites.sh); a macOS or hosted-runner checkout has neither"
-  "two-key interop|the RS-Key/YubiKey differential cells under tests/interop need both keys attached; the allow-list they are held to is checked by the gate phase, the cells themselves are not run"
+  "two-key interop|the RS-Key/YubiKey differential cells under tests/interop need both keys attached; the emu phase runs three of them (getInfo, ATR, DeviceInfo) against a frozen YubiKey 5.8.0, the rest are not run"
   "fuzz corpus coverage|scripts/fuzz-coverage.sh measures the corpus the weekly job has accumulated across runs, which is a CI cache artefact and not a property of this checkout"
   "CodeQL|the buildless CodeQL pass runs on GitHub's own infrastructure, is advisory, and has no local entry point"
   "release provenance|signing, attestation and the published-artifact half of the release manifest need a tag and the maintainer's signing identity; scripts/release_gate.py checks the recipe, not a release"
@@ -110,28 +112,35 @@ REFUSED=(
 #: Every shell runner under scripts/ and formal/.
 CLAIM_RUNNERS=(
   "scripts/check.sh|gate|"
+  "scripts/build.sh|gate|builds and partitions the combined S/NS image used by the gate's firmware rows"
+  "scripts/check-assurance.sh|assurance|"
+  "scripts/gate-lib.sh|gate|"
   "scripts/docs.sh|docs|"
   "scripts/kani.sh|proofs|"
   "formal/run-tlc.sh|model-safety|"
   "scripts/emu-suites.sh|emu|"
+  "scripts/image-suites.sh|image|"
   "scripts/miri-all.sh|miri|"
   "scripts/fuzz-all.sh|fuzz|"
+  "scripts/fuzz-dicts.sh|-|the per-target dictionary mapping, sourced by scripts/fuzz-all.sh and the gate's fuzz targets alive row; nothing runs it directly"
   "scripts/mutants-all.sh|mutants|"
+  "scripts/mutants-container.sh|mutants|the memory-limited Linux launcher for full and in-diff mutation runs"
+  "scripts/mutants-nextest.sh|-|the mutation runner's nextest adapter; retains Cargo doctests after library tests"
   "scripts/ci-scope.sh|gate|"
   "scripts/ci-knobs.sh|gate|"
   "scripts/complexity_gate.sh|gate|"
-  "scripts/token_refinement.sh|gate|"
-  "formal/gen-configs.sh|gate|"
+  "scripts/token_refinement.sh|assurance|"
+  "formal/gen-configs.sh|assurance|"
   "scripts/fuzz-coverage.sh|-|measures the weekly job's accumulated corpus cache, which no checkout carries"
   "scripts/usbip-suites.sh|-|needs a Linux host with vhci_hcd and KVM to boot the guest that owns the USB stack"
   "scripts/usbip-guest.sh|-|the in-guest half of the same suite, invoked by it and never directly"
-  "scripts/pt.sh|-|applies a partition table to an ELF; a build step the gate's image rows invoke, not evidence of its own"
   "scripts/metrics.sh|-|advisory refactor reconnaissance, explicitly not a gate and nothing depends on its numbers"
+  "scripts/mcdc.sh|coverage|"
   "scripts/pages/build-site.sh|-|renders the published docs site for GitHub Pages; the docs phase builds and link-checks the same book"
   "scripts/reproduce.sh|-|this file: the runner the phases above are run by, and the one shape that cannot be a phase of itself — its own drift check is --self-test"
 )
 
-#: Every job in the three workflows that produce evidence. `pages.yml`,
+#: Every job in the workflows below that produce evidence. `pages.yml`,
 #: `release*.yml` and `rekor-monitor.yml` publish rather than check, and are not
 #: read here at all -- which is stated so the omission is a decision and not an
 #: oversight.
@@ -143,26 +152,36 @@ CLAIM_JOBS=(
   "ci:flavors|-|builds the fourteen published image flavours; the gate phase builds four of them and scripts/matrix_gate.py holds the matrix"
   "ci:knob-builds|-|the same build matrix under the board and feature knobs, held by scripts/ci-knobs.sh --self-test in the gate phase"
   "ci:knobs|-|the same, sharded; the self-test row is what says the shards cover the matrix"
+  "ci:assurance|assurance|"
+  "ci:mutants-diff|mutants|"
+  "ci:miri-smoke|miri|the full Miri phase includes the APDU framing tests"
   "deep-checks:miri|miri|"
   "deep-checks:fuzz|fuzz|"
   "deep-checks:fuzz-coverage|-|needs the accumulated corpus cache; see REFUSED"
   "deep-checks:repro|repro|"
   "deep-checks:coverage|coverage|"
+  "deep-checks:mcdc|coverage|"
   "deep-checks:kani|proofs-all|"
   "deep-checks:mutants|mutants|"
   "deep-checks:comutants|comutants|"
   "deep-checks:formal|model-safety|"
+  "deep-checks:assurance|assurance|"
   "emulator:changes|-|path classification, as above"
   "emulator:sockets|emu|"
+  "emulator:image|image|"
   "emulator:usb|-|the USB-stack half, in a QEMU guest; see REFUSED"
+  "fuzz:fuzz|fuzz|"
 )
 
-#: How a `check.sh` row's command is recognised. The gate phase runs the file
-#: whole, so every row it already has is reproduced by construction -- what this
-#: table is for is the row that arrives needing something a clean checkout has
-#: not got. A command shape nobody has classified is UNCLAIMED and red, so a row
-#: invoking a board, a key or a network service has to be looked at by a human
-#: before this script may go on claiming it reproduces the gate.
+#: How a gate row's command is recognised, in either runner. Each phase runs its
+#: runner whole (`gate` check.sh, `assurance` check-assurance.sh), so every row
+#: either already has is reproduced by construction -- what this table is for is
+#: the row that arrives needing something a clean checkout has not got. The
+#: column says `gate` for both runners: it answers whether a clean checkout can
+#: run the shape, not which runner holds it. A command shape nobody has
+#: classified is UNCLAIMED and red, so a row invoking a board, a key or a network
+#: service has to be looked at by a human before this script may go on claiming
+#: it reproduces the gate.
 #:
 #: `extended regex|phase|reason`, first match wins. One alternative per entry
 #: and never an `|` inside a pattern: the record separator is `|`, so an
@@ -170,8 +189,18 @@ CLAIM_JOBS=(
 #: `Unmatched (`, on stderr, while the row it was meant to claim reads as
 #: unrecognised. Measured on the first run of this table.
 CLAIM_ROWS=(
+  "^bash scripts/build\\.sh( --features [a-z0-9,-]+)?$|gate|builds the combined S/NS image from pinned local sources without a board or signing key"
+  "^env FLASH_SIZE=16M bash scripts/build\\.sh$|gate|builds the 16 MB combined image locally"
+  "^env FLASH_SIZE=2M KVMAIN=896K bash scripts/build\\.sh$|gate|builds the documented 2 MB combined image locally"
+  "^env LED_KIND=none FLASH_SIZE=16M DISPLAY_TP_CHIP=cst328 bash scripts/build\\.sh --features display$|gate|builds the combined display V1 image locally"
+  "^env LED_KIND=none FLASH_SIZE=16M DISPLAY_TP_CHIP=cst3530 bash scripts/build\\.sh --features display$|gate|builds the combined display V2 image locally"
   "^cargo |gate|"
   "^env .*cargo |gate|"
+  "^nix develop \\.#tui -c cargo fmt --manifest-path tools/tui/|gate|the separate TUI shell provides host dependencies, with no board or secrets"
+  "^nix develop \\.#tui -c cargo clippy --manifest-path tools/tui/|gate|the separate TUI shell provides host dependencies, with no board or secrets"
+  "^nix develop \\.#tui -c cargo test --manifest-path tools/tui/|gate|the separate TUI shell provides host dependencies, with no board or secrets"
+  "^nix develop \\.#tui -c cargo audit --file tools/tui/|gate|the separate TUI shell provides host dependencies, with no board or secrets"
+  "^nix develop \\.#tui -c env RUSTDOCFLAGS=.* cargo doc --manifest-path tools/tui/|gate|the separate TUI shell provides host dependencies, with no board or secrets"
   "^python3? scripts/|gate|"
   "^python3? -m pytest scripts\\b|gate|"
   "^python3? -m pytest tools/rsk\\b|gate|"
@@ -195,7 +224,7 @@ LOCK="${XDG_CACHE_HOME:-$HOME/.cache}/rs-key/reproduce.lock"
 
 # `[r]…` so the pattern cannot match the `pgrep` that carries it, which is the
 # oldest way to make this check report a run that is only itself.
-OTHERS='[c]heck\.sh|[r]un-tlc\.sh|[c]argo-kani'
+OTHERS='[c]heck\.sh|[c]heck-assurance\.sh|[r]un-tlc\.sh|[c]argo-kani'
 
 take_lock() {
   mkdir -p "$(dirname "$LOCK")"
@@ -379,9 +408,10 @@ verdict() {
 FAILS=0
 bad() { echo "FAIL $1"; FAILS=$((FAILS + 1)); }
 
-#: `run`/`run_tests` rows, line continuations folded, as `check.sh` runs them.
+#: `run`/`run_tests` rows of both runners, line continuations folded, as they
+#: run them.
 check_rows() {
-  sed -e ':a' -e '/\\$/{N;s/\\\n[[:space:]]*/ /;ba' -e '}' scripts/check.sh \
+  sed -e ':a' -e '/\\$/{N;s/\\\n[[:space:]]*/ /;ba' -e '}' scripts/check.sh scripts/check-assurance.sh \
     | sed -nE 's/^[[:space:]]*(run|run_tests)[[:space:]]+"([^"]+)"[[:space:]]*(.*)$/\2\t\3/p'
 }
 
@@ -413,16 +443,16 @@ check_claim() {
 self_test() {
   local n cmd subject entry pat phase found t m
 
-  # C1 — every check.sh row's command shape is recognised.
+  # C1 — every gate row's command shape is recognised, in either runner.
   n=$(check_rows | grep -c .)
-  [ "$n" -ge 50 ] || bad "rows: read $n rows out of scripts/check.sh — the extractor is broken, and a table over nothing passes every case below"
+  [ "$n" -ge 50 ] || bad "rows: read $n rows out of the gate runners — the extractor is broken, and a table over nothing passes every case below"
   while IFS=$'\t' read -r subject cmd; do
     found=""
     for entry in "${CLAIM_ROWS[@]}"; do
       pat=$(field "$entry" 1)
       if printf '%s' "$cmd" | grep -qE "$pat"; then found=$(printf '%s|%s' "$(field "$entry" 2)" "$(rest "$entry" 3)"); break; fi
     done
-    [ -n "$found" ] || bad "rows: check.sh row \"$subject\" runs '$cmd', a shape no claim here recognises — say which phase reproduces it, and whether a clean checkout can"
+    [ -n "$found" ] || bad "rows: gate row \"$subject\" runs '$cmd', a shape no claim here recognises — say which phase reproduces it, and whether a clean checkout can"
     [ -n "$found" ] && check_claim rows "$subject" "$found"
   done < <(check_rows)
 
@@ -467,7 +497,7 @@ self_test() {
     [ -n "$(rest "$entry" 2)" ] || bad "refusals: '$(field "$entry" 1)' is refused with no reason"
   done
   [ -f "$HIL_PAGE" ] || bad "refusals: the maintainer-only page $HIL_PAGE does not exist, so the refusal points nowhere"
-  print_refusals | grep -qF "$HIL_PAGE" || bad "refusals: the refusal block does not name $HIL_PAGE"
+  print_refusals | grep -F "$HIL_PAGE" >/dev/null || bad "refusals: the refusal block does not name $HIL_PAGE"
 
   if [ "$FAILS" -eq 0 ]; then
     echo "reproduce: self-test ok — $n gate rows, $(find scripts formal -name '*.sh' | grep -c .) runners, $(workflow_jobs | grep -c .) jobs, ${#PHASES[@]} phases, ${#REFUSED[@]} refusals"
@@ -477,12 +507,12 @@ self_test() {
   fi
 }
 
-#: `workflow:job` for the three workflows that produce evidence. A job key is a
+#: `workflow:job` for the workflows that produce evidence. A job key is a
 #: two-space-indented mapping key under `jobs:`, which is the whole of the shape
 #: -- read with awk rather than a YAML parser so this stays a shell script.
 workflow_jobs() {
   local w
-  for w in ci deep-checks emulator; do
+  for w in ci deep-checks emulator fuzz; do
     awk -v w="$w" '
       /^jobs:/ { j = 1; next }
       j && /^[a-z]/ { j = 0 }

@@ -10,11 +10,315 @@ fn dev() -> Device<'static> {
         serial_hash: &[0xAB; 32],
         serial_id: &[1, 2, 3, 4, 5, 6, 7, 8],
         otp_key: None,
+        latched: false,
     }
 }
 
 const SEED: [u8; 32] = [0x42; 32];
 const IV: [u8; 12] = [0x11; 12];
+
+#[path = "credential_record_tests.rs"]
+mod records;
+
+#[test]
+fn a_small_credential_fits_its_exact_output_and_refuses_each_shorter_window() {
+    let d = dev();
+    let rp_hash = sha256(b"example.com");
+    let mut large = [0; 512];
+    let n = credential_create(&SEED, &d, &input(), &rp_hash, &IV, &mut large).unwrap();
+    let mut exact = vec![0; n];
+    assert_eq!(
+        credential_create(&SEED, &d, &input(), &rp_hash, &IV, &mut exact),
+        Ok(n)
+    );
+    assert_eq!(exact, large[..n]);
+    for room in 0..n {
+        let mut short = vec![0x55; room];
+        assert_eq!(
+            credential_create(&SEED, &d, &input(), &rp_hash, &IV, &mut short),
+            Err(Error::NoMemory),
+            "output capacity {room}"
+        );
+    }
+}
+
+pub(crate) fn legacy_box_at_limit(seed: &[u8; 32], d: &Device) -> [u8; 748] {
+    let rp_hash = sha256(b"example.com");
+    let mut plain = [0; 700];
+    let mut encoder = Encoder::new(Cursor::new(&mut plain[..]));
+    encode_body(&mut encoder, &input()).unwrap();
+    let n = encoder.writer().position();
+    plain[0] += 1;
+    let mut tail = Encoder::new(Cursor::new(&mut plain[n..]));
+    tail.u8(12)
+        .unwrap()
+        .bytes(&vec![0x55; 700 - n - 4])
+        .unwrap();
+    assert_eq!(n + tail.writer().position(), 700);
+    let mut boxed = [0; 748];
+    boxed[..4].copy_from_slice(&[0xf1, 0xd0, 2, 2]);
+    boxed[4..16].copy_from_slice(&IV);
+    boxed[16..716].copy_from_slice(&plain);
+    let mut key = derive_chacha_key(seed, CRED_PROTO);
+    let tag = chacha20poly1305_encrypt(key.expose(), &IV, &rp_hash, &mut boxed[16..716]);
+    key.wipe();
+    boxed[716..732].copy_from_slice(&tag);
+    let silent = silent_tag(d, &boxed[..732], &rp_hash).unwrap();
+    boxed[732..].copy_from_slice(&silent);
+    boxed
+}
+
+#[test]
+fn an_authenticated_legacy_box_at_the_advertised_limit_still_loads() {
+    let rp_hash = sha256(b"example.com");
+    let boxed = legacy_box_at_limit(&SEED, &dev());
+    let mut scratch = [0; CRED_BOX_MAX];
+    let loaded = credential_load(&SEED, &boxed, &rp_hash, &mut scratch).unwrap();
+    assert_eq!(loaded.rp_id, "example.com");
+    assert_eq!(loaded.user_id, input().user_id);
+    assert_eq!(loaded.user_name, "alice");
+    assert_eq!(loaded.alg, ALG_ES256);
+}
+
+#[test]
+fn unknown_nested_credential_fields_preserve_the_following_owner_and_policy() {
+    let mut buffer = [0; 128];
+    let mut e = Encoder::new(Cursor::new(&mut buffer[..]));
+    e.map(4)
+        .unwrap()
+        .u8(12)
+        .unwrap()
+        .array(2)
+        .unwrap()
+        .map(0)
+        .unwrap()
+        .null()
+        .unwrap();
+    e.u8(1)
+        .unwrap()
+        .str("example.com")
+        .unwrap()
+        .u8(3)
+        .unwrap()
+        .bytes(b"user")
+        .unwrap();
+    e.u8(7)
+        .unwrap()
+        .map(2)
+        .unwrap()
+        .str("future")
+        .unwrap()
+        .array(2)
+        .unwrap()
+        .map(0)
+        .unwrap()
+        .null()
+        .unwrap();
+    e.str("credProtect").unwrap().u8(3).unwrap();
+    let n = e.writer().position();
+    let req = parse_body(&buffer[..n]).unwrap();
+    assert_eq!(req.rp_id, "example.com");
+    assert_eq!(req.user_id, b"user");
+    assert_eq!(req.ext.cred_protect, 3);
+    assert!(parse_body(&[0xa1, 12, 0x82, 0xf6]).is_none());
+    assert!(parse_body(&[0xa1, 7, 0xa1, 0x61, b'x', 0x82, 0xf6]).is_none());
+}
+
+#[test]
+fn empty_short_and_foreign_slots_cannot_replace_the_new_account() {
+    let hash = sha256(b"example.com");
+    let mut boxed = [0; 512];
+    let n = credential_create(&SEED, &dev(), &input(), &hash, &IV, &mut boxed).unwrap();
+    for old in [vec![], vec![0; RECORD_PREFIX - 1], vec![0; RECORD_PREFIX]] {
+        let mut fs = Fs::new(RamStorage::new());
+        fs.put(EF_CRED, &old).unwrap();
+        credential_store(
+            &SEED,
+            &dev(),
+            &mut fs,
+            &mut SeqRng(1),
+            &boxed[..n],
+            &hash,
+            "example.com",
+            input().user_id,
+            &[],
+        )
+        .unwrap();
+        let mut saved = [0; CRED_REC_MAX];
+        let written = fs.read(EF_CRED + 1, &mut saved).unwrap();
+        let mut scratch = [0; CRED_REC_MAX];
+        let loaded = credential_load(
+            &SEED,
+            cred_record_box(&saved[..written]),
+            &hash,
+            &mut scratch,
+        )
+        .unwrap();
+        assert_eq!(loaded.rp_id, "example.com");
+        assert_eq!(loaded.user_id, input().user_id);
+        assert_eq!(rp_count(&mut fs, &hash), Ok(1));
+        let mut medium = fs.into_storage();
+        let mut retained = vec![0; old.len()];
+        assert_eq!(medium.read(EF_CRED, &mut retained), Some(old.len()));
+        assert_eq!(retained, old);
+    }
+}
+
+#[test]
+fn relying_party_count_distinguishes_foreign_short_and_unread_records() {
+    let hash = sha256(b"example.com");
+    let foreign = sha256(b"other.com");
+    let mut record = vec![1];
+    record.extend_from_slice(&foreign);
+    for value in [&record[..], &[1][..]] {
+        let mut fs = Fs::new(RamStorage::new());
+        fs.put(EF_RP, value).unwrap();
+        let generation = fs.write_gen();
+        assert_eq!(rp_count(&mut fs, &hash), Ok(0));
+        assert_eq!(fs.write_gen(), generation);
+    }
+    let (backend, medium) = rsk_fs::storage::faults::ProbeStuck::new();
+    let mut fs = Fs::new(backend);
+    fs.scan();
+    fs.put(EF_RP, &record).unwrap();
+    let generation = fs.write_gen();
+    medium.stick(Some(EF_RP));
+    assert_eq!(rp_count(&mut fs, &hash), Err(Error::MemoryFatal));
+    assert_eq!(fs.write_gen(), generation);
+    medium.stick(None);
+    assert_eq!(rp_count(&mut fs, &foreign), Ok(1));
+}
+
+#[test]
+fn an_unauthentic_stored_box_is_not_mistaken_for_the_account_being_replaced() {
+    let hash = sha256(b"example.com");
+    let mut fs = Fs::new(RamStorage::new());
+    let mut rng = SeqRng(1);
+    let mut boxed = [0; 512];
+    let n = credential_create(&SEED, &dev(), &input(), &hash, &IV, &mut boxed).unwrap();
+    credential_store(
+        &SEED,
+        &dev(),
+        &mut fs,
+        &mut rng,
+        &boxed[..n],
+        &hash,
+        "example.com",
+        input().user_id,
+        &[],
+    )
+    .unwrap();
+    let mut old = [0; CRED_REC_MAX];
+    let size = fs.read(EF_CRED, &mut old).unwrap();
+    let cipher = size - cred_record_box(&old[..size]).len() + IV_LEN;
+    old[cipher] ^= 1;
+    fs.put(EF_CRED, &old[..size]).unwrap();
+    let n = credential_create(&SEED, &dev(), &input(), &hash, &[0x22; 12], &mut boxed).unwrap();
+    credential_store(
+        &SEED,
+        &dev(),
+        &mut fs,
+        &mut rng,
+        &boxed[..n],
+        &hash,
+        "example.com",
+        input().user_id,
+        &[],
+    )
+    .unwrap();
+    let mut retained = [0; CRED_REC_MAX];
+    assert_eq!(fs.read(EF_CRED, &mut retained), Some(size));
+    assert_eq!(retained, old);
+    let mut added = [0; CRED_REC_MAX];
+    let size = fs.read(EF_CRED + 1, &mut added).unwrap();
+    let mut scratch = [0; CRED_REC_MAX];
+    let loaded =
+        credential_load(&SEED, cred_record_box(&added[..size]), &hash, &mut scratch).unwrap();
+    assert_eq!(loaded.user_id, input().user_id);
+    assert_eq!(rp_count(&mut fs, &hash), Ok(2));
+}
+
+#[test]
+fn resident_id_escapes_a_reproducible_legacy_marker_collision() {
+    let input = 6_760_416_248u64.to_le_bytes();
+    let digest = hmac_sha512(dev().serial_id, &input);
+    assert_eq!(&digest[4..8], CRED_PROTO_RESIDENT);
+    let id = derive_resident(&input, &dev());
+    assert!(!is_resident(&id));
+    let mut expected = [0; CRED_RESIDENT_LEN];
+    expected.copy_from_slice(&digest[..CRED_RESIDENT_LEN]);
+    expected[4] ^= 1;
+    assert_eq!(id, expected);
+    assert_eq!(derive_resident(&input, &dev()), id);
+    assert_eq!(resident_key_input(b"resealed box", Some(&id)), id);
+}
+
+#[test]
+fn legacy_resident_records_keep_their_box_without_a_public_cache() {
+    let hash = sha256(b"example.com");
+    for version in [0, RESIDENT_VERSION_V2, RESIDENT_VERSION_V3] {
+        let id = legacy_resident_id(b"old credential", &dev(), version);
+        let mut out = [0; 512];
+        let n = compose_cred_record(&hash, &id, &[4; 65], b"box", &mut out).unwrap();
+        assert_eq!(cred_record_box(&out[..n]), b"box");
+        if version == RESIDENT_VERSION_V3 {
+            assert_eq!(cred_record_pubkey(&out[..n]), Some(&[4; 65][..]));
+        } else {
+            assert_eq!(n, RECORD_PREFIX + 3);
+            assert_eq!(cred_record_pubkey(&out[..n]), None);
+        }
+    }
+}
+
+#[test]
+fn a_p521_public_point_fits_the_resident_record_trailer() {
+    let key = crate::ec::CredKey::from_raw(crate::consts::CURVE_P521 as i64, &[1; 66]).unwrap();
+    let mut point = [0; 133];
+    assert_eq!(key.public_point(&mut point), Some(133));
+    let hash = sha256(b"example.com");
+    let id = legacy_resident_id(b"old credential", &dev(), RESIDENT_VERSION_V3);
+    let mut out = [0; 512];
+    let n = compose_cred_record(&hash, &id, &point, b"box", &mut out).unwrap();
+    assert_eq!(cred_record_pubkey(&out[..n]), Some(&point[..]));
+    assert_eq!(cred_record_box(&out[..n]), b"box");
+}
+
+#[test]
+fn short_rp_and_nickname_outputs_refuse_without_partial_writes() {
+    let hash = sha256(b"example.com");
+    for room in [0, IV_LEN + TAG_LEN - 1, IV_LEN + TAG_LEN + 2] {
+        let mut out = [0xa5; NICK_BOX_MAX];
+        assert!(seal_rp_id(&SEED, "example.com", &hash, &mut out[..room]).is_err());
+        assert_eq!(out, [0xa5; NICK_BOX_MAX]);
+        assert!(seal_nick(&SEED, &hash, "Work", &mut out[..room]).is_err());
+        assert_eq!(out, [0xa5; NICK_BOX_MAX]);
+    }
+}
+
+#[test]
+fn rp_migration_keeps_unopenable_or_unboxable_records_unchanged() {
+    let hash = sha256(b"example.com");
+    let mut fs = Fs::new(RamStorage::new());
+    migrate_rp_seal(&dev(), &mut fs);
+    fs.put(EF_RP, &[1]).unwrap();
+    let generation = fs.write_gen();
+    migrate_rp_seal(&dev(), &mut fs);
+    assert_eq!(fs.write_gen(), generation);
+    crate::seed::ensure_seed(&dev(), &mut fs, &mut SeqRng(7)).unwrap();
+    for record in [
+        vec![1],
+        [&[1][..], &hash, &[0xff; 28][..]].concat(),
+        [&[1][..], &hash, &[b'x'; RP_ID_MAX + 1][..]].concat(),
+    ] {
+        fs.put(EF_RP, &record).unwrap();
+        let generation = fs.write_gen();
+        migrate_rp_seal(&dev(), &mut fs);
+        let mut after = [0; RP_REC_MAX];
+        assert_eq!(fs.read(EF_RP, &mut after), Some(record.len()));
+        assert_eq!(&after[..record.len()], &record);
+        assert_eq!(fs.write_gen(), generation);
+    }
+}
 
 fn input() -> CredInput<'static> {
     CredInput {
@@ -200,7 +504,7 @@ fn legacy_is22_box_still_loads() {
     let mut old = [0u8; 512];
     old[..PROTO_LEN].copy_from_slice(CRED_PROTO);
     old[PROTO_LEN..PROTO_LEN + core].copy_from_slice(&newbox[..core]);
-    let st = silent_tag(&d, &old[..PROTO_LEN + core], &rp_hash);
+    let st = silent_tag(&d, &old[..PROTO_LEN + core], &rp_hash).unwrap();
     old[PROTO_LEN + core..PROTO_LEN + core + SILENT_TAG_LEN].copy_from_slice(&st);
     let olen = PROTO_LEN + core + SILENT_TAG_LEN;
     assert_eq!(&old[..PROTO_LEN], CRED_PROTO); // it IS the legacy framing
@@ -227,8 +531,13 @@ fn legacy_non_silent_box_still_loads() {
         enc.writer().position()
     };
     let mut key = derive_chacha_key(&SEED, older_proto);
-    let tag = chacha20poly1305_encrypt(&key, &IV, &rp_hash, &mut boxbuf[HEAD_LEN..HEAD_LEN + rs]);
-    key.zeroize();
+    let tag = chacha20poly1305_encrypt(
+        key.expose(),
+        &IV,
+        &rp_hash,
+        &mut boxbuf[HEAD_LEN..HEAD_LEN + rs],
+    );
+    key.wipe();
     boxbuf[HEAD_LEN + rs..HEAD_LEN + rs + TAG_LEN].copy_from_slice(&tag);
     let blen = HEAD_LEN + rs + TAG_LEN;
 
@@ -244,15 +553,19 @@ fn hmac_key_deterministic_uv_halves_differ() {
     let mut box2 = box1;
     box2[40] ^= 0xFF;
     let k1 = derive_hmac_key(&SEED, &box1);
-    assert_eq!(k1, derive_hmac_key(&SEED, &box1), "deterministic");
+    assert_eq!(
+        crate::bare(&k1),
+        crate::bare(derive_hmac_key(&SEED, &box1)),
+        "deterministic"
+    );
     // The CredRandomWithUV ([32..64]) and CredRandomWithoutUV ([0..32]) differ.
-    assert_ne!(&k1[..32], &k1[32..]);
+    assert_ne!(&k1.expose()[..32], &k1.expose()[32..]);
     // A different box yields a different cred_random.
-    assert_ne!(k1, derive_hmac_key(&SEED, &box2));
+    assert_ne!(crate::bare(&k1), crate::bare(derive_hmac_key(&SEED, &box2)));
     // The proto prefix (first 4 bytes) is folded in, so it is path-sensitive.
     assert_ne!(
-        derive_hmac_key(&SEED, &box1),
-        derive_hmac_key(&[0x43; 32], &box1)
+        crate::bare(derive_hmac_key(&SEED, &box1)),
+        crate::bare(derive_hmac_key(&[0x43; 32], &box1))
     );
 }
 
@@ -264,7 +577,7 @@ fn large_blob_key_deterministic_and_box_sensitive() {
     let k1 = derive_large_blob_key(&SEED, &box1);
     assert_eq!(k1, derive_large_blob_key(&SEED, &box1));
     assert_ne!(k1, derive_large_blob_key(&SEED, &box2));
-    assert_ne!(k1, derive_hmac_key(&SEED, &box1)[..32]);
+    assert_ne!(k1, derive_hmac_key(&SEED, &box1).expose()[..32]);
 }
 
 /// A pre-v4 (v1/v2/v3) resident id, as older firmware wrote it:
@@ -378,13 +691,13 @@ fn resident_key_input_reseal_stable_and_v1_follows_box() {
     assert_eq!(ki1, &rid[..]);
     assert_eq!(ki2, &rid[..]);
     assert_eq!(
-        fido_load_key(&SEED, ki1),
-        fido_load_key(&SEED, ki2),
+        crate::bare(fido_load_key(&SEED, ki1)),
+        crate::bare(fido_load_key(&SEED, ki2)),
         "signing key stable across reseal"
     );
     assert_eq!(
-        derive_hmac_key(&SEED, ki1),
-        derive_hmac_key(&SEED, ki2),
+        crate::bare(derive_hmac_key(&SEED, ki1)),
+        crate::bare(derive_hmac_key(&SEED, ki2)),
         "hmac-secret stable across reseal"
     );
     assert_eq!(
@@ -406,8 +719,8 @@ fn resident_key_input_reseal_stable_and_v1_follows_box() {
     let rid_other = derive_resident(&box2, &d);
     assert_ne!(rid, rid_other);
     assert_ne!(
-        fido_load_key(&SEED, &rid[..]),
-        fido_load_key(&SEED, &rid_other[..])
+        crate::bare(fido_load_key(&SEED, &rid[..])),
+        crate::bare(fido_load_key(&SEED, &rid_other[..]))
     );
 }
 
@@ -423,6 +736,7 @@ fn store_then_dedup_and_rp_count() {
         &SEED,
         &d,
         &mut fs,
+        &mut SeqRng(7),
         &out[..len],
         &rp_hash,
         "example.com",
@@ -458,6 +772,7 @@ fn store_then_dedup_and_rp_count() {
         &SEED,
         &d,
         &mut fs,
+        &mut SeqRng(7),
         &out[..len2],
         &rp_hash,
         "example.com",
@@ -486,6 +801,7 @@ fn v3_record_roundtrips_box_and_cached_pubkey() {
         &SEED,
         &d,
         &mut fs,
+        &mut SeqRng(7),
         &boxbuf[..box_len],
         &rp_hash,
         "example.com",
@@ -661,6 +977,7 @@ fn a_failed_registration_never_leaves_a_credential_without_its_rp() {
             &SEED,
             &d,
             &mut fs,
+            &mut SeqRng(7),
             &out[..len],
             &rp_hash,
             "example.com",
@@ -715,6 +1032,7 @@ fn a_failed_registration_leaves_neither_the_credential_nor_its_rp_entry() {
             &SEED,
             &d,
             &mut fs,
+            &mut SeqRng(7),
             &out[..len],
             &rp_hash,
             "example.com",
@@ -767,6 +1085,7 @@ fn a_failed_re_registration_does_not_delete_the_rp_the_first_one_created() {
             &SEED,
             &d,
             &mut warm,
+            &mut SeqRng(7),
             &out[..len],
             &rp_hash,
             "example.com",
@@ -791,6 +1110,7 @@ fn a_failed_re_registration_does_not_delete_the_rp_the_first_one_created() {
             &SEED,
             &d,
             &mut fs,
+            &mut SeqRng(7),
             &out[..len],
             &rp_hash,
             "example.com",
@@ -831,6 +1151,7 @@ fn a_truncated_scan_does_not_let_a_new_credential_land_on_a_live_one() {
         &SEED,
         &d,
         &mut fs,
+        &mut SeqRng(7),
         &out[..len],
         &rp_hash,
         "example.com",
@@ -852,6 +1173,7 @@ fn a_truncated_scan_does_not_let_a_new_credential_land_on_a_live_one() {
             &SEED,
             &d,
             &mut fs,
+            &mut SeqRng(7),
             &out[..len2],
             &other,
             "other.example",
@@ -870,50 +1192,38 @@ fn a_truncated_scan_does_not_let_a_new_credential_land_on_a_live_one() {
     );
 }
 
-/// `bump_cred_store_state` reads the tag it advances with the collapsing `Fs::read`,
-/// whose `None` covers "never written" and "the flash could not serve it" alike, and
-/// the absent arm is the ZERO tag — right for the first, a replay for the second. So
-/// a faulted probe writes 1 over the live value and starts the sequence again from a
-/// prefix the platform has already been served: it is handed a tag it is holding, so
-/// it keeps the cache this record exists to make it drop.
-///
-/// Refused rather than clamped, because the bump runs BEFORE the write it describes:
-/// its `Err` aborts the store change too, so tag and store stay in step.
+/// A store change renews the tag without reading it, so a probe the flash cannot
+/// serve has nothing to replay and nothing to refuse: the change goes ahead under a
+/// fresh random tag, none of those the platform was served before (CTAP 2.3 §6.1.2).
 #[test]
 fn a_faulted_cred_state_probe_does_not_replay_the_store_tag() {
     let (backend, medium) = rsk_fs::storage::faults::ProbeStuck::new();
     let mut fs = Fs::new(backend);
     fs.scan();
-    // Three store changes: 1, 2 and 3 are each a tag the platform has been served.
+    let mut rng = SeqRng(11);
+    // Three store changes, each a tag the platform has been served.
     let mut seen = Vec::new();
     for _ in 0..3 {
-        bump_cred_store_state(&mut fs).unwrap();
+        renew_store_state(&mut fs, &mut rng).unwrap();
         seen.push(medium.value(EF_CRED_STATE).unwrap());
     }
-    assert_eq!(
-        seen[2],
-        3u128.to_le_bytes(),
-        "control: three changes, tag 3"
-    );
 
     medium.stick_once(EF_CRED_STATE);
-    let bumped = bump_cred_store_state(&mut fs);
+    let renewed = renew_store_state(&mut fs, &mut rng);
     medium.stick(None);
 
+    assert_eq!(
+        renewed,
+        Ok(()),
+        "a stuck probe must not stop a store change"
+    );
     let after = medium.value(EF_CRED_STATE).unwrap();
+    // Zero and one too: a probe collapsed into "absent" once restarted a count there.
+    seen.extend([0u128.to_le_bytes().to_vec(), 1u128.to_le_bytes().to_vec()]);
     assert!(
-        !seen[..2].contains(&after),
+        !seen.contains(&after),
         "a faulted probe replayed tag {} — a platform holding it is told nothing changed",
         u128::from_le_bytes(after[..].try_into().unwrap())
-    );
-    assert_eq!(
-        after, seen[2],
-        "a refused bump must leave the tag where it was"
-    );
-    assert_eq!(
-        bumped,
-        Err(Error::MemoryFatal),
-        "a bump that could not read the tag it advances must refuse"
     );
 }
 
@@ -935,7 +1245,17 @@ fn a_faulted_rp_probe_does_not_file_a_second_record_for_the_same_rp() {
     fs.scan();
     let mut out = [0u8; 512];
     let store = |fs: &mut Fs<_>, out: &[u8], user: &[u8]| {
-        credential_store(&SEED, &d, fs, out, &rp_hash, "example.com", user, &[])
+        credential_store(
+            &SEED,
+            &d,
+            fs,
+            &mut SeqRng(7),
+            out,
+            &rp_hash,
+            "example.com",
+            user,
+            &[],
+        )
     };
     let records_for_rp = |medium: &rsk_fs::storage::faults::ProbeMedium| {
         (0..MAX_RESIDENT_CREDENTIALS)
@@ -1006,7 +1326,18 @@ fn a_faulted_probe_of_another_rps_slot_does_not_deny_this_registration() {
         let mut req = input();
         req.user_id = core::slice::from_ref(&user);
         let len = credential_create(&SEED, &d, &req, hash, &IV, &mut out).unwrap();
-        credential_store(&SEED, &d, &mut fs, &out[..len], hash, id, &[user], &[]).unwrap();
+        credential_store(
+            &SEED,
+            &d,
+            &mut fs,
+            &mut SeqRng(7),
+            &out[..len],
+            hash,
+            id,
+            &[user],
+            &[],
+        )
+        .unwrap();
     }
     let before = medium
         .value(EF_RP + 1)
@@ -1024,6 +1355,7 @@ fn a_faulted_probe_of_another_rps_slot_does_not_deny_this_registration() {
         &SEED,
         &d,
         &mut fs,
+        &mut SeqRng(7),
         &out[..len],
         &mine,
         "example.com",
@@ -1121,4 +1453,223 @@ fn the_boot_pass_re_arms_the_lap_before_it_boxes_a_cleartext_rp_id() {
         Some(("example.com", true))
     );
     assert!(!medium.live(rsk_fs::EF_HARDENED));
+}
+
+/// `credential_store` refuses a NEW account while a credential slot is unreadable
+/// only when that slot could be this account: when its RP counts more credentials
+/// than the search read. A record belonging to another RP, or a brand-new RP, is
+/// no reason to refuse, and an account found in a readable slot is replaced there.
+#[test]
+fn an_unread_credential_refuses_only_a_new_account_its_own_rp_could_hide() {
+    let d = dev();
+    let mine = sha256(b"example.com");
+    let other = sha256(b"other.example");
+    let fresh = sha256(b"new.example");
+    let store = |fs: &mut Fs<_>, hash: &[u8; 32], id: &str, user: u8| {
+        let mut req = input();
+        let user = [user];
+        req.user_id = &user;
+        let mut out = [0u8; 512];
+        let len = credential_create(&SEED, &d, &req, hash, &IV, &mut out).unwrap();
+        credential_store(
+            &SEED,
+            &d,
+            fs,
+            &mut SeqRng(7),
+            &out[..len],
+            hash,
+            id,
+            &user,
+            &[],
+        )
+    };
+    let (backend, medium) = rsk_fs::storage::faults::ProbeStuck::new();
+    let mut fs = Fs::new(backend);
+    fs.scan();
+    // Slot 0 other.example's user 1, slot 1 example.com's user 2.
+    store(&mut fs, &other, "other.example", 1).unwrap();
+    store(&mut fs, &mine, "example.com", 2).unwrap();
+
+    medium.stick(Some(EF_CRED));
+    assert_eq!(
+        store(&mut fs, &mine, "example.com", 3),
+        Ok(()),
+        "another RP's unread credential cannot be this account"
+    );
+    assert_eq!(
+        store(&mut fs, &fresh, "new.example", 4),
+        Ok(()),
+        "an RP with no record has no credential to hide"
+    );
+    assert_eq!(
+        store(&mut fs, &mine, "example.com", 2),
+        Ok(()),
+        "an account found in a readable slot is replaced there"
+    );
+    assert_eq!(
+        medium.value(EF_CRED + 4),
+        None,
+        "in place: slots 0-3 hold the four accounts, and no fifth was filed"
+    );
+    medium.stick(None);
+
+    let (backend, medium) = rsk_fs::storage::faults::ProbeStuck::new();
+    let mut fs = Fs::new(backend);
+    fs.scan();
+    store(&mut fs, &mine, "example.com", 2).unwrap();
+    medium.stick(Some(EF_CRED));
+    assert_eq!(
+        store(&mut fs, &mine, "example.com", 5),
+        Err(Error::MemoryFatal),
+        "example.com counts one credential and none was read: it may be this account"
+    );
+    medium.stick(None);
+    assert!(!fs.has_data(EF_CRED + 1), "the refusal wrote no credential");
+    assert_eq!(
+        medium.value(EF_RP).map(|v| v[0]),
+        Some(1),
+        "nor counted one"
+    );
+
+    let (backend, medium) = rsk_fs::storage::faults::ProbeStuck::new();
+    let mut fs = Fs::new(backend);
+    fs.scan();
+    store(&mut fs, &other, "other.example", 1).unwrap();
+    store(&mut fs, &mine, "example.com", 2).unwrap();
+    let foreign = medium.value(EF_CRED).unwrap();
+    let generation = fs.write_gen();
+    medium.stick(Some(EF_CRED + 1));
+    assert_eq!(
+        store(&mut fs, &mine, "example.com", 5),
+        Err(Error::MemoryFatal),
+        "a readable foreign account cannot account for this RP's unread credential"
+    );
+    assert_eq!(fs.write_gen(), generation);
+    medium.stick(None);
+    assert_eq!(medium.value(EF_CRED), Some(foreign));
+    assert!(!fs.has_data(EF_CRED + 2));
+    assert_eq!(rp_count(&mut fs, &mine), Ok(1));
+
+    let (backend, medium) = rsk_fs::storage::faults::ProbeStuck::new();
+    let mut fs = Fs::new(backend);
+    fs.scan();
+    store(&mut fs, &mine, "example.com", 1).unwrap();
+    store(&mut fs, &mine, "example.com", 2).unwrap();
+    let first = medium.value(EF_CRED).unwrap();
+    fs.put(EF_CRED, &first[..32]).unwrap();
+    crate::credmgmt::settle_rp_records(&mut fs).unwrap();
+    assert_eq!(rp_count(&mut fs, &mine), Ok(1));
+    let generation = fs.write_gen();
+    medium.stick(Some(EF_CRED + 1));
+    assert_eq!(
+        store(&mut fs, &mine, "example.com", 5),
+        Err(Error::MemoryFatal),
+        "a truncated matching prefix cannot account for the unread credential"
+    );
+    assert_eq!(fs.write_gen(), generation);
+    medium.stick(None);
+    assert!(!fs.has_data(EF_CRED + 2));
+}
+
+/// Deterministic RNG (copied per test file, matching the repo convention).
+struct SeqRng(u64);
+impl crate::Rng for SeqRng {
+    fn fill(&mut self, buf: &mut [u8]) {
+        for b in buf.iter_mut() {
+            self.0 = self.0.wrapping_mul(6364136223846793005).wrapping_add(1);
+            *b = (self.0 >> 33) as u8;
+        }
+    }
+}
+
+/// Every store change draws a fresh random tag (CTAP 2.3 §6.1.2 step 17), not the next
+/// number: a platform holding one tag learns nothing about the next from it.
+#[test]
+fn a_store_change_draws_a_random_tag_not_the_next_number() {
+    let mut fs: Fs<RamStorage> = Fs::new(RamStorage::new());
+    let mut rng = SeqRng(13);
+    renew_store_state(&mut fs, &mut rng).unwrap();
+    let first = u128::from_le_bytes(cred_store_state(&mut fs).unwrap());
+    renew_store_state(&mut fs, &mut rng).unwrap();
+    let second = u128::from_le_bytes(cred_store_state(&mut fs).unwrap());
+    assert_ne!(second, first, "a store change must move the tag");
+    assert_ne!(
+        second,
+        first.wrapping_add(1),
+        "the tag must not count the changes"
+    );
+}
+
+#[test]
+fn provisioning_otp_changes_only_the_write_only_silent_tag() {
+    let otp = [0x77; 32];
+    let fused = Device {
+        otp_key: Some(&otp),
+        ..dev()
+    };
+    let rp_hash = sha256(b"example.com");
+    let mut before = [0; 512];
+    let mut after = [0; 512];
+    let before_len =
+        credential_create(&SEED, &dev(), &input(), &rp_hash, &IV, &mut before).unwrap();
+    let after_len = credential_create(&SEED, &fused, &input(), &rp_hash, &IV, &mut after).unwrap();
+    assert_eq!(before_len, after_len);
+    let prefix_len = after_len - SILENT_TAG_LEN;
+    assert_eq!(&before[..prefix_len], &after[..prefix_len]);
+    assert_ne!(
+        &before[prefix_len..before_len],
+        &after[prefix_len..after_len]
+    );
+    let key = sha256(&[otp.as_slice(), &rp_hash].concat());
+    let expected = hmac_sha256(&key, &after[..prefix_len]);
+    assert_eq!(&after[prefix_len..after_len], &expected[..SILENT_TAG_LEN]);
+    for boxed in [&before[..before_len], &after[..after_len]] {
+        let mut scratch = [0; 512];
+        let loaded = credential_load(&SEED, boxed, &rp_hash, &mut scratch).unwrap();
+        assert_eq!(loaded.rp_id, input().rp_id);
+        assert_eq!(loaded.user_id, input().user_id);
+        assert_eq!(loaded.alg, input().alg);
+    }
+}
+
+#[path = "credential_decisions_tests.rs"]
+mod decisions;
+
+#[test]
+fn an_occupied_rp_snapshot_does_not_turn_a_missing_or_short_read_into_a_match() {
+    use rsk_fs::read_change::ChangingRead;
+    let hash = sha256(b"example.com");
+    for replacement in [None, Some(&[1][..])] {
+        let (backend, control) = ChangingRead::new();
+        let mut fs = Fs::new(backend);
+        fs.scan();
+        bump_rp(&mut fs, &SEED, &hash, "example.com").unwrap();
+        let mut old = [0; RP_REC_MAX];
+        let n = fs.read(EF_RP, &mut old).unwrap();
+        control.replace_on_read(EF_RP, 0, replacement);
+        bump_rp(&mut fs, &SEED, &hash, "example.com").unwrap();
+        assert!(control.served());
+        let mut new = [0; RP_REC_MAX];
+        assert!(fs.read(EF_RP + 1, &mut new).unwrap() >= RP_PREFIX);
+        assert_eq!(&new[..RP_PREFIX], &old[..RP_PREFIX]);
+        let mut retained = [0; RP_REC_MAX];
+        assert_eq!(fs.into_storage().value(EF_RP, &mut retained), Some(n));
+        assert_eq!(retained, old);
+    }
+}
+
+#[test]
+fn an_unauthentic_legacy_is22_box_cannot_fall_back_to_another_framing() {
+    let hash = sha256(b"example.com");
+    let mut boxed = [0; 512];
+    let n = credential_create(&SEED, &dev(), &input(), &hash, &IV, &mut boxed).unwrap();
+    let core = n - SILENT_TAG_LEN;
+    let mut legacy = CRED_PROTO.to_vec();
+    legacy.extend_from_slice(&boxed[..core]);
+    let tag = silent_tag(&dev(), &legacy, &hash).unwrap();
+    legacy.extend_from_slice(&tag);
+    legacy[PROTO_LEN + IV_LEN] ^= 1;
+    let mut scratch = [0; 512];
+    assert!(verify_decrypt(&SEED, &legacy, &hash, &mut scratch).is_none());
+    assert!(credential_load(&SEED, &legacy, &hash, &mut scratch).is_none());
 }

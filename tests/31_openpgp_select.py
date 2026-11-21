@@ -36,7 +36,7 @@ def get_data(tag):
 VERSION = [0x00, 0xF1, 0x00, 0x00, 0x00]
 
 # Expected ROM values (rsk-openpgp::files).
-HISTORICAL_BYTES = [0x00, 0x31, 0x84, 0x73, 0x80, 0x01, 0xC0, 0x05, 0x90, 0x00]
+HISTORICAL_BYTES = [0x00, 0x73, 0x00, 0x00, 0xE0, 0x05, 0x90, 0x00]  # a YubiKey 5.8.0's
 # PW status byte 0 ("PW1 valid for several PSO:CDS") is mutable runtime state
 # (set via PUT DATA C4), so only the fixed tail is asserted: the three max PIN
 # lengths (127) and the three retry counters.
@@ -95,8 +95,8 @@ def main():
     print("ATR:", toHexString(list(conn.getATR())))
 
     fci = expect_ok(conn, SELECT, "SELECT OpenPGP AID")
-    if not fci or fci[0] != 0x6F:
-        fail(f"SELECT FCI should start with 6F, got {toHexString(fci)}")
+    if fci:
+        fail(f"SELECT should answer no FCI, as a YubiKey 5.8.0 does; got {toHexString(fci)}")
 
     aid = expect_ok(conn, get_data(0x004F), "GET DATA 4F (full AID)")
     if aid[:6] != OPENPGP_AID:

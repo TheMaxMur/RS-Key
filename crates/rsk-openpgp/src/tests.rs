@@ -2,6 +2,7 @@
 // Copyright (C) 2026 RS-Key contributors
 
 use super::*;
+use crate::test_tlv::{child, children};
 use rsk_fs::storage::ram::RamStorage;
 
 struct CountRng(u8);
@@ -19,6 +20,7 @@ fn dev() -> Device<'static> {
         serial_hash: &[0x22; 32],
         serial_id: &SERIAL_ID,
         otp_key: None,
+        latched: false,
     }
 }
 
@@ -27,8 +29,9 @@ const SERIAL_HASH: [u8; 32] = [0x22; 32];
 
 /// A provisioned MKEK for the tests. The applet holds a way to READ the fuses, not
 /// the key, so a test source has to be a plain `fn`.
-fn test_mkek() -> Option<[u8; 32]> {
-    Some([0x66; 32])
+fn test_mkek(out: &mut [u8; 32]) -> bool {
+    *out = [0x66; 32];
+    true
 }
 
 fn make_fs() -> Fs<RamStorage> {
@@ -46,6 +49,24 @@ fn run<S: Storage>(app: &mut OpenpgpApplet, fs: &mut Fs<S>, raw: &[u8]) -> (Vec<
     (res.as_slice().to_vec(), sw)
 }
 
+/// `tag` read the only way GET DATA serves it, inside its template: 65, 7A, or
+/// 6E's 73.
+fn nested<S: Storage>(app: &mut OpenpgpApplet, fs: &mut Fs<S>, tag: u16) -> Vec<u8> {
+    let template = match tag {
+        consts::EF_CH_NAME | consts::EF_LANG_PREF | consts::EF_SEX => consts::EF_CH_DATA,
+        consts::EF_SIG_COUNT => consts::EF_SEC_TPL,
+        _ => consts::EF_APP_DATA,
+    };
+    let get = [0x00, consts::INS_GET_DATA, 0x00, template as u8, 0x00];
+    let (raw, sw) = run(app, fs, &get);
+    assert_eq!(sw, Sw::OK);
+    let mut kids = children(&child(&children(&raw), template));
+    if template == consts::EF_APP_DATA {
+        kids = children(&child(&kids, consts::EF_DISCRETE_DO));
+    }
+    child(&kids, tag)
+}
+
 /// [`run`] with a response buffer that can hold `MAX_DO_BYTES` — `SCRATCH` is
 /// 1024 and is deliberately not the GET DATA ceiling, so reading a DO back at
 /// its announced size needs the transport's buffer rather than the applet's.
@@ -55,19 +76,6 @@ fn run_big(app: &mut OpenpgpApplet, fs: &mut Fs<RamStorage>, raw: &[u8]) -> (Vec
     let mut res = ResBuf::new(&mut buf);
     let sw = app.process(&apdu, fs, &mut res);
     (res.as_slice().to_vec(), sw)
-}
-
-#[test]
-fn select_emits_fci() {
-    let rng = RefCell::new(CountRng(0));
-    let mut fs = make_fs();
-    let presence = RefCell::new(crate::AlwaysConfirm);
-    let mut app = OpenpgpApplet::new(SERIAL_ID, SERIAL_HASH, None, &rng, &presence);
-    let mut buf = [0u8; 64];
-    let mut res = ResBuf::new(&mut buf);
-    let sw = app.select(false, &mut fs, &mut res);
-    assert_eq!(sw, Sw::OK);
-    assert_eq!(res.as_slice()[0], 0x6F);
 }
 
 #[test]
@@ -194,8 +202,7 @@ fn get_challenge_serves_exactly_what_do_c0_announces() {
     let presence = RefCell::new(crate::AlwaysConfirm);
     let mut app = OpenpgpApplet::new(SERIAL_ID, SERIAL_HASH, None, &rng, &presence);
 
-    let (c0, sw) = run(&mut app, &mut fs, &[0x00, consts::INS_GET_DATA, 0x00, 0xC0]);
-    assert_eq!(sw, Sw::OK);
+    let c0 = nested(&mut app, &mut fs, consts::EF_EXT_CAP);
     let announced = ((c0[2] as usize) << 8) | c0[3] as usize;
     assert_eq!(announced, files::MAX_CHALLENGE_BYTES);
 
@@ -210,15 +217,15 @@ fn get_challenge_serves_exactly_what_do_c0_announces() {
             ne as u8,
         ]
     };
-    // Everything up to the announcement is served in full…
+    // Everything up to the announcement is served in full, into a transport's buffer…
     for ne in [1, 8, 255, 256, 257, announced - 1, announced] {
-        let (body, sw) = run(&mut app, &mut fs, &ext(ne));
+        let (body, sw) = run_big(&mut app, &mut fs, &ext(ne));
         assert_eq!(sw, Sw::OK, "Le {ne}");
         assert_eq!(body.len(), ne, "Le {ne}");
     }
     // …and one byte past it is refused, not truncated under 9000.
-    for ne in [announced + 1, 2048, 4096] {
-        let (body, sw) = run(&mut app, &mut fs, &ext(ne));
+    for ne in [announced + 1, 4096, 65535] {
+        let (body, sw) = run_big(&mut app, &mut fs, &ext(ne));
         assert_eq!(sw, Sw::WRONG_LENGTH, "Le {ne}");
         assert!(body.is_empty(), "Le {ne}");
     }
@@ -394,7 +401,7 @@ fn a_blocked_pw3_neither_migrates_nor_writes() {
     let mut app = OpenpgpApplet::new(
         SERIAL_ID,
         SERIAL_HASH,
-        Some(test_mkek as FusedKey),
+        Some(FusedKey::open(test_mkek)),
         &rng,
         &presence,
     );
@@ -426,7 +433,7 @@ fn an_unblocked_legacy_verifier_still_migrates() {
     let mut app = OpenpgpApplet::new(
         SERIAL_ID,
         SERIAL_HASH,
-        Some(test_mkek as FusedKey),
+        Some(FusedKey::open(test_mkek)),
         &rng,
         &presence,
     );
@@ -443,11 +450,93 @@ fn an_unblocked_legacy_verifier_still_migrates() {
     let mut app2 = OpenpgpApplet::new(
         SERIAL_ID,
         SERIAL_HASH,
-        Some(test_mkek as FusedKey),
+        Some(FusedKey::open(test_mkek)),
         &rng,
         &presence,
     );
     verify_pin(&mut app2, &mut fs, consts::PW3_MODE83, consts::PW3_DEFAULT);
+}
+
+/// Past the latch a fused key that did not read leaves no arm to open or seal
+/// under: VERIFY and CHANGE refuse before a retry is spent or a verifier moves,
+/// since the fuse refused them and not the PIN.
+#[test]
+fn past_the_latch_an_unread_key_refuses_and_spends_nothing() {
+    fn unread(_: &mut [u8; 32]) -> bool {
+        false
+    }
+    let rng = RefCell::new(CountRng(0));
+    let mut fs = make_fs();
+    let presence = RefCell::new(crate::AlwaysConfirm);
+    let mut app = OpenpgpApplet::new(
+        SERIAL_ID,
+        SERIAL_HASH,
+        Some(FusedKey::open(test_mkek)),
+        &rng,
+        &presence,
+    );
+    verify_pin(&mut app, &mut fs, consts::PW3_MODE83, consts::PW3_DEFAULT);
+    let records = |fs: &mut Fs<RamStorage>| {
+        [consts::EF_PW1, consts::EF_PW3, consts::EF_PW_RETRIES].map(|fid| {
+            let mut buf = [0u8; 64];
+            fs.read(fid, &mut buf).map(|n| buf[..n].to_vec())
+        })
+    };
+    let before = records(&mut fs);
+
+    let mut shut = OpenpgpApplet::new(
+        SERIAL_ID,
+        SERIAL_HASH,
+        Some(FusedKey::latched(unread)),
+        &rng,
+        &presence,
+    );
+    for (mode, pin) in [
+        (consts::PW1_MODE81, consts::PW1_DEFAULT),
+        (consts::PW3_MODE83, consts::PW3_DEFAULT),
+    ] {
+        let mut v = vec![0x00, consts::INS_VERIFY, 0x00, mode, pin.len() as u8];
+        v.extend_from_slice(pin);
+        assert_eq!(run(&mut shut, &mut fs, &v).1, Sw::FUSED_KEY_UNREAD);
+    }
+    let body = [consts::PW3_DEFAULT, b"87654321"].concat();
+    let mut change = vec![0x00, consts::INS_CHANGE_PIN, 0x00, consts::PW3_MODE83];
+    change.push(body.len() as u8);
+    change.extend_from_slice(&body);
+    assert_eq!(run(&mut shut, &mut fs, &change).1, Sw::FUSED_KEY_UNREAD);
+    assert_eq!(records(&mut fs), before, "a retry spent past the latch");
+}
+
+/// A password verified before the fused key stopped reading stays droppable: a
+/// logout needs no key, so it clears the status past the latch rather than refuse.
+#[test]
+fn past_the_latch_a_logout_needs_no_key() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    static READS: AtomicBool = AtomicBool::new(true);
+    fn flaky(out: &mut [u8; 32]) -> bool {
+        *out = [0x66; 32];
+        READS.load(Ordering::SeqCst)
+    }
+    let rng = RefCell::new(CountRng(0));
+    let mut fs = make_fs();
+    let presence = RefCell::new(crate::AlwaysConfirm);
+    let mut app = OpenpgpApplet::new(
+        SERIAL_ID,
+        SERIAL_HASH,
+        Some(FusedKey::latched(flaky)),
+        &rng,
+        &presence,
+    );
+    verify_pin(&mut app, &mut fs, consts::PW3_MODE83, consts::PW3_DEFAULT);
+    assert_eq!(put(&mut app, &mut fs, 0x00, 0x5B, b"bob"), Sw::OK);
+    READS.store(false, Ordering::SeqCst);
+    let logout = [0x00, consts::INS_VERIFY, 0xFF, consts::PW3_MODE83];
+    assert_eq!(run(&mut app, &mut fs, &logout).1, Sw::OK);
+    assert_eq!(
+        put(&mut app, &mut fs, 0x00, 0x5B, b"eve"),
+        Sw::SECURITY_STATUS_NOT_SATISFIED,
+        "PW3 outlived its logout"
+    );
 }
 
 #[test]
@@ -815,6 +904,35 @@ fn import_p256_dec_then_pso_decipher_ecdh() {
     assert_eq!(&z, shared.raw_secret_bytes().as_slice());
 }
 
+/// PSO builds its result in the applet's scratch, which lives as long as the applet;
+/// a deciphered secret must be gone from it once the command has answered.
+#[test]
+fn pso_decipher_leaves_no_secret_in_the_scratch() {
+    let rng = RefCell::new(CountRng(7));
+    let mut fs = make_fs();
+    let presence = RefCell::new(crate::AlwaysConfirm);
+    let mut app = OpenpgpApplet::new(SERIAL_ID, SERIAL_HASH, None, &rng, &presence);
+    verify_pin(&mut app, &mut fs, consts::PW3_MODE83, consts::PW3_DEFAULT);
+    put(&mut app, &mut fs, 0x00, 0xC2, ATTR_P256_ECDH);
+    let (_, sw) = run(&mut app, &mut fs, &ec_import(0xB8, &[0x22u8; 32]));
+    assert_eq!(sw, Sw::OK);
+    verify_pin(&mut app, &mut fs, consts::PW1_MODE82, consts::PW1_DEFAULT);
+
+    let eph_pub = p256_vk(&[0x33u8; 32]).to_sec1_point(false);
+    let f86 = [&[0x86, eph_pub.as_bytes().len() as u8], eph_pub.as_bytes()].concat();
+    let f7f49 = [&[0x7F, 0x49, f86.len() as u8], f86.as_slice()].concat();
+    let a6 = [&[0xA6, f7f49.len() as u8], f7f49.as_slice()].concat();
+    let mut a = vec![0x00, consts::INS_PSO, 0x80, 0x86, a6.len() as u8];
+    a.extend_from_slice(&a6);
+    let (z, sw) = run(&mut app, &mut fs, &a);
+    assert_eq!(sw, Sw::OK);
+    assert_eq!(z.len(), 32);
+    assert!(
+        app.scratch.iter().all(|&b| b == 0),
+        "the shared secret outlived PSO:DECIPHER in the scratch"
+    );
+}
+
 #[test]
 fn mse_redirects_decipher_to_aut_slot() {
     let rng = RefCell::new(CountRng(7));
@@ -1049,6 +1167,205 @@ fn import_rsa_sig_then_pso_sign_verifies() {
 }
 
 #[test]
+fn rsa_signs_the_command_data_as_given_like_a_yubikey() {
+    // A YubiKey 5.8.0 (RSA-2048, two rounds) pads whatever PSO:CDS or INTERNAL
+    // AUTHENTICATE is sent as PKCS#1 type 1, 0 to k − 11 bytes — a bare hash is not
+    // wrapped in a DigestInfo, nothing is signed raw — and answers 6581 past that.
+    let rng = RefCell::new(CountRng(7));
+    let mut fs = make_fs();
+    let presence = RefCell::new(crate::AlwaysConfirm);
+    let mut app = OpenpgpApplet::new(SERIAL_ID, SERIAL_HASH, None, &rng, &presence);
+    verify_pin(&mut app, &mut fs, consts::PW3_MODE83, consts::PW3_DEFAULT);
+    for crt in [0xB6, 0xA4] {
+        let key = rsa_import(crt, &[0x01, 0x00, 0x01], &hx(RSA_P), &hx(RSA_Q));
+        assert_eq!(run(&mut app, &mut fs, &key).1, Sw::OK);
+    }
+    let di_tail = [DI_SHA256, &[0x42; 32], &[0x00]].concat();
+    let inputs: [(&str, &[u8]); 5] = [
+        ("empty", &[]),
+        ("a bare SHA-256", &[0x42; 32]),
+        ("a DigestInfo with 00 appended", &di_tail),
+        ("102 bytes", &[0x5A; 102]),
+        ("245 bytes", &[0x5A; 245]),
+    ];
+    let commands = [
+        ("PSO:CDS", consts::INS_PSO, 0x9E, 0x9A, consts::PW1_MODE81),
+        (
+            "INTERNAL AUTHENTICATE",
+            consts::INS_INTERNAL_AUT,
+            0x00,
+            0x00,
+            consts::PW1_MODE82,
+        ),
+    ];
+    for (name, ins, p1, p2, pw) in commands {
+        let command = |data: &[u8]| [&[0x00, ins, p1, p2, data.len() as u8][..], data].concat();
+        for (what, data) in inputs {
+            verify_pin(&mut app, &mut fs, pw, consts::PW1_DEFAULT);
+            let (sig, sw) = run(&mut app, &mut fs, &command(data));
+            assert_eq!(sw, Sw::OK, "{name} over {what}");
+            assert!(
+                rsa_verify(data, &sig),
+                "{name} over {what}: type 1 over it as sent"
+            );
+        }
+        verify_pin(&mut app, &mut fs, pw, consts::PW1_DEFAULT);
+        let (_, sw) = run(&mut app, &mut fs, &command(&[0x5A; 246]));
+        assert_eq!(sw, Sw::MEMORY_FAILURE, "{name} over 246 bytes");
+    }
+}
+
+#[test]
+fn a_refused_pso_cds_spends_a_one_shot_pw1_like_a_yubikey() {
+    // A YubiKey 5.8.0 with PW1 valid for one PSO:CDS (two rounds): a CDS refused for
+    // having no key, or for its length, spends the verification all the same, and
+    // only a signature bumps the counter.
+    let rng = RefCell::new(CountRng(7));
+    let mut fs = make_fs();
+    let presence = RefCell::new(crate::AlwaysConfirm);
+    let mut app = OpenpgpApplet::new(SERIAL_ID, SERIAL_HASH, None, &rng, &presence);
+    verify_pin(&mut app, &mut fs, consts::PW3_MODE83, consts::PW3_DEFAULT);
+    assert_eq!(put(&mut app, &mut fs, 0x00, 0xC4, &[0x00]), Sw::OK);
+    let cds = |data: &[u8]| {
+        [
+            &[0x00, consts::INS_PSO, 0x9E, 0x9A, data.len() as u8][..],
+            data,
+        ]
+        .concat()
+    };
+    // VERIFY with no data answers 9000 while PW1 stands, 63Cx once it is spent.
+    let status = [0x00, consts::INS_VERIFY, 0x00, consts::PW1_MODE81];
+    let counter = |fs: &mut Fs<RamStorage>| {
+        let mut c = [0u8; 3];
+        fs.read(consts::EF_SIG_COUNT, &mut c);
+        c
+    };
+    let di = [DI_SHA256, &[0x42; 32]].concat();
+
+    verify_pin(&mut app, &mut fs, consts::PW1_MODE81, consts::PW1_DEFAULT);
+    assert_ne!(
+        run(&mut app, &mut fs, &cds(&di)).1,
+        Sw::OK,
+        "no key: refused"
+    );
+    assert_ne!(
+        run(&mut app, &mut fs, &status).1,
+        Sw::OK,
+        "no key: PW1 spent"
+    );
+
+    for crt in [0xB6, 0xB8] {
+        let key = rsa_import(crt, &[0x01, 0x00, 0x01], &hx(RSA_P), &hx(RSA_Q));
+        assert_eq!(run(&mut app, &mut fs, &key).1, Sw::OK);
+    }
+    // From here on a fresh session holds PW1 alone, as gpg's forcesig flow does: a
+    // standing PW3 would unseal the key for a spend moved ahead of the signature.
+    let mut app = OpenpgpApplet::new(SERIAL_ID, SERIAL_HASH, None, &rng, &presence);
+    let before = counter(&mut fs);
+    verify_pin(&mut app, &mut fs, consts::PW1_MODE81, consts::PW1_DEFAULT);
+    let too_long = cds(&[0x5A; 246]);
+    assert_eq!(run(&mut app, &mut fs, &too_long).1, Sw::MEMORY_FAILURE);
+    assert_ne!(
+        run(&mut app, &mut fs, &status).1,
+        Sw::OK,
+        "246 bytes: PW1 spent"
+    );
+    assert_eq!(counter(&mut fs), before, "a refusal is not a signature");
+
+    verify_pin(&mut app, &mut fs, consts::PW1_MODE81, consts::PW1_DEFAULT);
+    assert_eq!(
+        run(&mut app, &mut fs, &cds(&di)).1,
+        Sw::OK,
+        "PW1 alone unseals"
+    );
+    assert_ne!(
+        run(&mut app, &mut fs, &status).1,
+        Sw::OK,
+        "a signature spends it"
+    );
+    assert_ne!(counter(&mut fs), before, "and counts");
+
+    // The one-shot status is PW1 no. 81's: a DECIPHER on no. 82 leaves it standing.
+    verify_pin(&mut app, &mut fs, consts::PW1_MODE81, consts::PW1_DEFAULT);
+    verify_pin(&mut app, &mut fs, consts::PW1_MODE82, consts::PW1_DEFAULT);
+    let ct = [vec![0x00], hx(rsk_rsa::vectors::ENCRYPT[2].1)].concat();
+    let decipher = [
+        &[0x00, consts::INS_PSO, 0x80, 0x86, 0x00, 0x01, 0x01][..],
+        &ct,
+    ]
+    .concat();
+    assert_eq!(run(&mut app, &mut fs, &decipher).1, Sw::OK);
+    assert_eq!(
+        run(&mut app, &mut fs, &status).1,
+        Sw::OK,
+        "a DECIPHER spends no PW1 81"
+    );
+}
+
+#[test]
+fn a_private_key_command_on_an_empty_slot_answers_6985_like_a_yubikey() {
+    // A YubiKey 5.8.0, reset, two rounds: PSO:CDS, PSO:DECIPHER and INTERNAL
+    // AUTHENTICATE with no key in the slot answer 6985 under the default RSA
+    // attributes and under P-256 ones alike.
+    let rng = RefCell::new(CountRng(7));
+    let presence = RefCell::new(crate::AlwaysConfirm);
+    let p256 = [0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x03, 0x01, 0x07];
+    let ecdh_point = [
+        &[0xA6, 0x46, 0x7F, 0x49, 0x43, 0x86, 0x41, 0x04][..],
+        &[0x11; 64],
+    ]
+    .concat();
+    for p256_attrs in [false, true] {
+        let mut fs = make_fs();
+        let mut app = OpenpgpApplet::new(SERIAL_ID, SERIAL_HASH, None, &rng, &presence);
+        verify_pin(&mut app, &mut fs, consts::PW3_MODE83, consts::PW3_DEFAULT);
+        if p256_attrs {
+            for (tag, algo) in [(0xC1, 0x13), (0xC2, 0x12), (0xC3, 0x13)] {
+                let attr = [&[algo][..], &p256].concat();
+                assert_eq!(put(&mut app, &mut fs, 0x00, tag, &attr), Sw::OK);
+            }
+        }
+        verify_pin(&mut app, &mut fs, consts::PW1_MODE81, consts::PW1_DEFAULT);
+        verify_pin(&mut app, &mut fs, consts::PW1_MODE82, consts::PW1_DEFAULT);
+        let decipher = if p256_attrs {
+            ecdh_point.clone()
+        } else {
+            [vec![0x00], vec![0; 256]].concat()
+        };
+        let commands: [(&str, u8, u8, u8, Vec<u8>); 3] = [
+            (
+                "PSO:CDS",
+                consts::INS_PSO,
+                0x9E,
+                0x9A,
+                [DI_SHA256, &[0x42; 32]].concat(),
+            ),
+            ("PSO:DECIPHER", consts::INS_PSO, 0x80, 0x86, decipher),
+            (
+                "INTERNAL AUTHENTICATE",
+                consts::INS_INTERNAL_AUT,
+                0x00,
+                0x00,
+                vec![0x5A; 20],
+            ),
+        ];
+        for (name, ins, p1, p2, data) in commands {
+            let lc = u8::try_from(data.len())
+                .map_or(vec![0x00, (data.len() >> 8) as u8, data.len() as u8], |b| {
+                    vec![b]
+                });
+            let apdu = [&[0x00, ins, p1, p2][..], &lc, &data].concat();
+            let sw = run(&mut app, &mut fs, &apdu).1;
+            assert_eq!(
+                sw,
+                Sw::CONDITIONS_NOT_SATISFIED,
+                "{name}, P-256 attributes: {p256_attrs}"
+            );
+        }
+    }
+}
+
+#[test]
 fn import_rsa_holds_the_key_to_the_algorithm_attribute() {
     // §4.4.3.12: "The length of the key data shall match the values given in the
     // DO 'Algorithm attributes' (C1 - C3)." Without it the card gives two answers
@@ -1098,8 +1415,8 @@ fn import_refuses_an_unadvertised_stored_algorithm_attribute() {
     let mut app = OpenpgpApplet::new(SERIAL_ID, SERIAL_HASH, None, &rng, &presence);
     verify_pin(&mut app, &mut fs, consts::PW3_MODE83, consts::PW3_DEFAULT);
 
-    // rsa2048 with a non-standard 17-bit exponent field: not in DO 0xFA.
-    fs.put(consts::EF_ALGO_PRIV1, &[0x01, 0x08, 0x00, 0x00, 0x11, 0x00])
+    // rsa2048 with an exponent field too short for 65537: not in DO 0xFA.
+    fs.put(consts::EF_ALGO_PRIV1, &[0x01, 0x08, 0x00, 0x00, 0x10, 0x00])
         .unwrap();
     let (_, sw) = run(
         &mut app,
@@ -1153,18 +1470,20 @@ fn import_rsa_dec_then_pso_decipher() {
 
     verify_pin(&mut app, &mut fs, consts::PW1_MODE82, consts::PW1_DEFAULT);
 
-    // A "session key" OpenSSL encrypted to this public key; the card recovers it.
-    let (msg, ct) = rsk_rsa::vectors::ENCRYPT[2];
-    let (msg, ct) = (hx(msg), hx(ct));
-    let mut data = vec![0x00u8]; // OpenPGP padding-indicator byte
-    data.extend_from_slice(&ct);
-    let mut a = vec![0x00, consts::INS_PSO, 0x80, 0x86, 0x00];
-    a.push((data.len() >> 8) as u8);
-    a.push(data.len() as u8);
-    a.extend_from_slice(&data);
-    let (pt, sw) = run(&mut app, &mut fs, &a);
-    assert_eq!(sw, Sw::OK);
-    assert_eq!(pt, msg);
+    for (msg, ct) in rsk_rsa::vectors::ENCRYPT {
+        let (msg, ct) = (hx(msg), hx(ct));
+        let mut data = vec![0x00u8]; // OpenPGP padding-indicator byte
+        data.extend_from_slice(&ct);
+        let mut a = vec![0x00, consts::INS_PSO, 0x80, 0x86, 0x00];
+        a.push((data.len() >> 8) as u8);
+        a.push(data.len() as u8);
+        a.extend_from_slice(&data);
+        let (pt, sw) = run(&mut app, &mut fs, &a);
+        assert_eq!(sw, Sw::OK);
+        assert_eq!(pt, msg);
+        assert!(app.sess.has_pw2);
+        assert!(!app.sess.has_pw1);
+    }
 }
 
 #[test]
@@ -1203,7 +1522,7 @@ const ATTR_CV25519: &[u8] = &[
 #[test]
 fn import_cv25519_dec_then_pso_decipher() {
     // RFC 7748 §6.1: import Alice (her LE scalar reversed into the big-endian
-    // OpenPGP MPI), decipher Bob's 0x40-prefixed ephemeral key → shared K.
+    // OpenPGP MPI), decipher Bob's bare ephemeral key → shared K.
     let alice_le = hx("77076d0a7318a57d3c16c17251b26645df4c2f87ebc0992ab177fba51db92c2a");
     let bob_pub = hx("de9edb7d7b7dc1b4d35b61c2ece435373f8343c85b78674dadfc7e146f882b4f");
     let k = hx("4a5d9d5ba4ce2de1728e3bf480350f25e07e21c947d19e3376f09b3c1e161742");
@@ -1222,9 +1541,8 @@ fn import_cv25519_dec_then_pso_decipher() {
 
     verify_pin(&mut app, &mut fs, consts::PW1_MODE82, consts::PW1_DEFAULT);
 
-    // PSO:DECIPHER with the 0x40-prefixed peer point.
-    let mut point = vec![0x40u8];
-    point.extend_from_slice(&bob_pub);
+    // PSO:DECIPHER with the bare peer point.
+    let point = bob_pub.clone();
     let f86 = [&[0x86, point.len() as u8], point.as_slice()].concat();
     let f7f49 = [&[0x7F, 0x49, f86.len() as u8], f86.as_slice()].concat();
     let a6 = [&[0xA6, f7f49.len() as u8], f7f49.as_slice()].concat();
@@ -1236,6 +1554,106 @@ fn import_cv25519_dec_then_pso_decipher() {
         z, k,
         "cv25519 DECIPHER must equal the RFC 7748 shared secret"
     );
+}
+
+/// PSO:DECIPHER around a peer point: `A6 { 7F49 { 86 <point> } }`.
+fn ecdh_decipher(point: &[u8]) -> Vec<u8> {
+    let f86 = [&[0x86, point.len() as u8], point].concat();
+    let f7f49 = [&[0x7F, 0x49, f86.len() as u8], f86.as_slice()].concat();
+    let a6 = [&[0xA6, f7f49.len() as u8], f7f49.as_slice()].concat();
+    let mut a = vec![0x00, consts::INS_PSO, 0x80, 0x86, a6.len() as u8];
+    a.extend_from_slice(&a6);
+    a
+}
+
+#[test]
+fn cv25519_decipher_refuses_a_small_order_peer() {
+    // A YubiKey 5.8.0's OpenPGP answers 6581 to all seven small-order encodings;
+    // `rsk-ec` walks the whole list, and u = 0 and u = 1 stand for it here.
+    let rng = RefCell::new(CountRng(7));
+    let mut fs = make_fs();
+    let presence = RefCell::new(crate::AlwaysConfirm);
+    let mut app = OpenpgpApplet::new(SERIAL_ID, SERIAL_HASH, None, &rng, &presence);
+    verify_pin(&mut app, &mut fs, consts::PW3_MODE83, consts::PW3_DEFAULT);
+    assert_eq!(put(&mut app, &mut fs, 0x00, 0xC2, ATTR_CV25519), Sw::OK);
+    let (_, sw) = run(&mut app, &mut fs, &ec_import(0xB8, &[0x11u8; 32]));
+    assert_eq!(sw, Sw::OK);
+    verify_pin(&mut app, &mut fs, consts::PW1_MODE82, consts::PW1_DEFAULT);
+
+    let mut one = [0u8; 32];
+    one[0] = 1;
+    for u in [[0u8; 32], one] {
+        let (z, sw) = run(&mut app, &mut fs, &ecdh_decipher(&u));
+        assert_eq!(
+            sw,
+            Sw::MEMORY_FAILURE,
+            "a small-order peer must answer 6581"
+        );
+        assert!(z.is_empty(), "a refused agreement must return no data");
+    }
+}
+
+#[test]
+fn ecdh_decipher_sorts_unusable_points_like_a_yubikey() {
+    // Measured on a YubiKey 5.8.0's OpenPGP, alike on each of its curves: 6A80 for
+    // an encoding it does not take (compressed too), 6581 for a point it refuses.
+    let rng = RefCell::new(CountRng(7));
+    let mut fs = make_fs();
+    let presence = RefCell::new(crate::AlwaysConfirm);
+    let mut app = OpenpgpApplet::new(SERIAL_ID, SERIAL_HASH, None, &rng, &presence);
+    verify_pin(&mut app, &mut fs, consts::PW3_MODE83, consts::PW3_DEFAULT);
+    assert_eq!(put(&mut app, &mut fs, 0x00, 0xC2, ATTR_P256_ECDH), Sw::OK);
+    let (_, sw) = run(&mut app, &mut fs, &ec_import(0xB8, &[0x22u8; 32]));
+    assert_eq!(sw, Sw::OK);
+    verify_pin(&mut app, &mut fs, consts::PW1_MODE82, consts::PW1_DEFAULT);
+
+    let peer = p256_vk(&[0x33u8; 32]).to_sec1_point(false);
+    let valid = peer.as_bytes();
+    let mut off_curve = valid.to_vec();
+    *off_curve.last_mut().unwrap() ^= 1;
+    let mut past_p = valid.to_vec();
+    past_p[1..33].fill(0xFF);
+    let compressed = p256_vk(&[0x33u8; 32]).to_sec1_point(true);
+    let mut compact = compressed.as_bytes().to_vec();
+    compact[0] = 0x05;
+    for (point, want) in [
+        (off_curve.as_slice(), Sw::MEMORY_FAILURE),
+        (past_p.as_slice(), Sw::MEMORY_FAILURE),
+        (compressed.as_bytes(), Sw::WRONG_DATA),
+        (compact.as_slice(), Sw::WRONG_DATA),
+        (&valid[1..], Sw::WRONG_DATA),
+        (&[0x00][..], Sw::WRONG_DATA),
+        (&[][..], Sw::WRONG_DATA),
+    ] {
+        let (z, sw) = run(&mut app, &mut fs, &ecdh_decipher(point));
+        assert_eq!(sw, want, "peer {point:02x?}");
+        assert!(z.is_empty(), "a refused agreement must return no data");
+    }
+}
+
+#[test]
+fn cv25519_decipher_refuses_a_point_of_the_wrong_width() {
+    // A YubiKey 5.8.0's OpenPGP answers 6A80 to a 31-byte u and to 32 bytes
+    // behind any prefix, the 0x40 of OpenPGP's native form included.
+    let rng = RefCell::new(CountRng(7));
+    let mut fs = make_fs();
+    let presence = RefCell::new(crate::AlwaysConfirm);
+    let mut app = OpenpgpApplet::new(SERIAL_ID, SERIAL_HASH, None, &rng, &presence);
+    verify_pin(&mut app, &mut fs, consts::PW3_MODE83, consts::PW3_DEFAULT);
+    assert_eq!(put(&mut app, &mut fs, 0x00, 0xC2, ATTR_CV25519), Sw::OK);
+    let (_, sw) = run(&mut app, &mut fs, &ec_import(0xB8, &[0x11u8; 32]));
+    assert_eq!(sw, Sw::OK);
+    verify_pin(&mut app, &mut fs, consts::PW1_MODE82, consts::PW1_DEFAULT);
+
+    let mut prefixed = vec![0x00u8];
+    prefixed.extend_from_slice(&[0x09u8; 32]);
+    let mut native = vec![0x40u8];
+    native.extend_from_slice(&[0x09u8; 32]);
+    for point in [&[0x09u8; 31][..], prefixed.as_slice(), native.as_slice()] {
+        let (z, sw) = run(&mut app, &mut fs, &ecdh_decipher(point));
+        assert_eq!(sw, Sw::WRONG_DATA, "peer {point:02x?}");
+        assert!(z.is_empty(), "a refused agreement must return no data");
+    }
 }
 
 // ---- GENERATE ASYMMETRIC KEY PAIR (0x47) ---------------------------------
@@ -1329,20 +1747,83 @@ fn generate_p256_sig_sign_verifies_and_reads_back() {
 }
 
 #[test]
+fn reading_an_empty_slots_public_key_answers_6581_like_a_yubikey() {
+    // A YubiKey 5.8.0, reset, two rounds: GENERATE's P1 = 81 read of a slot with no
+    // key answers 6581 for SIG, DEC and AUT, under RSA attributes and P-256 ones.
+    let rng = RefCell::new(LcgRng(1));
+    let presence = RefCell::new(crate::AlwaysConfirm);
+    let p256 = [0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x03, 0x01, 0x07];
+    for p256_attrs in [false, true] {
+        let mut fs = make_fs();
+        let mut app = OpenpgpApplet::new(SERIAL_ID, SERIAL_HASH, None, &rng, &presence);
+        if p256_attrs {
+            verify_pin(&mut app, &mut fs, consts::PW3_MODE83, consts::PW3_DEFAULT);
+            for (tag, algo) in [(0xC1, 0x13), (0xC2, 0x12), (0xC3, 0x13)] {
+                let attr = [&[algo][..], &p256].concat();
+                assert_eq!(put(&mut app, &mut fs, 0x00, tag, &attr), Sw::OK);
+            }
+        }
+        for crt in [0xB6, 0xB8, 0xA4] {
+            let sw = keygen(&mut app, &mut fs, 0x81, crt).1;
+            assert_eq!(
+                sw,
+                Sw::MEMORY_FAILURE,
+                "slot {crt:02X}, P-256: {p256_attrs}"
+            );
+        }
+    }
+}
+
+#[test]
+fn reading_a_public_key_the_flash_cannot_serve_answers_6581() {
+    // Both reads GENERATE's P1 = 81 makes of the public-key DO answer a fault 6581:
+    // the size probe (`has_data`, which reads a fault as absent) and the read itself.
+    let rng = RefCell::new(CountRng(7));
+    let (backend, medium) = rsk_fs::storage::faults::ProbeStuck::new();
+    let mut fs = Fs::new(backend);
+    fs.scan();
+    scan_files(&dev(), &mut fs, &mut CountRng(0)).unwrap();
+    let presence = RefCell::new(crate::AlwaysConfirm);
+    let mut app = OpenpgpApplet::new(SERIAL_ID, SERIAL_HASH, None, &rng, &presence);
+    verify_pin(&mut app, &mut fs, consts::PW3_MODE83, consts::PW3_DEFAULT);
+    assert_eq!(put(&mut app, &mut fs, 0x00, 0xC1, ATTR_P256), Sw::OK);
+    let key = ec_import(0xB6, &[0x11u8; 32]);
+    assert_eq!(run(&mut app, &mut fs, &key).1, Sw::OK);
+    let read = [0x00, consts::INS_KEYPAIR_GEN, 0x81, 0x00, 0x02, 0xB6, 0x00];
+    assert_eq!(
+        run(&mut app, &mut fs, &read).1,
+        Sw::OK,
+        "control: the key reads"
+    );
+
+    medium.stick_after(consts::EF_PB_SIG, 1);
+    let faulted_read = run(&mut app, &mut fs, &read).1;
+    medium.stick(None);
+    assert_eq!(
+        faulted_read,
+        Sw::MEMORY_FAILURE,
+        "the read faulted, the probe passed"
+    );
+
+    medium.stick_once(consts::EF_PB_SIG);
+    let faulted_probe = run(&mut app, &mut fs, &read).1;
+    medium.stick(None);
+    assert_eq!(faulted_probe, Sw::MEMORY_FAILURE, "the size probe faulted");
+}
+
+#[test]
 fn generate_requires_pw3() {
     let rng = RefCell::new(LcgRng(1));
     let mut fs = make_fs();
     let presence = RefCell::new(crate::AlwaysConfirm);
     let mut app = OpenpgpApplet::new(SERIAL_ID, SERIAL_HASH, None, &rng, &presence);
-    // Generate without admin auth is refused; reading an absent key is not found.
+    // Generate without admin auth is refused; reading an absent key answers 6581,
+    // as a YubiKey 5.8.0 does.
     assert_eq!(
         keygen(&mut app, &mut fs, 0x80, 0xB6).1,
         Sw::SECURITY_STATUS_NOT_SATISFIED
     );
-    assert_eq!(
-        keygen(&mut app, &mut fs, 0x81, 0xB6).1,
-        Sw::REFERENCE_NOT_FOUND
-    );
+    assert_eq!(keygen(&mut app, &mut fs, 0x81, 0xB6).1, Sw::MEMORY_FAILURE);
 }
 
 #[test]
@@ -1499,7 +1980,7 @@ fn cardholder_cert_write_read_per_occurrence() {
 }
 
 #[test]
-fn cardholder_cert_write_needs_pw3_and_select_validates() {
+fn cardholder_cert_write_needs_pw3() {
     let rng = RefCell::new(LcgRng(12));
     let mut fs = make_fs();
     let presence = RefCell::new(crate::AlwaysConfirm);
@@ -1511,18 +1992,92 @@ fn cardholder_cert_write_needs_pw3_and_select_validates() {
         run(&mut app, &mut fs, &p).1,
         Sw::SECURITY_STATUS_NOT_SATISFIED
     );
+}
 
-    // SELECT DATA validation: unknown tag / out-of-range occurrence / bad P2.
-    let mut bad_tag = select_cert(0);
-    (bad_tag[9], bad_tag[10]) = (0x00, 0x65); // tag 0x0065 (cardholder data)
-    assert_eq!(run(&mut app, &mut fs, &bad_tag).1, Sw::REFERENCE_NOT_FOUND);
-    // An occurrence past the last one is a wrong P1 — a YubiKey answers `6B00` to
-    // 3 and 4 where 0-2 are `9000`; the unknown TAG above stays `6A88` because it
-    // is named in the data field, not in P1P2.
-    assert_eq!(run(&mut app, &mut fs, &select_cert(3)).1, Sw::WRONG_P1P2);
-    let mut bad_p2 = select_cert(0);
-    bad_p2[3] = 0x00;
-    assert_eq!(run(&mut app, &mut fs, &bad_p2).1, Sw::INCORRECT_P1P2);
+/// SELECT DATA as a YubiKey 5.8.0 answers it (measured 2026-09-25): P1 and P2
+/// first, `6B00` for an occurrence past the last or a P2 but 04, then `6A80` for
+/// any body but the one naming 7F21, byte for byte. A refusal moves nothing.
+#[test]
+fn select_data_answers_as_a_yubikey_does() {
+    let rng = RefCell::new(LcgRng(37));
+    let mut fs = make_fs();
+    let presence = RefCell::new(crate::AlwaysConfirm);
+    let mut app = OpenpgpApplet::new(SERIAL_ID, SERIAL_HASH, None, &rng, &presence);
+    let ok: &[u8] = &[0x60, 0x04, 0x5C, 0x02, 0x7F, 0x21];
+    for (p1, p2, body, want) in [
+        (0u8, 0x04u8, ok, Sw::OK),
+        (2, 0x04, ok, Sw::OK),
+        (3, 0x04, ok, Sw::WRONG_P1P2),
+        (0xFF, 0x04, ok, Sw::WRONG_P1P2),
+        (0, 0x00, ok, Sw::WRONG_P1P2),
+        (0, 0x05, ok, Sw::WRONG_P1P2),
+        (0, 0x00, &[], Sw::WRONG_P1P2),
+        (3, 0x04, &[], Sw::WRONG_P1P2),
+        (
+            3,
+            0x04,
+            &[0x60, 0x04, 0x5C, 0x02, 0x7F, 0x22],
+            Sw::WRONG_P1P2,
+        ),
+        (
+            0,
+            0x04,
+            &[0x60, 0x04, 0x5C, 0x02, 0x7F, 0x22],
+            Sw::WRONG_DATA,
+        ),
+        (0, 0x04, &[0x60, 0x03, 0x5C, 0x01, 0x5E], Sw::WRONG_DATA),
+        (0, 0x04, &[], Sw::WRONG_DATA),
+        (0, 0x04, &[0x60, 0x00], Sw::WRONG_DATA),
+        (0, 0x04, &[0x5C, 0x02, 0x7F, 0x21], Sw::WRONG_DATA),
+        (
+            0,
+            0x04,
+            &[0x60, 0x05, 0x5C, 0x03, 0x7F, 0x21, 0x00],
+            Sw::WRONG_DATA,
+        ),
+        (
+            0,
+            0x04,
+            &[0x60, 0x04, 0x5C, 0x02, 0x7F, 0x21, 0x00],
+            Sw::WRONG_DATA,
+        ),
+        (
+            0,
+            0x04,
+            &[0x61, 0x04, 0x5C, 0x02, 0x7F, 0x21],
+            Sw::WRONG_DATA,
+        ),
+        (
+            0,
+            0x04,
+            &[0x60, 0x81, 0x04, 0x5C, 0x02, 0x7F, 0x21],
+            Sw::WRONG_DATA,
+        ),
+        (
+            0,
+            0x04,
+            &[0x60, 0x05, 0x5C, 0x81, 0x02, 0x7F, 0x21],
+            Sw::WRONG_DATA,
+        ),
+    ] {
+        // Occurrence 1 selected before each cell: a refusal must leave it there.
+        assert_eq!(run(&mut app, &mut fs, &select_cert(1)).1, Sw::OK);
+        let mut apdu = vec![0x00, consts::INS_SELECT_DATA, p1, p2];
+        if !body.is_empty() {
+            apdu.push(body.len() as u8);
+            apdu.extend_from_slice(body);
+        }
+        assert_eq!(
+            run(&mut app, &mut fs, &apdu).1,
+            want,
+            "{p1:02X} {p2:02X} {body:02x?}"
+        );
+        let at = if want.is_ok() { p1 } else { 1 };
+        assert_eq!(
+            app.sess.cert_occ, at,
+            "{p1:02X} {p2:02X} {body:02x?} moved the pointer"
+        );
+    }
 }
 
 // SELECT DATA is the walk's other starting gun — measured on a YubiKey 5.7.4,
@@ -1599,6 +2154,185 @@ fn select_data_arms_the_walk_and_a_body_is_not_a_length_error() {
     assert_eq!(run(&mut app, &mut fs, &next), (certs[1].to_vec(), Sw::OK));
 }
 
+/// A YubiKey 5.8.0 ends a 7F21 walk at a GET DATA or PUT DATA of any other DO,
+/// whatever it answers, and at nothing else it was sent between the anchor and GET
+/// NEXT DATA; a PUT DATA of 7F21 re-arms a closed walk (measured 2026-09-25).
+#[test]
+fn another_dos_get_or_put_data_ends_the_walk_whatever_it_answers() {
+    let rng = RefCell::new(LcgRng(31));
+    let mut fs = make_fs();
+    let presence = RefCell::new(crate::AlwaysConfirm);
+    let mut app = OpenpgpApplet::new(SERIAL_ID, SERIAL_HASH, None, &rng, &presence);
+    verify_pin(&mut app, &mut fs, consts::PW3_MODE83, consts::PW3_DEFAULT);
+    let certs: [&[u8]; 2] = [&[0xC0; 8], &[0xC1; 9]];
+    for (occ, cert) in certs.iter().enumerate() {
+        assert_eq!(run(&mut app, &mut fs, &select_cert(occ as u8)).1, Sw::OK);
+        assert_eq!(put(&mut app, &mut fs, 0x7F, 0x21, cert), Sw::OK);
+    }
+    let get = [0x00, consts::INS_GET_DATA, 0x7F, 0x21, 0x00];
+    let next = [0x00, consts::INS_GET_NEXT_DATA, 0x7F, 0x21, 0x00];
+    let ended = (Vec::new(), Sw::WRONG_DATA);
+    let went_on = (certs[1].to_vec(), Sw::OK);
+    // Anchored at occurrence 0 (after the walk was closed by GET DATA 5E when
+    // `closed`), then `between`, then GET NEXT DATA.
+    let walk = |app: &mut OpenpgpApplet,
+                fs: &mut Fs<RamStorage>,
+                between: &[u8],
+                admin: bool,
+                closed: bool| {
+        app.deselect(fs);
+        if admin {
+            verify_pin(app, fs, consts::PW3_MODE83, consts::PW3_DEFAULT);
+        }
+        assert_eq!(run(app, fs, &select_cert(0)).1, Sw::OK);
+        assert_eq!(run(app, fs, &get), (certs[0].to_vec(), Sw::OK));
+        if closed {
+            assert_eq!(run(app, fs, &[0x00, 0xCA, 0x00, 0x5E, 0x00]).1, Sw::OK);
+        }
+        let answer = run(app, fs, between).1;
+        (answer, run(app, fs, &next))
+    };
+    let put_7f21 = [&[0x00, 0xDA, 0x7F, 0x21, 0x08][..], certs[0]].concat();
+    // (sent between, PW3 first, walk closed first, its own answer if pinned, then).
+    type Cell<'a> = (&'a [u8], bool, bool, Option<Sw>, &'a (Vec<u8>, Sw));
+    let cells: [Cell; 17] = [
+        (
+            &[0x00, 0xCA, 0x00, 0xC5, 0x00],
+            false,
+            false,
+            Some(Sw::WRONG_P1P2),
+            &ended,
+        ),
+        (
+            &[0x00, 0xCA, 0x42, 0x42, 0x00],
+            false,
+            false,
+            Some(Sw::WRONG_P1P2),
+            &ended,
+        ),
+        (
+            &[0x00, 0xCA, 0x00, 0x4F, 0x00],
+            false,
+            false,
+            Some(Sw::OK),
+            &ended,
+        ),
+        (
+            &[0x00, 0xDA, 0x00, 0x5E, 0x00],
+            false,
+            false,
+            Some(Sw::SECURITY_STATUS_NOT_SATISFIED),
+            &ended,
+        ),
+        (
+            &[0x00, 0xDA, 0x00, 0x5E, 0x03, 0x61, 0x62, 0x63],
+            true,
+            false,
+            Some(Sw::OK),
+            &ended,
+        ),
+        (&get, false, false, Some(Sw::OK), &went_on),
+        (&put_7f21, true, false, Some(Sw::OK), &went_on),
+        (
+            &[0x00, 0x20, 0x00, 0x81, 0x00],
+            false,
+            false,
+            Some(Sw::new(0x63, 0xC3)),
+            &went_on,
+        ),
+        (
+            &[0x00, 0x84, 0x00, 0x00, 0x08],
+            false,
+            false,
+            Some(Sw::OK),
+            &went_on,
+        ),
+        (
+            &[0x00, 0xC0, 0x00, 0x00, 0x00],
+            false,
+            false,
+            Some(Sw::INS_NOT_SUPPORTED),
+            &went_on,
+        ),
+        (
+            &[0x00, 0xF1, 0x00, 0x00, 0x00],
+            false,
+            false,
+            Some(Sw::OK),
+            &went_on,
+        ),
+        (
+            &[0x00, 0xFF, 0xFF, 0x00, 0x00],
+            false,
+            false,
+            Some(Sw::INS_NOT_SUPPORTED),
+            &went_on,
+        ),
+        (&select_cert(0), false, false, Some(Sw::OK), &went_on),
+        // A refused SELECT DATA moves nothing; its own refusal word is not this test's.
+        (
+            &[
+                0x00, 0xA5, 0x00, 0x04, 0x06, 0x60, 0x04, 0x5C, 0x02, 0x7F, 0x22,
+            ],
+            false,
+            false,
+            None,
+            &went_on,
+        ),
+        (
+            &[0x00, 0xDB, 0x3F, 0xFF, 0x00],
+            false,
+            false,
+            Some(Sw::SECURITY_STATUS_NOT_SATISFIED),
+            &went_on,
+        ),
+        // From a closed walk: a PUT DATA of 7F21 re-arms it, a refused SELECT DATA does not.
+        (&put_7f21, true, true, Some(Sw::OK), &went_on),
+        (
+            &[
+                0x00, 0xA5, 0x00, 0x04, 0x06, 0x60, 0x04, 0x5C, 0x02, 0x7F, 0x22,
+            ],
+            false,
+            true,
+            None,
+            &ended,
+        ),
+    ];
+    for (between, admin, closed, answer, then) in cells {
+        let (got, walked) = walk(&mut app, &mut fs, between, admin, closed);
+        if let Some(answer) = answer {
+            assert_eq!(got, answer, "{between:02x?} itself");
+        }
+        assert_eq!(
+            &walked, then,
+            "GET NEXT DATA after {between:02x?}, closed first: {closed}"
+        );
+    }
+    // GET DATA 7F21 anchors on its own, with no SELECT DATA before it.
+    app.deselect(&mut fs);
+    assert_eq!(
+        run(&mut app, &mut fs, &[0x00, 0xCA, 0x00, 0x4F, 0x00]).1,
+        Sw::OK
+    );
+    assert_eq!(run(&mut app, &mut fs, &get), (certs[0].to_vec(), Sw::OK));
+    assert_eq!(run(&mut app, &mut fs, &next), went_on);
+}
+
+/// A reset card's 65 reads byte for byte as a reset YubiKey 5.8.0's (measured
+/// 2026-09-25): name and language empty, sex `9`, the length in its one-byte form.
+#[test]
+fn a_reset_cards_cardholder_data_reads_as_a_yubikeys() {
+    let rng = RefCell::new(LcgRng(41));
+    let mut fs = make_fs();
+    let presence = RefCell::new(crate::AlwaysConfirm);
+    let mut app = OpenpgpApplet::new(SERIAL_ID, SERIAL_HASH, None, &rng, &presence);
+    let get = [0x00, consts::INS_GET_DATA, 0x00, 0x65, 0x00];
+    let yubikey = [
+        0x65, 0x09, 0x5B, 0x00, 0x5F, 0x2D, 0x00, 0x5F, 0x35, 0x01, 0x39,
+    ];
+    assert_eq!(run(&mut app, &mut fs, &get), (yubikey.to_vec(), Sw::OK));
+}
+
 // OpenPGP 3.4 §4.4.3.8 gives DO 0xDE three status values per slot: 00 absent,
 // 01 generated on card, 02 imported. Ours collapsed them to a boolean, so an
 // imported key claimed on-card generation — the one direction that misleads a
@@ -1615,7 +2349,9 @@ fn key_info_reports_generated_and_imported_apart() {
     fn key_info(app: &mut OpenpgpApplet, fs: &mut Fs<RamStorage>) -> Vec<u8> {
         let (b, sw) = run(app, fs, &[0x00, consts::INS_GET_DATA, 0x00, 0xDE]);
         assert_eq!(sw, Sw::OK);
-        b
+        // The attestation key's pair closes it: generated, from the first boot on.
+        assert_eq!(b[6..], [0x81, 0x01]);
+        b[..6].to_vec()
     }
     fn generate(app: &mut OpenpgpApplet, fs: &mut Fs<RamStorage>, crt: u8) {
         let a = [0x00, consts::INS_KEYPAIR_GEN, 0x80, 0x00, 0x02, crt, 0x00];
@@ -1669,7 +2405,8 @@ fn key_info_reports_generated_and_imported_apart() {
     fs.delete(consts::EF_KEY_ORIGIN).unwrap();
     assert_eq!(key_info(&mut app, &mut fs), [1, 2, 2, 2, 3, 2]);
 
-    // TERMINATE DF takes the record with everything else.
+    // TERMINATE DF takes the record with everything else, and ACTIVATE FILE opens
+    // the applet again.
     assert_eq!(
         run(
             &mut app,
@@ -1680,6 +2417,8 @@ fn key_info_reports_generated_and_imported_apart() {
         Sw::OK
     );
     assert!(!fs.has_data(consts::EF_KEY_ORIGIN));
+    let activate = [0x00, consts::INS_ACTIVATE_FILE, 0x00, 0x00];
+    assert_eq!(run(&mut app, &mut fs, &activate).1, Sw::OK);
     assert_eq!(key_info(&mut app, &mut fs), [1, 0, 2, 0, 3, 0]);
 }
 
@@ -1714,12 +2453,7 @@ fn put_data_caps_the_cardholder_dos() {
                 Sw::WRONG_DATA,
                 "PUT {p1:02X}{p2:02X} len {n}"
             );
-            let (body, sw) = run(
-                &mut app,
-                &mut fs,
-                &[0x00, consts::INS_GET_DATA, p1, p2, 0x00],
-            );
-            assert_eq!(sw, Sw::OK);
+            let body = nested(&mut app, &mut fs, u16::from_be_bytes([p1, p2]));
             assert_eq!(body, good, "PUT {p1:02X}{p2:02X} len {n} altered the DO");
         }
         // Clearing the DO is still allowed — this is a cap, not a fixed width.
@@ -1763,9 +2497,15 @@ fn put_data_polices_the_fixed_length_dos() {
                     Sw::WRONG_DATA,
                     "PUT {tag:#04X} len {n}"
                 );
-                // …and the refusal changed nothing.
-                let (body, sw) = run(&mut app, &mut fs, &[0x00, consts::INS_GET_DATA, 0x00, tag]);
-                assert_eq!(sw, Sw::OK);
+                // …and the refusal changed nothing: its slice of C5/C6/CD, the
+                // only place it reads.
+                let (all, i) = match tag {
+                    0xC7..=0xC9 => (consts::EF_FP, tag - 0xC7),
+                    0xCA..=0xCC => (consts::EF_CA_FP, tag - 0xCA),
+                    _ => (consts::EF_TS_ALL, tag - 0xCE),
+                };
+                let at = i as usize * want;
+                let body = nested(&mut app, &mut fs, all)[at..at + want].to_vec();
                 assert_eq!(body, good, "PUT {tag:#04X} len {n} altered the DO");
             }
         }
@@ -1782,13 +2522,15 @@ fn put_data_polices_the_fixed_length_dos() {
         }
     }
 
-    // What was written lands in the right slice of each aggregate.
-    let (c5, _) = run(&mut app, &mut fs, &[0x00, consts::INS_GET_DATA, 0x00, 0xC5]);
-    assert_eq!(c5, vec![0xB0u8; consts::KEY_SLOTS * consts::FP_LEN]);
-    let (c6, _) = run(&mut app, &mut fs, &[0x00, consts::INS_GET_DATA, 0x00, 0xC6]);
-    assert_eq!(c6, vec![0xB0u8; consts::KEY_SLOTS * consts::FP_LEN]);
-    let (cd, _) = run(&mut app, &mut fs, &[0x00, consts::INS_GET_DATA, 0x00, 0xCD]);
-    assert_eq!(cd, vec![0xB0u8; consts::KEY_SLOTS * consts::TS_LEN]);
+    // What was written lands in the right slice of each aggregate, and the
+    // attestation key's slice, not written here, reads as zeroes.
+    let slices = |n| [vec![0xB0u8; consts::KEY_SLOTS * n], vec![0; n]].concat();
+    let c5 = nested(&mut app, &mut fs, consts::EF_FP);
+    assert_eq!(c5, slices(consts::FP_LEN));
+    let c6 = nested(&mut app, &mut fs, consts::EF_CA_FP);
+    assert_eq!(c6, slices(consts::FP_LEN));
+    let cd = nested(&mut app, &mut fs, consts::EF_TS_ALL);
+    assert_eq!(cd, slices(consts::TS_LEN));
 }
 
 // OpenPGP 3.4 §7.2.7 gives GET NEXT DATA exactly one job — walk the three 7F21
@@ -1981,7 +2723,7 @@ fn rsa_keepalive_generate_path_produces_signable_key() {
 fn rsa_generate_params_accepts_rsa4096() {
     // There is no 2048-only gate: a 4096-bit algorithm attribute flows straight
     // through `rsa_generate_params` to `RsaKeygen::new(4096)` (which is
-    // size-generic, asm modexp MAX_MOD = 256 B = an RSA-4096 prime). The full
+    // size-generic, modexp MAX_MOD = 256 B = an RSA-4096 prime). The full
     // keygen+sign is the `#[ignore]`d test below (on-device keygen runs for
     // minutes, so it is not a default test).
     let rng = RefCell::new(LcgRng(0xCAFE_F00D));
@@ -2758,7 +3500,8 @@ fn put_data_judges_the_tag_before_the_body_length() {
         std::vec![
             0x0101, 0x0102, 0x0103, 0x0104, 0x005B, 0x005E, 0x0093, 0x00C1, 0x00C2, 0x00C3, 0x00C4,
             0x00C7, 0x00C8, 0x00C9, 0x00CA, 0x00CB, 0x00CC, 0x00CE, 0x00CF, 0x00D0, 0x00D3, 0x00D5,
-            0x00D6, 0x00D7, 0x00D8, 0x00F9, 0x5F2D, 0x5F35, 0x5F50, 0x7F21,
+            0x00D6, 0x00D7, 0x00D8, 0x00D9, 0x00DB, 0x00DC, 0x00DD, 0x00F9, 0x5F2D, 0x5F35, 0x5F50,
+            0x7F21,
         ]
         .into_iter()
         .collect::<std::collections::BTreeSet<_>>()
@@ -2774,9 +3517,9 @@ fn put_data_judges_the_tag_before_the_body_length() {
 #[test]
 fn the_one_shot_pw_status_spends_pw1_at_the_signature() {
     // OpenPGP 3.4 §7.2.10: with DO C4's first byte at 0x00, "PW1 valid for one
-    // PSO:CDS" — the second signature must ask again. `inc_sig_count` is where
-    // that is enforced, *after* the signature, and the flag's only writer is a
-    // PW3 PUT DATA C4 (which is why the two live or die together).
+    // PSO:CDS" — the second signature must ask again. `spend_one_shot_pw1` enforces
+    // it after every PSO:CDS attempt, and the flag's only writer is a PW3 PUT DATA
+    // C4 (which is why the two live or die together).
     let rng = RefCell::new(CountRng(7));
     let mut fs = make_fs();
     let presence = RefCell::new(crate::AlwaysConfirm);
@@ -2910,15 +3653,15 @@ fn a_faulted_uif_probe_does_not_lower_a_permanent_touch_requirement() {
 }
 
 /// OpenPGP 3.4 §7.2.10: DO `C4`'s first byte at `0x00` is "PW1 valid for ONE
-/// PSO:CDS", and `inc_sig_count` is the only place that spends it. It read the flag
+/// PSO:CDS", and `spend_one_shot_pw1` is the only place that spends it. It read the flag
 /// with `Fs::read`, which answers the same `None` for "no PW status stored" and for
 /// one the flash could not serve — and that arm LEAVES PW1 STANDING. So one faulted
 /// probe turned a one-shot PIN entry into an unlimited signing session for whoever
 /// is on the wire after the owner's one legitimate signature.
 ///
-/// Aimed at `EF_PW_PRIV` alone: the statement immediately below reads `EF_SIG_COUNT`
-/// and already refuses, so a whole-backend fault would be caught by the neighbour
-/// and prove nothing about this line.
+/// Aimed at `EF_PW_PRIV` alone: a whole-backend fault would also fail the counter's
+/// read, which runs first, and refuse the signature itself — proving nothing about
+/// this probe.
 #[test]
 fn a_faulted_pw_status_probe_does_not_extend_a_one_shot_pin() {
     let rng = RefCell::new(CountRng(7));
@@ -3119,3 +3862,223 @@ fn a_faulted_algo_probe_does_not_generate_the_default_algorithm() {
         "a GENERATE that could not read the algorithm it must honour has to refuse"
     );
 }
+
+/// RSA IMPORT refusals as a YubiKey 5.8.0 answers them, read twice: a prime not
+/// exactly half the modulus width is `6A80`; a well-formed pair that is not a key
+/// is `6581`. Neither moves the slot: its key, public key DO and origin stand.
+#[test]
+fn a_refused_rsa_import_keeps_the_slot_and_its_origin() {
+    use crate::origin::{ORIGIN_GENERATED, ORIGIN_IMPORTED, mark, of};
+    let rng = RefCell::new(CountRng(7));
+    let mut fs = make_fs();
+    let presence = RefCell::new(crate::AlwaysConfirm);
+    let mut app = OpenpgpApplet::new(SERIAL_ID, SERIAL_HASH, None, &rng, &presence);
+    verify_pin(&mut app, &mut fs, consts::PW3_MODE83, consts::PW3_DEFAULT);
+    let e = [0x01, 0x00, 0x01];
+    let (p, q) = (hx(RSA_P), hx(RSA_Q));
+    let (_, sw) = run(&mut app, &mut fs, &rsa_import(0xB6, &e, &p, &q));
+    assert_eq!(sw, Sw::OK);
+    // What a key generated on card would read as.
+    mark(&mut fs, consts::EF_PK_SIG, ORIGIN_GENERATED).unwrap();
+    let slot = |fs: &mut Fs<RamStorage>| {
+        let mut key = [0u8; 2048];
+        let kn = fs.read(consts::EF_PK_SIG.get(), &mut key).unwrap_or(0);
+        let mut public = [0u8; 600];
+        let pn = fs.read(consts::EF_PB_SIG, &mut public).unwrap_or(0);
+        (
+            key[..kn].to_vec(),
+            public[..pn].to_vec(),
+            of(fs, consts::EF_PK_SIG),
+        )
+    };
+    let before = slot(&mut fs);
+    let leading_zero = [&[0][..], &p].concat();
+    let composite = hx(rsk_rsa::vectors::N1024_HEX);
+    let junk = |k: u8| [vec![0xFF; 127], vec![0u8.wrapping_sub(k)]].concat();
+    // Assembles and passes the size check, so the old import marked the origin
+    // and only then found it could not lay the pair out.
+    let wide = [vec![0xFF; 254], vec![0xFD]].concat();
+    let pad = |h: &str| [vec![0; 64], hx(h)].concat();
+    use rsk_rsa::vectors::{P1024_HEX, Q1024_HEX};
+    let rows: [(&str, &[u8], &[u8], Sw); 9] = [
+        ("p = 3 beside a 255-byte q", &[3], &wide, Sw::WRONG_DATA),
+        (
+            "primes of 125 and 131 bytes",
+            &p[..125],
+            &[&q[..], &[0x55; 3]].concat(),
+            Sw::WRONG_DATA,
+        ),
+        ("a leading zero byte", &leading_zero, &q, Sw::WRONG_DATA),
+        (
+            "a leading zero byte on q",
+            &p,
+            &[&[0][..], &q].concat(),
+            Sw::WRONG_DATA,
+        ),
+        (
+            "RSA-1024 primes in a 2048 slot",
+            &hx(rsk_rsa::vectors::P1024_HEX),
+            &hx(rsk_rsa::vectors::Q1024_HEX),
+            Sw::WRONG_DATA,
+        ),
+        // Widths right, the modulus short: a YubiKey's `6581`, and it loses the key.
+        (
+            "RSA-1024 primes zero-padded to 128 bytes",
+            &pad(P1024_HEX),
+            &pad(Q1024_HEX),
+            Sw::MEMORY_FAILURE,
+        ),
+        ("p = q", &p, &p, Sw::MEMORY_FAILURE),
+        ("a composite p", &composite, &p, Sw::MEMORY_FAILURE),
+        ("a shared factor 3", &junk(1), &junk(7), Sw::MEMORY_FAILURE),
+    ];
+    for (name, rp, rq, want) in rows {
+        let (_, sw) = run(&mut app, &mut fs, &rsa_import(0xB6, &e, rp, rq));
+        // The slot first, then the status word: the moved origin is the finding.
+        assert!(
+            slot(&mut fs) == before,
+            "{name}: the refusal moved the slot"
+        );
+        assert_eq!(sw, want, "{name}");
+    }
+    // Control: a key it takes is recorded as imported.
+    let (_, sw) = run(&mut app, &mut fs, &rsa_import(0xB6, &e, &p, &q));
+    assert_eq!(sw, Sw::OK);
+    assert_eq!(of(&mut fs, consts::EF_PK_SIG), ORIGIN_IMPORTED);
+}
+
+// The read-fault sweep lives in its own file; it needs this module's fixtures.
+#[path = "reads_tests.rs"]
+mod reads;
+
+#[path = "command_boundaries_tests.rs"]
+mod command_boundaries;
+
+#[path = "restart_commands_tests.rs"]
+mod restarts;
+
+#[path = "stored_damage_tests.rs"]
+mod stored_damage;
+
+#[test]
+fn absent_uif_needs_no_prompt_and_decryption_names_its_declined_prompt() {
+    struct Recording(Vec<&'static str>);
+    impl UserPresence for Recording {
+        fn request(&mut self, confirm: Confirm<'_>) -> Presence {
+            self.0.push(confirm.title);
+            Presence::Cancelled
+        }
+    }
+    let mut fs = Fs::new(RamStorage::new());
+    let mut presence = Recording(Vec::new());
+    assert_eq!(
+        check_uif(&mut fs, consts::EF_UIF_DEC, &mut presence),
+        Ok(())
+    );
+    assert!(presence.0.is_empty());
+    fs.put(consts::EF_UIF_DEC, &[1, 0x20]).unwrap();
+    let generation = fs.write_gen();
+    assert_eq!(
+        check_uif(&mut fs, consts::EF_UIF_DEC, &mut presence),
+        Err(Sw::SECURE_MESSAGE_EXEC_ERROR)
+    );
+    assert_eq!(presence.0, ["Decrypt data?"]);
+    assert_eq!(fs.write_gen(), generation);
+}
+
+#[test]
+fn an_unsupported_direct_pso_parameter_pair_changes_neither_output_nor_storage() {
+    let mut fs = Fs::new(RamStorage::new());
+    let mut session = Session::new();
+    let apdu = Apdu::parse(&[0, consts::INS_PSO, 0, 0]).unwrap();
+    let mut output = [0xA5; 64];
+    let generation = fs.write_gen();
+    assert_eq!(
+        pso::pso(
+            &dev(),
+            &mut fs,
+            &mut session,
+            &mut CountRng(7),
+            &mut AlwaysConfirm,
+            &apdu,
+            &mut output
+        ),
+        (0, Sw::INCORRECT_P1P2)
+    );
+    assert_eq!(output, [0xA5; 64]);
+    assert_eq!(fs.write_gen(), generation);
+}
+
+#[test]
+fn an_ec_import_without_its_scalar_does_not_replace_the_existing_key() {
+    let rng = RefCell::new(CountRng(7));
+    let presence = RefCell::new(AlwaysConfirm);
+    let mut app = OpenpgpApplet::new(SERIAL_ID, SERIAL_HASH, None, &rng, &presence);
+    let mut fs = make_fs();
+    verify_pin(&mut app, &mut fs, consts::PW3_MODE83, consts::PW3_DEFAULT);
+    assert_eq!(put(&mut app, &mut fs, 0, 0xC1, ATTR_P256), Sw::OK);
+    assert_eq!(
+        run(&mut app, &mut fs, &ec_import(0xB6, &[0x11; 32])).1,
+        Sw::OK
+    );
+    let mut before = [0; 256];
+    let n = fs.read(consts::EF_PK_SIG.get(), &mut before).unwrap();
+    let generation = fs.write_gen();
+    let mut body = vec![
+        0x4D, 0x2A, 0xB6, 0, 0x7F, 0x48, 2, 0x93, 0x20, 0x5F, 0x48, 0x20,
+    ];
+    body.extend_from_slice(&[0x22; 32]);
+    let mut apdu = vec![0, 0xDB, 0x3F, 0xFF, u8::try_from(body.len()).unwrap()];
+    apdu.extend_from_slice(&body);
+    assert_eq!(run(&mut app, &mut fs, &apdu), (vec![], Sw::WRONG_DATA));
+    assert_eq!(fs.write_gen(), generation);
+    let mut after = [0; 256];
+    assert_eq!(fs.read(consts::EF_PK_SIG.get(), &mut after), Some(n));
+    assert_eq!(&after[..n], &before[..n]);
+}
+
+#[test]
+fn a_short_challenge_response_window_spends_no_entropy_or_storage() {
+    let rng = RefCell::new(CountRng(7));
+    let presence = RefCell::new(AlwaysConfirm);
+    let mut app = OpenpgpApplet::new(SERIAL_ID, SERIAL_HASH, None, &rng, &presence);
+    let mut fs = make_fs();
+    let apdu = Apdu::parse(&[0, consts::INS_CHALLENGE, 0, 0, 16]).unwrap();
+    let generation = fs.write_gen();
+    let mut output = [0xA5; 8];
+    assert_eq!(
+        app.process(&apdu, &mut fs, &mut ResBuf::new(&mut output)),
+        Sw::WRONG_LENGTH
+    );
+    assert_eq!(rng.borrow().0, 7);
+    assert_eq!(output, [0xA5; 8]);
+    assert_eq!(fs.write_gen(), generation);
+}
+
+#[test]
+fn direct_uif_checks_use_the_generic_caption_for_an_unknown_file() {
+    struct Caption(usize);
+    impl UserPresence for Caption {
+        fn request(&mut self, confirm: Confirm<'_>) -> Presence {
+            assert_eq!(confirm.title, "Confirm?");
+            self.0 += 1;
+            Presence::Cancelled
+        }
+    }
+    let mut fs = Fs::new(RamStorage::new());
+    fs.put(0x4242, &[1, 0]).unwrap();
+    let generation = fs.write_gen();
+    let mut presence = Caption(0);
+    assert_eq!(
+        check_uif(&mut fs, 0x4242, &mut presence),
+        Err(Sw::SECURE_MESSAGE_EXEC_ERROR)
+    );
+    assert_eq!(presence.0, 1);
+    assert_eq!(fs.write_gen(), generation);
+    let mut retained = [0; 2];
+    assert_eq!(fs.read(0x4242, &mut retained), Some(2));
+    assert_eq!(retained, [1, 0]);
+}
+
+#[path = "mutation_tests.rs"]
+mod mutation;

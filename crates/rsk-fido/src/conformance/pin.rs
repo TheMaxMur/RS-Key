@@ -4,19 +4,21 @@
 //! CTAP 2.1 §6.5 clientPIN crypto-flow conformance, driven through the wire
 //! envelope (`process_cbor`): key agreement (ECDH), setPIN, getPinToken (correct
 //! PIN → a decryptable token; wrong PIN → PIN_INVALID + a retry decrement) and
-//! changePIN. The platform side runs the real pinUvAuthProtocol-2 primitives, so
-//! the exchange is verified end to end.
+//! changePIN. The platform side runs the real pinUvAuthProtocol primitives (protocol
+//! 2 throughout, protocol 1 where a case needs it), so the exchange is verified end to end.
 
 use super::{Authr, assert_ok, assert_ok_empty, field_at};
-use crate::consts::{CTAP_CLIENT_PIN, MAX_PIN_RETRIES};
+use crate::consts::{
+    CP_GET_PIN_TOKEN, CP_GET_PIN_UV_TOKEN_USING_PIN, CTAP_CLIENT_PIN, MAX_PIN_RETRIES,
+    PUBLIC_KEY_TYPE,
+};
 use crate::cose::cose_key_ecdh;
 use crate::error::{CTAP2_OK, CtapError};
+use crate::test_pins::{NEW_PIN, PIN, WRONG_PIN};
 use minicbor::Encoder;
 use minicbor::encode::write::Cursor;
 use rsk_crypto::pinproto::{self, PinProto, public_xy};
 use rsk_crypto::sha256;
-
-use crate::test_pins::{NEW_PIN, PIN, WRONG_PIN};
 
 /// A short two-key clientPIN request `{1: proto=2, 2: subCommand}`.
 fn cp_short(sub: u64) -> Vec<u8> {
@@ -542,5 +544,466 @@ fn clientpin_change_pin() {
     assert_eq!(
         a.send(CTAP_CLIENT_PIN, &pc.get_token(PIN)).status,
         CtapError::PinInvalid.as_u8()
+    );
+}
+
+/// The `pinUvAuthProtocol` value that names `proto` on the wire.
+fn wire(proto: PinProto) -> u64 {
+    match proto {
+        PinProto::One => 1,
+        PinProto::Two => 2,
+    }
+}
+
+/// `{1: pinUvAuthProtocol, 2: subCommand}` under `proto` — [`cp_short`] for either
+/// protocol.
+fn cp_over(proto: PinProto, sub: u64) -> Vec<u8> {
+    let mut buf = [0u8; 16];
+    let n = {
+        let mut e = Encoder::new(Cursor::new(&mut buf[..]));
+        e.map(2).unwrap();
+        e.u8(1).unwrap().u64(wire(proto)).unwrap();
+        e.u8(2).unwrap().u64(sub).unwrap();
+        e.writer().position()
+    };
+    buf[..n].to_vec()
+}
+
+/// `authenticate(key, msg)` in `proto`'s dialect: protocol one keeps the first 16
+/// bytes of the HMAC, protocol two all 32 (CTAP 2.3 §6.5.6, §6.5.7).
+fn auth_param(proto: PinProto, key: &[u8], msg: &[u8]) -> Vec<u8> {
+    let mut out = [0u8; 32];
+    let n = pinproto::authenticate(proto, key, msg, &mut out).unwrap();
+    out[..n].to_vec()
+}
+
+/// The platform half of either PIN/UV auth protocol. [`PinClient`] speaks only
+/// protocol two; protocol one encrypts under a zero IV with no prefix and takes
+/// SHA-256(Z) as its shared secret (CTAP 2.3 §6.5.6).
+struct ProtoClient {
+    proto: PinProto,
+    x: [u8; 32],
+    y: [u8; 32],
+    shared: Vec<u8>,
+}
+
+impl ProtoClient {
+    /// getKeyAgreement over `proto`, then this side of the ECDH.
+    fn establish(a: &mut Authr, proto: PinProto) -> Self {
+        let r = a.send(CTAP_CLIENT_PIN, &cp_over(proto, 2));
+        assert_ok(&r);
+        let (ax, ay) = authenticator_public(&r.body);
+        let mut s = [0u8; 32];
+        s[0] = 0x13;
+        s[31] = 0x42;
+        let (x, y) = public_xy(&s).unwrap();
+        let mut shared = [0u8; 64];
+        let slen = pinproto::ecdh(proto, &s, &ax, &ay, &mut shared).unwrap();
+        ProtoClient {
+            proto,
+            x,
+            y,
+            shared: shared[..slen].to_vec(),
+        }
+    }
+
+    fn enc(&self, pt: &[u8]) -> Vec<u8> {
+        let mut out = [0u8; 96];
+        let n = pinproto::encrypt(self.proto, &self.shared, &[0x55; 16], pt, &mut out).unwrap();
+        out[..n].to_vec()
+    }
+
+    /// `{1: proto, 2: sub, 3: keyAgreement}` and `more` keys after them, which `rest`
+    /// writes in ascending order.
+    fn keyed(
+        &self,
+        sub: u64,
+        more: u64,
+        rest: impl FnOnce(&mut Encoder<Cursor<&mut [u8]>>),
+    ) -> Vec<u8> {
+        let mut buf = [0u8; 256];
+        let n = {
+            let mut e = Encoder::new(Cursor::new(&mut buf[..]));
+            e.map(3 + more).unwrap();
+            e.u8(1).unwrap().u64(wire(self.proto)).unwrap();
+            e.u8(2).unwrap().u64(sub).unwrap();
+            e.u8(3).unwrap();
+            cose_key_ecdh(&mut e, &self.x, &self.y).unwrap();
+            rest(&mut e);
+            e.writer().position()
+        };
+        buf[..n].to_vec()
+    }
+
+    /// setPIN (0x03): `{4: pinUvAuthParam, 5: newPinEnc}`.
+    fn set_pin(&self, pin: &[u8]) -> Vec<u8> {
+        let mut padded = [0u8; 64];
+        padded[..pin.len()].copy_from_slice(pin);
+        let npe = self.enc(&padded);
+        let puap = auth_param(self.proto, &self.shared, &npe);
+        self.keyed(3, 2, |e| {
+            e.u8(4).unwrap().bytes(&puap).unwrap();
+            e.u8(5).unwrap().bytes(&npe).unwrap();
+        })
+    }
+
+    /// changePIN (0x04): `{4: pinUvAuthParam, 5: newPinEnc, 6: pinHashEnc}`.
+    fn change_pin(&self, old: &[u8], new: &[u8]) -> Vec<u8> {
+        let mut padded = [0u8; 64];
+        padded[..new.len()].copy_from_slice(new);
+        let npe = self.enc(&padded);
+        let phe = self.enc(&sha256(old)[..16]);
+        let puap = auth_param(self.proto, &self.shared, &[&npe[..], &phe[..]].concat());
+        self.keyed(4, 3, |e| {
+            e.u8(4).unwrap().bytes(&puap).unwrap();
+            e.u8(5).unwrap().bytes(&npe).unwrap();
+            e.u8(6).unwrap().bytes(&phe).unwrap();
+        })
+    }
+
+    /// Legacy getPinToken (0x05): `{6: pinHashEnc}`.
+    fn get_token(&self, pin: &[u8]) -> Vec<u8> {
+        let phe = self.enc(&sha256(pin)[..16]);
+        self.keyed(CP_GET_PIN_TOKEN, 1, |e| {
+            e.u8(6).unwrap().bytes(&phe).unwrap();
+        })
+    }
+
+    /// getPinUvAuthTokenUsingPinWithPermissions (0x09) with no rpId, as §6.8.2 has a
+    /// platform ask for `pcmr`: `{6: pinHashEnc, 9: permissions}`.
+    fn get_token_perms(&self, pin: &[u8], permissions: u8) -> Vec<u8> {
+        let phe = self.enc(&sha256(pin)[..16]);
+        self.keyed(CP_GET_PIN_UV_TOKEN_USING_PIN, 2, |e| {
+            e.u8(6).unwrap().bytes(&phe).unwrap();
+            e.u8(9).unwrap().u8(permissions).unwrap();
+        })
+    }
+
+    /// The pinUvAuthToken out of a token response `{2: enc}`.
+    fn decrypt_token(&self, body: &[u8]) -> [u8; 32] {
+        let mut d = field_at(body, 2).expect("pinUvAuthToken (0x02) present");
+        let mut tok = [0u8; 32];
+        let n = pinproto::decrypt(self.proto, &self.shared, d.bytes().unwrap(), &mut tok).unwrap();
+        assert_eq!(n, 32, "a pinUvAuthToken is 32 bytes");
+        tok
+    }
+
+    /// A PIN token over this protocol: legacy getPinToken (0x05) with the right PIN.
+    fn pin_token(&self, a: &mut Authr, pin: &[u8]) -> [u8; 32] {
+        let r = a.send(CTAP_CLIENT_PIN, &self.get_token(pin));
+        assert_ok(&r);
+        self.decrypt_token(&r.body)
+    }
+}
+
+/// A non-discoverable makeCredential over `rp` carrying `puap` under `proto`
+/// (keys 1–4, 8, 9).
+fn mc_authorized(rp: &str, cdh: &[u8; 32], proto: PinProto, puap: &[u8]) -> Vec<u8> {
+    use crate::consts::ALG_ES256;
+    let mut buf = [0u8; 256];
+    let n = {
+        let mut e = Encoder::new(Cursor::new(&mut buf[..]));
+        e.map(6).unwrap();
+        e.u8(1).unwrap().bytes(cdh).unwrap();
+        e.u8(2)
+            .unwrap()
+            .map(1)
+            .unwrap()
+            .str("id")
+            .unwrap()
+            .str(rp)
+            .unwrap();
+        e.u8(3).unwrap().map(2).unwrap();
+        e.str("id").unwrap().bytes(&[7, 7, 7, 7]).unwrap();
+        e.str("name").unwrap().str("carol").unwrap();
+        e.u8(4).unwrap().array(1).unwrap().map(2).unwrap();
+        e.str("alg").unwrap().i64(ALG_ES256).unwrap();
+        e.str("type").unwrap().str(PUBLIC_KEY_TYPE).unwrap();
+        e.u8(8).unwrap().bytes(puap).unwrap();
+        e.u8(9).unwrap().u64(wire(proto)).unwrap();
+        e.writer().position()
+    };
+    buf[..n].to_vec()
+}
+
+/// A getAssertion over `rp` for `cred_id`, carrying `puap` under `proto`
+/// (keys 1–3, 6, 7).
+fn ga_authorized(
+    rp: &str,
+    cdh: &[u8; 32],
+    cred_id: &[u8],
+    proto: PinProto,
+    puap: &[u8],
+) -> Vec<u8> {
+    let mut buf = [0u8; 512];
+    let n = {
+        let mut e = Encoder::new(Cursor::new(&mut buf[..]));
+        e.map(5).unwrap();
+        e.u8(1).unwrap().str(rp).unwrap();
+        e.u8(2).unwrap().bytes(cdh).unwrap();
+        e.u8(3).unwrap().array(1).unwrap().map(2).unwrap();
+        e.str("id").unwrap().bytes(cred_id).unwrap();
+        e.str("type").unwrap().str(PUBLIC_KEY_TYPE).unwrap();
+        e.u8(6).unwrap().bytes(puap).unwrap();
+        e.u8(7).unwrap().u64(wire(proto)).unwrap();
+        e.writer().position()
+    };
+    buf[..n].to_vec()
+}
+
+/// authData (0x02) of a makeCredential or getAssertion response.
+fn auth_data(body: &[u8]) -> &[u8] {
+    field_at(body, 2)
+        .expect("authData (0x02) present")
+        .bytes()
+        .unwrap()
+}
+
+/// The credentialId inside a makeCredential authData, after its 2-byte length at 53.
+fn credential_id(ad: &[u8]) -> &[u8] {
+    let len = usize::from(u16::from_be_bytes([ad[53], ad[54]]));
+    &ad[55..55 + len]
+}
+
+/// setMinPINLength raising only forceChangePin, `{3: true}` (CTAP 2.3 §6.11.4); the
+/// pinUvAuthParam covers `0xff×32 ‖ 0x0d ‖ 0x03 ‖ subCommandParams` under `proto`.
+fn force_change_request(proto: PinProto, token: &[u8; 32]) -> Vec<u8> {
+    use crate::consts::{CONFIG_SET_MIN_PIN, CTAP_CONFIG};
+    let mut sub = [0u8; 8];
+    let sn = {
+        let mut e = Encoder::new(Cursor::new(&mut sub[..]));
+        e.map(1).unwrap().u8(3).unwrap().bool(true).unwrap();
+        e.writer().position()
+    };
+    let mut msg = [0u8; 64];
+    let mn = crate::state::puat_subcommand_msg(
+        &mut msg,
+        CTAP_CONFIG,
+        CONFIG_SET_MIN_PIN as u8,
+        &sub[..sn],
+    );
+    let puap = auth_param(proto, token, &msg[..mn]);
+    let mut buf = [0u8; 96];
+    let n = {
+        let mut e = Encoder::new(Cursor::new(&mut buf[..]));
+        e.map(4).unwrap();
+        e.u8(1).unwrap().u64(CONFIG_SET_MIN_PIN).unwrap();
+        e.u8(2)
+            .unwrap()
+            .map(1)
+            .unwrap()
+            .u8(3)
+            .unwrap()
+            .bool(true)
+            .unwrap();
+        e.u8(3).unwrap().u64(wire(proto)).unwrap();
+        e.u8(4).unwrap().bytes(&puap).unwrap();
+        e.writer().position()
+    };
+    buf[..n].to_vec()
+}
+
+/// Raise forcePINChange as a platform does: an acfg token over `pc`'s protocol,
+/// spent on setMinPINLength.
+fn raise_force_pin_change(a: &mut Authr, pc: &ProtoClient, pin: &[u8]) {
+    use crate::consts::CTAP_CONFIG;
+    use crate::state::PERM_ACFG;
+    let r = a.send(CTAP_CLIENT_PIN, &pc.get_token_perms(pin, PERM_ACFG));
+    assert_ok(&r);
+    let token = pc.decrypt_token(&r.body);
+    assert_ok_empty(&a.send(CTAP_CONFIG, &force_change_request(pc.proto, &token)));
+}
+
+/// getInfo `forcePINChange` (0x0C); absent reads as false (CTAP 2.3 §6.4).
+fn force_pin_change_advertised(a: &mut Authr) -> bool {
+    let r = a.get_info();
+    assert_ok(&r);
+    field_at(&r.body, 0x0C).is_some_and(|mut d| d.bool().unwrap())
+}
+
+/// FIDO Authr-ClientPin1-NewPin P-4: a legacy getPinToken (0x05) token over PIN
+/// protocol one authorizes makeCredential with its 16-byte pinUvAuthParam, and the
+/// credential comes back user-verified (CTAP 2.3 §6.1.2 step 11.1).
+#[test]
+fn a_protocol_one_token_makes_a_user_verified_credential() {
+    use crate::consts::{CTAP_MAKE_CREDENTIAL, FLAG_UV};
+    let mut a = Authr::fresh();
+    let pc = ProtoClient::establish(&mut a, PinProto::One);
+    assert_ok_empty(&a.send(CTAP_CLIENT_PIN, &pc.set_pin(PIN)));
+    let token = pc.pin_token(&mut a, PIN);
+
+    let cdh = [0xC1u8; 32];
+    let puap = auth_param(PinProto::One, &token, &cdh);
+    assert_eq!(puap.len(), 16, "fixture: protocol one's MAC is truncated");
+    let r = a.send(
+        CTAP_MAKE_CREDENTIAL,
+        &mc_authorized("example.com", &cdh, PinProto::One, &puap),
+    );
+    assert_ok(&r);
+    assert_eq!(
+        auth_data(&r.body)[32] & FLAG_UV,
+        FLAG_UV,
+        "a verified protocol-one pinUvAuthParam must set UV"
+    );
+}
+
+/// FIDO Authr-ClientPin1-NewPin P-5: the same for getAssertion (CTAP 2.3 §6.2.2 step
+/// 6.1). The credential is made up-only before the PIN is set, so the assertion is the
+/// one step here that rides protocol one.
+#[test]
+fn a_protocol_one_token_makes_a_user_verified_assertion() {
+    use crate::consts::{CTAP_GET_ASSERTION, CTAP_MAKE_CREDENTIAL, FLAG_UV};
+    let mut a = Authr::fresh();
+    let r = a.send(CTAP_MAKE_CREDENTIAL, &mc_nopin("example.com"));
+    assert_ok(&r);
+    let cred_id = credential_id(auth_data(&r.body)).to_vec();
+    let pc = ProtoClient::establish(&mut a, PinProto::One);
+    assert_ok_empty(&a.send(CTAP_CLIENT_PIN, &pc.set_pin(PIN)));
+    let token = pc.pin_token(&mut a, PIN);
+
+    let cdh = [0xC2u8; 32];
+    let puap = auth_param(PinProto::One, &token, &cdh);
+    let r = a.send(
+        CTAP_GET_ASSERTION,
+        &ga_authorized("example.com", &cdh, &cred_id, PinProto::One, &puap),
+    );
+    assert_ok(&r);
+    assert_eq!(
+        auth_data(&r.body)[32] & FLAG_UV,
+        FLAG_UV,
+        "a verified protocol-one pinUvAuthParam must set UV"
+    );
+}
+
+/// FIDO Authr-ClientPin1-NewPin F-1: once setMinPINLength has raised forcePINChange,
+/// getPinToken over protocol one turns even the right PIN away with PIN_INVALID
+/// (CTAP 2.3 §6.5.5.7.1) — after the verify, which the retry budget shows.
+#[test]
+fn a_forced_pin_change_refuses_the_protocol_one_pin_token() {
+    let mut a = Authr::fresh();
+    let pc = ProtoClient::establish(&mut a, PinProto::One);
+    assert_ok_empty(&a.send(CTAP_CLIENT_PIN, &pc.set_pin(PIN)));
+    raise_force_pin_change(&mut a, &pc, PIN);
+
+    // A wrong PIN spends a retry and the right one restores the budget: a refusal
+    // made before the verify would leave the budget untouched both times. A mismatch
+    // regenerates the key-agreement key, so each attempt agrees afresh.
+    for (pin, retries, what) in [
+        (
+            WRONG_PIN,
+            MAX_PIN_RETRIES - 1,
+            "a wrong PIN is verified, and spends a retry",
+        ),
+        (
+            PIN,
+            MAX_PIN_RETRIES,
+            "the right PIN is verified, and restores the budget",
+        ),
+    ] {
+        let pc = ProtoClient::establish(&mut a, PinProto::One);
+        let r = a.send(CTAP_CLIENT_PIN, &pc.get_token(pin));
+        assert_eq!(
+            r.status,
+            CtapError::PinInvalid.as_u8(),
+            "getPinToken under a pending forced change must be PIN_INVALID (0x31), got 0x{:02x}",
+            r.status
+        );
+        let r = a.send(CTAP_CLIENT_PIN, &cp_over(PinProto::One, 1));
+        assert_ok(&r);
+        let mut d = field_at(&r.body, 3).expect("pinRetries (0x03) present");
+        assert_eq!(d.u8().unwrap(), retries, "{what}");
+    }
+}
+
+/// changePIN sets getInfo's forcePINChange back to false (CTAP 2.3 §6.5.5.6), read on
+/// the wire; the flag reading true before the change is the control.
+fn change_pin_clears_get_info_force_pin_change(proto: PinProto) {
+    let mut a = Authr::fresh();
+    let pc = ProtoClient::establish(&mut a, proto);
+    assert_ok_empty(&a.send(CTAP_CLIENT_PIN, &pc.set_pin(PIN)));
+    raise_force_pin_change(&mut a, &pc, PIN);
+    assert!(
+        force_pin_change_advertised(&mut a),
+        "control: setMinPINLength(forceChangePin) raised getInfo 0x0C"
+    );
+
+    assert_ok_empty(&a.send(CTAP_CLIENT_PIN, &pc.change_pin(PIN, NEW_PIN)));
+    assert!(
+        !force_pin_change_advertised(&mut a),
+        "changePIN over {proto:?} left getInfo forcePINChange (0x0C) true"
+    );
+}
+
+/// FIDO Authr-ClientPin1-NewPin P-6.
+#[test]
+fn change_pin_clears_get_info_force_pin_change_protocol_one() {
+    change_pin_clears_get_info_force_pin_change(PinProto::One);
+}
+
+/// FIDO Authr-ClientPin2-NewPin P-3.
+#[test]
+fn change_pin_clears_get_info_force_pin_change_protocol_two() {
+    change_pin_clears_get_info_force_pin_change(PinProto::Two);
+}
+
+/// FIDO Authr-ClientPin1-PinPolicy F-4: a PIN one code point past the maxPINLength
+/// getInfo advertises (0x1D) is PIN_POLICY_VIOLATION over protocol one (CTAP 2.3 §6.4,
+/// §6.5.5.5). Read from getInfo, so the refusal tracks what the device claims.
+#[test]
+fn a_protocol_one_pin_past_the_advertised_max_length_is_policy_violation() {
+    let mut a = Authr::fresh();
+    let r = a.get_info();
+    assert_ok(&r);
+    let mut d = field_at(&r.body, 0x1D).expect("maxPINLength (0x1D) present");
+    let max = usize::from(d.u8().unwrap());
+    let pc = ProtoClient::establish(&mut a, PinProto::One);
+
+    let r = a.send(CTAP_CLIENT_PIN, &pc.set_pin(&vec![b'7'; max + 1]));
+    assert_eq!(
+        r.status,
+        CtapError::PinPolicyViolation.as_u8(),
+        "a PIN of maxPINLength + 1 = {} must be PIN_POLICY_VIOLATION (0x37), got 0x{:02x}",
+        max + 1,
+        r.status
+    );
+    assert!(!client_pin_set(&mut a), "the refused PIN was stored");
+}
+
+/// FIDO Authr-ClientPin2-NewPin P-4, in one session: changePIN calls
+/// resetPersistentPinUvAuthToken (CTAP 2.3 §6.5.5.6), so the pcmr grant a platform
+/// holds stops reading the credential directory at once, not at the next power cycle.
+#[test]
+fn change_pin_revokes_the_persistent_grant_within_the_session() {
+    use crate::consts::{CM_ENUMERATE_RPS_BEGIN, CTAP_CREDENTIAL_MGMT, CTAP_MAKE_CREDENTIAL};
+    use crate::state::PERM_PCMR;
+    let mut a = Authr::fresh();
+    assert_ok(&a.send(CTAP_MAKE_CREDENTIAL, &mc_nopin_rk("example.com")));
+    let pc = ProtoClient::establish(&mut a, PinProto::Two);
+    assert_ok_empty(&a.send(CTAP_CLIENT_PIN, &pc.set_pin(PIN)));
+    let r = a.send(CTAP_CLIENT_PIN, &pc.get_token_perms(PIN, PERM_PCMR));
+    assert_ok(&r);
+    let grant = pc.decrypt_token(&r.body);
+
+    // enumerateRPsBegin `{1: 0x02, 3: 2, 4: authenticate(grant, 0x02)}` (§6.8.3).
+    let puap = auth_param(PinProto::Two, &grant, &[CM_ENUMERATE_RPS_BEGIN as u8]);
+    let mut buf = [0u8; 64];
+    let n = {
+        let mut e = Encoder::new(Cursor::new(&mut buf[..]));
+        e.map(3).unwrap();
+        e.u8(1).unwrap().u64(CM_ENUMERATE_RPS_BEGIN).unwrap();
+        e.u8(3).unwrap().u64(2).unwrap();
+        e.u8(4).unwrap().bytes(&puap).unwrap();
+        e.writer().position()
+    };
+    let enumerate = &buf[..n];
+    assert_ok(&a.send(CTAP_CREDENTIAL_MGMT, enumerate)); // control: the grant reads
+
+    assert_ok_empty(&a.send(CTAP_CLIENT_PIN, &pc.change_pin(PIN, NEW_PIN)));
+    let r = a.send(CTAP_CREDENTIAL_MGMT, enumerate);
+    assert_eq!(
+        r.status,
+        CtapError::PinAuthInvalid.as_u8(),
+        "the pcmr grant minted under the old PIN still read the directory, got 0x{:02x}",
+        r.status
     );
 }

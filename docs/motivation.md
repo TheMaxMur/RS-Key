@@ -14,7 +14,7 @@ actually rests on.
 
 ## The story
 
-In the spring of 2025 I came across
+I came across
 [pico-fido](https://github.com/polhenarejos/pico-fido), a firmware that turns
 a Raspberry Pi Pico into a FIDO2 key. A five-dollar board passed for a
 YubiKey. The ecosystem tooling (browsers, `ssh-keygen -t ed25519-sk`, `ykman`)
@@ -33,7 +33,7 @@ part of my daily life.
 
 ## The turn
 
-On October 26, 2025, this commit landed:
+Then the project changed its licensing model.
 ["Update license models and add ENTERPRISE.md"](https://github.com/polhenarejos/pico-fido/commit/8b086188758ad3f60e912acd969b80d6801cfab3).
 
 Point by point, without emotion:

@@ -602,6 +602,45 @@ impl ItemIter {
         }
         Ok(None)
     }
+
+    // Keep ordinary lookup futures small even when their pointer cache misses.
+    // The filtered walk is used only by retirement and must not enlarge them.
+    pub(crate) async fn next_unless<'d, S: NorFlash>(
+        &mut self, flash: &mut S, data_buffer: &'d mut [u8],
+        prefix_len: Option<usize>, skip: impl Fn(&[u8]) -> bool,
+    ) -> Result<Option<(Item<'d>, u32)>, Error<S::Error>> {
+        let mut data_buffer = Some(data_buffer);
+        while let (Some(header), address) = self.header.next(flash).await? {
+            let buffer = data_buffer.take().unwrap();
+            if let Some(length) = prefix_len.filter(|length| *length <= usize::from(header.length)) {
+                let read_len = round_up_to_alignment_usize::<S>(length);
+                if header.crc.is_some() && read_len != 0 && read_len <= buffer.len() {
+                    flash.read(ItemHeader::data_address::<S>(address), &mut buffer[..read_len])
+                        .await.map_err(|value| Error::Storage {
+                            value,
+                            #[cfg(feature = "_test")]
+                            backtrace: std::backtrace::Backtrace::capture(),
+                        })?;
+                    if skip(&buffer[..length]) {
+                        data_buffer.replace(buffer);
+                        continue;
+                    }
+                }
+            }
+            match header
+                .read_item(flash, buffer, address, self.header.end_address)
+                .await?
+            {
+                MaybeItem::Corrupted(_, buffer) | MaybeItem::Erased(_, buffer) => {
+                    data_buffer.replace(buffer);
+                }
+                MaybeItem::Present(item) => {
+                    return Ok(Some((item, address)));
+                }
+            }
+        }
+        Ok(None)
+    }
 }
 
 pub(crate) struct ItemHeaderIter {

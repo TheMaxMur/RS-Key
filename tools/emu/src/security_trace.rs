@@ -123,7 +123,7 @@ fn action_hint(command: u8) -> &'static str {
     }
 }
 
-fn option_u8(out: &mut impl Write, value: Option<u8>) -> Result<()> {
+fn option_number(out: &mut impl Write, value: Option<impl std::fmt::Display>) -> Result<()> {
     match value {
         Some(value) => write!(out, "{value}"),
         None => write!(out, "null"),
@@ -132,13 +132,13 @@ fn option_u8(out: &mut impl Write, value: Option<u8>) -> Result<()> {
 
 fn snapshot(out: &mut impl Write, s: SecurityTraceSnapshot) -> Result<()> {
     write!(out, "{{\"pin_record_len\":")?;
-    option_u8(out, s.pin_record_len)?;
+    option_number(out, s.pin_record_len)?;
     write!(out, ",\"pin_retries_raw\":")?;
-    option_u8(out, s.pin_retries_raw)?;
+    option_number(out, s.pin_retries_raw)?;
     write!(out, ",\"always_uv_record_len\":")?;
-    option_u8(out, s.always_uv_record_len)?;
+    option_number(out, s.always_uv_record_len)?;
     write!(out, ",\"always_uv_raw\":")?;
-    option_u8(out, s.always_uv_raw)?;
+    option_number(out, s.always_uv_raw)?;
     write!(
         out,
         ",\"persistent_grant_record\":{},\"backup_sealed_record\":{},\"seed_plain_record\":{},\"seed_encrypted_record\":{},\"credential_slots_raw\":{},\"rp_slots_raw\":{},\"token_in_use_raw\":{},\"token_permissions_raw\":{},\"token_has_rp_id_raw\":{},\"token_user_present_raw\":{},\"token_user_verified_raw\":{},\"soft_lock_raw\":{},\"pin_mismatches_raw\":{},\"cm_channel_raw\":{},\"cm_rp_counter_raw\":{},\"cm_rp_total_raw\":{},\"cm_cred_counter_raw\":{},\"cm_cred_total_raw\":{},\"warm_boot_raw\":{},\"channel_raw\":{},\"keydev_ram_raw\":{}}}",
@@ -180,3 +180,7 @@ fn abstract_token(out: &mut impl Write, a: AbstractTokenState) -> Result<()> {
         a.persistent_grant,
     )
 }
+
+#[cfg(test)]
+#[path = "security_trace_tests.rs"]
+mod tests;

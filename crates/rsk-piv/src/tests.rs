@@ -78,7 +78,7 @@ fn run<S: Storage>(
 ) -> (Sw, Vec<u8>) {
     let raw = apdu_bytes(ins, p1, p2, data);
     let apdu = Apdu::parse(&raw).unwrap();
-    let mut out = [0u8; 2048];
+    let mut out = [0u8; rsk_sdk::applet::RESP_BUILD];
     let mut res = ResBuf::new(&mut out);
     let sw = Applet::process(app, &apdu, fs, &mut res);
     (sw, res.as_slice().to_vec())
@@ -218,8 +218,8 @@ fn rsa_sw_reproduces_every_status_word() {
 fn ec_sw_reproduces_every_status_word() {
     // The EC twin of the table above, and it must stay identical to the other
     // applet's copy — `rsk-ec` names the target in each variant's doc. Assert
-    // the three arms one by one, so a swapped pair cannot pass by covering for
-    // each other.
+    // the arms one by one, so a swapped pair cannot pass by covering for each
+    // other.
     assert_eq!(
         ec_sw(EcError::Failed),
         Sw::EXEC_ERROR,
@@ -227,8 +227,13 @@ fn ec_sw_reproduces_every_status_word() {
     );
     assert_eq!(
         ec_sw(EcError::BadPoint),
-        Sw::DATA_INVALID,
-        "an unusable point or scalar must stay 6984"
+        Sw::WRONG_DATA,
+        "an undecodable peer point must stay 6A80, identical to the OpenPGP copy"
+    );
+    assert_eq!(
+        ec_sw(EcError::RejectedPoint),
+        Sw::MEMORY_FAILURE,
+        "the arm stays 6581 like the OpenPGP copy; PIV's agreement answers 6A80 first"
     );
     assert_eq!(
         ec_sw(EcError::Unsupported),
@@ -253,6 +258,7 @@ fn keys_sealed_by_the_previous_build_still_load() {
         serial_hash: &HASH,
         serial_id: &SERIAL,
         otp_key: None,
+        latched: false,
     };
     let fid = key_fid(SLOT_AUTHENTICATION);
     let cases: [(&str, Curve, &[u8]); 4] = [
@@ -433,12 +439,13 @@ fn a_wrong_pin_is_refused_on_the_kbase_fallback_path() {
     // wrong PIN accepted AND stored as the new one. Killed by no test, because
     // the fallback is only reachable on an OTP-provisioned device and every PIV
     // test that offers a wrong PIN runs without one (found by the reverse
-    // mutation pass, D2). Its FIDO twin at `clientpin.rs:764` is not the same
+    // mutation pass, D2). Its FIDO twin at `clientpin.rs:835` is not the same
     // shape: there the `ct_eq` sits inside the block, so a widened guard still
     // cannot write.
     const OTP: [u8; 32] = [0x44; 32];
-    fn otp_source() -> Option<[u8; 32]> {
-        Some(OTP)
+    fn otp_source(out: &mut [u8; 32]) -> bool {
+        *out = OTP;
+        true
     }
     let rng = RefCell::new(TestRng(7));
     let pres = RefCell::new(AlwaysConfirm);
@@ -449,10 +456,11 @@ fn a_wrong_pin_is_refused_on_the_kbase_fallback_path() {
         serial_hash: &HASH,
         serial_id: &SERIAL,
         otp_key: Some(&OTP),
+        latched: false,
     };
     migrate_kbase(&dev_new, &mut fs, &mut TestRng(9));
 
-    let mut app2 = PivApplet::new(SERIAL, HASH, Some(otp_source as FusedKey), &rng, &pres);
+    let mut app2 = PivApplet::new(SERIAL, HASH, Some(FusedKey::open(otp_source)), &rng, &pres);
     select(&mut app2, &mut fs);
     let wrong: [u8; 8] = [b'9', b'9', b'9', b'9', b'9', b'9', 0xFF, 0xFF];
     // Twice, because the retry counter moves between them — what must NOT move
@@ -507,6 +515,12 @@ fn select_returns_apt() {
     let apt = select(&mut app, &mut fs);
     assert_eq!(apt[0], 0x61);
     assert_eq!(apt[1] as usize, apt.len() - 2, "APT length backpatched");
+    // A YubiKey 5.8.0's, byte for byte (measured 2026-09-25).
+    let yubikey: &[u8] = &[
+        0x61, 0x11, 0x4F, 0x06, 0x00, 0x00, 0x10, 0x00, 0x01, 0x00, 0x79, 0x07, 0x4F, 0x05, 0xA0,
+        0x00, 0x00, 0x03, 0x08,
+    ];
+    assert_eq!(apt, yubikey);
     let body = &apt[2..];
     // NIST SP 800-73-4 §3.1.1: outer 4F is the PIV AID/PIX, and 79 (coexistent
     // tag allocation authority) MUST wrap a nested 4F with the NIST RID — OpenSC's
@@ -520,8 +534,45 @@ fn select_returns_apt() {
         find_tag(taa, 0x4F).expect("nested 4F with NIST RID"),
         &[0xA0, 0x00, 0x00, 0x03, 0x08]
     );
-    assert_eq!(find_tag(body, 0x50).unwrap(), b"RS-Key PIV");
-    assert!(find_tag(body, 0xAC).is_some());
+}
+
+const INS_SELECT: u8 = 0xA4;
+
+/// A YubiKey 5.8.0's PIV has no SELECT of its own: every form the dispatcher hands
+/// it, by AID with a `P2` but `00` or `04`, by file id or by path, is `6D00`.
+#[test]
+fn a_select_inside_the_application_is_not_an_instruction() {
+    let rng = RefCell::new(TestRng(7));
+    let pres = RefCell::new(AlwaysConfirm);
+    let mut app = PivApplet::new(SERIAL, HASH, None, &rng, &pres);
+    let mut fs = new_fs();
+    select(&mut app, &mut fs);
+    verify_pin(&mut app, &mut fs);
+    let aid = &PIV_AID[..5];
+    let forms: [(u8, u8, &[u8]); 8] = [
+        (0x04, 0x01, aid),
+        (0x04, 0x01, &aid[..4]),
+        (0x04, 0x02, aid),
+        (0x04, 0x0C, aid),
+        (0x04, 0x01, &[]),
+        (0x00, 0x00, &[]),
+        (0x00, 0x00, &[0x3F, 0x00]),
+        (0x01, 0x01, &[0x5F, 0xC1]),
+    ];
+    for (p1, p2, data) in forms {
+        let (sw, body) = run(&mut app, &mut fs, INS_SELECT, p1, p2, data);
+        assert_eq!(
+            (sw, body.len()),
+            (Sw::INS_NOT_SUPPORTED, 0),
+            "{p1:02X} {p2:02X} {data:02X?}"
+        );
+        let held = run(&mut app, &mut fs, INS_VERIFY, 0, 0x80, &[]).0;
+        assert_eq!(
+            held,
+            Sw::OK,
+            "the PIN still holds after {p1:02X} {p2:02X} {data:02X?}"
+        );
+    }
 }
 
 #[test]
@@ -1006,6 +1057,7 @@ fn a_reference_change_takes_two_wire_forms_or_nothing() {
         serial_hash: &HASH,
         serial_id: &SERIAL,
         otp_key: None,
+        latched: false,
     };
     assert_eq!(
         change_reference(&dev, &mut fs, PinRef::Pin, &DEFAULT_PIN, short),
@@ -1032,6 +1084,7 @@ fn a_poisoned_reference_keeps_every_exit_it_had() {
         serial_hash: &HASH,
         serial_id: &SERIAL,
         otp_key: None,
+        latched: false,
     };
     let rng = RefCell::new(TestRng(7));
     let pres = RefCell::new(AlwaysConfirm);
@@ -1052,7 +1105,7 @@ fn a_poisoned_reference_keeps_every_exit_it_had() {
     let mut app = PivApplet::new(SERIAL, HASH, None, &rng, &pres);
     let mut fs = new_fs();
     select(&mut app, &mut fs);
-    put_pin_verifier(&dev, &mut fs, EF_PIN, short).unwrap();
+    put_pin_verifier(&dev, &mut fs, EF_PIN, short, None).unwrap();
     assert_eq!(
         run(&mut app, &mut fs, INS_VERIFY, 0, 0x80, &DEFAULT_PIN).0,
         Sw::retries(2),
@@ -1081,7 +1134,7 @@ fn a_poisoned_reference_keeps_every_exit_it_had() {
     let mut fs = new_fs();
     let mut app = PivApplet::new(SERIAL, HASH, None, &rng, &pres);
     select(&mut app, &mut fs);
-    put_pin_verifier(&dev, &mut fs, EF_PUK, short).unwrap();
+    put_pin_verifier(&dev, &mut fs, EF_PUK, short, None).unwrap();
     auth_mgm(&mut app, &mut fs);
     verify_pin(&mut app, &mut fs);
     assert_eq!(run(&mut app, &mut fs, INS_SET_RETRIES, 3, 3, &[]).0, Sw::OK);
@@ -1097,8 +1150,8 @@ fn a_poisoned_reference_keeps_every_exit_it_had() {
     let mut fs = new_fs();
     let mut app = PivApplet::new(SERIAL, HASH, None, &rng, &pres);
     select(&mut app, &mut fs);
-    put_pin_verifier(&dev, &mut fs, EF_PIN, short).unwrap();
-    put_pin_verifier(&dev, &mut fs, EF_PUK, short).unwrap();
+    put_pin_verifier(&dev, &mut fs, EF_PIN, short, None).unwrap();
+    put_pin_verifier(&dev, &mut fs, EF_PUK, short, None).unwrap();
     assert_eq!(
         run(&mut app, &mut fs, INS_RESET, 0, 0, &[]).0,
         Sw::WRONG_DATA,
@@ -1136,17 +1189,18 @@ fn panel_pin_ops_match_host_wire() {
         serial_hash: &HASH,
         serial_id: &SERIAL,
         otp_key: None,
+        latched: false,
     };
 
     // pad_pin builds the 8-byte PIV wire form (matches the stored defaults).
-    assert_eq!(pad_pin(b"123456"), Some(DEFAULT_PIN));
-    assert_eq!(pad_pin(b"12345678"), Some(DEFAULT_PUK));
-    assert_eq!(pad_pin(b""), None);
-    assert_eq!(pad_pin(b"123456789"), None);
+    assert_eq!(pad_pin(b"123456").map(|p| *p.expose()), Some(DEFAULT_PIN));
+    assert_eq!(pad_pin(b"12345678").map(|p| *p.expose()), Some(DEFAULT_PUK));
+    assert!(pad_pin(b"").is_none());
+    assert!(pad_pin(b"123456789").is_none());
 
     // Panel change-PIN: "123456" -> "654321", both padded as the panel will.
-    let old = pad_pin(b"123456").unwrap();
-    let new = pad_pin(b"654321").unwrap();
+    let old = *pad_pin(b"123456").unwrap().expose();
+    let new = *pad_pin(b"654321").unwrap().expose();
     assert_eq!(
         change_reference(&dev, &mut fs, PinRef::Pin, &old, &new),
         Sw::OK
@@ -1163,7 +1217,7 @@ fn panel_pin_ops_match_host_wire() {
     assert_eq!(sw, Sw::OK);
 
     // Wrong old PIN burns a retry and leaves the PIN unchanged.
-    let wrong = pad_pin(b"000000").unwrap();
+    let wrong = *pad_pin(b"000000").unwrap().expose();
     assert_eq!(
         change_reference(&dev, &mut fs, PinRef::Pin, &wrong, &old),
         Sw::new(0x63, 0xC2)
@@ -1173,7 +1227,7 @@ fn panel_pin_ops_match_host_wire() {
     assert_eq!(sw, Sw::OK);
 
     // Panel change-PUK.
-    let newpuk = pad_pin(b"87654321").unwrap();
+    let newpuk = *pad_pin(b"87654321").unwrap().expose();
     assert_eq!(
         change_reference(&dev, &mut fs, PinRef::Puk, &DEFAULT_PUK, &newpuk),
         Sw::OK
@@ -1185,12 +1239,12 @@ fn panel_pin_ops_match_host_wire() {
     }
     let (sw, _) = run(&mut app, &mut fs, INS_VERIFY, 0, 0x80, &new);
     assert_eq!(sw, Sw::PIN_BLOCKED);
-    let fresh = pad_pin(b"111111").unwrap();
+    let fresh = *pad_pin(b"111111").unwrap().expose();
     assert_eq!(unblock_pin_with_puk(&dev, &mut fs, &newpuk, &fresh), Sw::OK);
     let (sw, _) = run(&mut app, &mut fs, INS_VERIFY, 0, 0x80, &fresh);
     assert_eq!(sw, Sw::OK);
     // Wrong PUK on unblock burns a PUK retry.
-    let badpuk = pad_pin(b"00000000").unwrap();
+    let badpuk = *pad_pin(b"00000000").unwrap().expose();
     assert_eq!(
         unblock_pin_with_puk(&dev, &mut fs, &badpuk, &fresh),
         Sw::new(0x63, 0xC2)
@@ -1211,6 +1265,7 @@ fn pin_protected_mgm_key_roundtrip() {
         serial_hash: &HASH,
         serial_id: &SERIAL,
         otp_key: None,
+        latched: false,
     };
     let get = |id: [u8; 3]| [0x5C, 0x03, id[0], id[1], id[2]];
     const PRINTED: [u8; 3] = [0x5F, 0xC1, 0x09];
@@ -1251,12 +1306,9 @@ fn pin_protected_mgm_key_roundtrip() {
     let host_key: [u8; 32] = printed[6..38].try_into().unwrap();
 
     // The synthesized key equals the sealed 0x9B auth key (single source).
-    let mut sealed = [0u8; 32];
-    assert_eq!(
-        seal::seal_read(&dev, &mut fs, key_fid(SLOT_CARDMGM), &mut sealed),
-        Ok(32)
-    );
-    assert_eq!(host_key, sealed);
+    let sealed = files::mgm_read(&dev, &mut fs).unwrap();
+    assert_eq!(sealed.policy, Some((ALGO_AES256, TOUCHPOLICY_NEVER)));
+    assert_eq!(host_key, sealed.key());
 
     // And the host-read key authenticates via AES-256 mutual auth.
     let (sw, wit) = run(
@@ -1311,6 +1363,7 @@ fn protect_mgm_preserves_timestamp_and_flags_drops_salt() {
         serial_hash: &HASH,
         serial_id: &SERIAL,
         otp_key: None,
+        latched: false,
     };
     let mut fs = new_fs();
     let mut inner = vec![PIVMAN_FLAGS_TAG, 0x01, 0x01];
@@ -1546,6 +1599,7 @@ fn printed_information_round_trips_but_an_escrow_body_is_never_stored() {
         serial_hash: &HASH,
         serial_id: &SERIAL,
         otp_key: None,
+        latched: false,
     };
     let get = [0x5C, 0x03, 0x5F, 0xC1, 0x09];
     let printed = [TAG_DATA_OBJECT, 0x03, 0x41, 0x42, 0x43];
@@ -1609,9 +1663,8 @@ fn printed_information_round_trips_but_an_escrow_body_is_never_stored() {
             0x20
         ]
     );
-    let mut sealed = [0u8; 32];
-    let n = seal::seal_read(&dev, &mut fs, key_fid(SLOT_CARDMGM), &mut sealed).unwrap();
-    assert_eq!(&body[6..6 + n], &sealed[..n]);
+    let sealed = files::mgm_read(&dev, &mut fs).unwrap();
+    assert_eq!(&body[6..6 + sealed.key().len()], sealed.key());
     // …so a write of anything else is refused while it is live, rather than
     // acknowledged and hidden under it. (A YubiKey takes the write and loses the
     // escrowed key with it; that is the data loss we do not copy.)
@@ -1630,7 +1683,9 @@ fn printed_information_round_trips_but_an_escrow_body_is_never_stored() {
         run(&mut cold, &mut fs, INS_PUT_DATA, 0x3F, 0xFF, &wipe).0,
         Sw::OK
     );
-    mgm_clear_protected(&mut fs).unwrap();
+    if let Some((admin, len)) = escrow_revocation(&mut fs).unwrap() {
+        fs.put(EF_PIVMAN_DATA, &admin[..len]).unwrap();
+    }
     verify_pin(&mut cold, &mut fs);
     assert_eq!(
         run(&mut cold, &mut fs, INS_GET_DATA, 0x3F, 0xFF, &get).0,
@@ -2408,8 +2463,8 @@ fn get_data_clamps_oversized_stored_object() {
     let mut app = PivApplet::new(SERIAL, HASH, None, &rng, &pres);
     let mut fs = new_fs();
     select(&mut app, &mut fs);
-    // Plant a 2000-byte value at the 5FC100 object fid (0xD200), bypassing put_data.
-    let big = [0xABu8; 2000];
+    // Plant a value past MAX_OBJECT at the 5FC100 object fid (0xD200), bypassing put_data.
+    let big = [0xABu8; MAX_OBJECT + 100];
     fs.put(object_fid(0x5F_C1_00).unwrap(), &big).unwrap();
     let (sw, resp) = run(
         &mut app,
@@ -2421,7 +2476,7 @@ fn get_data_clamps_oversized_stored_object() {
     );
     assert_eq!(sw, Sw::OK, "oversized object must not panic");
     // 0x53 wrapper (tag + 3-byte long-form length) around exactly MAX_OBJECT
-    // bytes, not the planted 2000.
+    // bytes, not the planted value.
     assert_eq!(resp[0], 0x53);
     assert_eq!(resp.len(), 4 + MAX_OBJECT, "payload clamped to MAX_OBJECT");
 }
@@ -2510,6 +2565,34 @@ fn mgm_3des_roundtrip() {
     let mut expect = host_chal;
     rsk_crypto::des3_encrypt_block(&key24, &mut expect);
     assert_eq!(&resp[4..12], &expect);
+    select(&mut app, &mut fs);
+    let (sw, challenge) = run(
+        &mut app,
+        &mut fs,
+        INS_AUTHENTICATE,
+        ALGO_3DES,
+        0x9B,
+        &[0x7C, 0x02, 0x81, 0x00],
+    );
+    assert_eq!(sw, Sw::OK);
+    assert_eq!(&challenge[..4], &[0x7C, 0x0A, 0x81, 0x08]);
+    let mut encrypted: [u8; 8] = challenge[4..12].try_into().unwrap();
+    rsk_crypto::des3_encrypt_block(&key24, &mut encrypted);
+    let mut response = vec![0x7C, 0x0A, 0x82, 0x08];
+    response.extend_from_slice(&encrypted);
+    assert_eq!(
+        run(
+            &mut app,
+            &mut fs,
+            INS_AUTHENTICATE,
+            ALGO_3DES,
+            0x9B,
+            &response
+        )
+        .0,
+        Sw::OK
+    );
+    assert!(app.sess.has_mgm);
 }
 
 #[test]
@@ -3322,8 +3405,10 @@ fn a_legacy_default_pin_policy_byte_resolves_at_use_time() {
     );
 }
 
+/// A YubiKey's GENERATE writes no certificate and neither does this one: the slot's
+/// object stays absent, whatever the algorithm, until a host puts one there.
 #[test]
-fn cert_object_is_wrapped_and_parses() {
+fn generate_writes_no_certificate() {
     let rng = RefCell::new(TestRng(7));
     let pres = RefCell::new(AlwaysConfirm);
     let mut app = PivApplet::new(SERIAL, HASH, None, &rng, &pres);
@@ -3331,40 +3416,23 @@ fn cert_object_is_wrapped_and_parses() {
     select(&mut app, &mut fs);
     auth_mgm(&mut app, &mut fs);
     verify_pin(&mut app, &mut fs);
-    let (sw, resp) = run(
-        &mut app,
-        &mut fs,
-        INS_ASYM_KEYGEN,
-        0,
-        0x9A,
-        &gen_template(ALGO_ECCP256),
-    );
-    assert_eq!(sw, Sw::OK);
-    let point = ec_point_of(&resp);
-    let (sw, obj) = run(
-        &mut app,
-        &mut fs,
-        INS_GET_DATA,
-        0x3F,
-        0xFF,
-        &[0x5C, 0x03, 0x5F, 0xC1, 0x05],
-    );
-    assert_eq!(sw, Sw::OK);
-    let body = find_tag(&obj, 0x53).unwrap();
-    let cert = find_tag(body, 0x70).unwrap();
-    assert_eq!(find_tag(body, 0x71).unwrap(), &[0x00]);
-    let (_, parsed) = x509_parser::parse_x509_certificate(cert).unwrap();
-    assert!(
-        parsed
-            .subject()
-            .to_string()
-            .contains("CN=RS-Key PIV Slot 9A")
-    );
-    // Self-signature verifies against the slot public key.
-    let digest: [u8; 32] = sha2::Sha256::digest(parsed.tbs_certificate.as_ref()).into();
-    let vk = p256::ecdsa::VerifyingKey::from_sec1_bytes(&point).unwrap();
-    let sig = p256::ecdsa::Signature::from_der(&parsed.signature_value.data).unwrap();
-    vk.verify_prehash(&digest, &sig).unwrap();
+    for (slot, algo, object) in [
+        (0x9A, ALGO_ECCP256, 0x05),
+        (0x9C, ALGO_ECCP384, 0x0A),
+        (0x9D, ALGO_X25519, 0x0B),
+        (0x9E, ALGO_ED25519, 0x01),
+    ] {
+        let template = gen_template(algo);
+        let (sw, _) = run(&mut app, &mut fs, INS_ASYM_KEYGEN, 0, slot, &template);
+        assert_eq!(sw, Sw::OK, "{slot:02X}");
+        let read = [0x5C, 0x03, 0x5F, 0xC1, object];
+        let (sw, _) = run(&mut app, &mut fs, INS_GET_DATA, 0x3F, 0xFF, &read);
+        assert_eq!(
+            sw,
+            Sw::FILE_NOT_FOUND,
+            "{slot:02X}/{algo:02X} got a certificate"
+        );
+    }
 }
 
 #[test]
@@ -3398,14 +3466,10 @@ fn retired_slot_generate_then_cert_roundtrip() {
     );
     assert_eq!(sw, Sw::OK, "GENERATE into retired R1 must succeed");
 
-    // Our GENERATE auto-writes a self-signed cert → the slot must read occupied.
-    let (sw, obj) = run(&mut app, &mut fs, INS_GET_DATA, 0x3F, 0xFF, &get_r1);
-    assert_eq!(
-        sw,
-        Sw::OK,
-        "retired slot cert must be readable after GENERATE"
-    );
-    assert!(find_tag(&obj, 0x53).is_some());
+    // GENERATE writes no certificate, as a YubiKey's does not: the slot reads free
+    // until age-plugin writes its own, which it does next.
+    let (sw, _) = run(&mut app, &mut fs, INS_GET_DATA, 0x3F, 0xFF, &get_r1);
+    assert_eq!(sw, Sw::FILE_NOT_FOUND);
 
     // age-plugin then PUT DATA its own self-signed cert (carrying the age OID).
     // A real P-256 age cert is ~400 bytes, so the 0x70/0x53 lengths are long-form
@@ -3434,7 +3498,7 @@ fn retired_slot_generate_then_cert_roundtrip() {
     let (sw, _) = run(&mut app, &mut fs, INS_PUT_DATA, 0x3F, 0xFF, &put);
     assert_eq!(sw, Sw::OK, "PUT DATA of the age cert must succeed");
 
-    // The slot must still read occupied, now with the age cert.
+    // The slot reads occupied now, with the age cert.
     let (sw, obj2) = run(&mut app, &mut fs, INS_GET_DATA, 0x3F, 0xFF, &get_r1);
     assert_eq!(
         sw,
@@ -3522,11 +3586,10 @@ fn attestation_chains_to_f9() {
     assert_eq!(sw, Sw::WRONG_DATA);
 }
 
-/// Generate an Ed25519 key, sign through GENERAL AUTHENTICATE and check the
-/// self-signed certificate carries the RFC 8410 SPKI and a valid PureEdDSA
-/// self-signature over the raw TBS.
+/// Generate an Ed25519 key, sign through GENERAL AUTHENTICATE, and find the key in
+/// its attestation statement as an RFC 8410 SPKI.
 #[test]
-fn ed25519_generate_sign_and_self_signed_cert() {
+fn ed25519_generate_sign_and_attested_spki() {
     let rng = RefCell::new(TestRng(7));
     let pres = RefCell::new(AlwaysConfirm);
     let mut app = PivApplet::new(SERIAL, HASH, None, &rng, &pres);
@@ -3574,30 +3637,13 @@ fn ed25519_generate_sign_and_self_signed_cert() {
     vk.verify_strict(&message, &ed25519_dalek::Signature::from_bytes(&sigbytes))
         .unwrap();
 
-    // The self-signed cert parses, names the slot and self-verifies.
-    let (sw, obj) = run(
-        &mut app,
-        &mut fs,
-        INS_GET_DATA,
-        0x3F,
-        0xFF,
-        &[0x5C, 0x03, 0x5F, 0xC1, 0x05],
-    );
+    // The attestation statement carries the key as an RFC 8410 SPKI.
+    let (sw, att) = run(&mut app, &mut fs, INS_ATTESTATION, 0x9A, 0, &[]);
     assert_eq!(sw, Sw::OK);
-    let cert = find_tag(find_tag(&obj, 0x53).unwrap(), 0x70).unwrap();
-    let (_, parsed) = x509_parser::parse_x509_certificate(cert).unwrap();
-    assert!(
-        parsed
-            .subject()
-            .to_string()
-            .contains("CN=RS-Key PIV Slot 9A")
-    );
-    let csig: [u8; 64] = parsed.signature_value.data.as_ref().try_into().unwrap();
-    vk.verify_strict(
-        parsed.tbs_certificate.as_ref(),
-        &ed25519_dalek::Signature::from_bytes(&csig),
-    )
-    .unwrap();
+    let (_, parsed) = x509_parser::parse_x509_certificate(&att).unwrap();
+    let spki = &parsed.tbs_certificate.subject_pki;
+    assert_eq!(spki.algorithm.algorithm.to_id_string(), "1.3.101.112");
+    assert_eq!(spki.subject_public_key.data.as_ref(), &point[..]);
 }
 
 /// A key slot whose metadata is shorter than the [algo, pin, touch] header
@@ -3676,7 +3722,7 @@ fn general_auth_rejects_short_meta() {
     assert_eq!(sw, Sw::OK);
 }
 
-/// Generate an X25519 key: it gets no self-signed certificate (it can't sign),
+/// Generate an X25519 key: it gets no certificate, like every generated key,
 /// and GENERAL AUTHENTICATE exponentiation (`ykman calculate-secret`) agrees a
 /// shared secret that matches the host side.
 #[test]
@@ -3722,6 +3768,86 @@ fn x25519_generate_has_no_cert_and_agrees() {
     let cardpk: [u8; 32] = card_point.as_slice().try_into().unwrap();
     let expected = x25519_dalek::x25519(host_scalar, cardpk);
     assert_eq!(shared, &expected[..]);
+}
+
+#[test]
+fn x25519_agreement_refuses_a_small_order_peer() {
+    // A YubiKey 5.8.0's PIV answers 6A80 to all seven small-order encodings;
+    // `rsk-ec` walks the whole list, and u = 0 and u = 1 stand for it here.
+    let rng = RefCell::new(TestRng(7));
+    let pres = RefCell::new(AlwaysConfirm);
+    let mut app = PivApplet::new(SERIAL, HASH, None, &rng, &pres);
+    let mut fs = new_fs();
+    select(&mut app, &mut fs);
+    auth_mgm(&mut app, &mut fs);
+    verify_pin(&mut app, &mut fs);
+    let template = gen_template(ALGO_X25519);
+    let (sw, _) = run(&mut app, &mut fs, INS_ASYM_KEYGEN, 0, 0x9D, &template);
+    assert_eq!(sw, Sw::OK);
+
+    let mut one = [0u8; 32];
+    one[0] = 1;
+    for u in [[0u8; 32], one] {
+        let mut msg = vec![0x7C, 0x22, 0x85, 0x20];
+        msg.extend_from_slice(&u);
+        let (sw, out) = run(&mut app, &mut fs, INS_AUTHENTICATE, ALGO_X25519, 0x9D, &msg);
+        assert_eq!(sw, Sw::WRONG_DATA, "a small-order peer must answer 6A80");
+        assert!(out.is_empty(), "a refused agreement must return no data");
+    }
+}
+
+#[test]
+fn ecdh_refuses_a_compressed_or_prefixed_peer() {
+    // A YubiKey 5.8.0's PIV answers 6A80 to a compressed or compact P-256 point and
+    // to an X25519 u behind the 0x40 prefix, though every one is a good point.
+    let rng = RefCell::new(TestRng(7));
+    let pres = RefCell::new(AlwaysConfirm);
+    let mut app = PivApplet::new(SERIAL, HASH, None, &rng, &pres);
+    let mut fs = new_fs();
+    select(&mut app, &mut fs);
+    auth_mgm(&mut app, &mut fs);
+    verify_pin(&mut app, &mut fs);
+
+    let template = gen_template(ALGO_ECCP256);
+    let (sw, _) = run(&mut app, &mut fs, INS_ASYM_KEYGEN, 0, 0x9D, &template);
+    assert_eq!(sw, Sw::OK);
+    use p256::elliptic_curve::sec1::ToSec1Point;
+    let host = p256::SecretKey::from_slice(&[7u8; 32]).unwrap();
+    let compressed = host.public_key().to_sec1_point(true);
+    let mut compact = compressed.as_bytes().to_vec();
+    compact[0] = 0x05;
+    for point in [compressed.as_bytes(), compact.as_slice()] {
+        let mut msg = vec![0x7C, 0x25, 0x82, 0x00, 0x85, 0x21];
+        msg.extend_from_slice(point);
+        let (sw, out) = run(
+            &mut app,
+            &mut fs,
+            INS_AUTHENTICATE,
+            ALGO_ECCP256,
+            0x9D,
+            &msg,
+        );
+        assert_eq!(
+            sw,
+            Sw::WRONG_DATA,
+            "P-256 peer {point:02x?} must answer 6A80"
+        );
+        assert!(out.is_empty());
+    }
+
+    let template = gen_template(ALGO_X25519);
+    let (sw, _) = run(&mut app, &mut fs, INS_ASYM_KEYGEN, 0, 0x9D, &template);
+    assert_eq!(sw, Sw::OK);
+    let host_u = x25519_dalek::x25519([0x33u8; 32], x25519_dalek::X25519_BASEPOINT_BYTES);
+    let mut msg = vec![0x7C, 0x23, 0x85, 0x21, 0x40];
+    msg.extend_from_slice(&host_u);
+    let (sw, out) = run(&mut app, &mut fs, INS_AUTHENTICATE, ALGO_X25519, 0x9D, &msg);
+    assert_eq!(
+        sw,
+        Sw::WRONG_DATA,
+        "a 0x40-prefixed X25519 u must answer 6A80"
+    );
+    assert!(out.is_empty());
 }
 
 /// An imported private scalar is exactly the field length or it is not that
@@ -4007,13 +4133,14 @@ fn on_device_rsa_stores_into_empty_retired_slot() {
         serial_hash: &HASH,
         serial_id: &SERIAL,
         otp_key: None,
+        latched: false,
     };
     let key = rsk_rsa::generate_rsa(&mut crate::RsaRng(&mut TestRng(99)), 1024).unwrap();
     let slot = info::next_free_retired(&mut fs).unwrap();
     assert!(info::store_retired_rsa(&dev, &mut fs, &mut TestRng(5), slot, &key).is_ok());
-    // Reads back like a host-generated RSA slot: key + cert present, RSA meta, generated.
+    // Reads back like a host-generated RSA slot: a key, no certificate, RSA meta, generated.
     assert!(fs.has_key(key_fid(slot)));
-    assert!(fs.has_data(cert_fid_for_slot(slot).unwrap()));
+    assert!(!fs.has_data(cert_fid_for_slot(slot).unwrap()));
     let mut meta = [0u8; 8];
     let n = fs.meta_find(key_fid(slot).get(), &mut meta).unwrap();
     assert!(n >= 4);
@@ -4026,9 +4153,9 @@ fn on_device_rsa_stores_into_empty_retired_slot() {
     );
 }
 
-/// Buffer-sizing proof for the largest key: a real RSA-4096 key seals, gets a self-signed
-/// cert that fits `MAX_CERT` and parses, and reads back as RSA-4096. Slow on host
-/// (num-bigint, no asm), so `#[ignore]`d — run with `--ignored`.
+/// Buffer-sizing proof for the largest key: a real RSA-4096 key seals, its attestation
+/// statement fits `MAX_CERT` and parses, and it reads back as RSA-4096.
+/// Run the slow full-width generation with `--ignored`.
 #[test]
 #[ignore = "full on-host RSA-4096 keygen — slow; run with --ignored"]
 fn on_device_rsa4096_buffers_round_trip() {
@@ -4041,6 +4168,7 @@ fn on_device_rsa4096_buffers_round_trip() {
         serial_hash: &HASH,
         serial_id: &SERIAL,
         otp_key: None,
+        latched: false,
     };
     let key = rsk_rsa::generate_rsa(&mut crate::RsaRng(&mut TestRng(99)), 4096).unwrap();
     let slot = info::next_free_retired(&mut fs).unwrap();
@@ -4048,13 +4176,12 @@ fn on_device_rsa4096_buffers_round_trip() {
     let mut meta = [0u8; 8];
     fs.meta_find(key_fid(slot).get(), &mut meta).unwrap();
     assert_eq!(meta[0], ALGO_RSA4096);
-    // The self-signed cert fits MAX_CERT (the DER writer is bounds-checked) and parses; its
-    // SPKI carries the 4096-bit key (≈526-byte RSAPublicKey, far larger than a 2048's ≈270).
-    let mut obj = [0u8; 2048];
-    let n = fs.read(cert_fid_for_slot(slot).unwrap(), &mut obj).unwrap();
-    let cert = find_tag(&obj[..n], 0x70).unwrap();
-    let (_, parsed) = x509_parser::parse_x509_certificate(cert).unwrap();
-    assert!(parsed.subject().to_string().contains("Slot"));
+    // The statement fits MAX_CERT (the DER writer is bounds-checked) and parses; its SPKI
+    // carries the 4096-bit key (≈526-byte RSAPublicKey, far larger than a 2048's ≈270).
+    let (sw, att) = run(&mut app, &mut fs, INS_ATTESTATION, slot, 0, &[]);
+    assert_eq!(sw, Sw::OK);
+    let (_, parsed) = x509_parser::parse_x509_certificate(&att).unwrap();
+    assert!(parsed.subject().to_string().contains("Attestation"));
     assert!(
         parsed
             .tbs_certificate
@@ -4197,9 +4324,8 @@ fn rsa1024_keygen_sign_verify_and_metadata() {
     assert_eq!(sw, Sw::OK);
     let pk = find_tag(&md, 0x04).unwrap();
     assert_eq!(find_tag(pk, 0x81).unwrap(), n_bytes);
-    // The self-signed RSA certificate parses, names the slot and is signed
-    // sha256WithRSAEncryption.
-    let (sw, obj) = run(
+    // No certificate: a YubiKey's GENERATE writes none, RSA's included.
+    let (sw, _) = run(
         &mut app,
         &mut fs,
         INS_GET_DATA,
@@ -4207,19 +4333,7 @@ fn rsa1024_keygen_sign_verify_and_metadata() {
         0xFF,
         &[0x5C, 0x03, 0x5F, 0xC1, 0x05],
     );
-    assert_eq!(sw, Sw::OK);
-    let cert = find_tag(find_tag(&obj, 0x53).unwrap(), 0x70).unwrap();
-    let (_, parsed) = x509_parser::parse_x509_certificate(cert).unwrap();
-    assert!(
-        parsed
-            .subject()
-            .to_string()
-            .contains("CN=RS-Key PIV Slot 9A")
-    );
-    assert_eq!(
-        parsed.signature_algorithm.algorithm.to_id_string(),
-        "1.2.840.113549.1.1.11"
-    );
+    assert_eq!(sw, Sw::FILE_NOT_FOUND);
     // RSA-slot attestation: the P-384 F9 key signs with ecdsa-with-SHA256.
     let (sw, att) = run(&mut app, &mut fs, INS_ATTESTATION, 0x9A, 0, &[]);
     assert_eq!(sw, Sw::OK);
@@ -4460,6 +4574,7 @@ fn the_management_slot_reports_one_pin_policy_in_every_state() {
         serial_hash: &HASH,
         serial_id: &SERIAL,
         otp_key: None,
+        latched: false,
     };
     select(&mut app, &mut fs);
     let policy = |app: &mut PivApplet, fs: &mut Fs<RamStorage>| -> Vec<u8> {
@@ -4522,6 +4637,7 @@ fn the_management_slot_reports_one_touch_policy_in_every_state() {
         serial_hash: &HASH,
         serial_id: &SERIAL,
         otp_key: None,
+        latched: false,
     };
     let mut app = PivApplet::new(SERIAL, HASH, None, &rng, &pres);
     let mut fs = new_fs();
@@ -4616,6 +4732,7 @@ fn protecting_the_management_key_keeps_a_gate_the_owner_raised() {
         serial_hash: &HASH,
         serial_id: &SERIAL,
         otp_key: None,
+        latched: false,
     };
     let touch = |md: &[u8]| find_tag(md, 0x02).unwrap()[1];
     let meta = |app: &mut PivApplet, fs: &mut Fs<RamStorage>| -> Vec<u8> {
@@ -4700,7 +4817,8 @@ fn move_and_delete_key() {
         &gen_template(ALGO_ECCP256),
     );
     assert_eq!(sw, Sw::OK);
-    // Move 9A → retired 0x82.
+    // A host's certificate for it in 9A, then move 9A → retired 0x82.
+    put_cert(&mut app, &mut fs, 0x05, 0xC5);
     let (sw, _) = run(&mut app, &mut fs, INS_MOVE_KEY, 0x82, 0x9A, &[]);
     assert_eq!(sw, Sw::OK);
     let (sw, _) = run(&mut app, &mut fs, INS_GET_METADATA, 0, 0x9A, &[]);
@@ -4708,7 +4826,7 @@ fn move_and_delete_key() {
     let (sw, md) = run(&mut app, &mut fs, INS_GET_METADATA, 0, 0x82, &[]);
     assert_eq!(sw, Sw::OK);
     assert_eq!(find_tag(&md, 0x01).unwrap(), &[ALGO_ECCP256]);
-    // The certificate object moved with it.
+    // The certificate stays in 9A's object: a move carries none.
     let (sw, _) = run(
         &mut app,
         &mut fs,
@@ -4717,7 +4835,7 @@ fn move_and_delete_key() {
         0xFF,
         &[0x5C, 0x03, 0x5F, 0xC1, 0x05],
     );
-    assert_eq!(sw, Sw::FILE_NOT_FOUND);
+    assert_eq!(sw, Sw::OK);
     let (sw, _) = run(
         &mut app,
         &mut fs,
@@ -4726,7 +4844,7 @@ fn move_and_delete_key() {
         0xFF,
         &[0x5C, 0x03, 0x5F, 0xC1, 0x0D],
     );
-    assert_eq!(sw, Sw::OK);
+    assert_eq!(sw, Sw::FILE_NOT_FOUND);
     // Retired → active works too — the trip is not one-way. Measured on a
     // YubiKey 5.7.4: 82 → 9A, 9A → 82 and 82 → 9C all answer 9000, three runs.
     let (sw, _) = run(&mut app, &mut fs, INS_MOVE_KEY, 0x9A, 0x82, &[]);
@@ -4791,8 +4909,22 @@ fn the_attestation_identity_is_not_host_replaceable() {
             &scalar
         )
         .0,
-        Sw::INCORRECT_P1P2,
+        Sw::WRONG_DATA,
         "IMPORT at F9"
+    );
+    // The control: the body is a key this card takes, so that `6A80` is the slot's.
+    assert_eq!(
+        run(
+            &mut app,
+            &mut fs,
+            INS_IMPORT_ASYM,
+            ALGO_ECCP384,
+            0x82,
+            &scalar
+        )
+        .0,
+        Sw::OK,
+        "the same key into 82"
     );
     let mut cert = vec![TAG_DATA_PATH, 0x03, 0x5F, 0xFF, 0x01, TAG_DATA_OBJECT, 0x03];
     cert.extend_from_slice(&[0x41, 0x42, 0x43]);
@@ -4849,18 +4981,27 @@ fn the_attestation_identity_is_not_host_replaceable() {
         .0,
         Sw::OK
     );
-    assert_eq!(
-        run(
-            &mut app,
-            &mut fs,
-            INS_ATTESTATION,
-            SLOT_AUTHENTICATION,
-            0,
-            &[]
-        )
-        .0,
-        Sw::OK
+    let (sw, att) = run(
+        &mut app,
+        &mut fs,
+        INS_ATTESTATION,
+        SLOT_AUTHENTICATION,
+        0,
+        &[],
     );
+    assert_eq!(sw, Sw::OK);
+    // …signed by the key F9's certificate names: the metadata above is a cache, and
+    // a key written under it would not show there.
+    let f9cert = find_tag(find_tag(&obj, 0x53).unwrap(), 0x70).unwrap();
+    let (_, f9) = x509_parser::parse_x509_certificate(f9cert).unwrap();
+    let spk = &f9.tbs_certificate.subject_pki.subject_public_key.data;
+    let vk = p384::ecdsa::VerifyingKey::from_sec1_bytes(spk).unwrap();
+    let (_, att_cert) = x509_parser::parse_x509_certificate(&att).unwrap();
+    let digest: [u8; 32] = sha2::Sha256::digest(att_cert.tbs_certificate.as_ref()).into();
+    let sig = p384::ecdsa::Signature::from_der(&att_cert.signature_value.data).unwrap();
+    use p384::ecdsa::signature::hazmat::PrehashVerifier as _;
+    vk.verify_prehash(&digest, &sig)
+        .expect("F9's certificate does not verify the attestation");
 }
 
 /// `GET METADATA F9` answered `6A88` — "referenced data not found" — on a card
@@ -4967,7 +5108,7 @@ fn move_key_same_slot_rejected() {
     );
     assert_eq!(sw, Sw::OK);
     let (sw, _) = run(&mut app, &mut fs, INS_MOVE_KEY, 0x9A, 0x9A, &[]);
-    assert_eq!(sw, Sw::INCORRECT_P1P2);
+    assert_eq!(sw, Sw::WRONG_DATA);
     // The key survives the rejected self-move.
     let (sw, md) = run(&mut app, &mut fs, INS_GET_METADATA, 0, 0x9A, &[]);
     assert_eq!(sw, Sw::OK);
@@ -5241,11 +5382,9 @@ fn the_bit_group_template_is_not_an_alias_of_a_data_object() {
         Sw::FILE_NOT_FOUND,
         "7F61 after writing 5FC1B6"
     );
-    // Both cards refuse the `5C`-form write to `7F61` — this pins `put_data`'s
-    // own 3-byte-path guard, not the map, and it passes with the alias restored.
-    // It is here because it is why the alias was only ever reachable from the
-    // other end. (A *bare* `7F 61 …` body is a different encoding and lands on
-    // the acknowledged-not-stored arm.)
+    // Both cards refuse the `5C`-form write to `7F61`. That pins `put_data`'s own
+    // path guard, not the map (it passes with the alias restored), and is why the
+    // alias was only reachable from the other end. A bare `7F 61` body is `6A80`.
     let mut bad = bitgt.to_vec();
     bad.extend_from_slice(&[TAG_DATA_OBJECT, 0x02, 0x42, 0x42]);
     assert_eq!(
@@ -5358,12 +5497,17 @@ fn an_object_id_is_its_whole_value() {
     assert_eq!(data_object_fid(0xEF), Some(0xD2EF));
     assert_eq!(data_object_fid(0xF0), None);
     assert_eq!(data_object_fid(0xF1), None);
+    // 5FC1F1 is an object of its own, stored in the pool as a YubiKey stores it, and
+    // never a second door to the attestation certificate.
     let mut over = vec![TAG_DATA_PATH, 0x03, 0x5F, 0xC1, 0xF1, TAG_DATA_OBJECT, 0x03];
     over.extend_from_slice(b"XXX");
     assert_eq!(
         run(&mut app, &mut fs, INS_PUT_DATA, 0x3F, 0xFF, &over).0,
-        Sw::WRONG_DATA,
-        "5FC1F1 must not be a second door to the attestation certificate"
+        Sw::OK
+    );
+    assert_eq!(
+        run(&mut app, &mut fs, INS_GET_DATA, 0x3F, 0xFF, &over[..5]),
+        (Sw::OK, vec![TAG_DATA_OBJECT, 0x03, b'X', b'X', b'X'])
     );
     let (sw, still) = run(&mut app, &mut fs, INS_GET_DATA, 0x3F, 0xFF, &exact);
     assert_eq!(sw, Sw::OK);
@@ -5376,6 +5520,7 @@ fn reset_reports_failure_when_the_sweep_cannot_converge() {
         serial_hash: &HASH,
         serial_id: &SERIAL,
         otp_key: None,
+        latched: false,
     };
     let mut fs = Fs::new(StubbornStorage(RamStorage::new()));
     fs.scan();
@@ -5572,11 +5717,12 @@ fn reset_fails_when_the_enumeration_is_truncated() {
         serial_hash: &HASH,
         serial_id: &SERIAL,
         otp_key: None,
+        latched: false,
     };
     let mut fs = Fs::new(rsk_fs::storage::faults::TruncatedWalk::new());
-    fs.scan();
     let obj = data_object_fid(0x01).unwrap();
     fs.put(obj, &[0x41]).unwrap();
+    fs.scan();
     assert_eq!(
         reset_files(&dev, &mut fs, &mut TestRng(3)),
         Err(Sw::MEMORY_FAILURE)
@@ -5624,8 +5770,7 @@ fn management_gates() {
     assert_eq!(sw, Sw::SECURITY_STATUS_NOT_SATISFIED);
     let (sw, _) = run(&mut app, &mut fs, INS_MOVE_KEY, 0x82, 0x9A, &[]);
     assert_eq!(sw, Sw::SECURITY_STATUS_NOT_SATISFIED);
-    // X25519 generates a key and returns its 32-byte public point (no
-    // self-signed cert — it can't sign).
+    // X25519 generates a key and returns its 32-byte public point.
     auth_mgm(&mut app, &mut fs);
     let (sw, resp) = run(
         &mut app,
@@ -5705,6 +5850,7 @@ fn torn_import_leaves_no_attestable_origin() {
         serial_hash: &HASH,
         serial_id: &SERIAL,
         otp_key: None,
+        latched: false,
     };
     let budget = Rc::new(Cell::new(usize::MAX));
     let mut fs = Fs::new(TornMeta {
@@ -5767,13 +5913,147 @@ fn torn_import_leaves_no_attestable_origin() {
     );
 }
 
+/// Past the fuse latch a key slot only the pre-OTP arm opens was planted: the boot
+/// pass leaves it where it is instead of moving it onto the fused root.
+#[test]
+fn past_the_latch_no_pre_otp_key_slot_moves() {
+    let rng = RefCell::new(TestRng(7));
+    let pres = RefCell::new(AlwaysConfirm);
+    let mut app = PivApplet::new(SERIAL, HASH, None, &rng, &pres);
+    let mut fs = new_fs();
+    select(&mut app, &mut fs);
+    auth_mgm(&mut app, &mut fs);
+    verify_pin(&mut app, &mut fs);
+    let (sw, _) = run(
+        &mut app,
+        &mut fs,
+        INS_ASYM_KEYGEN,
+        0,
+        0x9A,
+        &gen_template(ALGO_ECCP256),
+    );
+    assert_eq!(sw, Sw::OK);
+    let fid = crate::files::key_fid(0x9A);
+    let mut before = [0u8; 128];
+    let n = fs.read(fid.get(), &mut before).unwrap();
+
+    let latched = Device {
+        serial_hash: &HASH,
+        serial_id: &SERIAL,
+        otp_key: Some(&[0x44; 32]),
+        latched: true,
+    };
+    assert!(!migrate_kbase(&latched, &mut fs, &mut TestRng(9)));
+    let mut after = [0u8; 128];
+    assert_eq!(fs.read(fid.get(), &mut after), Some(n));
+    assert_eq!(after, before, "a planted key slot moved past the latch");
+}
+
+/// Past the latch the pass still counts a slot the medium did not read, as every
+/// other pass does, so READ 1E/07 keeps saying what a boot could not check.
+#[test]
+fn past_the_latch_an_unread_slot_is_still_reported() {
+    let (backend, medium) = ProbeStuck::new();
+    let rng = RefCell::new(TestRng(7));
+    let pres = RefCell::new(AlwaysConfirm);
+    let mut fs = Fs::new(backend);
+    fs.scan();
+    let mut app = PivApplet::new(SERIAL, HASH, None, &rng, &pres);
+    select(&mut app, &mut fs);
+    auth_mgm(&mut app, &mut fs);
+    let template = gen_template(ALGO_ECCP256);
+    let (sw, _) = run(&mut app, &mut fs, INS_ASYM_KEYGEN, 0, 0x9A, &template);
+    assert_eq!(sw, Sw::OK);
+    let latched = Device {
+        serial_hash: &HASH,
+        serial_id: &SERIAL,
+        otp_key: Some(&[0x44; 32]),
+        latched: true,
+    };
+    medium.stick(Some(crate::files::key_fid(0x9A).get()));
+    assert!(
+        migrate_kbase(&latched, &mut fs, &mut TestRng(9)),
+        "a slot the medium did not read counted as checked past the latch"
+    );
+}
+
+/// Past the latch a fused key that did not read leaves no arm to open or seal
+/// under: SELECT and every command refuse, and a VERIFY spends no retry, since the
+/// fuse refused it and not the PIN.
+#[test]
+fn past_the_latch_an_unread_key_refuses_and_spends_nothing() {
+    fn otp_source(out: &mut [u8; 32]) -> bool {
+        *out = [0x44; 32];
+        true
+    }
+    fn unread(_: &mut [u8; 32]) -> bool {
+        false
+    }
+    let rng = RefCell::new(TestRng(7));
+    let pres = RefCell::new(AlwaysConfirm);
+    let mut fs = new_fs();
+    let mut app = PivApplet::new(SERIAL, HASH, Some(FusedKey::open(otp_source)), &rng, &pres);
+    select(&mut app, &mut fs);
+    let retries =
+        |app: &mut PivApplet, fs: &mut Fs<RamStorage>| run(app, fs, INS_VERIFY, 0, 0x80, &[]).0;
+    let before = retries(&mut app, &mut fs);
+
+    let mut shut = PivApplet::new(SERIAL, HASH, Some(FusedKey::latched(unread)), &rng, &pres);
+    let mut out = [0u8; 256];
+    let sw = Applet::select(&mut shut, false, &mut fs, &mut ResBuf::new(&mut out));
+    assert_eq!(sw, Sw::FUSED_KEY_UNREAD);
+    let verify = run(&mut shut, &mut fs, INS_VERIFY, 0, 0x80, &DEFAULT_PIN).0;
+    assert_eq!(verify, Sw::FUSED_KEY_UNREAD);
+    let template = gen_template(ALGO_ECCP256);
+    let keygen = run(&mut shut, &mut fs, INS_ASYM_KEYGEN, 0, 0x9A, &template).0;
+    assert_eq!(keygen, Sw::FUSED_KEY_UNREAD);
+    assert_eq!(
+        retries(&mut app, &mut fs),
+        before,
+        "a retry spent past the latch"
+    );
+    assert_eq!(
+        fs.read(crate::files::key_fid(0x9A).get(), &mut [0u8; 128]),
+        None
+    );
+}
+
+/// A PIN verified before the fused key stopped reading stays droppable: a logout
+/// needs no key, so it clears the status past the latch rather than refuse.
+#[test]
+fn past_the_latch_a_logout_needs_no_key() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    static READS: AtomicBool = AtomicBool::new(true);
+    fn flaky(out: &mut [u8; 32]) -> bool {
+        *out = [0x44; 32];
+        READS.load(Ordering::SeqCst)
+    }
+    let rng = RefCell::new(TestRng(7));
+    let pres = RefCell::new(AlwaysConfirm);
+    let mut fs = new_fs();
+    let mut app = PivApplet::new(SERIAL, HASH, Some(FusedKey::latched(flaky)), &rng, &pres);
+    select(&mut app, &mut fs);
+    verify_pin(&mut app, &mut fs);
+    READS.store(false, Ordering::SeqCst);
+    assert_eq!(
+        run(&mut app, &mut fs, INS_VERIFY, 0xFF, 0x80, &[]).0,
+        Sw::OK
+    );
+    assert_ne!(
+        run(&mut app, &mut fs, INS_VERIFY, 0, 0x80, &[]).0,
+        Sw::OK,
+        "the PIN status outlived its logout"
+    );
+}
+
 #[test]
 fn kbase_migration_reseals_slots_and_pin_falls_back() {
     const OTP: [u8; 32] = [0x44; 32];
     // The applet holds a way to READ the fuses, not the key, so its test source has
     // to be a plain `fn` — a closure over `OTP` could not coerce to one.
-    fn otp_source() -> Option<[u8; 32]> {
-        Some(OTP)
+    fn otp_source(out: &mut [u8; 32]) -> bool {
+        *out = OTP;
+        true
     }
     // Provision under a pre-OTP device: defaults + a generated 9A key.
     let rng = RefCell::new(TestRng(7));
@@ -5799,6 +6079,7 @@ fn kbase_migration_reseals_slots_and_pin_falls_back() {
         serial_hash: &HASH,
         serial_id: &SERIAL,
         otp_key: Some(&OTP),
+        latched: false,
     };
     migrate_kbase(&dev_new, &mut fs, &mut TestRng(9));
     migrate_kbase(&dev_new, &mut fs, &mut TestRng(11));
@@ -5815,7 +6096,7 @@ fn kbase_migration_reseals_slots_and_pin_falls_back() {
         fs.has_data(rsk_fs::EF_HARDENED),
         "fixture: the lap has latched"
     );
-    let mut app2 = PivApplet::new(SERIAL, HASH, Some(otp_source as FusedKey), &rng, &pres);
+    let mut app2 = PivApplet::new(SERIAL, HASH, Some(FusedKey::open(otp_source)), &rng, &pres);
     select(&mut app2, &mut fs);
     auth_mgm(&mut app2, &mut fs);
     verify_pin(&mut app2, &mut fs);
@@ -5842,9 +6123,15 @@ fn kbase_migration_reseals_slots_and_pin_falls_back() {
     let psig = p256::ecdsa::Signature::from_der(&der).unwrap();
     vk.verify_prehash(&digest, &psig).unwrap();
 
-    // A pre-OTP applet no longer accepts the migrated PIN verifier.
+    // The public-root applet cannot open migrated F9, so SELECT refuses it.
+    // The dispatcher retains selection after refusal, so a subsequent VERIFY
+    // still reaches the verifier and must refuse the migrated PIN.
     let mut app3 = PivApplet::new(SERIAL, HASH, None, &rng, &pres);
-    select(&mut app3, &mut fs);
+    let mut output = [0u8; 256];
+    assert_eq!(
+        Applet::select(&mut app3, false, &mut fs, &mut ResBuf::new(&mut output)),
+        Sw::MEMORY_FAILURE
+    );
     let (sw, _) = run(&mut app3, &mut fs, INS_VERIFY, 0, 0x80, &DEFAULT_PIN);
     assert_eq!(sw, Sw::new(0x63, 0xC2));
 }
@@ -5855,19 +6142,22 @@ fn kbase_migration_reseals_slots_and_pin_falls_back() {
 #[test]
 fn unblock_with_the_puk_re_arms_the_at_rest_lap() {
     const OTP: [u8; 32] = [0x55; 32];
-    fn otp_source() -> Option<[u8; 32]> {
-        Some(OTP)
+    fn otp_source(out: &mut [u8; 32]) -> bool {
+        *out = OTP;
+        true
     }
     const NEW_PIN: [u8; PIN_WIRE_LEN] = [0x39, 0x39, 0x39, 0x39, 0x39, 0x39, PIN_PAD, PIN_PAD];
     let dev_pre = Device {
         serial_hash: &HASH,
         serial_id: &SERIAL,
         otp_key: None,
+        latched: false,
     };
     let dev_otp = Device {
         serial_hash: &HASH,
         serial_id: &SERIAL,
         otp_key: Some(&OTP),
+        latched: false,
     };
 
     // Provision pre-OTP: both references are rooted in the public chip serial.
@@ -5880,13 +6170,14 @@ fn unblock_with_the_puk_re_arms_the_at_rest_lap() {
     assert_eq!(fs.read(EF_PIN, &mut rec), Some(PIN_REC_LEN));
     assert_eq!(
         &rec[2..],
-        &dev_pre.pin_derive_verifier(&DEFAULT_PIN)[..],
+        &dev_pre.pin_derive_verifier(&DEFAULT_PIN).expose()[..],
         "fixture: EF_PIN starts rooted in the public chip serial"
     );
 
     // The OTP build. The PUK migrates on its own first use and re-arms the lap;
     // a boot then runs the lap and re-latches the marker.
-    let mut app2 = PivApplet::new(SERIAL, HASH, Some(otp_source as FusedKey), &rng, &pres);
+    assert!(!migrate_kbase(&dev_otp, &mut fs, &mut TestRng(9)));
+    let mut app2 = PivApplet::new(SERIAL, HASH, Some(FusedKey::open(otp_source)), &rng, &pres);
     select(&mut app2, &mut fs);
     fs.put(rsk_fs::EF_HARDENED, &[1]).unwrap();
     assert!(
@@ -5919,7 +6210,7 @@ fn unblock_with_the_puk_re_arms_the_at_rest_lap() {
     assert_eq!(fs.read(EF_PIN, &mut rec), Some(PIN_REC_LEN));
     assert_eq!(
         &rec[2..],
-        &dev_pre.pin_derive_verifier(&DEFAULT_PIN)[..],
+        &dev_pre.pin_derive_verifier(&DEFAULT_PIN).expose()[..],
         "fixture: a blocked PIN never migrated"
     );
 
@@ -5932,7 +6223,7 @@ fn unblock_with_the_puk_re_arms_the_at_rest_lap() {
     assert_eq!(fs.read(EF_PIN, &mut rec), Some(PIN_REC_LEN));
     assert_eq!(
         &rec[2..],
-        &dev_otp.pin_derive_verifier(&NEW_PIN)[..],
+        &dev_otp.pin_derive_verifier(&NEW_PIN).expose()[..],
         "the unblock re-keyed EF_PIN under the OTP arm"
     );
     assert!(
@@ -5948,18 +6239,21 @@ fn unblock_with_the_puk_re_arms_the_at_rest_lap() {
 #[test]
 fn set_retries_re_arms_the_at_rest_lap() {
     const OTP: [u8; 32] = [0x66; 32];
-    fn otp_source() -> Option<[u8; 32]> {
-        Some(OTP)
+    fn otp_source(out: &mut [u8; 32]) -> bool {
+        *out = OTP;
+        true
     }
     let dev_pre = Device {
         serial_hash: &HASH,
         serial_id: &SERIAL,
         otp_key: None,
+        latched: false,
     };
     let dev_otp = Device {
         serial_hash: &HASH,
         serial_id: &SERIAL,
         otp_key: Some(&OTP),
+        latched: false,
     };
 
     let rng = RefCell::new(TestRng(5));
@@ -5971,7 +6265,7 @@ fn set_retries_re_arms_the_at_rest_lap() {
 
     // The PIN migrates on its own verify and re-arms; a boot re-latches the marker.
     // The PUK is untouched by that path, so it is still chip-serial-rooted.
-    let mut app2 = PivApplet::new(SERIAL, HASH, Some(otp_source as FusedKey), &rng, &pres);
+    let mut app2 = PivApplet::new(SERIAL, HASH, Some(FusedKey::open(otp_source)), &rng, &pres);
     select(&mut app2, &mut fs);
     auth_mgm(&mut app2, &mut fs);
     verify_pin(&mut app2, &mut fs);
@@ -5984,7 +6278,7 @@ fn set_retries_re_arms_the_at_rest_lap() {
     assert_eq!(fs.read(EF_PUK, &mut rec), Some(PIN_REC_LEN));
     assert_eq!(
         &rec[2..],
-        &dev_pre.pin_derive_verifier(&DEFAULT_PUK)[..],
+        &dev_pre.pin_derive_verifier(&DEFAULT_PUK).expose()[..],
         "fixture: EF_PUK is still rooted in the public chip serial"
     );
 
@@ -5995,7 +6289,7 @@ fn set_retries_re_arms_the_at_rest_lap() {
     assert_eq!(fs.read(EF_PUK, &mut rec), Some(PIN_REC_LEN));
     assert_eq!(
         &rec[2..],
-        &dev_otp.pin_derive_verifier(&DEFAULT_PUK)[..],
+        &dev_otp.pin_derive_verifier(&DEFAULT_PUK).expose()[..],
         "SET RETRIES re-keyed EF_PUK under the OTP arm"
     );
     assert!(
@@ -6012,13 +6306,15 @@ fn set_retries_re_arms_the_at_rest_lap() {
 #[test]
 fn a_set_retries_whose_re_arm_the_medium_refuses_resets_neither_reference() {
     const OTP: [u8; 32] = [0x66; 32];
-    fn otp_source() -> Option<[u8; 32]> {
-        Some(OTP)
+    fn otp_source(out: &mut [u8; 32]) -> bool {
+        *out = OTP;
+        true
     }
     let dev_pre = Device {
         serial_hash: &HASH,
         serial_id: &SERIAL,
         otp_key: None,
+        latched: false,
     };
     let rng = RefCell::new(TestRng(5));
     let pres = RefCell::new(AlwaysConfirm);
@@ -6038,7 +6334,7 @@ fn a_set_retries_whose_re_arm_the_medium_refuses_resets_neither_reference() {
         &mut fs,
         &mut TestRng(13),
     );
-    let mut app2 = PivApplet::new(SERIAL, HASH, Some(otp_source as FusedKey), &rng, &pres);
+    let mut app2 = PivApplet::new(SERIAL, HASH, Some(FusedKey::open(otp_source)), &rng, &pres);
     select(&mut app2, &mut fs);
     auth_mgm(&mut app2, &mut fs);
     verify_pin(&mut app2, &mut fs);
@@ -6047,7 +6343,7 @@ fn a_set_retries_whose_re_arm_the_medium_refuses_resets_neither_reference() {
     assert_eq!(fs.read(EF_PUK, &mut before), Some(PIN_REC_LEN));
     assert_eq!(
         &before[2..],
-        &dev_pre.pin_derive_verifier(&DEFAULT_PUK)[..],
+        &dev_pre.pin_derive_verifier(&DEFAULT_PUK).expose()[..],
         "fixture: EF_PUK is still rooted in the public chip serial"
     );
 
@@ -6097,6 +6393,7 @@ fn a_reset_re_arms_the_at_rest_lap_before_the_first_tombstone() {
         serial_hash: &HASH,
         serial_id: &SERIAL,
         otp_key: Some(&OTP),
+        latched: false,
     };
     let rng = RefCell::new(TestRng(5));
     let pres = RefCell::new(AlwaysConfirm);
@@ -6157,6 +6454,7 @@ fn a_reset_retries_the_re_arm_after_the_sweep() {
         serial_hash: &HASH,
         serial_id: &SERIAL,
         otp_key: Some(&OTP),
+        latched: false,
     };
     let rng = RefCell::new(TestRng(5));
     let pres = RefCell::new(AlwaysConfirm);
@@ -6255,6 +6553,7 @@ fn reset_under(refuse_once: Option<u16>, truncate_after: Option<u16>) -> Residue
         serial_hash: &HASH,
         serial_id: &SERIAL,
         otp_key: Some(&OTP),
+        latched: false,
     };
     let mut fs = Fs::new(RefusedThenTruncated {
         inner: RamStorage::new(),
@@ -6334,6 +6633,7 @@ fn the_boot_pass_re_arms_the_lap_before_it_supersedes_a_pre_otp_key_slot() {
         serial_hash: &HASH,
         serial_id: &SERIAL,
         otp_key: None,
+        latched: false,
     };
     let dev_otp = Device {
         otp_key: Some(&OTP),
@@ -6342,7 +6642,7 @@ fn the_boot_pass_re_arms_the_lap_before_it_supersedes_a_pre_otp_key_slot() {
     let fid = crate::files::key_fid(SLOT_AUTHENTICATION);
     let plain = [0x5Au8; 33];
     let mut rng = TestRng(21);
-    let mut out = [0u8; 64];
+    let mut out = Secret::<[u8; 64]>::zeroed();
 
     // The ORDER, on the one medium that can tell the two orderings apart.
     let (mut fs, medium) = new_cut_fs();
@@ -6517,6 +6817,7 @@ fn pivman_printed_codec_property_fuzz() {
         serial_hash: &HASH,
         serial_id: &SERIAL,
         otp_key: None,
+        latched: false,
     };
 
     for body in inputs {
@@ -6566,11 +6867,9 @@ fn pivman_printed_codec_property_fuzz() {
                 &out[..6],
                 &[0x53, 0x24, PROTECTED_TAG, 0x22, PROTECTED_MGM_TAG, 0x20]
             );
-            let mut sealed = [0u8; 32];
-            let klen = seal::seal_read(&dev, &mut fs, key_fid(SLOT_CARDMGM), &mut sealed)
-                .expect("sealed mgmt key present");
-            assert_eq!(klen, 32);
-            assert_eq!(&out[6..38], &sealed[..]);
+            let sealed = files::mgm_read(&dev, &mut fs).expect("sealed mgmt key present");
+            assert_eq!(sealed.key().len(), 32);
+            assert_eq!(&out[6..38], sealed.key());
         } else {
             assert_eq!(sw_pin, Sw::FILE_NOT_FOUND);
         }
@@ -6604,7 +6903,8 @@ fn key_cert_sign_is_asserted_only_on_a_ca() {
     );
     assert_eq!(sw, Sw::OK);
 
-    // The attestation leaf (cA=FALSE) and the F9 self-signed CA it chains to.
+    // The F9 CA, in its 70/71/FE object, and the attestation leaf it signs, which
+    // names no key usage at all (the next test holds that).
     let (sw, leaf) = run(&mut app, &mut fs, INS_ATTESTATION, 0x9A, 0, &[]);
     assert_eq!(sw, Sw::OK);
     let (sw, f9) = run(
@@ -6616,7 +6916,13 @@ fn key_cert_sign_is_asserted_only_on_a_ca() {
         &[0x5C, 0x03, 0x5F, 0xFF, 0x01],
     );
     assert_eq!(sw, Sw::OK);
-    let f9der = find_tag(find_tag(&f9, 0x53).unwrap(), 0x70).expect("F9 cert object");
+    let body = find_tag(&f9, 0x53).unwrap();
+    assert_eq!(
+        find_tag(body, 0x71),
+        Some(&[0x00][..]),
+        "CertInfo: uncompressed"
+    );
+    let f9der = find_tag(body, 0x70).expect("F9 cert object");
 
     for (label, der) in [("attestation leaf", &leaf[..]), ("F9 self-cert", f9der)] {
         let (_, c) = x509_parser::parse_x509_certificate(der).unwrap();
@@ -6627,15 +6933,45 @@ fn key_cert_sign_is_asserted_only_on_a_ca() {
             .find_map(|e| match e.parsed_extension() {
                 ParsedExtension::KeyUsage(k) => Some(k),
                 _ => None,
-            })
-            .expect("keyUsage extension");
-        assert!(ku.digital_signature(), "{label}: no digitalSignature");
+            });
+        let key_cert_sign = ku.is_some_and(|k| k.key_cert_sign());
         assert_eq!(
-            ku.key_cert_sign(),
-            is_ca,
-            "{label}: keyCertSign={} but cA={is_ca} — RFC 5280 §4.2.1.3",
-            ku.key_cert_sign()
+            key_cert_sign, is_ca,
+            "{label}: keyCertSign={key_cert_sign} but cA={is_ca} — RFC 5280 §4.2.1.3"
         );
+        if is_ca {
+            assert!(
+                ku.is_some_and(|k| k.digital_signature()),
+                "{label}: no digitalSignature"
+            );
+        }
+    }
+}
+
+/// An attestation statement carries no keyUsage, as a YubiKey's OpenPGP statement
+/// carries none: it says where a key came from, not what it is for. Ours put
+/// `digitalSignature` on a 9D key-management key unless it was X25519.
+#[test]
+fn an_attestation_statement_names_no_key_usage() {
+    let rng = RefCell::new(TestRng(7));
+    let pres = RefCell::new(AlwaysConfirm);
+    let mut app = PivApplet::new(SERIAL, HASH, None, &rng, &pres);
+    let mut fs = new_fs();
+    select(&mut app, &mut fs);
+    auth_mgm(&mut app, &mut fs);
+    verify_pin(&mut app, &mut fs);
+    for (slot, algo) in [
+        (0x9A, ALGO_ECCP256),
+        (0x9D, ALGO_ECCP256),
+        (0x9D, ALGO_X25519),
+    ] {
+        let template = gen_template(algo);
+        let (sw, _) = run(&mut app, &mut fs, INS_ASYM_KEYGEN, 0, slot, &template);
+        assert_eq!(sw, Sw::OK);
+        let (sw, leaf) = run(&mut app, &mut fs, INS_ATTESTATION, slot, 0, &[]);
+        assert_eq!(sw, Sw::OK);
+        let (_, c) = x509_parser::parse_x509_certificate(&leaf).unwrap();
+        assert!(c.key_usage().unwrap().is_none(), "{slot:02X}/{algo:02X}");
     }
 }
 
@@ -7185,6 +7521,7 @@ fn a_torn_reset_never_leaves_a_key_behind_the_default_pin() {
         serial_hash: &HASH,
         serial_id: &SERIAL,
         otp_key: None,
+        latched: false,
     };
     let rng = RefCell::new(TestRng(7));
     let pres = RefCell::new(AlwaysConfirm);
@@ -7254,6 +7591,7 @@ fn a_torn_reset_never_leaves_a_key_behind_the_default_mgm() {
         serial_hash: &HASH,
         serial_id: &SERIAL,
         otp_key: None,
+        latched: false,
     };
     let rng = RefCell::new(TestRng(11));
     let pres = RefCell::new(AlwaysConfirm);
@@ -7325,6 +7663,7 @@ fn scan_files_repairs_the_mgm_metadata_when_only_it_is_missing() {
         serial_hash: &HASH,
         serial_id: &SERIAL,
         otp_key: None,
+        latched: false,
     };
     let mut fs = Fs::new(RamStorage::new());
     fs.scan();
@@ -7437,6 +7776,7 @@ fn scan_files_rewrites_a_stale_mgm_head_when_the_key_is_re_minted() {
         serial_hash: &HASH,
         serial_id: &SERIAL,
         otp_key: None,
+        latched: false,
     };
     let mgm = files::key_fid(SLOT_CARDMGM);
     let mut fs = Fs::new(RamStorage::new());
@@ -7477,6 +7817,7 @@ fn the_mgm_metadata_repair_reads_the_surviving_keys_algorithm() {
         serial_hash: &HASH,
         serial_id: &SERIAL,
         otp_key: None,
+        latched: false,
     };
     let mgm_fid = files::key_fid(SLOT_CARDMGM);
     for (key, want) in [
@@ -7720,6 +8061,7 @@ fn only_a_failed_verify_revokes_the_standing_one() {
         serial_hash: &HASH,
         serial_id: &SERIAL,
         otp_key: None,
+        latched: false,
     };
     select(&mut app, &mut fs);
     auth_mgm(&mut app, &mut fs);
@@ -7742,9 +8084,9 @@ fn only_a_failed_verify_revokes_the_standing_one() {
         "the control: it signs"
     );
 
-    let wrong = pad_pin(b"999999").unwrap();
-    let wrong_puk = pad_pin(b"99999999").unwrap();
-    let new = pad_pin(b"654321").unwrap();
+    let wrong = *pad_pin(b"999999").unwrap().expose();
+    let wrong_puk = *pad_pin(b"99999999").unwrap().expose();
+    let new = *pad_pin(b"654321").unwrap().expose();
 
     // The panel's gate (`rsk-display`'s `gate_piv_ref`) is this call: the old-secret
     // check of a CHANGE, never a VERIFY. It cannot go red — E45's fix has to add a
@@ -7907,18 +8249,26 @@ fn the_management_slots_default_flag_answers_for_the_slots_touch_policy() {
         "the factory key behind a raised touch gate is not the factory configuration"
     );
 
-    // e. planted touch bytes. `NEVER` is the rule, not "anything but ALWAYS": a
-    // head carrying a value no writer emits is not the factory configuration
-    // either, and `!= ALWAYS` would call it one.
+    // e. planted touch bytes, on the key-only record an older build wrote, whose
+    // head is the only word on its policy. `NEVER` is the rule, not "anything but
+    // ALWAYS": a head carrying a value no writer emits is not the factory
+    // configuration either, and `!= ALWAYS` would call it one.
     // The last row is the card the rule is scoped for — `0x0875`'s
     // `PINPOLICY_ALWAYS` in `meta[1]`, still on the factory key. It must keep
     // reporting `01`, or an upgrade silently retires a true warning.
+    let dev = Device {
+        serial_hash: &HASH,
+        serial_id: &SERIAL,
+        otp_key: None,
+        latched: false,
+    };
     let flag_for = |planted: [u8; 3]| -> u8 {
         let mut app = PivApplet::new(SERIAL, HASH, None, &rng, &pres);
         let mut fs = new_fs();
         select(&mut app, &mut fs);
-        fs.meta_add(files::key_fid(SLOT_CARDMGM).get(), &planted)
-            .unwrap();
+        let fid = files::key_fid(SLOT_CARDMGM);
+        seal::seal_put(&dev, &mut fs, &mut TestRng(3), fid, &DEFAULT_MGM).unwrap();
+        fs.meta_add(fid.get(), &planted).unwrap();
         find_tag(
             &run(&mut app, &mut fs, INS_GET_METADATA, 0, SLOT_CARDMGM, &[]).1,
             0x05,
@@ -8013,13 +8363,13 @@ fn a_one_byte_body_is_the_same_refusal_on_every_command() {
     select(&mut app, &mut fs);
 
     // (INS, P1, P2) — every instruction `process` dispatches, gated and ungated
-    // alike, plus its `_ => 6D00` fall-through. `A4` is here at `P2 = 01`, the
-    // in-applet re-SELECT: the dispatcher intercepts `P2 = 00`/`04` before the
-    // applet, and the reference draws the same line — `00 A4 04 00 01 A0` is
+    // alike, plus its `_ => 6D00` fall-through. `A4` is here at `P2 = 01`, a SELECT
+    // form that reaches the applet: the dispatcher intercepts `P2 = 00`/`04` before
+    // it, and the reference draws the same line — `00 A4 04 00 01 A0` is
     // `9000` there while `00 A4 04 01 01 A0` is `6A80`. The rule is applet-local
     // on both cards and must not be lifted to the dispatcher (`rsk-oath` takes a
     // legitimate `Lc = 1`).
-    let cmds: [(u8, u8, u8); 18] = [
+    let cmds: [(u8, u8, u8); 19] = [
         (INS_VERIFY, 0x00, 0x80),
         (INS_CHANGE_PIN, 0x00, 0x80),
         (INS_RESET_RETRY, 0x00, 0x80),
@@ -8037,6 +8387,7 @@ fn a_one_byte_body_is_the_same_refusal_on_every_command() {
         (INS_SET_MGMKEY, 0xFF, 0xFF),
         (INS_IMPORT_ASYM, 0x06, 0x9A),
         (INS_SELECT, 0x04, 0x01),
+        (rsk_sdk::apdu::INS_GET_RESPONSE, 0x00, 0x00),
         (0xEE, 0x00, 0x00),
     ];
     for authed in [false, true] {
@@ -8156,7 +8507,7 @@ fn a_one_byte_body_is_the_same_refusal_on_every_command() {
     auth_mgm(&mut app, &mut fs);
     assert_eq!(
         run(&mut app, &mut fs, INS_MOVE_KEY, 0x9A, 0x9C, &long).0,
-        Sw::FILE_NOT_FOUND,
+        Sw::REFERENCE_NOT_FOUND,
         "MOVE KEY authorised: the empty source slot, not the body"
     );
     assert_eq!(
@@ -8180,7 +8531,7 @@ fn a_one_byte_body_is_the_same_refusal_on_every_command() {
     }
     assert_eq!(
         run(&mut app, &mut fs, INS_MOVE_KEY, 0x01, 0x9C, &[]).0,
-        Sw::INCORRECT_P1P2,
+        Sw::WRONG_DATA,
         "MOVE KEY authorised: a destination naming no slot"
     );
 }
@@ -8510,8 +8861,8 @@ impl Storage for MetaFaults {
 /// repair exists for.
 ///
 /// The budget counts EF_META reads, and this path takes more than the two the
-/// head is about — the pubkey and certificate deletes each try one, for fids that
-/// carry no head at all. So the "nothing lands" case arms the medium for the whole
+/// head is about — the pubkey delete tries one, for a fid that carries no head at
+/// all. So the "nothing lands" case arms the medium for the whole
 /// command rather than counting: a flash that cannot be read is not a budget.
 fn move_delete_under_faults(meta_faults: usize, break_remove: bool) -> (Sw, bool, bool) {
     let rng = RefCell::new(TestRng(7));
@@ -8660,6 +9011,7 @@ fn reset_with_ef_meta_stuck(stuck: bool) -> (Result<(), Sw>, bool, Vec<&'static 
         serial_hash: &HASH,
         serial_id: &SERIAL,
         otp_key: None,
+        latched: false,
     };
     let answered = files::reset_files(&dev, &mut fs, &mut *rng.borrow_mut());
     unremovable.set(0);
@@ -8896,6 +9248,7 @@ fn a_faulted_meta_probe_does_not_retire_the_management_touch_gate() {
         serial_hash: &HASH,
         serial_id: &SERIAL,
         otp_key: None,
+        latched: false,
     };
     // ONE faulted EF_META read, not a stuck one: `meta_add` further down refuses a
     // persistently unreadable blob on its own, which would mask this guard entirely.
@@ -8947,6 +9300,46 @@ fn moved_card() -> (
     (app, fs, medium, rng, pres)
 }
 
+/// A destination whose key the medium could not probe is not a free slot: a move
+/// onto it would write over whatever key is there, so it refuses instead. 82 holds
+/// a key as well, or the present index answers "absent" without asking the medium.
+#[test]
+fn a_faulted_destination_probe_does_not_move_onto_it() {
+    let (mut app, mut fs, medium, _rng, _pres) = moved_card();
+    let template = gen_template(ALGO_ECCP256);
+    assert_eq!(
+        run(&mut app, &mut fs, INS_ASYM_KEYGEN, 0, 0x82, &template).0,
+        Sw::OK
+    );
+    let (from, to) = (key_fid(SLOT_AUTHENTICATION).get(), key_fid(0x82).get());
+    let (src, dst) = (medium.value(from), medium.value(to));
+    assert!(
+        src.is_some() && dst.is_some(),
+        "control: both keys are on the medium"
+    );
+    medium.stick(Some(to));
+    assert_eq!(
+        run(
+            &mut app,
+            &mut fs,
+            INS_MOVE_KEY,
+            0x82,
+            SLOT_AUTHENTICATION,
+            &[]
+        )
+        .0,
+        Sw::MEMORY_FAILURE,
+        "a destination that could not be probed was taken for a free one"
+    );
+    medium.stick(None);
+    assert_eq!(medium.value(from), src, "the source key moved");
+    assert_eq!(
+        medium.value(to),
+        dst,
+        "the destination key was written over"
+    );
+}
+
 /// Write a certificate object at `tag` (`5FC1xx`) with a recognisable body.
 fn put_cert<S: Storage>(app: &mut PivApplet, fs: &mut Fs<S>, tag: u8, fill: u8) {
     let body = std::vec![fill; 40];
@@ -8955,10 +9348,9 @@ fn put_cert<S: Storage>(app: &mut PivApplet, fs: &mut Fs<S>, tag: u8, fill: u8) 
     assert_eq!(run(app, fs, INS_PUT_DATA, 0x3F, 0xFF, &obj).0, Sw::OK);
 }
 
-/// `MOVE KEY` reads the source certificate and, finding none, DELETES the
-/// destination's — then deletes the source's at the end of the move. `Fs::read`
-/// answers the same `None` for "no certificate" and "I could not read it", so one
-/// faulted probe destroyed both certificates and still answered 9000.
+/// `MOVE KEY` read the source certificate and, finding none, DELETED the
+/// destination's, so one faulted probe destroyed both and still answered 9000. It
+/// reads no certificate now, so a stuck one neither stops the move nor is touched.
 #[test]
 fn a_faulted_certificate_probe_does_not_destroy_both_certificates() {
     let (mut app, mut fs, medium, _rng, _pres) = moved_card();
@@ -8982,19 +9374,14 @@ fn a_faulted_certificate_probe_does_not_destroy_both_certificates() {
         &[],
     )
     .0;
-    // The destruction first, then the status word: the loss is the finding, and the
-    // refusal is only how it is now avoided.
+    // The destruction first, then the status word: the loss is the finding.
     assert_eq!(
         medium.value(to),
         dst,
         "the destination's certificate is gone"
     );
     assert_eq!(medium.value(from), src, "and so is the source's");
-    assert_eq!(
-        sw,
-        Sw::MEMORY_FAILURE,
-        "a move that could not read the certificate it carries must refuse"
-    );
+    assert_eq!(sw, Sw::OK, "a certificate the move never reads stopped it");
 }
 
 /// The moved key's metadata head is what `GET METADATA` and the PIN/touch gate read.
@@ -9067,8 +9454,8 @@ fn a_faulted_readback_does_not_report_a_move_that_left_the_key() {
     );
 }
 
-/// `FILE_NOT_FOUND` over a slot the medium merely could not read tells the host the
-/// slot is EMPTY, and a host that believes it fills the slot — over a live key.
+/// The empty-slot answer over a slot the medium merely could not read tells the host
+/// the slot is EMPTY, and a host that believes it fills the slot — over a live key.
 #[test]
 fn a_faulted_source_probe_does_not_report_the_slot_empty() {
     let (mut app, mut fs, medium, _rng, _pres) = moved_card();
@@ -9111,6 +9498,7 @@ fn every_scan_files_guard_refuses_its_own_faulted_probe() {
         (EF_RETRIES, "the retry counters"),
         (key_fid(SLOT_CARDMGM).get(), "the management key"),
         (key_fid(SLOT_ATTESTATION).get(), "the F9 attestation key"),
+        (EF_ATTESTATION_CERT, "the F9 attestation certificate"),
         (rsk_fs::EF_META, "the 9B metadata head"),
     ] {
         let before = medium.value(fid);
@@ -9120,6 +9508,7 @@ fn every_scan_files_guard_refuses_its_own_faulted_probe() {
             serial_hash: &HASH,
             serial_id: &SERIAL,
             otp_key: None,
+            latched: false,
         };
         let sw = crate::files::scan_files(&dev, &mut fs, &mut TestRng(3));
         medium.stick(None);
@@ -9147,6 +9536,7 @@ fn a_faulted_pivman_probe_does_not_discard_the_host_record() {
         serial_hash: &HASH,
         serial_id: &SERIAL,
         otp_key: None,
+        latched: false,
     };
     let (backend, medium) = ProbeStuck::new();
     let mut fs = Fs::new(backend);
@@ -9212,6 +9602,7 @@ fn a_faulted_meta_probe_at_select_does_not_retire_the_management_touch_gate() {
         serial_hash: &HASH,
         serial_id: &SERIAL,
         otp_key: None,
+        latched: false,
     };
     medium.stick_once(rsk_fs::EF_META);
     let sw = crate::files::scan_files(&dev, &mut fs, &mut TestRng(3));
@@ -9229,20 +9620,16 @@ fn a_faulted_meta_probe_at_select_does_not_retire_the_management_touch_gate() {
     );
 }
 
-/// SET MANAGEMENT KEY revokes the PIN-readable escrow last, and both of
-/// `mgm_clear_protected`'s `EF_PIVMAN_DATA` probes answered the same `None` for "no
-/// ADMIN DATA record" and for one the flash could not serve. The absent arm is
-/// `Ok(())` — nothing to revoke — so a faulted probe answered `9000` with the flag
-/// still standing, and the flag is what makes GET DATA PRINTED synthesize the key
-/// from the 0x9B slot. That slot now holds the key the HOST just chose, so the card
-/// hands it to the PIN while reporting the escrow gone.
+/// SET MANAGEMENT KEY revokes the PIN-readable escrow last, and both of its
+/// `EF_PIVMAN_DATA` probes answered the same `None` for "no ADMIN DATA record" and
+/// for one the flash could not serve. The absent arm is "nothing to revoke", so a
+/// faulted probe answered `9000` with the flag still standing, and the flag is what
+/// makes GET DATA PRINTED synthesize the key from the 0x9B slot — by then the key
+/// the HOST just chose, handed to the PIN under a report of the escrow gone.
 ///
-/// The standing flag itself is not the defect: the ordering is key-then-flag on
-/// purpose (a torn write must not strand a PRINTED-only owner), so that state is
-/// reachable by a power cut too. What may not happen is reporting it as done — the
-/// status word is the only thing that lets the host repair it.
-///
-/// Both probes, each reached on its own: a persistent fault stops at the first
+/// Both probes now run before the key is written, so a fault refuses the whole
+/// change with nothing written: the escrow and the key it holds stand as they were.
+/// Each probe reached on its own: a persistent fault stops at the first
 /// (`try_mgm_is_protected`), so only `stick_after(.., 1)` reaches the second.
 #[test]
 fn a_faulted_pivman_probe_does_not_report_an_escrow_revoked() {
@@ -9250,6 +9637,7 @@ fn a_faulted_pivman_probe_does_not_report_an_escrow_revoked() {
         serial_hash: &HASH,
         serial_id: &SERIAL,
         otp_key: None,
+        latched: false,
     };
     let printed_id = [0x5C, 0x03, 0x5F, 0xC1, 0x09];
     let new_key = [0x5Au8; 32];
@@ -9297,27 +9685,26 @@ fn a_faulted_pivman_probe_does_not_report_an_escrow_revoked() {
         let mut app = PivApplet::new(SERIAL, HASH, None, &rng, &pres);
         card(&medium, &mut app, &mut fs);
 
+        let (_, escrowed) = run(&mut app, &mut fs, INS_GET_DATA, 0x3F, 0xFF, &printed_id);
         medium.stick_after(EF_PIVMAN_DATA, skip);
         let sw = run(&mut app, &mut fs, INS_SET_MGMKEY, 0xFF, 0xFF, &set_key).0;
         medium.stick(None);
 
-        // What the status word is about, measured first: the escrow the command was
-        // asked to revoke still stands, and it now escrows the host's own new key.
-        assert!(
-            mgm_is_protected(&mut fs),
-            "skip={skip}: vacuous — the fault did not reach the revocation"
-        );
-        let (get_sw, body) = run(&mut app, &mut fs, INS_GET_DATA, 0x3F, 0xFF, &printed_id);
-        assert_eq!(get_sw, Sw::OK);
-        assert!(
-            body.windows(new_key.len()).any(|w| w == new_key),
-            "skip={skip}: vacuous — PRINTED does not hand back the host's new key"
-        );
         assert_eq!(
             sw,
             Sw::MEMORY_FAILURE,
-            "skip={skip}: the card reported an escrow revoked that still hands the \
-             host's own new management key to the PIN"
+            "skip={skip}: a probe the flash failed was taken for no escrow"
+        );
+        assert!(mgm_is_protected(&mut fs), "skip={skip}: the escrow went");
+        let (get_sw, body) = run(&mut app, &mut fs, INS_GET_DATA, 0x3F, 0xFF, &printed_id);
+        assert_eq!(get_sw, Sw::OK);
+        assert_eq!(
+            body, escrowed,
+            "skip={skip}: a refused change replaced the key the escrow holds"
+        );
+        assert!(
+            !body.windows(new_key.len()).any(|w| w == new_key),
+            "skip={skip}: the host's new key is in force"
         );
     }
 }
@@ -9334,6 +9721,7 @@ fn a_faulted_pivman_probe_does_not_admit_a_hidden_printed_write() {
         serial_hash: &HASH,
         serial_id: &SERIAL,
         otp_key: None,
+        latched: false,
     };
     let rng = RefCell::new(TestRng(7));
     let pres = RefCell::new(AlwaysConfirm);
@@ -9369,3 +9757,1546 @@ fn a_faulted_pivman_probe_does_not_admit_a_hidden_printed_write() {
         "a write that could not read the escrow it must not land under has to refuse"
     );
 }
+
+/// A YubiKey 5.8.0 refuses an authenticated IMPORT with nothing but `6A80`, a bad
+/// slot as a bad algorithm or body (read twice over this matrix); without the
+/// management key every cell is `6982`.
+#[test]
+fn import_refuses_a_bad_slot_as_it_refuses_a_bad_body() {
+    let rng = RefCell::new(TestRng(7));
+    let pres = RefCell::new(AlwaysConfirm);
+    let mut app = PivApplet::new(SERIAL, HASH, None, &rng, &pres);
+    let mut fs = new_fs();
+    let mut ec_key = vec![0x06, 0x20];
+    ec_key.extend(1..=32u8);
+    for authed in [false, true] {
+        select(&mut app, &mut fs);
+        if authed {
+            auth_mgm(&mut app, &mut fs);
+        }
+        for p1 in [0x00, 0x07, ALGO_ECCP256, 0xFF] {
+            for p2 in [0x9A, 0x9B, 0x80, 0x00, 0x82] {
+                for body in [&[][..], &[0x01, 0x02], &ec_key] {
+                    let want = if !authed {
+                        Sw::SECURITY_STATUS_NOT_SATISFIED
+                    } else if p1 == ALGO_ECCP256 && matches!(p2, 0x9A | 0x82) && body == &ec_key[..]
+                    {
+                        Sw::OK
+                    } else {
+                        Sw::WRONG_DATA
+                    };
+                    assert_eq!(
+                        run(&mut app, &mut fs, INS_IMPORT_ASYM, p1, p2, body).0,
+                        want,
+                        "P1 {p1:02X} P2 {p2:02X} body {body:02X?}, authed={authed}"
+                    );
+                }
+            }
+        }
+    }
+    // No refused cell wrote anything: 9B and 80 name the management key and the PIN.
+    auth_mgm(&mut app, &mut fs);
+    verify_pin(&mut app, &mut fs);
+}
+
+/// A refused RSA import leaves the slot's key standing. The seal refused a pair it
+/// could not lay out for the CRT signer after the slot's metadata was dropped, so
+/// the key already there went unreachable. Each refusal is `6A80`, as a YubiKey's.
+#[test]
+fn a_refused_rsa_import_leaves_the_slots_key_standing() {
+    let rng = RefCell::new(TestRng(7));
+    let pres = RefCell::new(AlwaysConfirm);
+    let mut app = PivApplet::new(SERIAL, HASH, None, &rng, &pres);
+    let mut fs = new_fs();
+    select(&mut app, &mut fs);
+    auth_mgm(&mut app, &mut fs);
+    verify_pin(&mut app, &mut fs);
+    let mut scalar = vec![0x06, 32];
+    scalar.extend_from_slice(&[0x11u8; 32]);
+    assert_eq!(
+        run(
+            &mut app,
+            &mut fs,
+            INS_IMPORT_ASYM,
+            ALGO_ECCP256,
+            0x9A,
+            &scalar
+        )
+        .0,
+        Sw::OK
+    );
+    let before = run(&mut app, &mut fs, INS_GET_METADATA, 0, 0x9A, &[]);
+    assert_eq!(before.0, Sw::OK);
+    let tlv = |tag: u8, v: &[u8]| {
+        let mut out = vec![tag];
+        match v.len() {
+            n if n < 0x80 => out.push(n as u8),
+            n if n < 0x100 => out.extend_from_slice(&[0x81, n as u8]),
+            n => out.extend_from_slice(&[0x82, (n >> 8) as u8, n as u8]),
+        }
+        out.extend_from_slice(v);
+        out
+    };
+    // 2^(8·len) - k, big-endian.
+    let less = |len: usize, k: u8| {
+        let mut v = vec![0xFF; len];
+        v[len - 1] = 0u8.wrapping_sub(k);
+        v
+    };
+    // Each pair makes a modulus of the right byte length and is refused for one
+    // reason: primes of 1 and 255 bytes, the factor 3 in both, and primes of 224
+    // and 288 bytes where RSA-4096 takes 256 each.
+    for (algo, p, q, want) in [
+        (ALGO_RSA2048, vec![3], less(255, 3), Sw::WRONG_DATA),
+        (ALGO_RSA2048, less(128, 1), less(128, 7), Sw::WRONG_DATA),
+        (ALGO_RSA4096, less(224, 1), less(288, 3), Sw::WRONG_DATA),
+    ] {
+        let mut body = tlv(0x01, &p);
+        body.extend(tlv(0x02, &q));
+        assert_eq!(
+            run(&mut app, &mut fs, INS_IMPORT_ASYM, algo, 0x9A, &body).0,
+            want
+        );
+        assert_eq!(
+            run(&mut app, &mut fs, INS_GET_METADATA, 0, 0x9A, &[]),
+            before,
+            "a refused import ({want:?}) moved the slot"
+        );
+    }
+    assert_eq!(
+        sign_p256(&mut app, &mut fs, 0x9A),
+        Sw::OK,
+        "9A no longer signs"
+    );
+}
+
+/// MOVE KEY as a YubiKey 5.8.0 answers it, read twice: onto an occupied slot it
+/// is refused `6A80` and both keys stay; from an empty slot (onto a key too), or
+/// one that takes no key, `6A88`; onto itself or a slot that takes no key, `6A80`.
+#[test]
+fn move_key_refuses_as_a_yubikey_does_and_destroys_nothing() {
+    let rng = RefCell::new(TestRng(7));
+    let pres = RefCell::new(AlwaysConfirm);
+    let key = |b: u8| {
+        let mut s = vec![0x06, 32];
+        s.extend_from_slice(&[b; 32]);
+        s
+    };
+    let rows: [(&str, u8, u8, Sw); 13] = [
+        ("occupied", 0x9C, 0x9A, Sw::WRONG_DATA),
+        ("empty", 0x9D, 0x9A, Sw::OK),
+        ("from empty", 0x9E, 0x9D, Sw::REFERENCE_NOT_FOUND),
+        ("from empty onto a key", 0x9C, 0x9D, Sw::REFERENCE_NOT_FOUND),
+        ("onto itself", 0x9A, 0x9A, Sw::WRONG_DATA),
+        ("empty onto itself", 0x9D, 0x9D, Sw::WRONG_DATA),
+        ("FF onto itself", 0xFF, 0xFF, Sw::REFERENCE_NOT_FOUND),
+        ("delete", 0xFF, 0x9A, Sw::OK),
+        ("delete empty", 0xFF, 0x9D, Sw::REFERENCE_NOT_FOUND),
+        ("retired", 0x82, 0x9A, Sw::OK),
+        ("destination 00", 0x00, 0x9A, Sw::WRONG_DATA),
+        ("destination 9B", 0x9B, 0x9A, Sw::WRONG_DATA),
+        ("source 9B", 0x9C, 0x9B, Sw::REFERENCE_NOT_FOUND),
+    ];
+    for (name, to, from, want) in rows {
+        let mut app = PivApplet::new(SERIAL, HASH, None, &rng, &pres);
+        let mut fs = new_fs();
+        select(&mut app, &mut fs);
+        auth_mgm(&mut app, &mut fs);
+        for (slot, b) in [(0x9A, 0x11), (0x9C, 0x22)] {
+            let sw = run(
+                &mut app,
+                &mut fs,
+                INS_IMPORT_ASYM,
+                ALGO_ECCP256,
+                slot,
+                &key(b),
+            )
+            .0;
+            assert_eq!(sw, Sw::OK);
+        }
+        let slots = [0x9A, 0x9B, 0x9C];
+        let before: Vec<_> = slots
+            .iter()
+            .map(|&s| run(&mut app, &mut fs, INS_GET_METADATA, 0, s, &[]))
+            .collect();
+        assert_eq!(
+            run(&mut app, &mut fs, INS_MOVE_KEY, to, from, &[]).0,
+            want,
+            "{name}"
+        );
+        if want != Sw::OK {
+            let after: Vec<_> = slots
+                .iter()
+                .map(|&s| run(&mut app, &mut fs, INS_GET_METADATA, 0, s, &[]))
+                .collect();
+            assert_eq!(after, before, "{name}: a refused move changed a slot");
+        }
+    }
+}
+
+/// GET DATA as a YubiKey 5.8.0 answers it, read twice with the object absent and
+/// present: a tag list it cannot read, and any P1-P2 but `3FFF`, is `6A82`, as
+/// for an object it does not hold; a one-byte body stays every PIV command's `6A80`.
+#[test]
+fn get_data_refuses_what_it_cannot_read_as_a_yubikey_does() {
+    enum Want {
+        Is(Sw),
+        TheObject,
+    }
+    let rows: [(&str, &[u8], Want); 20] = [
+        ("no data", &[], Want::Is(Sw::FILE_NOT_FOUND)),
+        ("5C", &[0x5C], Want::Is(Sw::WRONG_DATA)),
+        ("5C00", &[0x5C, 0x00], Want::Is(Sw::FILE_NOT_FOUND)),
+        ("5C01, no byte", &[0x5C, 0x01], Want::Is(Sw::FILE_NOT_FOUND)),
+        ("discovery", &[0x5C, 0x01, 0x7E], Want::Is(Sw::OK)),
+        (
+            "5C027F61",
+            &[0x5C, 0x02, 0x7F, 0x61],
+            Want::Is(Sw::FILE_NOT_FOUND),
+        ),
+        ("5FC105", &[0x5C, 0x03, 0x5F, 0xC1, 0x05], Want::TheObject),
+        (
+            "unknown",
+            &[0x5C, 0x03, 0x5F, 0xC1, 0x99],
+            Want::Is(Sw::FILE_NOT_FOUND),
+        ),
+        (
+            "four-byte tag",
+            &[0x5C, 0x04, 0x5F, 0xC1, 0x05, 0x00],
+            Want::Is(Sw::FILE_NOT_FOUND),
+        ),
+        (
+            "short tag",
+            &[0x5C, 0x03, 0x5F, 0xC1],
+            Want::Is(Sw::FILE_NOT_FOUND),
+        ),
+        (
+            "long-form length",
+            &[0x5C, 0x81, 0x03, 0x5F, 0xC1, 0x05],
+            Want::Is(Sw::FILE_NOT_FOUND),
+        ),
+        (
+            "tag 53",
+            &[0x53, 0x03, 0x5F, 0xC1, 0x05],
+            Want::Is(Sw::FILE_NOT_FOUND),
+        ),
+        ("no 5C", &[0x5F, 0xC1, 0x05], Want::Is(Sw::FILE_NOT_FOUND)),
+        (
+            "trailing byte",
+            &[0x5C, 0x03, 0x5F, 0xC1, 0x05, 0x00],
+            Want::TheObject,
+        ),
+        (
+            "trailing list",
+            &[0x5C, 0x03, 0x5F, 0xC1, 0x05, 0x5C, 0x01],
+            Want::TheObject,
+        ),
+        (
+            "5C025FC1",
+            &[0x5C, 0x02, 0x5F, 0xC1],
+            Want::Is(Sw::FILE_NOT_FOUND),
+        ),
+        (
+            "5FFF00",
+            &[0x5C, 0x03, 0x5F, 0xFF, 0x00],
+            Want::Is(Sw::FILE_NOT_FOUND),
+        ),
+        // Its low three bytes name 5FC105, which a read that kept them would find.
+        (
+            "four-byte 005FC105",
+            &[0x5C, 0x04, 0x00, 0x5F, 0xC1, 0x05],
+            Want::Is(Sw::FILE_NOT_FOUND),
+        ),
+        // PIN-gated, and no PIN is verified: the P1-P2 is judged before the PIN.
+        (
+            "5FC103",
+            &[0x5C, 0x03, 0x5F, 0xC1, 0x03],
+            Want::Is(Sw::SECURITY_STATUS_NOT_SATISFIED),
+        ),
+        // Synthesized for the Windows minidriver, where a reset YubiKey has none.
+        ("CHUID", &[0x5C, 0x03, 0x5F, 0xC1, 0x02], Want::Is(Sw::OK)),
+    ];
+    let rng = RefCell::new(TestRng(7));
+    let pres = RefCell::new(AlwaysConfirm);
+    let mut app = PivApplet::new(SERIAL, HASH, None, &rng, &pres);
+    let mut fs = new_fs();
+    select(&mut app, &mut fs);
+    auth_mgm(&mut app, &mut fs);
+    for present in [false, true] {
+        if present {
+            let obj = [
+                0x5C, 0x03, 0x5F, 0xC1, 0x05, 0x53, 0x05, 0x70, 0x03, 1, 2, 3,
+            ];
+            assert_eq!(
+                run(&mut app, &mut fs, INS_PUT_DATA, 0x3F, 0xFF, &obj).0,
+                Sw::OK
+            );
+        }
+        for (p1, p2) in [(0x3F, 0xFF), (0x3F, 0xFE), (0x00, 0x00)] {
+            for (name, body, want) in &rows {
+                let want = match want {
+                    _ if body.len() == 1 => Sw::WRONG_DATA,
+                    _ if (p1, p2) != (0x3F, 0xFF) => Sw::FILE_NOT_FOUND,
+                    Want::Is(sw) => *sw,
+                    Want::TheObject if present => Sw::OK,
+                    Want::TheObject => Sw::FILE_NOT_FOUND,
+                };
+                assert_eq!(
+                    run(&mut app, &mut fs, INS_GET_DATA, p1, p2, body).0,
+                    want,
+                    "{name} at {p1:02X}{p2:02X}, object present: {present}"
+                );
+            }
+        }
+    }
+}
+
+/// The discovery object byte for byte as a YubiKey 5.8.0 serves it: the full PIV
+/// AID, then a PIN usage policy of `40 00`. RS-Key answered `40 10`, a second byte
+/// that ranks the application PIN above a global PIN it does not have.
+#[test]
+fn discovery_is_a_yubikeys_to_the_byte() {
+    let rng = RefCell::new(TestRng(7));
+    let pres = RefCell::new(AlwaysConfirm);
+    let mut app = PivApplet::new(SERIAL, HASH, None, &rng, &pres);
+    let mut fs = new_fs();
+    select(&mut app, &mut fs);
+    let yubikey = [
+        0x7E, 0x12, 0x4F, 0x0B, 0xA0, 0x00, 0x00, 0x03, 0x08, 0x00, 0x00, 0x10, 0x00, 0x01, 0x00,
+        0x5F, 0x2F, 0x02, 0x40, 0x00,
+    ];
+    let (sw, body) = run(
+        &mut app,
+        &mut fs,
+        INS_GET_DATA,
+        0x3F,
+        0xFF,
+        &[0x5C, 0x01, 0x7E],
+    );
+    assert_eq!((sw, body.as_slice()), (Sw::OK, &yubikey[..]));
+}
+
+/// MOVE KEY and its delete (`to` = `FF`) as a YubiKey 5.8.0 runs them, read twice:
+/// the key moves with its metadata, and no certificate object is read, written or
+/// removed. RS-Key carried the source's certificate and deleted the destination's.
+#[test]
+fn move_key_leaves_every_certificate_where_it_was() {
+    let rng = RefCell::new(TestRng(7));
+    let pres = RefCell::new(AlwaysConfirm);
+    let mut app = PivApplet::new(SERIAL, HASH, None, &rng, &pres);
+    let mut fs = new_fs();
+    select(&mut app, &mut fs);
+    auth_mgm(&mut app, &mut fs);
+    let template = gen_template(ALGO_ECCP256);
+    let cert = |app: &mut PivApplet, fs: &mut Fs<RamStorage>, tag: u8| {
+        run(
+            app,
+            fs,
+            INS_GET_DATA,
+            0x3F,
+            0xFF,
+            &[0x5C, 0x03, 0x5F, 0xC1, tag],
+        )
+    };
+    let has_key = |app: &mut PivApplet, fs: &mut Fs<RamStorage>, slot: u8| {
+        run(app, fs, INS_GET_METADATA, 0, slot, &[]).0 == Sw::OK
+    };
+    let delete_cert = |app: &mut PivApplet, fs: &mut Fs<RamStorage>, tag: u8| {
+        let obj = [0x5C, 0x03, 0x5F, 0xC1, tag, 0x53, 0x00];
+        assert_eq!(run(app, fs, INS_PUT_DATA, 0x3F, 0xFF, &obj).0, Sw::OK);
+    };
+    // (key slot, its certificate object's tag) for the slots below.
+    let (s9a, s9c, s9d, s9e, s82, s83) = (
+        (0x9A, 0x05),
+        (0x9C, 0x0A),
+        (0x9D, 0x0B),
+        (0x9E, 0x01),
+        (0x82, 0x0D),
+        (0x83, 0x0E),
+    );
+    for (slot, _) in [s9a, s9e, s82] {
+        assert_eq!(
+            run(&mut app, &mut fs, INS_ASYM_KEYGEN, 0, slot, &template).0,
+            Sw::OK
+        );
+    }
+    // Each certificate is a marker the moves must leave byte for byte; 82 keeps its
+    // key with no certificate, and 9D and 83 hold a certificate with no key.
+    delete_cert(&mut app, &mut fs, s82.1);
+    for (_, tag) in [s9a, s9e, s9d, s83] {
+        put_cert(&mut app, &mut fs, tag, tag);
+    }
+    let before: Vec<_> = [s9a, s9c, s9d, s9e, s82, s83]
+        .iter()
+        .map(|&(_, tag)| cert(&mut app, &mut fs, tag))
+        .collect();
+    for (name, to, from) in [
+        ("key and certificate onto an empty slot", s9c.0, s9a.0),
+        ("key and certificate onto a certificate", s9d.0, s9e.0),
+        ("a key alone onto a certificate", s83.0, s82.0),
+        ("the delete of a key beside its certificate", 0xFF, s9d.0),
+    ] {
+        assert_eq!(
+            run(&mut app, &mut fs, INS_MOVE_KEY, to, from, &[]).0,
+            Sw::OK,
+            "{name}"
+        );
+        assert!(
+            !has_key(&mut app, &mut fs, from),
+            "{name}: the source key stayed"
+        );
+        assert!(
+            to == 0xFF || has_key(&mut app, &mut fs, to),
+            "{name}: the key did not arrive"
+        );
+        let after: Vec<_> = [s9a, s9c, s9d, s9e, s82, s83]
+            .iter()
+            .map(|&(_, tag)| cert(&mut app, &mut fs, tag))
+            .collect();
+        assert_eq!(after, before, "{name}: a certificate object changed");
+    }
+}
+
+/// A YubiKey's IMPORT and GENERATE write no certificate, so a slot's certificate is
+/// whatever a host put there, through every key the slot gets: a MOVE away, an IMPORT,
+/// two GENERATEs, a delete, and a key moved in.
+#[test]
+fn a_slots_certificate_outlives_every_key_it_gets() {
+    let rng = RefCell::new(TestRng(7));
+    let pres = RefCell::new(AlwaysConfirm);
+    let mut app = PivApplet::new(SERIAL, HASH, None, &rng, &pres);
+    let mut fs = new_fs();
+    select(&mut app, &mut fs);
+    auth_mgm(&mut app, &mut fs);
+    let template = gen_template(ALGO_ECCP256);
+    let generate = |app: &mut PivApplet, fs: &mut Fs<RamStorage>, slot: u8| {
+        run(app, fs, INS_ASYM_KEYGEN, 0, slot, &template).0
+    };
+    let cert = |app: &mut PivApplet, fs: &mut Fs<RamStorage>, tag: u8| {
+        run(
+            app,
+            fs,
+            INS_GET_DATA,
+            0x3F,
+            0xFF,
+            &[0x5C, 0x03, 0x5F, 0xC1, tag],
+        )
+    };
+    // 9C's keys come and go with no certificate ever written for them.
+    assert_eq!(generate(&mut app, &mut fs, 0x9C), Sw::OK);
+    assert_eq!(generate(&mut app, &mut fs, 0x9C), Sw::OK);
+    assert_eq!(cert(&mut app, &mut fs, 0x0A).0, Sw::FILE_NOT_FOUND);
+    // A host's certificate in 9A, kept through each step.
+    assert_eq!(generate(&mut app, &mut fs, 0x9A), Sw::OK);
+    put_cert(&mut app, &mut fs, 0x05, 0xC5);
+    let host = cert(&mut app, &mut fs, 0x05);
+    assert_eq!(host.0, Sw::OK);
+    let mut import = vec![0x06, 32];
+    import.extend_from_slice(&[0x33; 32]);
+    let steps: [(&str, u8, u8, &[u8]); 5] = [
+        ("MOVE 9A to 82", INS_MOVE_KEY, 0x82, &[]),
+        ("IMPORT into 9A", INS_IMPORT_ASYM, ALGO_ECCP256, &import),
+        (
+            "GENERATE over the imported key",
+            INS_ASYM_KEYGEN,
+            0,
+            &template,
+        ),
+        (
+            "GENERATE over the generated key",
+            INS_ASYM_KEYGEN,
+            0,
+            &template,
+        ),
+        ("delete 9A's key", INS_MOVE_KEY, 0xFF, &[]),
+    ];
+    for (name, ins, p1, body) in steps {
+        assert_eq!(
+            run(&mut app, &mut fs, ins, p1, 0x9A, body).0,
+            Sw::OK,
+            "{name}"
+        );
+        assert_eq!(
+            cert(&mut app, &mut fs, 0x05),
+            host,
+            "{name} touched 9A's certificate"
+        );
+    }
+    // A key moved in from 9C, and then a GENERATE.
+    assert_eq!(
+        run(&mut app, &mut fs, INS_MOVE_KEY, 0x9A, 0x9C, &[]).0,
+        Sw::OK
+    );
+    assert_eq!(generate(&mut app, &mut fs, 0x9A), Sw::OK);
+    assert_eq!(
+        cert(&mut app, &mut fs, 0x05),
+        host,
+        "a key moved in let GENERATE replace it"
+    );
+}
+
+/// A certificate for the slot's own key, what an older build's GENERATE wrote, stays
+/// through the next GENERATE too: a YubiKey keeps whatever the object holds.
+#[test]
+fn an_older_builds_certificate_for_the_key_stays_through_a_generate() {
+    let rng = RefCell::new(TestRng(7));
+    let pres = RefCell::new(AlwaysConfirm);
+    let mut app = PivApplet::new(SERIAL, HASH, None, &rng, &pres);
+    let mut fs = new_fs();
+    select(&mut app, &mut fs);
+    auth_mgm(&mut app, &mut fs);
+    let template = gen_template(ALGO_ECCP256);
+    let (sw, resp) = run(&mut app, &mut fs, INS_ASYM_KEYGEN, 0, 0x9A, &template);
+    assert_eq!(sw, Sw::OK);
+    let point = ec_point_of(&resp);
+    let mut inner = vec![0x70, point.len() as u8];
+    inner.extend_from_slice(&point);
+    inner.extend_from_slice(&[0x71, 0x01, 0x00]);
+    let mut put = vec![0x5C, 0x03, 0x5F, 0xC1, 0x05, 0x53, inner.len() as u8];
+    put.extend_from_slice(&inner);
+    assert_eq!(
+        run(&mut app, &mut fs, INS_PUT_DATA, 0x3F, 0xFF, &put).0,
+        Sw::OK
+    );
+    let read = [0x5C, 0x03, 0x5F, 0xC1, 0x05];
+    let before = run(&mut app, &mut fs, INS_GET_DATA, 0x3F, 0xFF, &read);
+    assert_eq!(before.0, Sw::OK);
+    assert_eq!(
+        run(&mut app, &mut fs, INS_ASYM_KEYGEN, 0, 0x9A, &template).0,
+        Sw::OK
+    );
+    assert_eq!(
+        run(&mut app, &mut fs, INS_GET_DATA, 0x3F, 0xFF, &read),
+        before,
+        "a GENERATE dropped the certificate of the key it replaced"
+    );
+}
+
+/// The RSA path the board's keygen finishes through writes none either: the slot's
+/// object stays absent, and then a host's, across RSA GENERATEs of two keys.
+#[test]
+fn an_rsa_generate_writes_no_certificate_either() {
+    let rng = RefCell::new(TestRng(7));
+    let pres = RefCell::new(AlwaysConfirm);
+    let mut app = PivApplet::new(SERIAL, HASH, None, &rng, &pres);
+    let mut fs = new_fs();
+    select(&mut app, &mut fs);
+    auth_mgm(&mut app, &mut fs);
+    let cert_9a = |app: &mut PivApplet, fs: &mut Fs<RamStorage>| {
+        run(
+            app,
+            fs,
+            INS_GET_DATA,
+            0x3F,
+            0xFF,
+            &[0x5C, 0x03, 0x5F, 0xC1, 0x05],
+        )
+    };
+    let key = rsk_rsa::generate_rsa(&mut crate::RsaRng(&mut TestRng(99)), 1024).unwrap();
+    let other = rsk_rsa::generate_rsa(&mut crate::RsaRng(&mut TestRng(100)), 1024).unwrap();
+    let pol = [PINPOLICY_ONCE, TOUCHPOLICY_NEVER];
+    let mut resp = [0u8; 1024];
+    let (_, sw) = app.rsa_generate_finish(&mut fs, &mut TestRng(5), 0x9A, pol, &key, &mut resp);
+    assert_eq!(sw, Sw::OK);
+    assert_eq!(
+        cert_9a(&mut app, &mut fs).0,
+        Sw::FILE_NOT_FOUND,
+        "an RSA GENERATE wrote a certificate"
+    );
+    put_cert(&mut app, &mut fs, 0x05, 0xC5);
+    let host = cert_9a(&mut app, &mut fs);
+    let (_, sw) = app.rsa_generate_finish(&mut fs, &mut TestRng(6), 0x9A, pol, &other, &mut resp);
+    assert_eq!(sw, Sw::OK);
+    assert_eq!(
+        cert_9a(&mut app, &mut fs),
+        host,
+        "an RSA GENERATE replaced the host's certificate"
+    );
+}
+
+/// GENERATE drops the slot's metadata head before it writes the key, as IMPORT does, so
+/// a head it cannot read refuses the command with nothing written. Writing the key first
+/// left the new key under the old key's policies once the head write failed.
+#[test]
+fn a_faulted_head_refuses_generate_before_it_writes() {
+    let key = key_fid(SLOT_AUTHENTICATION).get();
+    let rsa = rsk_rsa::generate_rsa(&mut crate::RsaRng(&mut TestRng(99)), 1024).unwrap();
+    let mut wrong = Vec::new();
+    for (name, once, via_rsa) in [
+        ("EC, for good", false, false),
+        ("RSA, for good", false, true),
+        ("EC, one fault", true, false),
+        ("RSA, one fault", true, true),
+    ] {
+        let (mut app, mut fs, medium, _rng, _pres) = moved_card();
+        let before = medium.value(key);
+        assert!(before.is_some(), "{name}: control");
+        if once {
+            medium.stick_once(rsk_fs::EF_META);
+        } else {
+            medium.stick(Some(rsk_fs::EF_META));
+        }
+        let sw = if via_rsa {
+            let pol = [PINPOLICY_ALWAYS, TOUCHPOLICY_ALWAYS];
+            let mut resp = [0u8; 1024];
+            let slot = SLOT_AUTHENTICATION;
+            app.rsa_generate_finish(&mut fs, &mut TestRng(5), slot, pol, &rsa, &mut resp)
+                .1
+        } else {
+            let template = gen_template(ALGO_ECCP256);
+            run(
+                &mut app,
+                &mut fs,
+                INS_ASYM_KEYGEN,
+                0,
+                SLOT_AUTHENTICATION,
+                &template,
+            )
+            .0
+        };
+        medium.stick(None);
+        let kept = medium.value(key) == before;
+        if (sw, kept) != (Sw::MEMORY_FAILURE, true) {
+            wrong.push(format!("{name}: {sw:?}, key kept {kept}"));
+        }
+    }
+    assert!(wrong.is_empty(), "{wrong:#?}");
+}
+
+/// A PUT DATA body `5C 03 id 53 <len> body`, the length in its shortest form.
+fn object_body(id: [u8; 3], body: &[u8]) -> Vec<u8> {
+    let mut d = vec![TAG_DATA_PATH, 0x03];
+    d.extend_from_slice(&id);
+    d.push(TAG_DATA_OBJECT);
+    match body.len() {
+        n @ 0..=0x7F => d.push(n as u8),
+        n @ 0x80..=0xFF => d.extend_from_slice(&[0x81, n as u8]),
+        n => d.extend_from_slice(&[0x82, (n >> 8) as u8, n as u8]),
+    }
+    d.extend_from_slice(body);
+    d
+}
+
+/// The pool's live files, read off the store rather than through `is_piv_fid`, the
+/// predicate the reset test holds to them.
+fn pooled<S: Storage>(fs: &mut Fs<S>) -> usize {
+    let mut fids = Vec::new();
+    fs.for_each_key(&mut |fid| {
+        if crate::objects::POOL.contains(&fid) && !fids.contains(&fid) {
+            fids.push(fid);
+        }
+    });
+    fids.len()
+}
+
+fn put_object<S: Storage>(app: &mut PivApplet, fs: &mut Fs<S>, n: u16, body: &[u8]) -> Sw {
+    let id = [0x5F, (n >> 8) as u8, n as u8];
+    run(app, fs, INS_PUT_DATA, 0x3F, 0xFF, &object_body(id, body)).0
+}
+
+fn get_object<S: Storage>(app: &mut PivApplet, fs: &mut Fs<S>, n: u16) -> (Sw, Vec<u8>) {
+    let id = [0x5F, (n >> 8) as u8, n as u8];
+    run(
+        app,
+        fs,
+        INS_GET_DATA,
+        0x3F,
+        0xFF,
+        &object_body(id, &[])[..5],
+    )
+}
+
+/// Any `5Fxxxx` outside the fixed map is an object of its own, stored, read back,
+/// rewritten in place and deleted as a YubiKey 5.8.0 does — the Yubico minidriver's
+/// `5FFF10`–`5FFF15` among them. `5FFF01` and ids that are not `5F` stay refused.
+#[test]
+fn the_pool_keeps_any_5f_object_a_yubikey_keeps() {
+    let rng = RefCell::new(TestRng(7));
+    let pres = RefCell::new(AlwaysConfirm);
+    let mut app = PivApplet::new(SERIAL, HASH, None, &rng, &pres);
+    let mut fs = new_fs();
+    select(&mut app, &mut fs);
+    auth_mgm(&mut app, &mut fs);
+    let put = |app: &mut PivApplet, fs: &mut Fs<RamStorage>, id: [u8; 3], body: &[u8]| {
+        run(app, fs, INS_PUT_DATA, 0x3F, 0xFF, &object_body(id, body)).0
+    };
+    let get = |app: &mut PivApplet, fs: &mut Fs<RamStorage>, id: [u8; 3]| {
+        run(
+            app,
+            fs,
+            INS_GET_DATA,
+            0x3F,
+            0xFF,
+            &object_body(id, &[])[..5],
+        )
+    };
+    let ids = [
+        [0x5F, 0x00, 0x00],
+        [0x5F, 0x12, 0x34],
+        [0x5F, 0xFF, 0xFF],
+        [0x5F, 0xFF, 0x10],
+        [0x5F, 0xFF, 0x15],
+        [0x5F, 0xFF, 0x02],
+        [0x5F, 0xC1, 0xF0],
+        [0x5F, 0xC1, 0xFF],
+    ];
+    for (i, id) in ids.iter().enumerate() {
+        assert_eq!(
+            put(&mut app, &mut fs, *id, &[i as u8; 3]),
+            Sw::OK,
+            "{id:02X?}"
+        );
+    }
+    for (i, id) in ids.iter().enumerate() {
+        let want = vec![TAG_DATA_OBJECT, 3, i as u8, i as u8, i as u8];
+        assert_eq!(get(&mut app, &mut fs, *id), (Sw::OK, want), "{id:02X?}");
+    }
+    assert_eq!(pooled(&mut fs), ids.len(), "control: one file each");
+    assert_eq!(put(&mut app, &mut fs, ids[3], b"new"), Sw::OK);
+    let want = [&[TAG_DATA_OBJECT, 3][..], b"new"].concat();
+    assert_eq!(get(&mut app, &mut fs, ids[3]), (Sw::OK, want));
+    assert_eq!(pooled(&mut fs), ids.len(), "a rewrite stored a second copy");
+    // Deleted, then deleted again: `9000` both times, as on a YubiKey.
+    for _ in 0..2 {
+        assert_eq!(put(&mut app, &mut fs, ids[3], &[]), Sw::OK);
+    }
+    assert_eq!(get(&mut app, &mut fs, ids[3]).0, Sw::FILE_NOT_FOUND);
+    assert_eq!(pooled(&mut fs), ids.len() - 1);
+    for id in [[0x5F, 0xFF, 0x01], [0xDF, 0x00, 0x00], [0x12, 0x34, 0x56]] {
+        assert_eq!(
+            put(&mut app, &mut fs, id, b"x"),
+            Sw::WRONG_DATA,
+            "{id:02X?}"
+        );
+    }
+}
+
+/// The pool takes a body up to `MAX_OBJECT` and `6700` past it, as a YubiKey answers
+/// past its own limit, and 256 objects, then `6A84` as a full YubiKey does; an object
+/// it holds can still be rewritten, and a deleted one's file is taken again.
+#[test]
+fn the_pool_takes_max_object_and_answers_6a84_when_full() {
+    let rng = RefCell::new(TestRng(7));
+    let pres = RefCell::new(AlwaysConfirm);
+    let mut app = PivApplet::new(SERIAL, HASH, None, &rng, &pres);
+    let mut fs = new_fs();
+    select(&mut app, &mut fs);
+    auth_mgm(&mut app, &mut fs);
+    let put = |app: &mut PivApplet, fs: &mut Fs<RamStorage>, n: u16, body: &[u8]| {
+        let id = [0x5F, (n >> 8) as u8, n as u8];
+        run(app, fs, INS_PUT_DATA, 0x3F, 0xFF, &object_body(id, body)).0
+    };
+    let big = vec![0xA5; MAX_OBJECT];
+    assert_eq!(put(&mut app, &mut fs, 0, &big), Sw::OK);
+    let (sw, back) = run(
+        &mut app,
+        &mut fs,
+        INS_GET_DATA,
+        0x3F,
+        0xFF,
+        &[TAG_DATA_PATH, 0x03, 0x5F, 0x00, 0x00],
+    );
+    assert_eq!((sw, &back[4..]), (Sw::OK, &big[..]));
+    assert_eq!(
+        put(&mut app, &mut fs, 1, &[0xA5; MAX_OBJECT + 1]),
+        Sw::WRONG_LENGTH
+    );
+    for n in 1..256 {
+        assert_eq!(put(&mut app, &mut fs, n, &[n as u8]), Sw::OK, "object {n}");
+    }
+    assert_eq!(pooled(&mut fs), 256, "control: the pool is full");
+    assert_eq!(put(&mut app, &mut fs, 256, b"x"), Sw::FILE_FULL);
+    assert_eq!(put(&mut app, &mut fs, 7, b"again"), Sw::OK, "a held object");
+    assert_eq!(put(&mut app, &mut fs, 5, &[]), Sw::OK);
+    assert_eq!(put(&mut app, &mut fs, 256, b"x"), Sw::OK, "a freed file");
+}
+
+/// The pool holds 32 KiB of bodies in all, then answers `6A84` as a full YubiKey
+/// does; a rewrite is judged by what it adds, and a delete makes room again.
+#[test]
+fn the_pool_holds_its_byte_budget_and_no_more() {
+    let rng = RefCell::new(TestRng(7));
+    let pres = RefCell::new(AlwaysConfirm);
+    let mut app = PivApplet::new(SERIAL, HASH, None, &rng, &pres);
+    let mut fs = new_fs();
+    select(&mut app, &mut fs);
+    auth_mgm(&mut app, &mut fs);
+    let full = crate::objects::POOL_BYTES / MAX_OBJECT;
+    let rest = crate::objects::POOL_BYTES - full * MAX_OBJECT;
+    for n in 0..full as u16 {
+        assert_eq!(
+            put_object(&mut app, &mut fs, n, &vec![0x11; MAX_OBJECT]),
+            Sw::OK
+        );
+    }
+    let next = full as u16;
+    let big = vec![0x22; MAX_OBJECT];
+    assert_eq!(put_object(&mut app, &mut fs, next, &big), Sw::FILE_FULL);
+    assert_eq!(
+        put_object(&mut app, &mut fs, next, &vec![0x33; rest]),
+        Sw::OK
+    );
+    assert_eq!(put_object(&mut app, &mut fs, next + 1, b"x"), Sw::FILE_FULL);
+    assert_eq!(
+        put_object(&mut app, &mut fs, 0, &big),
+        Sw::OK,
+        "a same-size rewrite"
+    );
+    assert_eq!(put_object(&mut app, &mut fs, next, &[]), Sw::OK);
+    assert_eq!(
+        put_object(&mut app, &mut fs, next + 1, &vec![0x44; rest]),
+        Sw::OK
+    );
+    // A held object growing in place is charged its growth: one byte past the budget.
+    assert_eq!(put_object(&mut app, &mut fs, 0, &[]), Sw::OK);
+    let grown = 0x100;
+    assert_eq!(
+        put_object(&mut app, &mut fs, grown, &vec![0x55; MAX_OBJECT - 1]),
+        Sw::OK
+    );
+    assert_eq!(put_object(&mut app, &mut fs, 0, b"x"), Sw::OK);
+    assert_eq!(
+        put_object(&mut app, &mut fs, grown, &vec![0x55; MAX_OBJECT]),
+        Sw::FILE_FULL,
+        "a held object grew past the budget"
+    );
+}
+
+/// A rewrite lands in its object's own file even when a file before it is free:
+/// written into the free one it would leave the old copy behind as a second.
+#[test]
+fn a_rewrite_behind_a_freed_file_stays_in_its_own() {
+    let rng = RefCell::new(TestRng(7));
+    let pres = RefCell::new(AlwaysConfirm);
+    let mut app = PivApplet::new(SERIAL, HASH, None, &rng, &pres);
+    let mut fs = new_fs();
+    select(&mut app, &mut fs);
+    auth_mgm(&mut app, &mut fs);
+    assert_eq!(put_object(&mut app, &mut fs, 1, b"one"), Sw::OK);
+    assert_eq!(put_object(&mut app, &mut fs, 2, b"two"), Sw::OK);
+    assert_eq!(put_object(&mut app, &mut fs, 1, &[]), Sw::OK);
+    assert_eq!(put_object(&mut app, &mut fs, 2, b"TWO"), Sw::OK);
+    assert_eq!(pooled(&mut fs), 1, "the rewrite stored a second copy");
+    let want = [&[TAG_DATA_OBJECT, 3][..], b"TWO"].concat();
+    assert_eq!(get_object(&mut app, &mut fs, 2), (Sw::OK, want));
+    assert_eq!(get_object(&mut app, &mut fs, 1).0, Sw::FILE_NOT_FOUND);
+}
+
+/// A fixed object takes the same `MAX_OBJECT` a pooled one does.
+#[test]
+fn a_fixed_object_takes_max_object_and_no_more() {
+    let rng = RefCell::new(TestRng(7));
+    let pres = RefCell::new(AlwaysConfirm);
+    let mut app = PivApplet::new(SERIAL, HASH, None, &rng, &pres);
+    let mut fs = new_fs();
+    select(&mut app, &mut fs);
+    auth_mgm(&mut app, &mut fs);
+    let id = [0x5F, 0xC1, 0x05];
+    let put = |app: &mut PivApplet, fs: &mut Fs<RamStorage>, n: usize| {
+        run(
+            app,
+            fs,
+            INS_PUT_DATA,
+            0x3F,
+            0xFF,
+            &object_body(id, &vec![0x5A; n]),
+        )
+        .0
+    };
+    assert_eq!(put(&mut app, &mut fs, MAX_OBJECT), Sw::OK);
+    assert_eq!(put(&mut app, &mut fs, MAX_OBJECT + 1), Sw::WRONG_LENGTH);
+}
+
+/// A write or delete the medium refuses is `6581`, not the `6A84` of a store with no
+/// room — for a pooled object as for a fixed one.
+#[test]
+fn a_refused_pool_write_or_delete_answers_6581() {
+    let rng: &'static _ = Box::leak(Box::new(RefCell::new(TestRng(7))));
+    let pres: &'static _ = Box::leak(Box::new(RefCell::new(AlwaysConfirm)));
+    let (backend, medium) = Cut::new();
+    let mut fs = Fs::new(backend);
+    fs.scan();
+    let mut app = PivApplet::new(SERIAL, HASH, None, rng, pres);
+    select(&mut app, &mut fs);
+    auth_mgm(&mut app, &mut fs);
+    medium.arm(0);
+    assert_eq!(put_object(&mut app, &mut fs, 7, b"x"), Sw::MEMORY_FAILURE);
+    let fixed = object_body([0x5F, 0xC1, 0x05], b"x");
+    assert_eq!(
+        run(&mut app, &mut fs, INS_PUT_DATA, 0x3F, 0xFF, &fixed).0,
+        Sw::MEMORY_FAILURE
+    );
+    medium.arm(u32::MAX);
+    let (mut app, mut fs, medium, _rng, _pres) = moved_card();
+    assert_eq!(put_object(&mut app, &mut fs, 7, b"x"), Sw::OK);
+    let first = *crate::objects::POOL.start();
+    medium.refuse_remove(Some(first));
+    assert_eq!(put_object(&mut app, &mut fs, 7, &[]), Sw::MEMORY_FAILURE);
+    medium.refuse_remove(None);
+    assert!(
+        medium.value(first).is_some(),
+        "control: the object is still held"
+    );
+}
+
+/// A fault on the body read, after the walk found the object, is `6581` rather than
+/// the `6A82` of an object never stored.
+#[test]
+fn a_faulted_pool_body_read_is_6581() {
+    let (mut app, mut fs, medium, _rng, _pres) = moved_card();
+    assert_eq!(put_object(&mut app, &mut fs, 7, b"x"), Sw::OK);
+    medium.stick_after(*crate::objects::POOL.start(), 1);
+    assert_eq!(get_object(&mut app, &mut fs, 7).0, Sw::MEMORY_FAILURE);
+}
+
+/// A pooled record is the object id's low two bytes, then its body; one shorter
+/// than that tag names no object, and no write takes its file.
+#[test]
+fn a_pool_record_is_its_id_tag_and_body() {
+    let (mut app, mut fs, medium, _rng, _pres) = moved_card();
+    let first = *crate::objects::POOL.start();
+    fs.put(first, &[0x5F]).unwrap();
+    assert_eq!(get_object(&mut app, &mut fs, 0x5F00).0, Sw::FILE_NOT_FOUND);
+    assert_eq!(put_object(&mut app, &mut fs, 0x1234, b"xyz"), Sw::OK);
+    assert_eq!(
+        medium.value(first),
+        Some(vec![0x5F]),
+        "a short record was taken"
+    );
+    assert_eq!(
+        medium.value(first + 1),
+        Some(vec![0x12, 0x34, b'x', b'y', b'z'])
+    );
+}
+
+/// A PIV reset takes the pool with the rest of the applet's files, and its delete
+/// budget covers them: every data object, cached point and pool file held at once
+/// is more than the 768 the budget was before the pool.
+#[test]
+fn a_piv_reset_takes_the_pool() {
+    let dev = Device {
+        serial_hash: &HASH,
+        serial_id: &SERIAL,
+        otp_key: None,
+        latched: false,
+    };
+    let mut fs = new_fs();
+    for fid in (0xD100..=0xD17F)
+        .chain(0xD200..=0xD2EF)
+        .chain(0xD400..=0xD4FF)
+    {
+        fs.put(fid, &[0x41]).unwrap();
+    }
+    for n in 0..256 {
+        crate::objects::write(&mut fs, 0x5F_00_00 + n, b"minidriver").unwrap();
+    }
+    // Counted off the ranges planted, not through `is_piv_fid`, the predicate under test.
+    let planted = 0x80 + 0xF0 + 0x100 + pooled(&mut fs);
+    assert!(
+        planted > 768 + 32,
+        "control: past the old budget by more than a sweep batch"
+    );
+    assert_eq!(reset_files(&dev, &mut fs, &mut TestRng(3)), Ok(()));
+    assert_eq!(pooled(&mut fs), 0, "the reset left pool objects");
+}
+
+/// A pool probe the medium cannot serve refuses. Read as absent it would store a
+/// second copy beside the one it missed, or answer `6A82` over an object it holds.
+#[test]
+fn a_faulted_pool_probe_refuses_and_stores_no_second_copy() {
+    let (mut app, mut fs, medium, _rng, _pres) = moved_card();
+    let id = [0x5F, 0xFF, 0x10];
+    let first = *crate::objects::POOL.start();
+    let put = |app: &mut PivApplet, fs: &mut Fs<ProbeStuck>, body: &[u8]| {
+        run(app, fs, INS_PUT_DATA, 0x3F, 0xFF, &object_body(id, body)).0
+    };
+    assert_eq!(put(&mut app, &mut fs, b"one"), Sw::OK);
+    assert!(
+        medium.value(first).is_some(),
+        "control: the pool's first file"
+    );
+    medium.stick_once(first);
+    assert_eq!(put(&mut app, &mut fs, b"two"), Sw::MEMORY_FAILURE);
+    assert_eq!(pooled(&mut fs), 1, "a faulted probe stored a second copy");
+    medium.stick_once(first);
+    let get = run(
+        &mut app,
+        &mut fs,
+        INS_GET_DATA,
+        0x3F,
+        0xFF,
+        &object_body(id, &[])[..5],
+    );
+    assert_eq!(get.0, Sw::MEMORY_FAILURE, "a faulted probe read as absent");
+    assert_eq!(
+        run(
+            &mut app,
+            &mut fs,
+            INS_GET_DATA,
+            0x3F,
+            0xFF,
+            &object_body(id, &[])[..5]
+        ),
+        (Sw::OK, vec![TAG_DATA_OBJECT, 3, b'o', b'n', b'e'])
+    );
+}
+
+/// A store with no room answers PUT DATA `6A84`, as a full YubiKey does, not the `6581`
+/// of a medium that failed: for a fixed object as for a pooled one.
+#[test]
+fn a_full_store_answers_put_data_6a84() {
+    let rng = RefCell::new(TestRng(7));
+    let pres = RefCell::new(AlwaysConfirm);
+    let mut app = PivApplet::new(SERIAL, HASH, None, &rng, &pres);
+    let mut fs = new_fs();
+    select(&mut app, &mut fs);
+    auth_mgm(&mut app, &mut fs);
+    // Spend the shared file budget on records outside every applet's range.
+    for n in 0..fs.free_dynamic() {
+        fs.put(0x3000 + n as u16, &[1]).unwrap();
+    }
+    for id in [[0x5F, 0xC1, 0x05], [0x5F, 0x00, 0x00]] {
+        assert_eq!(
+            run(
+                &mut app,
+                &mut fs,
+                INS_PUT_DATA,
+                0x3F,
+                0xFF,
+                &object_body(id, b"x")
+            )
+            .0,
+            Sw::FILE_FULL,
+            "{id:02X?}"
+        );
+    }
+}
+
+/// PIV PUT DATA as a YubiKey 5.8.0 answers it, read twice: without the management
+/// key `6982` whatever the request but a one-byte body; with it, `6A80` to a P1-P2
+/// other than `3FFF` and to a body not `5C 03 <id>` then `53` in its shortest form.
+#[test]
+fn put_data_reads_its_body_as_a_yubikey_does() {
+    let rng = RefCell::new(TestRng(7));
+    let pres = RefCell::new(AlwaysConfirm);
+    let mut app = PivApplet::new(SERIAL, HASH, None, &rng, &pres);
+    let mut fs = new_fs();
+    select(&mut app, &mut fs);
+    let put = |app: &mut PivApplet, fs: &mut Fs<RamStorage>, p1: u8, p2: u8, body: &[u8]| {
+        run(app, fs, INS_PUT_DATA, p1, p2, body).0
+    };
+    let read = |app: &mut PivApplet, fs: &mut Fs<RamStorage>, tag: u8| {
+        run(
+            app,
+            fs,
+            INS_GET_DATA,
+            0x3F,
+            0xFF,
+            &[0x5C, 0x03, 0x5F, 0xC1, tag],
+        )
+    };
+    let good = [0x5C, 0x03, 0x5F, 0xC1, 0x05, 0x53, 0x01, 0xAA];
+    let unauthenticated: [(u8, u8, &[u8]); 6] = [
+        (0x3F, 0xFF, &good),
+        (0x3F, 0xFE, &good),
+        (0x00, 0x00, &good),
+        (0x3F, 0xFF, &[]),
+        (0x3F, 0xFF, &good[..5]),
+        (0x3F, 0xFF, &[0x7E, 0x00]),
+    ];
+    for (p1, p2, body) in unauthenticated {
+        assert_eq!(
+            put(&mut app, &mut fs, p1, p2, body),
+            Sw::SECURITY_STATUS_NOT_SATISFIED,
+            "no management key, {p1:02X}{p2:02X} {body:02X?}"
+        );
+    }
+    // A one-byte body is every PIV command's `6A80`, and it comes before the key.
+    assert_eq!(put(&mut app, &mut fs, 0x3F, 0xFF, &[0x5C]), Sw::WRONG_DATA);
+    auth_mgm(&mut app, &mut fs);
+    for (p1, p2) in [
+        (0x3F, 0xFE),
+        (0x00, 0x00),
+        (0x3F, 0x00),
+        (0x00, 0xFF),
+        (0xFF, 0xFF),
+    ] {
+        assert_eq!(
+            put(&mut app, &mut fs, p1, p2, &good),
+            Sw::WRONG_DATA,
+            "{p1:02X}{p2:02X}"
+        );
+    }
+    assert_eq!(read(&mut app, &mut fs, 0x05).0, Sw::FILE_NOT_FOUND);
+    let indefinite = [
+        &[0x5C, 0x03, 0x5F, 0xC1, 0x05, 0x53, 0x80][..],
+        &[0x42; 0x80],
+    ]
+    .concat();
+    let refused: [(&str, &[u8]); 19] = [
+        ("empty", &[]),
+        ("5C alone", &good[..5]),
+        ("53 alone", &good[5..]),
+        ("two-byte tag", &[0x5C, 0x02, 0x5F, 0xC1, 0x53, 0x01, 0xAA]),
+        (
+            "four-byte tag",
+            &[0x5C, 0x04, 0x00, 0x5F, 0xC1, 0x05, 0x53, 0x01, 0xAA],
+        ),
+        ("empty tag", &[0x5C, 0x00, 0x53, 0x01, 0xAA]),
+        (
+            "53 overruns",
+            &[0x5C, 0x03, 0x5F, 0xC1, 0x05, 0x53, 0x02, 0xAA],
+        ),
+        (
+            "53 before 5C",
+            &[0x53, 0x01, 0xAA, 0x5C, 0x03, 0x5F, 0xC1, 0x05],
+        ),
+        (
+            "53 81 01",
+            &[0x5C, 0x03, 0x5F, 0xC1, 0x05, 0x53, 0x81, 0x01, 0xAA],
+        ),
+        (
+            "53 82 0001",
+            &[0x5C, 0x03, 0x5F, 0xC1, 0x05, 0x53, 0x82, 0x00, 0x01, 0xAA],
+        ),
+        (
+            "53 80",
+            &[0x5C, 0x03, 0x5F, 0xC1, 0x05, 0x53, 0x80, 0xAA, 0x00, 0x00],
+        ),
+        (
+            "5C 81 03",
+            &[0x5C, 0x81, 0x03, 0x5F, 0xC1, 0x05, 0x53, 0x01, 0xAA],
+        ),
+        (
+            "two 5C",
+            &[
+                0x5C, 0x03, 0x5F, 0xC1, 0x05, 0x5C, 0x03, 0x5F, 0xC1, 0x0A, 0x53, 0x01, 0xAA,
+            ],
+        ),
+        (
+            "54 for 53",
+            &[0x5C, 0x03, 0x5F, 0xC1, 0x05, 0x54, 0x01, 0xAA],
+        ),
+        (
+            "a byte before 5C",
+            &[0x00, 0x5C, 0x03, 0x5F, 0xC1, 0x05, 0x53, 0x01, 0xAA],
+        ),
+        ("an ID cut short", &[0x5C, 0x03, 0x5F, 0xC1]),
+        ("53 80 over 128 bytes", &indefinite),
+        ("discovery", &[0x7E, 0x00]),
+        ("BIT group template", &[0x7F, 0x61, 0x00]),
+    ];
+    for (name, body) in refused {
+        assert_eq!(
+            put(&mut app, &mut fs, 0x3F, 0xFF, body),
+            Sw::WRONG_DATA,
+            "{name}"
+        );
+        for tag in [0x05, 0x0A] {
+            assert_eq!(
+                read(&mut app, &mut fs, tag).0,
+                Sw::FILE_NOT_FOUND,
+                "{name} stored 5FC1{tag:02X}"
+            );
+        }
+    }
+    // Taken: the object is the first `53`, and what follows it is not read.
+    let long = [
+        &[0x5C, 0x03, 0x5F, 0xC1, 0x05, 0x53, 0x81, 0x80][..],
+        &[0x42; 0x80],
+    ]
+    .concat();
+    let form = |len: &[u8], fill: u8, n: usize| {
+        [
+            &[0x5C, 0x03, 0x5F, 0xC1, 0x05, 0x53][..],
+            len,
+            &vec![fill; n],
+        ]
+        .concat()
+    };
+    let (short, one, two) = (
+        form(&[0x7F], 0x43, 0x7F),
+        form(&[0x81, 0xFF], 0x44, 0xFF),
+        form(&[0x82, 0x01, 0x00], 0x45, 0x100),
+    );
+    let taken: [(&str, &[u8], &[u8]); 6] = [
+        (
+            "a trailing byte",
+            &[0x5C, 0x03, 0x5F, 0xC1, 0x05, 0x53, 0x01, 0xAA, 0xFF],
+            &[0xAA],
+        ),
+        (
+            "a second 53",
+            &[
+                0x5C, 0x03, 0x5F, 0xC1, 0x05, 0x53, 0x01, 0xAA, 0x53, 0x01, 0xBB,
+            ],
+            &[0xAA],
+        ),
+        ("53 81 80", &long, &[0x42; 0x80]),
+        ("53 7F", &short, &[0x43; 0x7F]),
+        ("53 81 FF", &one, &[0x44; 0xFF]),
+        ("53 82 0100", &two, &[0x45; 0x100]),
+    ];
+    for (name, body, object) in taken {
+        assert_eq!(put(&mut app, &mut fs, 0x3F, 0xFF, body), Sw::OK, "{name}");
+        let (sw, got) = read(&mut app, &mut fs, 0x05);
+        assert_eq!(sw, Sw::OK, "{name}");
+        assert_eq!(find_tag(&got, 0x53), Some(object), "{name}");
+    }
+    // An empty `53` deletes, whether or not there is an object to delete.
+    for _ in 0..2 {
+        assert_eq!(
+            put(
+                &mut app,
+                &mut fs,
+                0x3F,
+                0xFF,
+                &[0x5C, 0x03, 0x5F, 0xC1, 0x05, 0x53, 0x00]
+            ),
+            Sw::OK
+        );
+        assert_eq!(read(&mut app, &mut fs, 0x05).0, Sw::FILE_NOT_FOUND);
+    }
+}
+
+/// RSA IMPORT refusals a YubiKey 5.8.0 makes, read twice, all `6A80` with the slot
+/// kept: a prime sent wider than half the modulus, a short modulus, `p = q`, and
+/// composite factors, which RS-Key stored as a key that refused every signature.
+#[test]
+fn rsa_import_refuses_a_key_a_yubikey_refuses() {
+    use rsk_rsa::vectors::{N1024_HEX, P_HEX, Q_HEX, hex};
+    let rng = RefCell::new(TestRng(7));
+    let pres = RefCell::new(AlwaysConfirm);
+    let mut app = PivApplet::new(SERIAL, HASH, None, &rng, &pres);
+    let mut fs = new_fs();
+    select(&mut app, &mut fs);
+    auth_mgm(&mut app, &mut fs);
+    let template = gen_template(ALGO_ECCP256);
+    assert_eq!(
+        run(&mut app, &mut fs, INS_ASYM_KEYGEN, 0, 0x9A, &template).0,
+        Sw::OK
+    );
+    let before = run(&mut app, &mut fs, INS_GET_METADATA, 0, 0x9A, &[]);
+    let (p, q, composite) = (hex(P_HEX), hex(Q_HEX), hex(N1024_HEX));
+    assert!(
+        rsk_rsa::rsa_from_pqe(&[0x01, 0x00, 0x01], &composite, &p).is_some(),
+        "the composite pair assembles, so only the trial signature can refuse it"
+    );
+    // Two 1017-bit primes in 128-byte fields: the widths hold, the modulus is 255 bytes.
+    let p1017 = hex(
+        "01fd0790b5c0ef2a339d6dba60b8341cdb84bad62f16e4f52e7bb84c2a843f969f0707f838383987e35118ce7e6e0d5d6572b0cb5303cf51f12cd90e89e587ef4dd4a5ab206424484805e322a7c3440f1e7b8828de09be2f12675bab240d2b99c940ceaf72651e94a448e03c067b2cd62fca48f7180c6010659f3aae18476085",
+    );
+    let q1017 = hex(
+        "01d69e1125599be3014de8443bf1fd257f6382f8ed0640e270900cacd72e480eba5928124737175e8eab66c6e58a74fe24b55a6ef82a621fdbac5bd6b91ee421b05c2aa372ddfad45bd84cddcdc200df74647ce677f06dc99c2e54ec5da58c24f5f66ce8d5d29983d652d6587b591f1f9872fd3360ad7833abd4689054e10f03",
+    );
+    let tlvs = |fields: &[(u8, &[u8])]| {
+        let mut b = Vec::new();
+        for (tag, v) in fields {
+            b.extend_from_slice(&[*tag, 0x81, v.len() as u8]);
+            b.extend_from_slice(v);
+        }
+        b
+    };
+    let zero_led = |v: &[u8]| [&[0][..], v].concat();
+    for (name, body) in [
+        ("composite p", tlvs(&[(1, &composite), (2, &p)])),
+        (
+            "p with a leading zero",
+            tlvs(&[(1, &zero_led(&p)), (2, &q)]),
+        ),
+        (
+            "q with a leading zero",
+            tlvs(&[(1, &p), (2, &zero_led(&q))]),
+        ),
+        ("a 255-byte modulus", tlvs(&[(1, &p1017), (2, &q1017)])),
+        ("p = q", tlvs(&[(1, &p), (2, &p)])),
+    ] {
+        assert_eq!(
+            run(
+                &mut app,
+                &mut fs,
+                INS_IMPORT_ASYM,
+                ALGO_RSA2048,
+                0x9A,
+                &body
+            )
+            .0,
+            Sw::WRONG_DATA,
+            "{name}"
+        );
+        assert_eq!(
+            run(&mut app, &mut fs, INS_GET_METADATA, 0, 0x9A, &[]),
+            before,
+            "{name}: the refusal moved the slot"
+        );
+    }
+    // Control: the same primes, with CRT fields a YubiKey takes whatever they hold.
+    let junk = [0x5A; 128];
+    let good = tlvs(&[(1, &p), (2, &q), (3, &junk), (4, &junk), (5, &junk)]);
+    assert_eq!(
+        run(
+            &mut app,
+            &mut fs,
+            INS_IMPORT_ASYM,
+            ALGO_RSA2048,
+            0x9A,
+            &good
+        )
+        .0,
+        Sw::OK
+    );
+    let (sw, meta) = run(&mut app, &mut fs, INS_GET_METADATA, 0, 0x9A, &[]);
+    assert_eq!(
+        (sw, find_tag(&meta, 0x01)),
+        (Sw::OK, Some(&[ALGO_RSA2048][..]))
+    );
+}
+
+/// MOVE KEY 9A → 82, cut at every mutation. The source goes only once the
+/// destination holds the key, so no cut loses it; the destination's head lands after
+/// its key, so a cut can leave the moved key there with no head, which the use-time
+/// gate refuses (`6A88`) rather than serve under a default PIN or touch policy.
+#[test]
+fn a_torn_move_key_never_loses_the_key_or_serves_it_headless() {
+    let rng = RefCell::new(TestRng(7));
+    let pres = RefCell::new(AlwaysConfirm);
+    let app_on = || PivApplet::new(SERIAL, HASH, None, &rng, &pres);
+    assert!(!rsk_fs::cut::sweep_restarts(
+        || {
+            let (mut fs, medium) = new_cut_fs();
+            let mut app = app_on();
+            select(&mut app, &mut fs);
+            auth_mgm(&mut app, &mut fs);
+            let tmpl = gen_template(ALGO_ECCP256);
+            assert_eq!(
+                run(&mut app, &mut fs, INS_ASYM_KEYGEN, 0, 0x9A, &tmpl).0,
+                Sw::OK
+            );
+            (fs, medium)
+        },
+        |fs| {
+            let mut app = app_on();
+            select(&mut app, fs);
+            auth_mgm(&mut app, fs);
+            run(&mut app, fs, INS_MOVE_KEY, 0x82, 0x9A, &[]).0 == Sw::OK
+        },
+        |fs| {
+            let _ = files::scan_files(
+                &Device {
+                    serial_hash: &HASH,
+                    serial_id: &SERIAL,
+                    otp_key: None,
+                    latched: false,
+                },
+                fs,
+                &mut TestRng(91),
+            );
+        },
+        |fs, budget, _second, completed, medium| {
+            let held: Vec<u8> = [0x9A, 0x82]
+                .into_iter()
+                .filter(|&s| fs.has_key(key_fid(s)))
+                .collect();
+            assert!(
+                !held.is_empty(),
+                "budget {budget}: the key is gone — {:?}",
+                medium.ops()
+            );
+            let mut app = app_on();
+            select(&mut app, fs);
+            verify_pin(&mut app, fs);
+            for slot in held {
+                let headed = fs.meta_find(key_fid(slot).get(), &mut [0u8; 8]).is_some();
+                let want = if headed {
+                    Sw::OK
+                } else {
+                    Sw::REFERENCE_NOT_FOUND
+                };
+                assert_eq!(
+                    sign_p256(&mut app, fs, slot),
+                    want,
+                    "budget {budget}: slot {slot:#04x}, head {headed} — {:?}",
+                    medium.ops()
+                );
+            }
+            if completed {
+                assert!(
+                    !fs.has_key(key_fid(0x9A))
+                        && fs.meta_find(key_fid(0x82).get(), &mut [0u8; 8]).is_some(),
+                    "budget {budget}: MOVE answered OK and did not finish"
+                );
+            }
+        },
+    ));
+}
+
+// The read-fault sweep lives in its own file; it needs this module's fixtures.
+#[path = "reads_tests.rs"]
+mod reads;
+
+/// SET MANAGEMENT KEY under a cut and a faulted read; its own file, it needs this
+/// module's fixtures.
+#[path = "mgmkey_tests.rs"]
+mod mgmkey;
+
+/// ECDSA challenge lengths at GENERAL AUTHENTICATE; its own file, it needs this
+/// module's fixtures.
+#[path = "ecdsa_tests.rs"]
+mod ecdsa;
+
+#[test]
+fn set_retries_requires_mgmt_not_just_pin() {
+    let rng = RefCell::new(TestRng(7));
+    let pres = RefCell::new(AlwaysConfirm);
+    let mut app = PivApplet::new(SERIAL, HASH, None, &rng, &pres);
+    let mut fs = new_fs();
+    select(&mut app, &mut fs);
+    verify_pin(&mut app, &mut fs);
+    let (sw, _) = run(&mut app, &mut fs, INS_SET_RETRIES, 5, 4, &[]);
+    assert_eq!(sw, Sw::SECURITY_STATUS_NOT_SATISFIED);
+}
+
+#[path = "keygen_bounds_tests.rs"]
+mod keygen_bounds_tests;
+
+#[path = "command_bounds_tests.rs"]
+mod command_bounds_tests;
+
+#[path = "mgm_fault_bounds_tests.rs"]
+mod mgm_fault_bounds_tests;
+
+#[path = "pin_decisions_tests.rs"]
+mod pin_decisions;
+
+#[path = "auth_decisions_tests.rs"]
+mod auth_decisions;
+
+#[path = "handshake_decisions_tests.rs"]
+mod handshake_decisions;
+
+#[path = "attestation_bounds_tests.rs"]
+mod attestation_bounds;
+
+#[path = "move_decisions_tests.rs"]
+mod move_decisions;
+
+#[path = "service_fault_decisions_tests.rs"]
+mod service_fault_decisions;
+
+#[path = "cache_retirement_tests.rs"]
+mod cache_retirement;
+
+#[path = "attestation_recovery_tests.rs"]
+mod attestation_recovery;
+
+#[path = "coverage_boundaries_tests.rs"]
+mod coverage_boundaries;
+
+#[path = "restart_tests.rs"]
+mod restarts;
+
+#[path = "stored_damage_tests.rs"]
+mod stored_damage;
+
+#[test]
+fn an_unknown_stored_slot_algorithm_cannot_enter_a_private_operation() {
+    let rng = RefCell::new(TestRng(7));
+    let presence = RefCell::new(AlwaysConfirm);
+    let mut app = PivApplet::new(SERIAL, HASH, None, &rng, &presence);
+    let mut fs = new_fs();
+    select(&mut app, &mut fs);
+    auth_mgm(&mut app, &mut fs);
+    assert_eq!(
+        run(
+            &mut app,
+            &mut fs,
+            INS_ASYM_KEYGEN,
+            0,
+            SLOT_AUTHENTICATION,
+            &gen_template(ALGO_ECCP256)
+        )
+        .0,
+        Sw::OK
+    );
+    fs.meta_add(
+        key_fid(SLOT_AUTHENTICATION).get(),
+        &[0xFF, PINPOLICY_NEVER, TOUCHPOLICY_NEVER, ORIGIN_GENERATED],
+    )
+    .unwrap();
+    let generation = fs.write_gen();
+    let (sw, output) = run(
+        &mut app,
+        &mut fs,
+        INS_AUTHENTICATE,
+        0xFF,
+        SLOT_AUTHENTICATION,
+        &[0x7C, 5, 0x82, 0, 0x81, 1, 0],
+    );
+    assert_eq!(sw, Sw::WRONG_DATA);
+    assert!(output.is_empty());
+    assert_eq!(fs.write_gen(), generation);
+}
+
+#[test]
+fn an_imported_key_survives_a_refused_optional_public_cache_reload() {
+    let dev = Device {
+        serial_hash: &HASH,
+        serial_id: &SERIAL,
+        otp_key: None,
+        latched: false,
+    };
+    let (backend, medium) = ProbeStuck::new();
+    let mut fs = Fs::new(backend);
+    fs.scan();
+    files::scan_files(&dev, &mut fs, &mut TestRng(7)).unwrap();
+    let scalar = [0x33; 32];
+    let mut body = vec![0x06, 32];
+    body.extend_from_slice(&scalar);
+    let session = Session {
+        has_mgm: true,
+        ..Default::default()
+    };
+    medium.stick_once(key_fid(SLOT_AUTHENTICATION).get());
+    assert_eq!(
+        keygen::import(
+            &session,
+            &dev,
+            &mut fs,
+            &mut TestRng(7),
+            ALGO_ECCP256,
+            SLOT_AUTHENTICATION,
+            &body
+        ),
+        Sw::OK
+    );
+    assert!(!fs.has_data(files::pubkey_fid(SLOT_AUTHENTICATION)));
+    let mut metadata = [0; 128];
+    assert_eq!(
+        fs.meta_find(key_fid(SLOT_AUTHENTICATION).get(), &mut metadata),
+        Some(4)
+    );
+    assert_eq!(
+        &metadata[..4],
+        &[
+            ALGO_ECCP256,
+            PINPOLICY_ONCE,
+            TOUCHPOLICY_NEVER,
+            ORIGIN_IMPORTED
+        ]
+    );
+    let loaded = seal::load_ec_key(&dev, &mut fs, key_fid(SLOT_AUTHENTICATION)).unwrap();
+    let expected = PrivKey::from_scalar(Curve::P256, &scalar).unwrap();
+    let mut actual_point = [0; MAX_EC_POINT];
+    let mut expected_point = [0; MAX_EC_POINT];
+    assert_eq!(
+        loaded.public_point(&mut actual_point).unwrap(),
+        expected.public_point(&mut expected_point).unwrap()
+    );
+    assert_eq!(actual_point, expected_point);
+}
+
+#[path = "move_absence_tests.rs"]
+mod move_absence;
+
+#[path = "raw_record_contract_tests.rs"]
+mod raw_record_contracts;

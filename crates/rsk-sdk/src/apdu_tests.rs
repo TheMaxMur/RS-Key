@@ -4,6 +4,19 @@
 use super::*;
 
 #[test]
+fn the_basic_channel_has_only_the_two_unadorned_classes() {
+    for cla in 0..=255 {
+        let raw = [cla, 0, 0, 0];
+        let command = Apdu::parse(&raw).unwrap();
+        assert_eq!(
+            command.is_basic_class(),
+            [0x00, 0x80].contains(&cla),
+            "CLA {cla:02x}"
+        );
+    }
+}
+
+#[test]
 fn case1() {
     let a = Apdu::parse(&[0x00, 0xA4, 0x04, 0x00]).unwrap();
     assert_eq!((a.cla, a.ins, a.p1, a.p2), (0x00, 0xA4, 0x04, 0x00));
@@ -92,12 +105,14 @@ fn extended_bad_lc() {
 }
 
 #[test]
-fn extended_marker_too_short_is_short_lc() {
-    // Leading 0 but only 6 bytes: too short for extended, decoded as short Le.
+fn a_two_byte_body_under_00_is_one_16_bit_le() {
+    // Too short for an extended case, and no short one: a YubiKey 5.8.0 reads `00 xx`
+    // as the Le `00xx` (measured 2026-09-30). `00 00` is 65536 by that reading, unmeasured.
     let a = Apdu::parse(&[0x00, 0x01, 0x00, 0x00, 0x00, 0x10]).unwrap();
-    assert_eq!(a.nc, 0);
-    assert_eq!(a.ne, 0x10);
+    assert_eq!((a.nc, a.ne, a.extended), (0, 0x10, true));
     assert!(a.data.is_empty());
+    let a = Apdu::parse(&[0x00, 0x01, 0x00, 0x00, 0x00, 0x00]).unwrap();
+    assert_eq!((a.nc, a.ne, a.extended), (0, 65536, true));
 }
 
 #[test]
@@ -113,6 +128,26 @@ fn chaining_flag() {
             .unwrap()
             .is_chaining()
     );
+}
+
+/// The classes a YubiKey 5.8.0's CCID layer passed on, read off it one by one:
+/// `00`, `04`, `80`, `84`, and all 128 with the chaining bit.
+#[test]
+fn the_classes_served_over_ccid_are_a_yubikeys() {
+    let served: std::vec::Vec<u8> = (0..=0xFFu8)
+        .filter(|&cla| {
+            Apdu::parse(&[cla, 0xA4, 0x04, 0x00])
+                .unwrap()
+                .is_served_over_ccid()
+        })
+        .collect();
+    let chaining = (0..=0xFFu8).filter(|c| c & 0x10 != 0);
+    let mut want: std::vec::Vec<u8> = [0x00, 0x04, 0x80, 0x84]
+        .into_iter()
+        .chain(chaining)
+        .collect();
+    want.sort_unstable();
+    assert_eq!(served, want);
 }
 
 #[test]
@@ -148,4 +183,65 @@ fn an_extended_lc_is_the_whole_16_bit_value_never_its_low_byte() {
         assert_eq!(a.data.len(), nc);
         assert_eq!(a.data.last(), Some(&((nc - 1) as u8)), "body truncated");
     }
+}
+
+/// `extended` records the length ENCODING, which `ne` cannot say once `Le` is
+/// absent: a short case 3 and an extended one both leave `ne` 0.
+#[test]
+fn extended_records_the_encoding_where_ne_cannot() {
+    for (raw, extended, ne) in [
+        (&[0x00, 0xA1, 0, 0][..], false, 256),
+        (&[0x00, 0xA1, 0, 0, 0x00], false, 256),
+        (&[0x00, 0xA4, 0, 1, 0x01, 0x74], false, 0),
+        (&[0x00, 0xA4, 0, 1, 0x00, 0x00, 0x01, 0x74], true, 0),
+        (&[0x00, 0xA1, 0, 0, 0x00, 0x00, 0x00], true, 65536),
+        (
+            &[0x00, 0xA4, 0, 1, 0x00, 0x00, 0x01, 0x74, 0x00, 0x10],
+            true,
+            16,
+        ),
+    ] {
+        let a = Apdu::parse(raw).unwrap();
+        assert_eq!((a.extended, a.ne), (extended, ne), "{raw:02X?}");
+    }
+}
+
+/// `"00A4 0400 05"` → bytes; spaces are for the reader.
+fn hex(s: &str) -> std::vec::Vec<u8> {
+    let digits: std::vec::Vec<u8> = s.bytes().filter(|b| !b.is_ascii_whitespace()).collect();
+    digits
+        .chunks(2)
+        .map(|p| u8::from_str_radix(core::str::from_utf8(p).unwrap(), 16).unwrap())
+        .collect()
+}
+
+/// YubiKey 5.8.0, measured 2026-09-30 over raw USB CCID: a body that fits no case
+/// is `6700`, bytes past `Le` included. Two shapes outside ISO 7816-4 are read:
+/// `00 xx` as one 16-bit Le, and a case 2E and two bytes as a case 4E with Lc 0.
+#[test]
+fn a_body_that_fits_no_case_is_refused_as_a_yubikey_refuses_it() {
+    // `Some((Nc, Ne))` where the YubiKey ran the command, `None` for its `6700`.
+    let rows: [(&str, Option<(usize, usize)>); 12] = [
+        ("00A40400 07 A0000005272101 00", Some((7, 256))),
+        ("00A40400 07 A0000005272101", Some((7, 0))),
+        ("00A40400 07 A0000005272101 00 AA", None),
+        ("00A40400 07 A0000005272101 00 AABB", None),
+        ("00A40400 000007 A0000005272101 0000 AA", None),
+        ("00CA006E 00", Some((0, 256))),
+        ("00CA006E 00AA", Some((0, 0xAA))),
+        ("00CA006E 10AA", None),
+        ("00CA006E 000000", Some((0, 65536))),
+        ("00CA006E 000000 AA", None),
+        ("00CA006E 000000 AABB", Some((0, 0xAABB))),
+        ("00A40400 05 A0", None),
+    ];
+    let wrong: std::vec::Vec<_> = rows
+        .into_iter()
+        .map(|(raw, want)| {
+            let got = Apdu::parse(&hex(raw)).map(|a| (a.nc, a.ne));
+            (raw, got, want.ok_or(Error::WrongLength))
+        })
+        .filter(|(_, got, want)| got != want)
+        .collect();
+    assert!(wrong.is_empty(), "(APDU, parsed, the YubiKey's): {wrong:?}");
 }

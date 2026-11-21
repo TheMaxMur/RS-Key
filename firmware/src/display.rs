@@ -26,7 +26,7 @@ use rsk_display::{BL_TOP, TouchPad};
 use rsk_rsa::RsaKey;
 
 use crate::flash_storage::FlashStorage;
-use crate::handler::{FidoRng, Store};
+use crate::handler::FidoRng;
 
 #[path = "display_panel.rs"]
 mod display_panel;
@@ -41,10 +41,7 @@ pub use rsk_display::{DeviceInfo, DeviceKeys, UI_YIELD_FLOOR_MS, piv_ref_title};
 const CST328_ADDR: u16 = 0x1A;
 
 /// CST3530 7-bit I2C address — the touch controller Waveshare swapped in on the
-/// V2 revision (2026-10-14). Its register addresses are four bytes wide and its
-/// report block starts at `0xD0070000`; see `rsk_ui::touch::parse_cst3530` for the
-/// layout. Pointed at a CST328 this address NAKs, so the two can not be probed for
-/// at runtime and the choice is a build knob (`DISPLAY_TP_CHIP`).
+/// V2 revision. Select it with `DISPLAY_TP_CHIP=cst3530`.
 #[cfg(display_tp = "cst3530")]
 const CST3530_ADDR: u16 = 0x58;
 /// Report block: nine bytes, the first point at `[4..8]`.
@@ -56,10 +53,11 @@ const CST3530_DATA_REG: u32 = 0xD007_0000;
 const CST3530_END_READ_REG: u32 = 0xD000_02AB;
 
 /// This board's instance of the flow.
-pub type Ui = rsk_display::Ui<'static, Panel, Touch, DisplayHooks, FlashStorage, FidoRng>;
+pub type Ui = rsk_display::Ui<'static, Panel, Touch, DisplayHooks>;
 /// The on-screen presence backend over this board's panel.
-pub type TouchPresence =
-    rsk_display::TouchPresence<'static, Panel, Touch, DisplayHooks, FlashStorage, FidoRng>;
+pub type TouchPresence = rsk_display::TouchPresence<'static, Panel, Touch, DisplayHooks>;
+/// The cells this board's own screens borrow, handed to `build` and `status_task` only.
+pub type Parked = rsk_display::Parked<'static, FlashStorage, FidoRng>;
 
 /// The panel's SPI bus + control pins, bundled so `main` stays
 /// within embassy's argument cap when it hands the peripherals over.
@@ -176,6 +174,10 @@ impl rsk_display::Hooks for DisplayHooks {
         self.bl.set_config(&backlight_cfg(duty));
     }
 
+    fn sweep_dead_stack(&mut self) {
+        crate::sweep::dead_stack();
+    }
+
     fn wake_pressed(&self) -> bool {
         match &self.wake_btn {
             Some((btn, active_high)) => {
@@ -222,9 +224,9 @@ impl rsk_display::Hooks for DisplayHooks {
     }
 
     /// The same worker signal, because its whole effect is what both events need:
-    /// end the RAM `pinUvAuthToken` before the next CBOR command. They stay mapped
-    /// together only while that holds — a re-key-*specific* side effect added
-    /// there would then fire on a failed check too.
+    /// end the RAM `pinUvAuthToken` before either transport's next FIDO command. They
+    /// stay mapped together only while that holds — a re-key-*specific* side effect
+    /// added there would then fire on a failed check too.
     fn note_local_pin_failed(&mut self) {
         crate::handler::note_local_pin_changed();
     }
@@ -277,8 +279,7 @@ pub fn build(
     panel: PanelHw,
     touch: TouchHw,
     info: DeviceInfo,
-    fs: &'static RefCell<Store>,
-    keys: DeviceKeys,
+    cells: Parked,
     rng: &'static RefCell<FidoRng>,
     wake_btn: Option<(Input<'static>, bool)>,
 ) -> Ui {
@@ -321,23 +322,26 @@ pub fn build(
     block_for(Duration::from_millis(10));
     tp_rst.set_high();
     block_for(Duration::from_millis(50));
-    #[cfg_attr(display_tp = "cst3530", allow(unused_mut))]
-    let mut touch = Touch { i2c };
+    let touch = Touch { i2c };
     #[cfg(not(display_tp = "cst3530"))]
-    touch.normal_mode();
+    let touch = {
+        let mut touch = touch;
+        touch.normal_mode();
+        touch
+    };
 
     let hooks = DisplayHooks {
         bl,
         tp_rst,
         wake_btn,
     };
-    Ui::new(panel, touch, hooks, info, fs, keys, rng)
+    Ui::new(panel, touch, hooks, info, cells)
 }
 
 /// The ambient status screen. `#[embassy_executor::task]` cannot be generic, so
 /// this monomorphic wrapper is what the spawner takes; the loop itself is
 /// [`rsk_display::status_loop`].
 #[embassy_executor::task]
-pub async fn status_task(ui: &'static RefCell<Ui>) {
-    rsk_display::status_loop(ui).await;
+pub async fn status_task(ui: &'static RefCell<Ui>, cells: Parked) {
+    rsk_display::status_loop(ui, cells).await;
 }

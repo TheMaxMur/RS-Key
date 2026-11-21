@@ -58,9 +58,9 @@ def main():
         new_pin_enc = proto.encrypt(padded)
         params = {1: 2, 2: 3, 3: proto.cose(), 4: proto.authenticate(new_pin_enc), 5: new_pin_enc}
         sp = client_pin(dev, cid, params)
-        # 0x33 = PIN_AUTH_INVALID, what CTAP 2.1 §6.5.5.5 returns when a PIN is
-        # already set (changePIN is the only way to replace one).
-        if sp[0] == 0x33:
+        # 0x30 = NOT_ALLOWED, what a YubiKey 5.8.0 answers when a PIN is already set
+        # (changePIN is the only way to replace one); §6.5.5.5 names 0x33.
+        if sp[0] == 0x30:
             print("setPIN: already set (reusing PIN '1234')")
         else:
             assert sp[0] == 0x00, f"setPIN status {sp[0]:#x}"

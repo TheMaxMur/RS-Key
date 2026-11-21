@@ -12,7 +12,7 @@
 //! those are stateful (the begin/next cursor lives in `FidoState`), permission-gated
 //! and FIDO-conformance-tested. A separate additive walk leaves that path untouched.
 
-use zeroize::Zeroize;
+use rsk_secret::Secret;
 
 use rsk_crypto::Device;
 use rsk_fs::{Fs, Storage};
@@ -23,10 +23,6 @@ use crate::credential::{
     credential_load, seal_nick, slot_map, unseal_nick, unseal_rp_id,
 };
 
-/// The trivial-PIN predicate the `strong-pin` / `fips-profile` builds enforce, re-exported
-/// so the display PIN pad rejects a guessable PIN at entry (the host path already does).
-#[cfg(any(feature = "strong-pin", feature = "fips-profile"))]
-pub use crate::clientpin::pin_is_trivial;
 /// The device-local PIN seam for a display-initiated action, re-exported here so the
 /// trusted display reaches the whole on-device Passkeys/PIN seam — read walks,
 /// [`delete_cred`], the PIN check ([`spend_and_verify_local_pin`]) and the on-device set/change
@@ -38,6 +34,9 @@ pub use crate::clientpin::{
     min_pin_length, pin_is_set, pin_retries_left, spend_and_verify_device_pin,
     spend_and_verify_local_pin, store_device_pin, store_local_pin,
 };
+/// The trivial-PIN predicate the `strong-pin` / `fips-profile` builds enforce, re-exported
+/// so the display PIN pad rejects a guessable PIN at entry (the host path already does).
+pub use crate::clientpin::{pin_complexity_enabled, pin_is_trivial};
 /// The compile-time PIN-length floor (CTAP default 4, or the `fips-profile` minimum) that
 /// [`store_device_pin`] enforces — the trusted-display device-PIN pad must use it as its
 /// floor so a set the user types can actually be stored.
@@ -102,9 +101,9 @@ where
     let mut nick_present = [false; MAX_RESIDENT_CREDENTIALS as usize];
     slot_map(fs, EF_RPNICK, &mut nick_present);
     let mut buf = [0u8; RP_REC_MAX];
-    let mut plain = [0u8; RP_REC_MAX];
+    let mut plain = Secret::<[u8; RP_REC_MAX]>::zeroed();
     let mut nick_buf = [0u8; NICK_BOX_MAX];
-    let mut nick_plain = [0u8; RP_NICK_MAX_LEN];
+    let mut nick_plain = Secret::<[u8; RP_NICK_MAX_LEN]>::zeroed();
     let mut total = 0usize;
     for i in 0..MAX_RESIDENT_CREDENTIALS {
         if !occupied[i as usize] {
@@ -119,8 +118,12 @@ where
         }
         let mut rp_id_hash = [0u8; 32];
         rp_id_hash.copy_from_slice(&buf[1..RP_PREFIX]);
-        let Some((rp_id, _)) = unseal_rp_id(&seed, &rp_id_hash, &buf[RP_PREFIX..n], &mut plain)
-        else {
+        let Some((rp_id, _)) = unseal_rp_id(
+            seed.expose(),
+            &rp_id_hash,
+            &buf[RP_PREFIX..n],
+            plain.expose_mut(),
+        ) else {
             continue;
         };
         // A nickname lives in the parallel EF_RPNICK slot; it opens only under this
@@ -128,10 +131,10 @@ where
         let nickname = if nick_present[i as usize] {
             fs.read(EF_RPNICK + i, &mut nick_buf).and_then(|m| {
                 unseal_nick(
-                    &seed,
+                    seed.expose(),
                     &rp_id_hash,
                     &nick_buf[..m.min(NICK_BOX_MAX)],
-                    &mut nick_plain,
+                    nick_plain.expose_mut(),
                 )
             })
         } else {
@@ -145,9 +148,9 @@ where
             nickname,
         });
     }
-    seed.zeroize();
-    plain.zeroize(); // held the cleartext rp domains
-    nick_plain.zeroize(); // held the cleartext nicknames
+    seed.wipe();
+    plain.wipe(); // held the cleartext rp domains
+    nick_plain.wipe(); // held the cleartext nicknames
     total
 }
 
@@ -194,11 +197,11 @@ pub fn set_rp_nickname<S: Storage>(
         return false;
     };
     let mut rec = [0u8; NICK_BOX_MAX];
-    let ok = match seal_nick(&seed, rp_id_hash, nick, &mut rec) {
+    let ok = match seal_nick(seed.expose(), rp_id_hash, nick, &mut rec) {
         Ok(len) => fs.put(EF_RPNICK + slot, &rec[..len]).is_ok(),
         Err(_) => false,
     };
-    seed.zeroize();
+    seed.wipe();
     ok
 }
 
@@ -216,7 +219,7 @@ where
     let mut occupied = [false; MAX_RESIDENT_CREDENTIALS as usize];
     slot_map(fs, EF_CRED, &mut occupied);
     let mut buf = [0u8; CRED_REC_MAX];
-    let mut scratch = [0u8; CRED_REC_MAX];
+    let mut scratch = Secret::<[u8; CRED_REC_MAX]>::zeroed();
     let mut total = 0usize;
     for i in 0..MAX_RESIDENT_CREDENTIALS {
         if !occupied[i as usize] {
@@ -229,9 +232,12 @@ where
         if n < RECORD_PREFIX || buf[..32] != *rp_id_hash {
             continue;
         }
-        let Some(cred) =
-            credential_load(&seed, cred_record_box(&buf[..n]), rp_id_hash, &mut scratch)
-        else {
+        let Some(cred) = credential_load(
+            seed.expose(),
+            cred_record_box(&buf[..n]),
+            rp_id_hash,
+            scratch.expose_mut(),
+        ) else {
             continue;
         };
         total += 1;
@@ -243,8 +249,8 @@ where
             ef_cred_fid: EF_CRED + i,
         });
     }
-    seed.zeroize();
-    scratch.zeroize(); // held the decrypted account names
+    seed.wipe();
+    scratch.wipe(); // held the decrypted account names
     total
 }
 
@@ -257,7 +263,11 @@ where
 /// This is the on-device counterpart of CTAP `deleteCredential` (0x06): the same
 /// flash effect, but keyed by slot (what the on-device walk holds) instead of by
 /// the host's resident id. Cred-first then RP-decrement matches that path's order.
-pub fn delete_cred<S: Storage>(fs: &mut Fs<S>, ef_cred_fid: u16) -> bool {
+pub fn delete_cred<S: Storage>(
+    fs: &mut Fs<S>,
+    rng: &mut impl crate::Rng,
+    ef_cred_fid: u16,
+) -> bool {
     if !(EF_CRED..EF_CRED + MAX_RESIDENT_CREDENTIALS).contains(&ef_cred_fid) {
         return false;
     }
@@ -272,7 +282,7 @@ pub fn delete_cred<S: Storage>(fs: &mut Fs<S>, ef_cred_fid: u16) -> bool {
     rp_id_hash.copy_from_slice(&buf[..32]);
     // Ahead of the delete, as on the host path: a tag that over-reports costs the
     // platform one re-enumeration, one that under-reports costs it a stale cache.
-    if crate::credential::bump_cred_store_state(fs).is_err() {
+    if crate::credential::renew_store_state(fs, rng).is_err() {
         return false;
     }
     if fs.delete(ef_cred_fid).is_err() {

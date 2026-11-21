@@ -12,21 +12,24 @@
 # in the change that staled it. Gated on `scripts/ci-scope.sh` so an edit that
 # cannot reach the emulator does not boot one.
 #
-# Two halves, because the transport splits them:
+# The jobs follow the backend and transport split:
 #   sockets — everything the emulator can serve over TCP, on the runner directly.
-#   usb     — `02`, `61`, `65`, `73`, `77` and the pico-fido conformance suite,
-#             which read USB descriptors or go through python-fido2's and
-#             pyscard's own transports. Those need a kernel that enumerated the
-#             device, i.e. `vhci_hcd` — which a GitHub-hosted runner has no way to
+#   image   — command operations and platform checks on the ELF, in parallel.
+#   usb     — `02`, `61`, `65`, `73`, `77`, the pico-fido conformance suite and
+#             OpenSC's p11test, which read USB descriptors or go through
+#             python-fido2's, pyscard's and pcsc-lite's own transports. Those need
+#             a kernel that enumerated the device, i.e. `vhci_hcd` — which a
+#             GitHub-hosted runner has no way to
 #             provide (no module loading, and no reliable /dev/kvm either). So
 #             they run inside a QEMU guest under software emulation; see
-#             `scripts/usbip-suites.sh`.
+#             `scripts/usbip-suites.sh`. The guest also runs image PICOBOOT and
+#             MSC with its own emulator and fresh virtual flash/OTP.
 
 name: emulator
 
 on:
   push:
-    branches: [main]
+    branches: [main, develop]
   pull_request:
   schedule:
     - cron: "20 4 * * *" # 04:20 UTC daily, clear of deep-checks at 05:17
@@ -44,6 +47,7 @@ jobs:
     timeout-minutes: 5
     outputs:
       emulator: ${{ steps.scope.outputs.emulator }}
+      image: ${{ steps.scope.outputs.image }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -55,20 +59,9 @@ jobs:
       - name: what changed
         id: scope
         env:
-          EVENT: ${{ github.event_name }}
           BASE: ${{ github.base_ref }}
           BEFORE: ${{ github.event.before }}
-        run: |
-          files=""
-          if [ "$EVENT" = "pull_request" ]; then
-            files="$(git diff --name-only "origin/$BASE...HEAD")"
-          elif [ -n "$BEFORE" ] && git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
-            files="$(git diff --name-only "$BEFORE" HEAD)"
-          fi
-          # Empty means we could not work out a base (a schedule run, a new
-          # branch) — ci-scope.sh reads that as "everything", which is the
-          # direction a mistake should fail in.
-          printf '%s\n' "$files" | ./scripts/ci-scope.sh | tee -a "$GITHUB_OUTPUT"
+        run: ./scripts/ci-scope.sh --github | tee -a "$GITHUB_OUTPUT"
 
   sockets:
     needs: changes
@@ -94,7 +87,7 @@ jobs:
           key: emu-${{ runner.os }}-${{ hashFiles('tools/emu/Cargo.lock', 'flake.lock') }}
           restore-keys: emu-${{ runner.os }}-
 
-      - name: the on-device suites + the OpenPGP conformance suite, against tools/emu
+      - name: the on-device suites + the OpenPGP and ykman suites, against tools/emu
         run: nix develop -c ./scripts/emu-suites.sh
         env:
           HOST_TARGET: x86_64-unknown-linux-gnu
@@ -106,6 +99,56 @@ jobs:
           # is usually the device saying why, not the suite.
           find /tmp -name '*.log' -newermt '-45 minutes' -path '*/tmp.*' \
             -exec sh -c 'echo "--- $1"; tail -40 "$1"' _ {} \; 2>/dev/null || true
+
+  image:
+    needs: changes
+    if: needs.changes.outputs.image == 'true'
+    runs-on: ubuntu-latest
+    # RSA key generation and the TrustZone/OTP checks need independent budgets.
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        suite: [platform, operations-core, rsa-openpgp, rsa-openpgp-4096]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: DeterminateSystems/nix-installer-action@3138316df39ed29be04236d7ffc686fa525866aa # v23
+
+      - uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.2
+        with:
+          primary-key: nix-${{ runner.os }}-${{ hashFiles('flake.lock') }}
+          restore-prefixes-first-match: nix-${{ runner.os }}-
+
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target/thumbv8m.main-none-eabihf
+            target/trustzone
+            tools/emu/target
+          key: image-${{ matrix.suite }}-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'tools/emu/Cargo.lock', 'flake.lock') }}
+          restore-keys: |
+            image-${{ matrix.suite }}-${{ runner.os }}-
+            image-${{ runner.os }}-
+
+      - name: run the firmware image suite
+        run: nix develop -c ./scripts/image-suites.sh target/image-assurance "$IMAGE_SUITE"
+        env:
+          HOST_TARGET: x86_64-unknown-linux-gnu
+          IMAGE_SUITE: ${{ matrix.suite }}
+
+      - name: image reports and logs
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: image-assurance-${{ matrix.suite }}
+          path: |
+            target/image-assurance/**/*.log
+            target/image-assurance/**/report.json
+          if-no-files-found: warn
+          retention-days: 14
 
   usb:
     needs: changes
@@ -133,10 +176,22 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             tools/emu/target
-          key: emu-${{ runner.os }}-${{ hashFiles('tools/emu/Cargo.lock', 'flake.lock') }}
-          restore-keys: emu-${{ runner.os }}-
+            target/thumbv8m.main-none-eabihf
+          key: usb-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'tools/emu/Cargo.lock', 'flake.lock') }}
+          restore-keys: usb-${{ runner.os }}-
 
       - name: the suites that need a real USB stack, in a QEMU guest
-        run: nix develop -c ./scripts/usbip-suites.sh
+        run: nix develop -c ./scripts/usbip-suites.sh target/usbip-assurance
         env:
           HOST_TARGET: x86_64-unknown-linux-gnu
+
+      - name: USB stack, PICOBOOT and MSC reports and logs
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: usbip-assurance
+          path: |
+            target/usbip-assurance/**/*.log
+            target/usbip-assurance/**/report.json
+          if-no-files-found: warn
+          retention-days: 14

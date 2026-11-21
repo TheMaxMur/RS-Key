@@ -5,7 +5,7 @@
 //! site** rather than the state predicates behind it.
 //!
 //! Only one of the four token gates can be reached this way. The other three
-//! (`config.rs:243`, `getassertion.rs:420`, `makecredential.rs:559`) are inline
+//! (`config.rs:245`, `getassertion.rs:452`, `makecredential.rs:605`) are inline
 //! in functions that need a `Ctx`, and a `Ctx` drags `p256` into the reachable
 //! set, where Kani 0.67.0 does not merely time out — it aborts in codegen:
 //! `crypto-bigint 0.7.5 UintRef::lowest_u64` panics cprover_bindings' typecheck
@@ -41,7 +41,7 @@ const OP_STOP: u8 = 2;
 
 /// `NoTokenAfterInvalidation`, at the call site — the bounded, code-level
 /// instance of the TLA+ invariant of that name, driving the real
-/// [`verify_cm_token`] (`credmgmt.rs:278-288`) that `deleteCredential` and
+/// [`verify_cm_token`] (`credmgmt.rs:300-310`) that `deleteCredential` and
 /// `updateUserInformation` authorize with.
 ///
 /// The platform mints a genuine `pinUvAuthParam` while the grant is live, then a
@@ -51,15 +51,15 @@ const OP_STOP: u8 = 2;
 /// - **C1** the call site refuses unless the `cm` permission genuinely survived;
 /// - **C2** the replayed MAC still *verifies* — `stop_using_token` and
 ///   `consume_after_user_presence` do not touch the token bytes
-///   (`state.rs:547-562`, `:523-535`). So at this call site, and at
-///   `config.rs:243-245`, zeroing `permissions` is not defence in depth: it is
+///   (`state.rs:659-675`, `:644-657`). So at this call site, and at
+///   `config.rs:245-247`, zeroing `permissions` is not defence in depth: it is
 ///   the only defence. The TLA+ mutation experiment found exactly this by
 ///   failing to catch `BugStopUsingKeepsPerms` under a guard that also tested
 ///   "the token is in use" — a conjunct these two sites do not have.
 ///
 /// What this does **not** prove: only the `cm` permission and only this call
 /// site; the persistent `pcmr` grant that `authorize_cm` consults *before* this
-/// (`credmgmt.rs:240-242`) is in flash and out of reach here — finding 2 of the
+/// (`credmgmt.rs:262-264`) is in flash and out of reach here — finding 2 of the
 /// TLA+ run, closed at the consumer by `32b9fa3` and at the producer by
 /// `31c6e73`, and pinned by host tests rather than by this harness; four
 /// operations, one starting state; and
@@ -71,7 +71,7 @@ fn no_token_after_invalidation_at_call_site() {
     let mut st = FidoState::new();
     let proto = PinProto::Two;
 
-    // Issuance, in `clientpin.rs:420-426`'s order, with a symbolic permission set.
+    // Issuance, in `clientpin.rs:464-471`'s order, with a symbolic permission set.
     let perms0: u8 = kani::any();
     st.reset_pin_uv_auth_token(&mut rng);
     st.begin_using_token(false, 1_000);
@@ -137,6 +137,32 @@ const RAW_SUBPARA: [u8; 3] = [0xA1, 0x01, 0x58];
 
 const NOW: u64 = 1_000;
 
+const BEGIN_PAYLOAD: [u8; 1] = [CM_ENUMERATE_RPS_BEGIN as u8];
+// HMAC-SHA-256 of BEGIN_PAYLOAD under the 32-byte StepRng(0xC9) token.
+const BEGIN_TAG: [u8; 32] = [
+    0x87, 0xA5, 0x51, 0x97, 0x8C, 0x72, 0x71, 0x8B, 0xB8, 0x1F, 0xB4, 0x4A, 0x01, 0x41, 0x9A, 0x3E,
+    0x48, 0x96, 0xC1, 0x7E, 0x5F, 0x1D, 0xEE, 0xF3, 0xFE, 0xA0, 0x9B, 0x14, 0xFA, 0xB1, 0x7E, 0xD1,
+];
+
+fn begin_mac_state() -> FidoState {
+    let mut st = FidoState::new();
+    st.reset_pin_uv_auth_token(&mut StepRng(0xC9));
+    st.begin_using_token(false, NOW);
+    st
+}
+
+#[kani::proof]
+fn begin_authenticate_matches_reference_tag() {
+    let st = begin_mac_state();
+    let mut param = [0u8; 32];
+    let n = pinproto::authenticate(PinProto::Two, &st.paut.token, &BEGIN_PAYLOAD, &mut param)
+        .expect("32-byte buffer fits a v2 MAC");
+    kani::assert(
+        n == BEGIN_TAG.len() && param == BEGIN_TAG,
+        "D3: the issued tag matches the reference",
+    );
+}
+
 /// **D3** — the flag the two harnesses below reason with means what it says.
 ///
 /// Both of them compute `authorized` from `forged`, which is the harness's own
@@ -145,28 +171,18 @@ const NOW: u64 = 1_000;
 /// it is this one — a `pinUvAuthParam` with a single bit of its tag flipped does
 /// not verify, and an untouched one does.
 ///
-/// Its own harness, and the reason is a number. A third HMAC-SHA-256 evaluation
-/// inside `no_authorization_bypass_rps_begin_at_call_site` took it to 448 s and
-/// **14.5 GiB** — over what a hosted runner has, and the `state` tier runs on one.
-/// Here the same fact costs two evaluations and nothing else.
+/// The preceding harness proves that `authenticate` emits the reference tag.
+/// Proving both halves separately keeps one HMAC-SHA-256 evaluation per harness.
 #[kani::proof]
 fn no_authorization_bypass_begin_mac_is_the_flag() {
-    let mut rng = StepRng(0xC9);
-    let mut st = FidoState::new();
-    let proto = PinProto::Two;
-    st.reset_pin_uv_auth_token(&mut rng);
-    st.begin_using_token(false, NOW);
-
-    let payload = [CM_ENUMERATE_RPS_BEGIN as u8];
-    let mut param = [0u8; 32];
-    let n = pinproto::authenticate(proto, &st.paut.token, &payload, &mut param)
-        .expect("32-byte buffer fits a v2 MAC");
+    let st = begin_mac_state();
+    let mut param = BEGIN_TAG;
     let forged: bool = kani::any();
     if forged {
         param[0] ^= 1;
     }
     kani::assert(
-        st.verify_token(proto, &payload, &param[..n]) == !forged,
+        st.verify_token(PinProto::Two, &BEGIN_PAYLOAD, &param) == !forged,
         "NoAuthorizationBypass/D3: the MAC's verdict does not track the flipped tag bit",
     );
     kani::cover!(forged);
@@ -254,12 +270,12 @@ fn drive_begin(
     let chan = if second { W_C2 } else { W_C1 };
     st.channel = chan;
 
-    // The demux, `credmgmt.rs:164`: past the two *Next* subcommands, every
+    // The demux, `credmgmt.rs:174`: past the two *Next* subcommands, every
     // credentialManagement command ends the walk in flight before anything else.
     st.cm.reset();
 
     // THE DECISION, and it is the real one: `authorize_cm`'s session-token arm,
-    // in its own order (`credmgmt.rs:243-245`).
+    // in its own order (`credmgmt.rs:265-267`).
     let decided = verify_cm_token(st, proto, payload, param)
         .and_then(|()| check_rp_binding(st, if rps { None } else { Some(&want_rp) }));
     if decided.is_ok() {
@@ -275,8 +291,8 @@ fn drive_begin(
     let authorized = !forged && perms0 & PERM_CM != 0 && (!scoped || (!rps && mine));
 
     // The Begin's body, verbatim from its call site, run only where the gate let
-    // it — an empty scan refuses BEFORE the totals move (`credmgmt.rs:383-385`,
-    // `:497-499`), which is why a zero total opens nothing.
+    // it — an empty scan refuses BEFORE the totals move (`credmgmt.rs:416-418`,
+    // `:533-535`), which is why a zero total opens nothing.
     if authorized {
         if rps {
             st.cm.channel = st.channel;
@@ -284,8 +300,8 @@ fn drive_begin(
             st.cm.rp_total = 0;
             st.cm.rp_next_slot = 0;
             if total > 0 {
-                // `credmgmt.rs:386-393`, and every line of it is BEFORE the seed
-                // load at `:398`.
+                // `credmgmt.rs:419-426`, and every line of it is BEFORE the seed
+                // load at `:431`.
                 st.cm.rp_total = total;
                 st.cm.rp_counter = 1u16.saturating_add(1);
                 st.cm.last_leg_ms = NOW;
@@ -295,8 +311,8 @@ fn drive_begin(
             st.cm.cred_counter = 1;
             st.cm.cred_total = 0;
             st.cm.cred_next_slot = 0;
-            // `credmgmt.rs:506-509`, and every line of it is AFTER the seed load
-            // at `:501`. The opposite side from the walk above.
+            // `credmgmt.rs:543-546`, and every line of it is AFTER the seed load
+            // at `:537`. The opposite side from the walk above.
             if total > 0 && !late {
                 st.cm.cred_total = total;
                 st.cm.rp_id_hash = want_rp;
@@ -344,8 +360,8 @@ fn check_begin(st: &FidoState, begin: &Begin, rps: bool) {
 /// the rpId binding — is never evaluated. The property is about the
 /// authorization, so this drives the real one: [`verify_cm_token`] then
 /// [`check_rp_binding`] then `mark_token_used`, in `authorize_cm`'s own order
-/// (`credmgmt.rs:233-247`), behind the `cm.reset()` the subcommand demux
-/// performs first (`credmgmt.rs:164`).
+/// (`credmgmt.rs:255-269`), behind the `cm.reset()` the subcommand demux
+/// performs first (`credmgmt.rs:174`).
 ///
 /// Four claims, and each is an equality:
 ///
@@ -361,14 +377,14 @@ fn check_begin(st: &FidoState, begin: &Begin, rps: bool) {
 ///   harness cost 448 s and **14.5 GiB**, over the 16 GiB a hosted runner has.
 ///   Without it D1's `forged` flag would be an assumption; with it in its own
 ///   harness the flag is a proved fact and this one costs two evaluations;
-/// - **D4** `enumerate_rps` writes `rp_total` at `credmgmt.rs:386-393`, BEFORE
-///   the seed load at `:398`, so an authorized Begin that then fails to the host
+/// - **D4** `enumerate_rps` writes `rp_total` at `credmgmt.rs:419-426`, BEFORE
+///   the seed load at `:431`, so an authorized Begin that then fails to the host
 ///   leaves a live walk cursor behind. Not a bypass — the authorization had
 ///   already succeeded — and asserted here because "checked by hand" was the
 ///   reason it was written down rather than the reason it could be omitted.
 ///
 /// What this does **not** prove: the persistent `pcmr` arm `authorize_cm` tries
-/// first (`credmgmt.rs:240-242`) is in flash behind `get_sealed32`'s AEAD and out
+/// first (`credmgmt.rs:262-264`) is in flash behind `get_sealed32`'s AEAD and out
 /// of budget here, so this is the session-token arm only; the scan is a symbolic
 /// total rather than a store, which over-approximates it past
 /// `MAX_RESIDENT_CREDENTIALS`; one Begin from one starting state, not a sequence;
@@ -381,7 +397,7 @@ fn no_authorization_bypass_rps_begin_at_call_site() {
     let mut st = FidoState::new();
     let proto = PinProto::Two;
 
-    // Issuance in `clientpin.rs:420-434`'s order, with the permission set and the
+    // Issuance in `clientpin.rs:464-479`'s order, with the permission set and the
     // rpId binding both symbolic — the two halves the Begin's gate reads.
     let perms0: u8 = kani::any();
     let scoped: bool = kani::any();
@@ -424,14 +440,14 @@ fn no_authorization_bypass_rps_begin_at_call_site() {
 /// one subcommand over, and the three things that differ are the point of it
 /// being its own harness rather than a branch inside that one.
 ///
-/// - the MAC covers `subcommand ‖ <raw subCommandParams>` (`credmgmt.rs:190-192`)
+/// - the MAC covers `subcommand ‖ <raw subCommandParams>` (`credmgmt.rs:202-204`)
 ///   rather than the bare subcommand byte, and it is built by the real
 ///   [`payload_with_subpara`];
 /// - the request NAMES an rp, so §6.8.4's binding is a match rather than a
 ///   refusal: a scoped token may use this subcommand exactly for its own rp;
 /// - **D5**, which the RP walk has no counterpart for: `enumerate_creds` writes
-///   `cm.rp_id_hash` (`credmgmt.rs:508`) and the demux reads it back to serve a
-///   *Next* (`:153-154`). `state_kani.rs`'s `begin_creds` never writes it, so the
+///   `cm.rp_id_hash` (`credmgmt.rs:545`) and the demux reads it back to serve a
+///   *Next* (`:163-164`). `state_kani.rs`'s `begin_creds` never writes it, so the
 ///   rp a *Next* is served for was outside that harness's shape entirely. Here it
 ///   is asserted to be the rp **the request named**, which is what the binding
 ///   was checked against. Its first wording said the rp the TOKEN is bound to and
@@ -439,7 +455,7 @@ fn no_authorization_bypass_rps_begin_at_call_site() {
 ///   rp, so the cursor legitimately holds one the token was never bound to.
 ///
 /// And **D4 in the other direction**: `enumerate_creds` writes its totals AFTER
-/// the seed load (`credmgmt.rs:501` then `:506-509`), so the same failure that
+/// the seed load (`credmgmt.rs:537` then `:543-546`), so the same failure that
 /// leaves an RP walk live leaves this one dead. The two call sites sit on
 /// opposite sides of one call, which is the kind of thing a projection over the
 /// guard alone cannot see.
@@ -491,3 +507,6 @@ fn no_authorization_bypass_creds_begin_at_call_site() {
     kani::cover!(begin.owner == Some(W_C2));
     kani::cover!(begin.authorized && scoped); // a scoped token serving its own rp
 }
+
+#[path = "credmgmt_parse_kani.rs"]
+mod parse_proofs;

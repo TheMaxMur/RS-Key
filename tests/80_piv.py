@@ -9,7 +9,7 @@ Covers: SELECT (APT), GET VERSION / GET SERIAL, PIN verify + retry counter,
 GENERAL AUTHENTICATE management-key mutual auth (default AES-192 key),
 GENERATE for P-256 / P-384 (+ optional RSA-2048), sign + ECDSA-verify against
 the returned public key, ECDH (calculate_secret) on the key-management slot,
-GET METADATA, the certificate object (70/71/FE wrapper, self-signature checked),
+GET METADATA, that GENERATE leaves the certificate object as it was,
 ATTESTATION (chains to the F9 cert), PUT/GET DATA object round-trip, CHANGE PIN
 and a final factory RESET that requires both PIN and PUK blocked.
 
@@ -61,6 +61,7 @@ SLOT_9A, SLOT_9C, SLOT_9D, SLOT_9E = 0x9A, 0x9C, 0x9D, 0x9E
 OBJ_9A = [0x5F, 0xC1, 0x05]   # 5FC105 cert object for slot 9A
 OBJ_CHUID = [0x5F, 0xC1, 0x02]
 OBJ_ATTEST = [0x5F, 0xFF, 0x01]
+OBJ_POOL = [0x5F, 0x00, 0x77]  # any id outside the standard set, as a YubiKey takes
 
 
 def fail(msg):
@@ -208,22 +209,16 @@ def test_ecdh(piv, slot, point):
     print(f"  slot {slot:02X} ECDH: shared secret matches host")
 
 
-def test_cert_object(piv, point):
-    obj, _ = piv.apdu(INS_GET_DATA, 0x3F, 0xFF, tlv(0x5C, OBJ_9A), le=True)
-    body = parse_tlv(obj)[0x53]
-    fields = parse_tlv(body)
-    cert_der = fields[0x70]
-    if fields.get(0x71) != b"\x00":
-        fail("cert object CertInfo != 0 (expected uncompressed)")
-    cert = load_der_x509_certificate(cert_der)
-    cn = cert.subject.rfc4514_string()
-    if "RS-Key PIV Slot 9A" not in cn:
-        fail(f"unexpected cert subject: {cn}")
-    # Self-signature verifies against the slot public key.
-    pub = ec.EllipticCurvePublicKey.from_encoded_point(ec.SECP256R1(), point)
-    pub.verify(cert.signature, cert.tbs_certificate_bytes,
-               ec.ECDSA(cert.signature_hash_algorithm))
-    print("  cert object: 70/71/FE wrapper + self-signature OK")
+def test_generate_writes_no_certificate(piv):
+    # A YubiKey's GENERATE writes no certificate: 9A's object reads the same after
+    # one as before it, absent on a fresh card or whatever a host put there.
+    read = (INS_GET_DATA, 0x3F, 0xFF, tlv(0x5C, OBJ_9A))
+    before = piv.apdu(*read, want=None, le=True)
+    piv.slot_public_point(SLOT_9A, ALGO_ECCP256)
+    after = piv.apdu(*read, want=None, le=True)
+    if after != before:
+        fail(f"GENERATE changed 9A's certificate object: SW {before[1]:04X} -> {after[1]:04X}")
+    print(f"  GENERATE left 9A's certificate object as it was (SW {after[1]:04X})")
 
 
 def test_attestation(piv):
@@ -255,6 +250,40 @@ def test_objects(piv):
     if parse_tlv(got)[0x53] != chuid:
         fail("CHUID object round-trip mismatch")
     print("  PUT/GET DATA object: round-trip OK")
+    test_frame_sized_objects(piv)
+
+
+def test_frame_sized_objects(piv):
+    """A YubiKey 5.8.0's 3072-byte CCID message each way: a 3062-byte APDU stores
+    3046 bytes (48 full packets in), and 3056 read back under an extended Le make a
+    3062-byte answer, which ends in a zero-length packet. A longer write chains."""
+    head = [0x00, INS_GET_DATA, 0x3F, 0xFF, 0x00, 0x00, 0x05, 0x5C, 0x03] + OBJ_POOL + [0, 0]
+    for size in (3046, 3056):
+        want = bytes((i * 7 + 3) & 0xFF for i in range(size))
+        data = tlv(0x5C, OBJ_POOL) + tlv(0x53, want)
+        if size == 3046:
+            cmd = [0x00, INS_PUT_DATA, 0x3F, 0xFF, 0x00, len(data) >> 8, len(data) & 0xFF]
+            if len(cmd) + len(data) != 3062:
+                fail(f"the {size}-byte write is not one 3062-byte APDU")
+            _, sw1, sw2 = piv.conn.transmit(cmd + list(data))
+            sw = (sw1 << 8) | sw2
+        else:
+            for off in range(0, len(data) - 255, 255):
+                cmd = [0x10, INS_PUT_DATA, 0x3F, 0xFF, 255] + list(data[off:off + 255])
+                _, sw1, sw2 = piv.conn.transmit(cmd)
+                if (sw1, sw2) != (0x90, 0x00):
+                    fail(f"chained PUT DATA segment at {off}: SW {sw1:02X}{sw2:02X}")
+            last = data[(len(data) - 1) // 255 * 255:]
+            cmd = [0x00, INS_PUT_DATA, 0x3F, 0xFF, len(last)] + list(last)
+            _, sw1, sw2 = piv.conn.transmit(cmd)
+            sw = (sw1 << 8) | sw2
+        if sw != 0x9000:
+            fail(f"PUT DATA of a {size}-byte object: SW {sw:04X}")
+        resp, sw1, sw2 = piv.conn.transmit(head)
+        if (sw1, sw2) != (0x90, 0x00) or bytes(resp) != tlv(0x53, want):
+            fail(f"a {size}-byte object read back {len(resp)} bytes, SW {sw1:02X}{sw2:02X}")
+    piv.apdu(INS_PUT_DATA, 0x3F, 0xFF, tlv(0x5C, OBJ_POOL) + tlv(0x53, b""))
+    print("  3072-byte CCID messages: a 3046-byte object in one APDU, 3056 back in one answer")
 
 
 def test_rsa(piv):
@@ -337,8 +366,7 @@ def main():
             fail("metadata missing public key (tag 04)")
     print("GET METADATA OK")
 
-    point_9a = piv.slot_public_point(SLOT_9A, ALGO_ECCP256)
-    test_cert_object(piv, point_9a)
+    test_generate_writes_no_certificate(piv)
     test_attestation(piv)
 
     point_9d = piv.slot_public_point(SLOT_9D, ALGO_ECCP256)

@@ -26,6 +26,47 @@ fn sha256_vectors() {
 }
 
 #[test]
+fn streaming_sha256_preserves_block_and_padding_boundaries() {
+    let bytes = [0xa5; 1025];
+    for length in [0, 1, 55, 56, 63, 64, 65, 255, 256, 1025] {
+        for chunk in [1, 7, 64, 256] {
+            let mut state = Sha256State::new();
+            for part in bytes[..length].chunks(chunk) {
+                state.update(part);
+            }
+            assert_eq!(state.finish(), sha256(&bytes[..length]));
+        }
+    }
+    assert_eq!(Sha256State::default().finish(), sha256(b""));
+}
+
+#[test]
+fn cloned_public_sha256_prefixes_extend_independently() {
+    let prefix = [0xa5; 257];
+    for length in [0, 1, 55, 56, 63, 64, 65, 255, 256, 257] {
+        let mut state = Sha256State::new();
+        state.update(&prefix[..length]);
+        for suffix in [b"".as_slice(), b"append", &[0xff; 129]] {
+            let mut branch = state.clone();
+            branch.update(suffix);
+            assert_eq!(
+                branch.finish(),
+                sha256(&[&prefix[..length], suffix].concat())
+            );
+            let (blocks, tail) = state.clone().into_prefix();
+            assert_eq!(tail, length % 64);
+            let mut resumed = blocks.resume(&prefix[length - tail..length]);
+            resumed.update(suffix);
+            assert_eq!(
+                resumed.finish(),
+                sha256(&[&prefix[..length], suffix].concat())
+            );
+        }
+        assert_eq!(state.finish(), sha256(&prefix[..length]));
+    }
+}
+
+#[test]
 fn sha1_vectors() {
     // FIPS 180-1 examples.
     assert_eq!(

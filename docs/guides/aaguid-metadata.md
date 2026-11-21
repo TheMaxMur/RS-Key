@@ -51,7 +51,7 @@ A few consequences worth knowing:
 ## The Metadata Statement
 
 [`metadata/rs-key.metadata.json`](https://github.com/TheMaxMur/RS-Key/blob/main/metadata/rs-key.metadata.json)
-is a [FIDO Metadata Statement v3.1.1](https://fidoalliance.org/specs/mds/fido-metadata-statement-v3.1.1-rd-20251016.html)
+is a [FIDO Metadata Statement v3.1.1](https://fidoalliance.org/specs/mds/fido-metadata-statement-v3.1.1-ps-20260105.html)
 describing the **default build profile**. It declares the AAGUID, the supported
 authentication algorithms, the attestation type, key/matcher protection, and an
 embedded `authenticatorGetInfo` that mirrors exactly what the device returns to
@@ -60,12 +60,13 @@ embedded `authenticatorGetInfo` that mirrors exactly what the device returns to
 | Field | RS-Key value |
 |---|---|
 | `attestationTypes` | `["basic_full"]`: packed attestation with an `x5c` leaf |
-| `attestationRootCertificates` | `[]`: the leaf is per-device and self-signed, so there is no shareable root — the statement's own `legalHeader` says so, since MDS defines this field as the anchors "for the batch chain" and an empty one otherwise reads as a broken chain rather than an absent one |
+| `attestationRootCertificates` | `[]`: the leaf is per-device and self-signed, so there is no shareable root; a relying party requiring a trust anchor treats this attestation as untrusted |
+| `legalHeader` | Standard MDS3 text, matching the official tool's Metadata P-36; the statement remains self-published |
 | `authenticationAlgorithms` | secp256r1 / ed25519 / secp384r1 / secp521r1 / secp256k1 (ECDSA + EdDSA) |
 | `keyProtection` | `["hardware"]`: RP2350 flash/OTP, not a separate certified secure element |
 | `matcherProtection` | `["on_chip"]`: the PIN is verified on the device |
 | `attachmentHint` | `["external", "wired"]`: a USB roaming token |
-| `upv` | `1.0`: matches the `FIDO_2_0` entry the device advertises in `versions` |
+| `upv` | `1.0`, `1.1`, `1.3`: one per FIDO2 entry the device advertises in `versions`. MDS 3.1.1 maps CTAP 2.0, 2.1 and 2.3 there and reserves 1.2, because CTAP 2.2 was skipped |
 
 A drift guard, [`tests/62_metadata_statement.py`](https://github.com/TheMaxMur/RS-Key/blob/main/tests/62_metadata_statement.py),
 checks the statement against both the firmware source (the default AAGUID in
@@ -112,5 +113,5 @@ than only trusting the MDS BLOB) can consume it directly. If RS-Key is ever
 certified, the statement is already authored and ready to submit.
 
 See also: [Enterprise attestation](attestation.md) for the org-provisioned
-cert-chain path, and the [interop matrix](../interop.md) for what has actually
-been observed working on hardware.
+cert-chain path, and the [FIDO2 interop results](https://github.com/TheMaxMur/RS-Key/blob/main/assurance/reports/interop.md#fido2--webauthn--u2f)
+for hardware runs.

@@ -1,11 +1,52 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 RS-Key contributors
 
-//! One-shot SHA-1 / SHA-256 / SHA-384 / SHA-512 helpers.
+//! SHA-1 / SHA-256 / SHA-384 / SHA-512 helpers.
 
-use sha2::{Digest, Sha256};
+use rsk_sha256::Sha256;
+use sha2::Digest;
 // SHA-384/512 use the Cortex-M33-fast core (byte-identical to sha2::Sha384/512).
 use rsk_sha512::{Sha384, Sha512};
+
+/// Streaming SHA-256 for public metadata larger than a command's scratch buffer.
+#[derive(Clone)]
+pub struct Sha256State(Sha256);
+
+/// Complete public-message blocks; the caller supplies the omitted partial block.
+pub struct Sha256Prefix(rsk_sha256::Sha256Core);
+
+impl Sha256Prefix {
+    pub fn resume(self, tail: &[u8]) -> Sha256State {
+        let mut state = Sha256State(Sha256::from_core(self.0));
+        state.update(tail);
+        state
+    }
+}
+
+impl Default for Sha256State {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Sha256State {
+    pub fn new() -> Self {
+        Self(Sha256::new())
+    }
+
+    pub fn update(&mut self, bytes: &[u8]) {
+        self.0.update(bytes);
+    }
+
+    pub fn finish(self) -> [u8; 32] {
+        self.0.finalize().into()
+    }
+
+    pub fn into_prefix(self) -> (Sha256Prefix, usize) {
+        let (core, buffer) = self.0.decompose();
+        (Sha256Prefix(core), buffer.get_pos())
+    }
+}
 
 /// One-shot SHA-1 — only for X.509 key identifiers (SKI/AKI, RFC 5280 method 1),
 /// never for new signatures.
@@ -18,10 +59,7 @@ pub fn sha1(input: &[u8]) -> [u8; 20] {
 
 /// One-shot SHA-256.
 pub fn sha256(input: &[u8]) -> [u8; 32] {
-    let digest = Sha256::digest(input);
-    let mut out = [0u8; 32];
-    out.copy_from_slice(&digest);
-    out
+    Sha256::digest(input).into()
 }
 
 /// One-shot SHA-384.

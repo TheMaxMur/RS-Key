@@ -26,7 +26,7 @@ const HASH: [u8; 32] = [0x22; 32];
 /// Same length as the defaults and equally well-formed, so only the comparison
 /// separates them.
 const WRONG_PIN: [u8; 8] = [b'9', b'9', b'9', b'9', b'9', b'9', 0xFF, 0xFF];
-const WRONG_PUK: [u8; 8] = [b'9', b'9', b'9', b'9', b'9', b'9', b'9', b'9'];
+const WRONG_PUK: [u8; 8] = *b"99999999";
 const NEW_PIN: [u8; 8] = [b'6', b'5', b'4', b'3', b'2', b'1', 0xFF, 0xFF];
 
 struct TestRng(u64);

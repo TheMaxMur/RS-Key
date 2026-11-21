@@ -54,6 +54,8 @@ import claims_gate
 import gate_lines
 import release_gate
 
+pytestmark = pytest.mark.assurance
+
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 
 WORKFLOW = ".github/workflows/release-build.yml"
@@ -89,6 +91,10 @@ jobs:
       - name: resolve tag
         id: tag
         run: |
+          if [ "$GITHUB_REF" != "refs/tags/$TAG" ]; then
+            echo "refusing: this run is not at its tag" >&2
+            exit 1
+          fi
           git fetch --no-tags --quiet origin +refs/heads/main:refs/remotes/origin/main
           if ! git merge-base --is-ancestor "$TAG^{commit}" origin/main; then
             exit 1
@@ -160,12 +166,13 @@ let
         runHook preBuild
         cargo build --release --offline --frozen \\
           -p firmware --target ${target}
+        bash scripts/build.sh
         runHook postBuild
       '';
       installPhase = ''
         runHook preInstall
-        bash scripts/pt.sh "target/${target}/release/firmware" "$out/${name}.elf"
-        picotool uf2 convert "$out/${name}.elf" -t elf "$out/${name}.uf2"
+        cp target/trustzone/combined.elf "$out/${name}.elf"
+        cp target/trustzone/combined.uf2 "$out/${name}.uf2"
         runHook postInstall
       '';
     };
@@ -233,10 +240,10 @@ cosign verify-blob --bundle SHA256SUMS.sigstore.json SHA256SUMS
 ```
 """
 
-PT_SH = """\
+BUILD_SH = """\
 #!/usr/bin/env bash
 set -euo pipefail
-picotool partition create --pt "$1" "$2"
+picotool partition create partitions.json combined.elf firmware -t elf
 """
 
 
@@ -251,7 +258,7 @@ class Tree:
         self.write("assurance/platform.toml", PLATFORM)
         self.write(PAGE, SUPPLY_CHAIN)
         self.write("docs/releases.md", RELEASES)
-        self.write("scripts/pt.sh", PT_SH)
+        self.write("scripts/build.sh", BUILD_SH)
         self.git("init", "-q")
         # A real commit: the commit-stability rule asks git whether a hex string
         # names one, and a repository with no history answers "no" to everything,
@@ -867,6 +874,52 @@ def test_without_rule_6_the_swapped_builder_is_not_found(tree, monkeypatch):
     assert tree.problems() == []
 
 
+#: The fixture's ref test, whole, so each case below breaks one part of it.
+REF_BLOCK = (
+    '          if [ "$GITHUB_REF" != "refs/tags/$TAG" ]; then\n'
+    '            echo "refusing: this run is not at its tag" >&2\n'
+    "            exit 1\n"
+    "          fi\n"
+)
+
+
+@pytest.mark.parametrize("broken", [
+    "",
+    REF_BLOCK.replace("            exit 1\n", ""),
+    REF_BLOCK.replace("exit 1", "exit 0"),
+    REF_BLOCK.replace("!=", "="),
+    REF_BLOCK.replace("            exit 1\n", "          else\n            exit 1\n"),
+    REF_BLOCK.replace("            exit 1\n", "").replace("          fi\n", "          fi;\n"),
+    REF_BLOCK.replace("            exit 1\n",
+                      "            if false; then\n              exit 1\n            fi\n"),
+    REF_BLOCK.replace("exit 1", "exit 256"),
+    REF_BLOCK.replace("            exit 1\n", "            {\n              exit 1\n            } | cat\n"),
+    REF_BLOCK.replace("            exit 1\n", "            exit 0\n            exit 1\n"),
+    REF_BLOCK.replace('            echo "refusing: this run is not at its tag" >&2\n'
+                      "            exit 1\n", ""),
+], ids=["gone", "only-prints", "exits-0", "inverted", "else", "fi-semicolon",
+        "nested-if", "exits-256", "pipe", "exits-0-first", "empty"])
+def test_a_builder_that_releases_from_another_ref_is_refused(tree, broken):
+    """A run at a branch, or at tag A with `tag: B`, signs and attests as that ref,
+    and the published verify commands take the release's own tag. Ways the test
+    stops stopping it: deleted, a message with no exit, an exit that succeeds, the
+    comparison inverted, and five a review ran past the first rule under `bash -e`:
+    the exit moved to an `else`, a `fi;` that let the bound slide to the next
+    block's `exit`, an inner `if false`, `exit 256` (which is 0), and the exit in a
+    piped group, which `bash -e` without pipefail runs past."""
+    tree.edit(WORKFLOW, REF_BLOCK, broken)
+    tree.regenerate()
+    assert only(tree.problems(), "does not stop a run whose ref is not the tag it releases")
+
+
+def test_without_rule_6_the_builder_at_any_ref_is_not_found(tree, monkeypatch):
+    """The arm, regenerated for the swapped builder's reason above."""
+    gone(monkeypatch, "check_ref_is_tag")
+    tree.edit(WORKFLOW, REF_BLOCK, "")
+    tree.regenerate()
+    assert tree.problems() == []
+
+
 # --- rule 8: the page's asset names --------------------------------------------
 
 
@@ -1001,6 +1054,17 @@ def test_an_upper_case_commit_is_refused_too(tree):
     assert only(tree.problems(), "names a commit of this repository")
 
 
+def test_a_hex_run_inside_a_word_is_not_a_commit_citation(tree):
+    """`header` contains `eade`, and a boundary of `[0-9a-f]` matched it: a rule
+    that reads a word fragment as a value refuses prose, and whether that fires
+    has nothing to do with what the region says."""
+    prefix = tree.head()[:4]
+    tree.edit(WORKFLOW, "cat CHANGELOG.md > release-notes.md",
+              f"cat CHANGELOG.md > release-notes.md\n          echo h{prefix}r")
+    tree.regenerate()
+    assert only(tree.problems(), "names a commit of this repository") == []
+
+
 def test_the_toolchain_regions_values_are_not_this_rules_business(tree):
     """[`stable`] read the whole rendered PAGE at first. A hex value in another
     generator's region is not this region's finding, and a message naming the
@@ -1051,12 +1115,14 @@ def test_regenerating_launders_no_clause(tree):
     tree.edit(WORKFLOW, "      - name: checksums",
               "      - run: scp dist/* mirror:/pub\n      - name: checksums")
     tree.edit(WORKFLOW, "dist/SHA256SUMS.sigstore.json", "dist/SHA256SUMS.sigstore.v2.json")
+    tree.edit(WORKFLOW, REF_BLOCK, "")
     tree.regenerate()
     problems = tree.problems()
     assert only(problems, "is not what the generator writes") == []
     assert only(problems, "iterates 3 flavor(s)")
     assert only(problems, "this parser does not see")
     assert only(problems, "docs/supply-chain.md names the release asset `SHA256SUMS.sigstore.json`")
+    assert only(problems, "does not stop a run whose ref is not the tag it releases")
 
 
 def test_a_page_with_no_marker_pair_is_a_finding_not_a_crash(tree):
@@ -1711,42 +1777,13 @@ def test_the_shipped_map_cannot_derive_the_frontier():
     assert release_gate.UNSHAPED in release_gate.SUBJECTS
 
 
-def test_check_sh_runs_this_row():
+def test_check_assurance_sh_runs_this_row():
     """The row, with its flags — a name match cannot see a `--write` typed into
-    the gate row, which would rewrite the page instead of diffing it.
-
-    Where the row SITS was argued from a line number that has since moved, so the
-    argument is restated rather than kept: the `SEC-FIDO-002` citations the first
-    version reasoned about were re-anchored on the row's NAME by `d544aa1`, and
-    that reason is gone. The conclusion holds for another one, asserted below
-    rather than written: every line-numbered citation of `check.sh` in the tree
-    is ABOVE this row, so inserting it renumbered none of them — and the highest
-    of them is the `assurance-trace image identity` row that `SEC-FIDO-006`'s
-    discharge rests on, cited twice.
-    """
-    text = (ROOT / "scripts/check.sh").read_text()
+    the gate row, which would rewrite the page instead of diffing it."""
+    text = (ROOT / "scripts/check-assurance.sh").read_text()
     assert gate_lines.runs(text, "scripts/release_gate.py")
     code = [gate_lines.split_at_comment(body)[0]
             for _indent, body in gate_lines.logical_lines(text)]
     rows = [line for line in code if "scripts/release_gate.py" in line]
     assert rows == ['run "release manifest"        python scripts/release_gate.py'], rows
 
-
-def test_this_row_sits_below_every_line_numbered_citation_of_check_sh():
-    """The placement argument above, as a measurement rather than a sentence.
-
-    Inserting a row renumbers every line under it, and this tree cites `check.sh`
-    by line from `assurance/bundle/`. The row went in below all of them, so it
-    moved none — and a later row that does not would break a discharge's citation
-    silently, since a shifted line still resolves to something.
-    """
-    needle = "scripts/check.sh" + ":"
-    found = subprocess.run(
-        ["git", "-C", str(ROOT), "grep", "-hoE", re.escape(needle) + r"[0-9]+"],
-        capture_output=True, text=True,
-    )
-    cited = sorted({int(hit.rsplit(":", 1)[1]) for hit in found.stdout.split()})
-    assert cited, "nothing cites check.sh by line any more; drop this case"
-    text = (ROOT / "scripts/check.sh").read_text().splitlines()
-    row = next(i for i, line in enumerate(text, 1) if "scripts/release_gate.py" in line)
-    assert row > max(cited), f"this row is at {row} and {max(cited)} is cited"

@@ -10,13 +10,12 @@ use rsk_fs::{Fs, Storage};
 use rsk_sdk::{Apdu, Sw};
 
 use rsk_crypto::aes::{Mode, aes_decrypt, aes_encrypt};
-use zeroize::Zeroize;
 
 use crate::consts::*;
 use crate::importdata::tag_len;
 use crate::keys::{
     ec_sw, inc_sig_count, load_aes_key, load_ec_key, load_rsa_crt, load_rsa_key, rsa_decipher,
-    rsa_decipher_legacy, rsa_sw,
+    rsa_decipher_legacy, rsa_sign_block, spend_one_shot_pw1,
 };
 use crate::pin::Session;
 use crate::{Rng, UserPresence, check_uif};
@@ -40,7 +39,14 @@ pub fn pso<S: Storage>(
     apdu: &Apdu,
     out: &mut [u8],
 ) -> (usize, Sw) {
-    match try_pso(dev, fs, sess, rng, presence, apdu, out) {
+    // A YubiKey 5.8.0 spends a one-shot PW1 on a refused PSO:CDS as on a signature, so
+    // every attempt past the PIN check spends it here — after it, as the unseal reads PW1.
+    let spends = (apdu.p1, apdu.p2) == (0x9E, 0x9A) && sess.has_pw1;
+    let res = try_pso(dev, fs, sess, rng, presence, apdu, out);
+    if spends {
+        spend_one_shot_pw1(fs, sess);
+    }
+    match res {
         Ok(n) => (n, Sw::OK),
         Err(sw) => (0, sw),
     }
@@ -49,7 +55,7 @@ pub fn pso<S: Storage>(
 fn try_pso<S: Storage>(
     dev: &Device,
     fs: &mut Fs<S>,
-    sess: &mut Session,
+    sess: &Session,
     rng: &mut dyn Rng,
     presence: &mut dyn UserPresence,
     apdu: &Apdu,
@@ -107,13 +113,12 @@ fn try_pso<S: Storage>(
     if algo0 == ALGO_RSA {
         if (p1, p2) == (0x9E, 0x9A) {
             let crt = load_rsa_crt(dev, fs, sess, pk_fid)?;
-            let n = rsk_rsa::pkcs1v15::rsa_sign_crt(&crt, data, &mut crate::keys::RsaRng(rng), out)
-                .map_err(rsa_sw)?;
-            inc_sig_count(fs, sess)?;
+            let n = rsa_sign_block(&crt, rng, data, out)?;
+            inc_sig_count(fs)?;
             return Ok(n);
         }
         // DECIPHER: PKCS#1 v1.5 decrypt the ciphertext that follows the leading
-        // OpenPGP padding-indicator byte, on the same asm CRT core as PSO:CDS.
+        // OpenPGP padding-indicator byte, on the same fixed-width CRT core as PSO:CDS.
         // `WRONG_LENGTH` is `rsk_rsa::crt::crt_from_plain`'s one refusal — a
         // legacy `P‖Q` blob whose prime width is not a 32-multiple — and only
         // such a key, which cannot sign either, falls back to the software
@@ -132,7 +137,7 @@ fn try_pso<S: Storage>(
     if (p1, p2) == (0x9E, 0x9A) {
         // COMPUTE SIGNATURE over the supplied digest / message.
         let n = key.sign(data, out).map_err(ec_sw)?;
-        inc_sig_count(fs, sess)?;
+        inc_sig_count(fs)?;
         Ok(n)
     } else {
         // DECIPHER (ECDH): extract the peer public point and agree.
@@ -154,34 +159,29 @@ fn aes_pso<S: Storage>(
     data: &[u8],
     out: &mut [u8],
 ) -> Result<usize, Sw> {
-    let (mut key, klen) = load_aes_key(dev, fs, sess)?;
+    let (key, klen) = load_aes_key(dev, fs, sess)?;
+    let key = &key.expose()[..klen];
     let iv = [0u8; 16];
-    let r = (|| {
-        if encipher {
-            // Input = plaintext (the whole body, block-aligned — the card pads
-            // nothing). Output = 0x02 || AES-CBC(plaintext).
-            if data.is_empty() || !data.len().is_multiple_of(16) || out.len() < data.len() + 1 {
-                return Err(Sw::WRONG_LENGTH);
-            }
-            out[0] = 0x02;
-            out[1..=data.len()].copy_from_slice(data);
-            aes_encrypt(&key[..klen], &iv, Mode::Cbc, &mut out[1..=data.len()])
-                .map_err(|_| Sw::EXEC_ERROR)?;
-            Ok(data.len() + 1)
-        } else {
-            // Input = 0x02 || ciphertext (block-aligned). Output = plaintext.
-            let ct = &data[1..];
-            if ct.is_empty() || !ct.len().is_multiple_of(16) || out.len() < ct.len() {
-                return Err(Sw::WRONG_LENGTH);
-            }
-            out[..ct.len()].copy_from_slice(ct);
-            aes_decrypt(&key[..klen], &iv, Mode::Cbc, &mut out[..ct.len()])
-                .map_err(|_| Sw::EXEC_ERROR)?;
-            Ok(ct.len())
+    if encipher {
+        // Input = plaintext (the whole body, block-aligned — the card pads
+        // nothing). Output = 0x02 || AES-CBC(plaintext).
+        if data.is_empty() || !data.len().is_multiple_of(16) || out.len() < data.len() + 1 {
+            return Err(Sw::WRONG_LENGTH);
         }
-    })();
-    key.zeroize();
-    r
+        out[0] = 0x02;
+        out[1..=data.len()].copy_from_slice(data);
+        aes_encrypt(key, &iv, Mode::Cbc, &mut out[1..=data.len()]).map_err(|_| Sw::EXEC_ERROR)?;
+        Ok(data.len() + 1)
+    } else {
+        // Input = 0x02 || ciphertext (block-aligned). Output = plaintext.
+        let ct = &data[1..];
+        if ct.is_empty() || !ct.len().is_multiple_of(16) || out.len() < ct.len() {
+            return Err(Sw::WRONG_LENGTH);
+        }
+        out[..ct.len()].copy_from_slice(ct);
+        aes_decrypt(key, &iv, Mode::Cbc, &mut out[..ct.len()]).map_err(|_| Sw::EXEC_ERROR)?;
+        Ok(ct.len())
+    }
 }
 
 /// Parse `A6 { 7F49 { 86 <point> } }` and return the `0x86` value (the peer's
@@ -207,3 +207,7 @@ pub fn parse_ecdh_point(data: &[u8]) -> Option<&[u8]> {
     let plen = tag_len(data, &mut pos)?;
     data.get(pos..pos + plen)
 }
+
+#[cfg(test)]
+#[path = "pso_tests.rs"]
+mod tests;

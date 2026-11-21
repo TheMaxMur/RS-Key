@@ -77,9 +77,10 @@ class Board:
     def __init__(self, cut_after_ms, every_ms=100.0, status=STATUS_PROCESSING,
                  reset_takes_ms=487.2, notices=True, read_timeout_ms=None,
                  deliver_writes=True, quiet_after_ms=None,
-                 keepalive_cid=CID, busy_elsewhere=False, response=b"\x00"):
+                 keepalive_cid=CID, busy_elsewhere=False, response=b"\x00", first_after_ms=None):
         self.cut_after_ms = cut_after_ms      # None: the supply never goes
         self.every_ms = every_ms              # the keepalive cadence
+        self.first_after_ms = every_ms if first_after_ms is None else first_after_ms
         self.status = status                  # the byte those frames carry
         self.reset_takes_ms = reset_takes_ms
         self.notices = notices                # does the handle raise at all?
@@ -136,7 +137,7 @@ class FakeHid:
                 if (board.saw_reset_request
                         and now - board.sender_started >= board.reset_takes_ms / 1000):
                     return frame(CTAPHID_CBOR, board.response)
-                due = board.sender_started + (board.sent + 1) * board.every_ms / 1000
+                due = board.sender_started + (board.first_after_ms + board.sent * board.every_ms) / 1000
                 if now >= due:
                     board.sent += 1
                     board.sent_at.append(now)
@@ -415,7 +416,11 @@ def scenarios(path, default, tmp):
 
     return {
         # the default relay arm, cut at its own commanded delay
-        "torn-default": R("torn-default", board=Board(cut_after_ms=default + 5)),
+        # Keep the first-frame floor independent of a mutated cut delay;
+        # a faster following cadence leaves scheduler room before cutoff.
+        "torn-default": R("torn-default", board=Board(cut_after_ms=default + 5,
+                         every_ms=load(SCRIPT, None).KEEPALIVE_MS / 2,
+                         first_after_ms=load(SCRIPT, None).KEEPALIVE_MS)),
         # hidapi's read TIMES OUT and returns EMPTY; the handle never notices.
         # 35 and not 30: a cut ON a keepalive boundary races the frame due at
         # that instant, and the lower-bound check then decides on which side of

@@ -5,9 +5,15 @@ use super::*;
 use rsk_fs::Fs;
 use rsk_fs::storage::ram::RamStorage;
 
+#[path = "bounds_tests.rs"]
+mod bounds;
+
 fn fs() -> Fs<RamStorage> {
     Fs::new(RamStorage::new())
 }
+
+/// The DeviceInfo serial every write here salts the lock's verifier with.
+const SERIAL: [u8; 4] = [0x01, 0x23, 0x45, 0x67];
 
 /// Walk a TLV blob, returning the value for `tag`.
 fn tlv_get(blob: &[u8], tag: u8) -> Option<&[u8]> {
@@ -37,16 +43,32 @@ fn read_config_body_fits_the_smallest_transport_buffer() {
     assert!(!res.as_slice().is_empty(), "empty body reported as success");
     assert_eq!(res.as_slice()[0] as usize, res.len() - 1);
 
-    // A maximum-size stored blob still fits — that is what the cap is derived for.
-    let mut blob = std::vec![0x08, (EF_DEV_CONF_MAX - 2) as u8];
-    blob.extend_from_slice(&std::vec![0u8; EF_DEV_CONF_MAX - 2]);
-    assert_eq!(blob.len(), EF_DEV_CONF_MAX);
-    fs.put(EF_DEV_CONF, &blob).unwrap();
-    let mut body = [0u8; MIN_CONFIG_RES_CAP];
-    let mut res = ResBuf::new(&mut body);
-    assert_eq!(config_tlv(&[0; 4], &mut fs, &mut res), Sw::OK);
-    assert!(!res.as_slice().is_empty());
-    assert_eq!(res.as_slice()[0] as usize, res.len() - 1);
+    // The widest record the writer stores and the read side validates takes the echo
+    // branch. The room is slack at 64 bytes, so the buffer then shrinks to one byte
+    // short of the whole body, where the room binds and must cut whole entries.
+    let widest = widest_storable_record();
+    persist_touched(&SERIAL, &mut fs, &widest).unwrap();
+    for cap in [MIN_CONFIG_RES_CAP, CONFIG_TLV_FIXED + widest.len() - 1] {
+        let mut body = std::vec![0u8; cap];
+        let mut res = ResBuf::new(&mut body);
+        assert_eq!(
+            config_tlv(&[0; 4], &mut fs, &mut res),
+            Sw::OK,
+            "cap {cap}: the body did not fit"
+        );
+        let body = res.as_slice();
+        assert_eq!(body[0] as usize, body.len() - 1, "cap {cap}: length byte");
+        assert!(tlv_whole(&body[1..]), "cap {cap}: an entry was cut in half");
+        assert!(
+            tlv_get(&body[1..], TAG_AUTO_EJECT_TIMEOUT).is_some(),
+            "cap {cap}: the synthesised default was served, not the echo"
+        );
+        assert_eq!(
+            tlv_get(&body[1..], TAG_CONFIG_LOCK),
+            Some(&[0x00][..]),
+            "cap {cap}: the trailing CONFIG_LOCK was lost"
+        );
+    }
 }
 
 /// Whether every byte of `blob` belongs to a complete TLV entry — what
@@ -184,7 +206,7 @@ fn cap_enabled_treats_zero_as_always_on() {
 fn read_enabled_caps_roundtrips_via_flash() {
     let mut fs = fs();
     assert_eq!(read_enabled_caps(&mut fs), SUPPORTED_CAPS); // absent → default
-    persist_dev_conf(&mut fs, &[TAG_USB_ENABLED, 0x02, 0x02, 0x2B]).unwrap();
+    persist_touched(&SERIAL, &mut fs, &[TAG_USB_ENABLED, 0x02, 0x02, 0x2B]).unwrap();
     assert_eq!(read_enabled_caps(&mut fs), 0x022B); // "disable PIV" round-trips
 }
 
@@ -195,7 +217,7 @@ fn persist_dev_conf_sets_dirty_latch() {
     // assert; the negative "take clears it" is left out to stay race-free.
     let mut fs = fs();
     let _ = take_dev_conf_dirty();
-    persist_dev_conf(&mut fs, &[TAG_USB_ENABLED, 0x02, 0x02, 0x2B]).unwrap();
+    persist_touched(&SERIAL, &mut fs, &[TAG_USB_ENABLED, 0x02, 0x02, 0x2B]).unwrap();
     assert!(
         take_dev_conf_dirty(),
         "a successful config write sets the latch"
@@ -271,7 +293,7 @@ fn dev_conf_unchanged_recognises_a_record_wider_than_the_write_cap() {
         }
         fs.put(EF_DEV_CONF, &blob).unwrap();
         assert!(
-            dev_conf_unchanged(&mut fs, &blob),
+            dev_conf_unchanged(&SERIAL, &mut fs, &blob),
             "a stored {len}-byte record must be recognised as already present"
         );
     }
@@ -329,7 +351,7 @@ fn a_partial_write_config_keeps_the_fields_it_does_not_mention() {
     let mut fs: Fs<RamStorage> = Fs::new(RamStorage::new());
 
     // The owner disables everything but FIDO2/U2F.
-    persist_dev_conf(&mut fs, &[TAG_USB_ENABLED, 2, 0x02, 0x02]).unwrap();
+    persist_touched(&SERIAL, &mut fs, &[TAG_USB_ENABLED, 2, 0x02, 0x02]).unwrap();
     let hardened = read_enabled_caps(&mut fs);
     assert_ne!(
         hardened, SUPPORTED_CAPS,
@@ -339,7 +361,7 @@ fn a_partial_write_config_keeps_the_fields_it_does_not_mention() {
     // …then sets a lock code, which sends the 0x0A TLV and nothing else.
     let mut lock = vec![TAG_CONFIG_LOCK, 16];
     lock.extend_from_slice(&[0xAB; 16]);
-    persist_dev_conf(&mut fs, &lock).unwrap();
+    persist_touched(&SERIAL, &mut fs, &lock).unwrap();
 
     assert_eq!(
         read_enabled_caps(&mut fs),
@@ -353,8 +375,8 @@ fn a_partial_write_config_keeps_the_fields_it_does_not_mention() {
 #[test]
 fn a_write_config_replaces_only_the_tags_it_carries() {
     let mut fs: Fs<RamStorage> = Fs::new(RamStorage::new());
-    persist_dev_conf(&mut fs, &[TAG_USB_ENABLED, 2, 0x02, 0x02]).unwrap();
-    persist_dev_conf(&mut fs, &[TAG_USB_ENABLED, 2, 0x00, 0x3B]).unwrap();
+    persist_touched(&SERIAL, &mut fs, &[TAG_USB_ENABLED, 2, 0x02, 0x02]).unwrap();
+    persist_touched(&SERIAL, &mut fs, &[TAG_USB_ENABLED, 2, 0x00, 0x3B]).unwrap();
     let mut buf = [0u8; 64];
     let n = fs.read(EF_DEV_CONF, &mut buf).unwrap();
     assert_eq!(
@@ -375,11 +397,11 @@ fn an_oversized_config_entry_is_refused_so_it_cannot_wedge_the_owner() {
     let mut bloat = vec![TAG_AUTO_EJECT_TIMEOUT, 38];
     bloat.extend(core::iter::repeat_n(0u8, 38));
     assert!(
-        persist_dev_conf(&mut fs, &bloat).is_err(),
+        persist_touched(&SERIAL, &mut fs, &bloat).is_err(),
         "a 38-byte value for a 2-byte tag must be refused, not stored"
     );
     // And the owner's own write still lands.
-    persist_dev_conf(&mut fs, &[TAG_USB_ENABLED, 2, 0x02, 0x1B]).unwrap();
+    persist_touched(&SERIAL, &mut fs, &[TAG_USB_ENABLED, 2, 0x02, 0x1B]).unwrap();
 }
 
 /// The same lockout with no attacker at all: released firmware bounded writes at
@@ -393,7 +415,7 @@ fn a_legacy_oversized_record_cannot_veto_the_owners_write() {
     legacy.extend(core::iter::repeat_n(0u8, 42));
     fs.put(EF_DEV_CONF, &legacy).unwrap();
 
-    persist_dev_conf(&mut fs, &[TAG_USB_ENABLED, 2, 0x00, 0x01]).unwrap();
+    persist_touched(&SERIAL, &mut fs, &[TAG_USB_ENABLED, 2, 0x00, 0x01]).unwrap();
 
     assert_eq!(
         read_enabled_caps(&mut fs),
@@ -409,15 +431,15 @@ fn a_legacy_oversized_record_cannot_veto_the_owners_write() {
 #[test]
 fn an_idempotent_partial_write_is_recognised_as_unchanged() {
     let mut fs: Fs<RamStorage> = Fs::new(RamStorage::new());
-    persist_dev_conf(&mut fs, &[TAG_DEVICE_FLAGS, 1, 0x80]).unwrap();
-    persist_dev_conf(&mut fs, &[TAG_USB_ENABLED, 2, 0x02, 0x1B]).unwrap();
+    persist_touched(&SERIAL, &mut fs, &[TAG_DEVICE_FLAGS, 1, 0x80]).unwrap();
+    persist_touched(&SERIAL, &mut fs, &[TAG_USB_ENABLED, 2, 0x02, 0x1B]).unwrap();
 
     assert!(
-        dev_conf_unchanged(&mut fs, &[TAG_USB_ENABLED, 2, 0x02, 0x1B]),
+        dev_conf_unchanged(&SERIAL, &mut fs, &[TAG_USB_ENABLED, 2, 0x02, 0x1B]),
         "a replay whose merge is byte-identical still read as changed"
     );
     assert!(
-        !dev_conf_unchanged(&mut fs, &[TAG_USB_ENABLED, 2, 0x00, 0x01]),
+        !dev_conf_unchanged(&SERIAL, &mut fs, &[TAG_USB_ENABLED, 2, 0x00, 0x01]),
         "a genuine change must still be seen as a change"
     );
 }
@@ -448,7 +470,7 @@ fn trimming_an_over_cap_record_never_evicts_the_enabled_applications_policy() {
         fs.put(EF_DEV_CONF, &legacy).unwrap();
         assert_eq!(read_enabled_caps(&mut fs), CAP_OATH, "precondition");
 
-        persist_dev_conf(&mut fs, request).unwrap();
+        persist_touched(&SERIAL, &mut fs, request).unwrap();
         assert_eq!(
             read_enabled_caps(&mut fs),
             CAP_OATH,
@@ -472,7 +494,7 @@ fn a_full_width_legacy_record_still_accepts_a_write_that_adds_a_tag() {
 
     let mut want = vec![TAG_USB_ENABLED, 2];
     want.extend_from_slice(&CAP_OTP.to_be_bytes());
-    persist_dev_conf(&mut fs, &want).unwrap();
+    persist_touched(&SERIAL, &mut fs, &want).unwrap();
 
     assert_eq!(
         read_enabled_caps(&mut fs),
@@ -481,17 +503,11 @@ fn a_full_width_legacy_record_still_accepts_a_write_that_adds_a_tag() {
     );
 }
 
-/// `EF_DEV_CONF_MAX` is derived from the smallest response buffer so that "a stored
-/// blob can never be one a consumer must silently drop" — a claim that only holds
-/// while the cap is at or above the widest record the *writer's own validator*
-/// accepts. That side was never checked, and it is the side that moves: since
-/// `well_formed_writable` gained a per-tag width table (audit run-34 #25) the widest
-/// storable record is 24 bytes against a 42-byte cap, so the cap's arithmetic can
-/// drift 18 bytes in either direction unobserved. The tag set is scanned rather than
-/// listed, so a new writable tag joins the record instead of ageing beside it.
-#[test]
-fn the_widest_record_the_validator_accepts_is_stored_and_echoed_whole() {
-    let widest: Vec<u8> = (0u8..=255)
+/// Every writable tag the writer keeps, once, at its widest. The tag set is scanned
+/// rather than listed, so a new writable tag joins the record instead of ageing
+/// beside it.
+fn widest_storable_record() -> Vec<u8> {
+    (0u8..=255)
         .filter(|&t| writable_tag(t))
         // The lock tags never reach flash (`strip_config_lock`), so they cannot
         // widen the stored record however wide the request is.
@@ -510,7 +526,19 @@ fn the_widest_record_the_validator_accepts_is_stored_and_echoed_whole() {
             e.extend(core::iter::repeat_n(0u8, len));
             e
         })
-        .collect();
+        .collect()
+}
+
+/// `EF_DEV_CONF_MAX` is derived from the smallest response buffer so that "a stored
+/// blob can never be one a consumer must silently drop" — a claim that only holds
+/// while the cap is at or above the widest record the *writer's own validator*
+/// accepts. That side was never checked, and it is the side that moves: since
+/// `well_formed_writable` gained a per-tag width table (audit run-34 #25) the widest
+/// storable record is 24 bytes against a 42-byte cap, so the cap's arithmetic can
+/// drift 18 bytes in either direction unobserved.
+#[test]
+fn the_widest_record_the_validator_accepts_is_stored_and_echoed_whole() {
+    let widest = widest_storable_record();
     assert!(well_formed_writable(&widest));
     assert!(
         widest.len() <= EF_DEV_CONF_MAX,
@@ -519,7 +547,7 @@ fn the_widest_record_the_validator_accepts_is_stored_and_echoed_whole() {
     );
 
     let mut fs = fs();
-    persist_dev_conf(&mut fs, &widest).unwrap();
+    persist_touched(&SERIAL, &mut fs, &widest).unwrap();
     let mut stored = [0u8; EF_DEV_CONF_READ_MAX];
     let n = fs.read(EF_DEV_CONF, &mut stored).unwrap();
     assert_eq!(
@@ -556,7 +584,7 @@ fn a_faulted_dev_conf_probe_does_not_re_enable_disabled_applets() {
     let mut fs = Fs::new(backend);
     fs.scan();
     // The owner's config: FIDO2 only — U2F, OTP, OpenPGP, PIV and OATH off.
-    persist_dev_conf(&mut fs, &[TAG_USB_ENABLED, 2, 0x02, 0x00]).unwrap();
+    persist_touched(&SERIAL, &mut fs, &[TAG_USB_ENABLED, 2, 0x02, 0x00]).unwrap();
     assert_eq!(read_enabled_caps(&mut fs), CAP_FIDO2);
 
     medium.stick_once(EF_DEV_CONF);
@@ -587,7 +615,8 @@ fn a_faulted_dev_conf_probe_does_not_replace_the_owners_record() {
     let (backend, medium) = rsk_fs::storage::faults::ProbeStuck::new();
     let mut fs = Fs::new(backend);
     fs.scan();
-    persist_dev_conf(
+    persist_touched(
+        &SERIAL,
         &mut fs,
         &[
             TAG_USB_ENABLED,
@@ -609,7 +638,7 @@ fn a_faulted_dev_conf_probe_does_not_replace_the_owners_record() {
 
     // `ykman config usb --enable OATH`: the one tag it changes, nothing else.
     medium.stick_once(EF_DEV_CONF);
-    let r = persist_dev_conf(&mut fs, &[TAG_USB_ENABLED, 2, 0x02, 0x20]);
+    let r = persist_touched(&SERIAL, &mut fs, &[TAG_USB_ENABLED, 2, 0x02, 0x20]);
     assert_eq!(
         medium.value(EF_DEV_CONF).as_deref(),
         Some(&before[..]),
@@ -631,7 +660,7 @@ fn a_faulted_probe_reports_the_mask_it_enforces() {
     let (backend, medium) = rsk_fs::storage::faults::ProbeStuck::new();
     let mut fs = Fs::new(backend);
     fs.scan();
-    persist_dev_conf(&mut fs, &[TAG_USB_ENABLED, 2, 0x02, 0x00]).unwrap();
+    persist_touched(&SERIAL, &mut fs, &[TAG_USB_ENABLED, 2, 0x02, 0x00]).unwrap();
 
     medium.stick(Some(EF_DEV_CONF));
     let mut body = [0u8; MIN_CONFIG_RES_CAP];
@@ -646,4 +675,306 @@ fn a_faulted_probe_reports_the_mask_it_enforces() {
         "READ CONFIG reported a capability set the dispatcher does not enforce"
     );
     assert_eq!(enforced, NO_CAPS);
+}
+
+/// A factory YubiKey reports `DEVICE_FLAGS = 00`, and so must a store no host has
+/// configured. The default was `80` (EJECT), a touch-eject mode RS-Key never
+/// implemented, which `ykman --diagnose` and any raw DeviceInfo reader saw set.
+#[test]
+fn an_unconfigured_device_reports_device_flags_00() {
+    let mut fs = fs();
+    let mut body = [0u8; MIN_CONFIG_RES_CAP];
+    let mut res = ResBuf::new(&mut body);
+    assert_eq!(config_tlv(&[0; 4], &mut fs, &mut res), Sw::OK);
+    assert_eq!(
+        tlv_get(&res.as_slice()[1..], TAG_DEVICE_FLAGS),
+        Some(&[0x00][..])
+    );
+}
+
+/// How many entries of `blob`'s TLV run carry `tag`.
+fn tlv_count(blob: &[u8], tag: u8) -> usize {
+    let mut i = 0;
+    let mut n = 0;
+    while i + 2 <= blob.len() {
+        n += usize::from(blob[i] == tag);
+        i += 2 + blob[i + 1] as usize;
+    }
+    n
+}
+
+/// A YubiKey reports `DEVICE_FLAGS` in every DeviceInfo, and `ykman config usb` stores
+/// a record without it, which READ CONFIG then echoed with no `08` at all. It reads as
+/// the factory `00` now, in the same bytes on every transport; the record is untouched.
+#[test]
+fn a_record_without_device_flags_reports_the_factory_flags() {
+    let mut fs = fs();
+    let record = [TAG_USB_ENABLED, 2, 0x02, 0x3B];
+    persist_touched(&SERIAL, &mut fs, &record).unwrap();
+    let mut small = [0u8; MIN_CONFIG_RES_CAP];
+    let mut res = ResBuf::new(&mut small);
+    assert_eq!(config_tlv(&[0; 4], &mut fs, &mut res), Sw::OK);
+    let otp = res.as_slice().to_vec();
+    assert_eq!(otp[0] as usize, otp.len() - 1);
+    assert!(tlv_whole(&otp[1..]));
+    assert_eq!(
+        tlv_get(&otp[1..], TAG_DEVICE_FLAGS),
+        Some(&[DEVICE_FLAGS_FACTORY][..]),
+        "a host-written record without 08 read back without DEVICE_FLAGS"
+    );
+    assert_eq!(tlv_get(&otp[1..], TAG_USB_ENABLED), Some(&record[2..]));
+    assert_eq!(tlv_get(&otp[1..], TAG_CONFIG_LOCK), Some(&[0x00][..]));
+    let mut stored = [0u8; EF_DEV_CONF_READ_MAX];
+    let n = fs.read(EF_DEV_CONF, &mut stored).unwrap();
+    assert_eq!(&stored[..n], &record, "the flags reached the stored record");
+    // A transport with more room answers the same bytes.
+    let mut big = [0u8; 256];
+    let mut res = ResBuf::new(&mut big);
+    assert_eq!(config_tlv(&[0; 4], &mut fs, &mut res), Sw::OK);
+    assert_eq!(res.as_slice(), &otp[..]);
+    // So does a buffer of exactly its size…
+    let mut exact = std::vec![0u8; otp.len()];
+    let mut res = ResBuf::new(&mut exact);
+    assert_eq!(config_tlv(&[0; 4], &mut fs, &mut res), Sw::OK);
+    assert_eq!(res.as_slice(), &otp[..]);
+    // …and one byte short, the flags are what gives way, not the lock state.
+    let mut short = std::vec![0u8; otp.len() - 1];
+    let mut res = ResBuf::new(&mut short);
+    assert_eq!(config_tlv(&[0; 4], &mut fs, &mut res), Sw::OK);
+    let body = res.as_slice();
+    assert_eq!(body[0] as usize, body.len() - 1);
+    assert!(tlv_whole(&body[1..]));
+    assert_eq!(tlv_count(&body[1..], TAG_DEVICE_FLAGS), 0);
+    assert_eq!(tlv_get(&body[1..], TAG_USB_ENABLED), Some(&record[2..]));
+    assert_eq!(tlv_get(&body[1..], TAG_CONFIG_LOCK), Some(&[0x00][..]));
+
+    // A record with flags of its own keeps them, once.
+    persist_touched(&SERIAL, &mut fs, &[TAG_DEVICE_FLAGS, 1, 0x80]).unwrap();
+    let mut body = [0u8; MIN_CONFIG_RES_CAP];
+    let mut res = ResBuf::new(&mut body);
+    assert_eq!(config_tlv(&[0; 4], &mut fs, &mut res), Sw::OK);
+    assert_eq!(tlv_count(&res.as_slice()[1..], TAG_DEVICE_FLAGS), 1);
+    assert_eq!(
+        tlv_get(&res.as_slice()[1..], TAG_DEVICE_FLAGS),
+        Some(&[0x80][..])
+    );
+}
+
+/// A lock code a build before 0.4.5 stored, as it stored it: `0A 10 <code>` beside
+/// the owner's other fields.
+fn legacy_locked_record() -> Vec<u8> {
+    let mut rec = std::vec![TAG_CONFIG_LOCK, 16];
+    rec.extend_from_slice(&[0xAB; 16]);
+    rec.extend_from_slice(&[TAG_USB_ENABLED, 2, 0x02, 0x3B]);
+    rec
+}
+
+#[test]
+fn the_boot_pass_drops_a_legacy_lock_code_and_re_arms_the_scrub() {
+    let mut fs = fs();
+    fs.put(rsk_fs::EF_HARDENED, &[1]).unwrap();
+    fs.put(EF_DEV_CONF, &legacy_locked_record()).unwrap();
+    scrub_legacy_lock(&mut fs).unwrap();
+    let mut rec = [0u8; EF_DEV_CONF_READ_MAX];
+    let n = fs.read(EF_DEV_CONF, &mut rec).unwrap();
+    assert_eq!(
+        &rec[..n],
+        &[TAG_USB_ENABLED, 2, 0x02, 0x3B],
+        "the code or a field is wrong"
+    );
+    assert!(
+        !fs.has_data(rsk_fs::EF_HARDENED),
+        "the superseded plaintext copy needs the lap re-armed"
+    );
+}
+
+#[test]
+fn the_boot_pass_leaves_a_record_without_a_lock_code_alone() {
+    let mut fs = fs();
+    fs.put(rsk_fs::EF_HARDENED, &[1]).unwrap();
+    fs.put(EF_DEV_CONF, &[TAG_USB_ENABLED, 2, 0x02, 0x3B])
+        .unwrap();
+    scrub_legacy_lock(&mut fs).unwrap();
+    assert!(
+        fs.has_data(rsk_fs::EF_HARDENED),
+        "a clean record re-armed the lap"
+    );
+    let mut empty = Fs::new(RamStorage::new());
+    assert_eq!(scrub_legacy_lock(&mut empty), Ok(()));
+    assert!(!empty.has_data(EF_DEV_CONF), "an absent record was written");
+}
+
+#[test]
+fn a_faulted_probe_is_not_a_record_without_a_lock_code() {
+    let (backend, medium) = rsk_fs::storage::faults::ProbeStuck::new();
+    let mut fs = Fs::new(backend);
+    fs.scan();
+    fs.put(EF_DEV_CONF, &legacy_locked_record()).unwrap();
+    medium.stick_once(EF_DEV_CONF);
+    assert_eq!(scrub_legacy_lock(&mut fs), Err(DevConfError::Store));
+}
+
+#[test]
+fn a_write_config_does_not_carry_a_legacy_lock_code_forward() {
+    let mut fs = fs();
+    fs.put(EF_DEV_CONF, &legacy_locked_record()).unwrap();
+    persist_touched(&SERIAL, &mut fs, &[TAG_CHALRESP_TIMEOUT, 1, 0x0F]).unwrap();
+    let mut rec = [0u8; EF_DEV_CONF_READ_MAX];
+    let n = fs.read(EF_DEV_CONF, &mut rec).unwrap();
+    assert_eq!(
+        tlv_get(&rec[..n], TAG_CONFIG_LOCK),
+        None,
+        "the legacy code rode the merge"
+    );
+    assert_eq!(tlv_get(&rec[..n], TAG_USB_ENABLED), Some(&[0x02, 0x3B][..]));
+}
+
+#[test]
+fn a_legacy_unlock_tag_is_retired_by_both_boot_scrub_and_delta_write() {
+    for scrub in [false, true] {
+        let mut fs = fs();
+        let mut stored = vec![TAG_CONFIG_UNLOCK, 16];
+        stored.extend_from_slice(&[0xab; 16]);
+        stored.extend_from_slice(&[TAG_USB_ENABLED, 2, 0x02, 0x3b]);
+        fs.put(EF_DEV_CONF, &stored).unwrap();
+        if scrub {
+            scrub_legacy_lock(&mut fs).unwrap();
+        } else {
+            persist_touched(&SERIAL, &mut fs, &[TAG_CHALRESP_TIMEOUT, 1, 0x0f]).unwrap();
+        }
+        let mut out = [0; EF_DEV_CONF_READ_MAX];
+        let n = fs.read(EF_DEV_CONF, &mut out).unwrap();
+        assert_eq!(tlv_get(&out[..n], TAG_CONFIG_UNLOCK), None);
+        assert_eq!(tlv_get(&out[..n], TAG_USB_ENABLED), Some(&[0x02, 0x3b][..]));
+        assert_eq!(
+            tlv_get(&out[..n], TAG_CHALRESP_TIMEOUT),
+            if scrub { None } else { Some(&[0x0f][..]) }
+        );
+    }
+}
+
+#[test]
+fn boot_scrub_preserves_an_unreadable_tail_of_an_overlong_legacy_record() {
+    let mut fs = fs();
+    let mut stored = legacy_locked_record();
+    stored.resize(EF_DEV_CONF_READ_MAX + 1, 0x55);
+    fs.put(EF_DEV_CONF, &stored).unwrap();
+    let generation = fs.write_gen();
+    assert_eq!(scrub_legacy_lock(&mut fs), Ok(()));
+    assert_eq!(fs.write_gen(), generation);
+    let mut out = vec![0; stored.len()];
+    assert_eq!(fs.read(EF_DEV_CONF, &mut out), Some(stored.len()));
+    assert_eq!(out, stored);
+}
+
+#[test]
+fn a_direct_overlay_refuses_each_short_output_without_rewriting_the_record() {
+    let mut store = fs();
+    let stored = [TAG_USB_ENABLED, 2, 0x02, 0x3b];
+    let incoming = [TAG_CHALRESP_TIMEOUT, 1, 0x0f];
+    store.put(EF_DEV_CONF, &stored).unwrap();
+    let generation = store.write_gen();
+    let expected = [
+        TAG_USB_ENABLED,
+        2,
+        0x02,
+        0x3b,
+        TAG_CHALRESP_TIMEOUT,
+        1,
+        0x0f,
+    ];
+    for room in 0..=expected.len() {
+        let mut output = [0xa5; 16];
+        let result = overlay_dev_conf(&mut store, &incoming, &mut output[..room]);
+        assert_eq!(
+            result,
+            if room < expected.len() {
+                Err(DevConfError::TooLong)
+            } else {
+                Ok(expected.len())
+            }
+        );
+        if room == expected.len() {
+            assert_eq!(&output[..room], &expected);
+        }
+        assert_eq!(&output[room..], &[0xa5; 16][room..]);
+        assert_eq!(store.write_gen(), generation);
+    }
+    let mut retained = [0; 4];
+    assert_eq!(store.read(EF_DEV_CONF, &mut retained), Some(stored.len()));
+    assert_eq!(retained, stored);
+}
+
+#[test]
+fn stripping_with_a_short_direct_output_never_writes_past_its_window() {
+    for blob in [
+        &[TAG_USB_ENABLED, 2, 0x02, 0x3b][..],
+        &[TAG_USB_ENABLED, 4, 0x02, 0x3b][..],
+    ] {
+        for room in 0..=blob.len() {
+            let mut output = [0xa5; 8];
+            assert_eq!(strip_config_lock(blob, &mut output[..room]), blob.len());
+            if room == blob.len() {
+                assert_eq!(&output[..room], blob);
+            } else {
+                assert_eq!(output, [0xa5; 8]);
+            }
+            assert_eq!(&output[room..], &[0xa5; 8][room..]);
+        }
+    }
+}
+
+#[test]
+fn clamping_skips_wrong_width_enabled_masks_and_keeps_the_following_tlv() {
+    for width in [0, 1, 3] {
+        let mut blob = vec![TAG_USB_ENABLED, width];
+        blob.extend(core::iter::repeat_n(0xff, width as usize));
+        blob.extend([TAG_USB_ENABLED, 2, 0xff, 0xff]);
+        let prefix = blob[..width as usize + 2].to_vec();
+        clamp_usb_enabled(&mut blob);
+        assert_eq!(&blob[..prefix.len()], &prefix);
+        assert_eq!(
+            &blob[prefix.len()..],
+            &[
+                TAG_USB_ENABLED,
+                2,
+                SUPPORTED_CAPS.to_be_bytes()[0],
+                SUPPORTED_CAPS.to_be_bytes()[1]
+            ]
+        );
+    }
+}
+
+#[test]
+fn a_tlv_append_refuses_an_overwide_value_or_short_window_without_advancing() {
+    for (room, cursor, value) in [
+        (16, 0, &vec![0x42; 256][..]),
+        (2, 0, &b"x"[..]),
+        (16, 17, &b"x"[..]),
+    ] {
+        let mut output = [0xa5; 16];
+        let mut n = cursor;
+        push_tlv(&mut output[..room], &mut n, TAG_DEVICE_FLAGS, value);
+        assert_eq!(n, cursor);
+        assert_eq!(output, [0xa5; 16]);
+    }
+    let mut output = [0xa5; 3];
+    let mut n = 0;
+    push_tlv(&mut output, &mut n, TAG_DEVICE_FLAGS, &[1]);
+    assert_eq!(n, output.len());
+    assert_eq!(output, [TAG_DEVICE_FLAGS, 1, 1]);
+}
+
+#[test]
+fn every_device_config_error_has_its_distinct_status_word() {
+    for (error, status) in [
+        (DevConfError::TooLong, Sw::WRONG_DATA),
+        (DevConfError::BadTlv, Sw::WRONG_DATA),
+        (DevConfError::Store, Sw::MEMORY_FAILURE),
+        (DevConfError::Locked, Sw::COMMAND_NOT_ALLOWED),
+        (DevConfError::WrongCode, Sw::retries(0)),
+        (DevConfError::NotConfirmed, Sw::CONDITIONS_NOT_SATISFIED),
+    ] {
+        assert_eq!(error.sw(), status);
+    }
 }

@@ -99,7 +99,7 @@ Thirteen rules, and the first is the one that earns the file:
   row's `evidence` and the paths its own `revalidated_by` names; stale is a page.
 * **an accepted risk says WHERE it is published.** `out_of_scope_by` resolves to a
   `docs/limitations.md` section that names the row, and that page's ids resolve back.
-* **the page is generated.** `docs/platform-assumptions.md` is written from the
+* **the page is generated.** `assurance/reports/platform-assumptions.md` is written from the
   entries and byte-diffed, so a status cannot move without the diff that says so.
 * **the unsafe page is held to the tree, both ways.** AGENTS.md requires
   `docs/unsafe.md` updated for every new site and nothing checked it: measured,
@@ -122,7 +122,7 @@ Thirteen rules, and the first is the one that earns the file:
   runtime sites ([`check_page_sections`]). Six rows were already wrong about the
   first half in the small.
 
-`contradicts` is the one link kind of stage 1B п.3 left out. No pair in this
+`contradicts` is the one link kind of stage 1B item 3 left out. No pair in this
 registry contradicts another, so the field would have no instance — and a rule
 whose only exercise is its own mutation is the thing this programme keeps finding
 switched off. It goes in when a real pair arrives.
@@ -145,7 +145,7 @@ REGISTRY = pathlib.Path("assurance/platform.toml")
 MODEL_REGISTRY = pathlib.Path("assurance/assumptions.toml")
 PROPERTIES = pathlib.Path("assurance/properties.toml")
 BUNDLES = pathlib.Path("assurance/bundle")
-ARTIFACT = pathlib.Path("docs/platform-assumptions.md")
+ARTIFACT = pathlib.Path("assurance/reports/platform-assumptions.md")
 EMU_SHIM = pathlib.Path("tests/emu.py")
 USBIP_GUEST = pathlib.Path("scripts/usbip-guest.sh")
 UNSAFE_PAGE = pathlib.Path("docs/unsafe.md")
@@ -1042,9 +1042,9 @@ def check_shape(name, entry, findings):
 #: NOR THE PAGE THIS GATE WRITES, which the carve-out let straight back in:
 #: [`ARTIFACT`] is rendered from this registry and [`render`] emits every row's
 #: `discharge` verbatim, so `PLAT-STORE-003` `discharged` with
-#: `evidence = ["docs/platform-assumptions.md"]` was **exit 0** — the row citing
+#: `evidence = ["assurance/reports/platform-assumptions.md"]` was **exit 0** — the row citing
 #: its own restatement. [`circular`] is that clause, and it is not `ARTIFACT`
-#: alone: `docs/assurance-vector.md` names 67 of these rows, because
+#: alone: `assurance/reports/assurance-vector.md` names 67 of these rows, because
 #: `evidence_gate.py` renders it partly from this registry, and citing it is the
 #: same loop one hop out.
 #:
@@ -1131,7 +1131,7 @@ def circular(root, name, rel, generated):
     The derived half is the one that answers "or any page generated from this
     registry": a generated page that NAMES the row carries the row, which is what
     being rendered from it means in the only sense that matters here. Measured,
-    that is not a hypothetical second member — `docs/assurance-vector.md` names
+    that is not a hypothetical second member — `assurance/reports/assurance-vector.md` names
     67 of these rows because `evidence_gate.py` renders its outstanding list from
     `platform_gate.entries`, and `docs/assurance-bounds.md` names three. Reading
     the page rather than the generator's source is deliberate: which pages a
@@ -1298,7 +1298,7 @@ def check_covered_files(name, entry, findings):
 
 #: `assurance/board/<ID>.toml`: the raw record a hardware measurement leaves
 #: behind, and the reason it is a FILE rather than three more sentences in the
-#: registry. Stage 2 п.9 asks for the board, the stepping, the boot
+#: registry. Stage 2 item 9 asks for the board, the stepping, the boot
 #: configuration, the firmware hash, the cut method, the first-boot capture and
 #: BOTH values -- and the split below is what makes the file worth writing before
 #: the run: the PLAN half is knowable in advance and the RESULT half is not, so
@@ -1451,7 +1451,11 @@ ARM_REQUIRED = ("pass", "fail")
 #: LOWERING IT IS ALSO RED, and not here — `test_the_record_vocabulary_is_ratcheted`
 #: pins it at `>= 13`, because this number is one line and a deletion that edits it
 #: in the same diff would otherwise cost a reviewer nothing to miss.
-BOARD_ROW_FLOOR = 13
+#:
+#: RATCHETED 13 -> 14 on 2026-09-27 for `PLAT-UNSAFE-014`, the dead-stack sweep's
+#: board run. That row covers two sites, so its deletion is red without the floor;
+#: the step is the equality rule above, not an anchor this row needs.
+BOARD_ROW_FLOOR = 17  # Includes the three independently owned TrustZone hardware routes.
 
 
 def board_rows(ids):
@@ -1826,7 +1830,7 @@ def board_says(root, name, key):
     reason one layer in — the page published `discharge`, the sentence a row says
     it is discharged BY, and never the criterion the run is read against, so a
     `pass` beside an unmet expectation read exactly like a met one. Measured on
-    the page before this: `grep -c 'still owes' docs/platform-assumptions.md` = 0,
+    the page before this: `grep -c 'still owes' assurance/reports/platform-assumptions.md` = 0,
     over a record whose own INCONCLUSIVE arm ends on those words.
     """
     path = root / BOARD_EVIDENCE / f"{name}.toml"
@@ -1921,8 +1925,8 @@ def check_bundles(root, ids, findings):
 #: The page that publishes what this project does NOT defend against, and the one
 #: an `accepted-risk` row has to point INTO. `scripts/test_threat_gate.py` has a
 #: case recording it as cited by nothing yet, and that was literal: before this
-#: rule, ZERO rows of any `assurance/*.toml` named it, so stage 9 п.5 and stage 10
-#: п.5 — "the accepted risk is published" — were both claims about a page no
+#: rule, ZERO rows of any `assurance/*.toml` named it, so stage 9 item 5 and stage 10
+#: item 5 — "the accepted risk is published" — were both claims about a page no
 #: register referenced and no gate could check.
 LIMITATIONS = pathlib.Path("docs/limitations.md")
 
@@ -2215,14 +2219,14 @@ def settled_freshness(root, registered, tree):
 def check_freshness(name, entry, findings, vector):
     """A settled row is DATED, and only a settled row is.
 
-    Stage 10 п.3 asks that an assumption mark its dependent claims stale, and
+    Stage 10 item 3 asks that an assumption mark its dependent claims stale, and
     `grep -c stale` over this file answered 0: the registry had `revalidated_by`,
     a sentence naming what would unsettle a row, and no machine could tell whether
     that had happened. `evidence_gate` had the machine and reads bundles, not this
     file.
 
     Being STALE is not a finding here, for the reason it is not one there: measured
-    over the 11 bundles that record a commit, 11 are stale, so a red on staleness
+    over the 17 bundles that record a commit, 11 are stale, so a red on staleness
     is a gate that is red as its resting state. What is a finding is a settled row
     with no date at all, and one whose date this history does not have — the two
     ways the axis stops being computable. The staleness itself lands on
@@ -2258,7 +2262,7 @@ def check_freshness(name, entry, findings, vector):
 
 def inherits(name, registered):
     """What goes stale with `name`: the properties it supports, then the rows that
-    rest on it. Stage 10 п.3's "dependent claims", derived from the links the
+    rest on it. Stage 10 item 3's "dependent claims", derived from the links the
     registry already carries rather than from a second list of them.
     """
     onward = sorted(
@@ -2405,7 +2409,7 @@ def check_cells(name, entry, findings):
     Two guards over one rule, and they are not the same guard: this one names the
     entry and the field, which is what a contributor needs; [`cell`] is what
     stops the page being WRITTEN, and it is the only half `evidence_gate.py` has
-    — that gate renders the same `statement` into `docs/assurance-vector.md` and
+    — that gate renders the same `statement` into `assurance/reports/assurance-vector.md` and
     never calls [`check_shape`].
     """
     for key in RENDERED_PROSE:
@@ -2468,7 +2472,7 @@ def fields(names):
 
 
 def render(root, registered=None, dated=None):
-    """`docs/platform-assumptions.md` as the tree makes it."""
+    """`assurance/reports/platform-assumptions.md` as the tree makes it."""
     root = pathlib.Path(root)
     registered = entries(root, []) if registered is None else registered
     if dated is None:
@@ -2485,7 +2489,7 @@ def render(root, registered=None, dated=None):
         "",
         "# Platform assumptions",
         "",
-        claims_gate.DISCLAIMER_PARAGRAPH,
+        claims_gate.REPORT_DISCLAIMER_PARAGRAPH,
         "",
         "The assumptions no model constant can carry. `assurance/assumptions.toml`"
         " holds the other kind — a Boolean TLA constant a configuration assigns"
@@ -2598,15 +2602,15 @@ def render(root, registered=None, dated=None):
         " whose `evidence` does not mention it.",
         "",
         "Committed history only, so an uncommitted edit to an input is invisible"
-        " until it lands — the same hole `docs/assurance-vector.md` names about"
+        " until it lands — the same hole `assurance/reports/assurance-vector.md` names about"
         f" itself. Stale is not a red: {len(stale)} of {len(settled)} are stale"
         " right now, and a gate red in its resting state is one nobody reads. What"
         " it costs instead is this page — a row going stale is a diff.",
         "",
         "That price is worth stating for the `unsafe` rows, because the input is a"
-        " whole FILE and the claim is two lines of it. `PLAT-UNSAFE-001` is"
-        " anchored on `firmware/src/main.rs`, so ANY commit touching that file"
-        " flips it stale and owes this page a regeneration — including the many"
+        " whole FILE and the claim is two lines of it. If `PLAT-UNSAFE-003` is"
+        " discharged against `firmware/src/main.rs`, ANY later commit to that file"
+        " will make its evidence stale and require regeneration — including changes"
         " that cannot touch what the row is about. The site-level axis such a row"
         " wants is already elsewhere: its `covers` keys are the sites' own code,"
         " so a site that is rewritten reddens the row outright rather than dating"
@@ -2644,7 +2648,7 @@ def render(root, registered=None, dated=None):
         anchor = ref.partition("#")[2]
         out.append(
             f"| `{name}` | "
-            + (f"[{cell(headings.get(anchor, anchor))}]({LIMITATIONS.name}#{anchor})"
+            + (f"[{cell(headings.get(anchor, anchor))}](../../{LIMITATIONS}#{anchor})"
                if ref else "**not published there**")
             + " |"
         )
@@ -2661,7 +2665,7 @@ def render(root, registered=None, dated=None):
         "",
         "## The graph",
         "",
-        "Stage 1B п.3's link vocabulary, less `contradicts`: no pair here"
+        "Stage 1B item 3's link vocabulary, less `contradicts`: no pair here"
         " contradicts another, and a link kind with no instance is a rule whose"
         " only exercise is its own mutation.",
         "",
@@ -2679,7 +2683,7 @@ def render(root, registered=None, dated=None):
     out += [
         "",
         f"`supports` is in the table above, on {sum(1 for _, e in rows if e.get('supports'))}"
-        f" of {len(rows)} rows. A property it names is CONDITIONAL on that row"
+        f" of {len(rows)} assumptions. A property it names is CONDITIONAL on that row"
         " while the row is pending; nothing here upgrades a property's evidence.",
         "",
         "## What this page may not be read as",
@@ -2694,7 +2698,7 @@ def render(root, registered=None, dated=None):
         " stage 10's inventory names eleven categories — a category with no"
         " candidate source is a category this page cannot see.",
         "- that a discharged row makes a property proved. It removes a condition;"
-        " the property's own evidence is `docs/assurance-vector.md`'s.",
+        " the property's own evidence is `assurance/reports/assurance-vector.md`'s.",
         "",
     ]
     return "\n".join(out)

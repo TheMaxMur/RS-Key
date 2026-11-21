@@ -16,8 +16,8 @@ with the suite still green.
 
 Five clauses, each with a removal arm and a defect arm:
 
-* **rows** — every `check.sh` row's command shape is claimed, and the extractor
-  that reads them is held to finding any at all;
+* **rows** — every row's command shape is claimed, in both gate runners, and the
+  extractor that reads them is held to finding any at all;
 * **runners** — every shell runner under `scripts/` and `formal/` is claimed,
   and every claim names a file that is still there;
 * **jobs** — every job of the three evidence workflows is claimed, and every
@@ -41,7 +41,7 @@ SCRIPT = "scripts/reproduce.sh"
 
 #: The workflows the self-test reads. Named here so a fixture that forgets one
 #: fails as a fixture rather than as a green case over a tree with no jobs in it.
-WORKFLOWS = ("ci", "deep-checks", "emulator")
+WORKFLOWS = ("ci", "deep-checks", "emulator", "fuzz")
 
 
 @pytest.fixture
@@ -94,6 +94,13 @@ def test_the_shipped_tree_passes_its_own_self_test(tree):
     assert "self-test ok" in out
 
 
+def test_the_refusal_check_drains_the_complete_printed_block(tree):
+    footer = 'echo "  The board half is maintainer-only and written down in $HIL_PAGE."'
+    edit(tree, footer, footer + '\n  for ((i=0; i<4096; i++)); do echo "refusal detail"; done')
+    rc, out = self_test(tree)
+    assert rc == 0, "the printed page must be recognized without a producer SIGPIPE: " + out
+
+
 # --- clause: rows -------------------------------------------------------------
 
 
@@ -112,6 +119,37 @@ def test_rows_defect_a_row_that_needs_a_board_is_unclaimed(tree):
     assert rc == 1
     assert 'row "board smoke"' in out
     assert "whether a clean checkout can" in out
+
+
+@pytest.mark.parametrize("command", ["cargo fmt", "cargo clippy", "cargo test", "cargo audit", "cargo doc"])
+def test_separate_tui_shell_rows_need_their_own_claim(tree, command):
+    lines = (tree / SCRIPT).read_text().splitlines()
+    claim = next(line for line in lines if '"^nix develop ' in line and command in line)
+    edit(tree, claim, "")
+    rc, out = self_test(tree)
+    assert rc == 1
+    assert "a shape no claim here recognises" in out
+    assert "tui" in out
+
+
+def test_tui_shell_does_not_make_a_board_command_reproducible(tree):
+    edit(tree, 'run "fmt"',
+         'run "board smoke" nix develop .#tui -c python tests/10_fido_getinfo.py\nrun "fmt"',
+         path="scripts/check.sh")
+    rc, out = self_test(tree)
+    assert rc == 1
+    assert 'row "board smoke"' in out
+
+
+def test_rows_defect_the_second_runner_is_read_too(tree):
+    """The same board row landing in `check-assurance.sh`: its rows are claimed
+    the way `check.sh`'s are, or that runner could grow one unseen."""
+    edit(tree, 'run "formal citations"',
+         'run "board smoke" python tests/10_fido_getinfo.py\nrun "formal citations"',
+         path="scripts/check-assurance.sh")
+    rc, out = self_test(tree)
+    assert rc == 1
+    assert 'row "board smoke"' in out
 
 
 def test_rows_defect_an_extractor_that_reads_nothing_is_a_finding(tree):
@@ -177,8 +215,8 @@ def test_jobs_defect_a_claim_over_a_renamed_job_is_a_finding(tree):
 
 
 def test_phases_removal_a_phase_in_no_tier_is_a_finding(tree):
-    edit(tree, '"deep|comutants emu proofs-all coverage repro miri fuzz mutants"',
-         '"deep|comutants emu proofs-all coverage repro miri fuzz"')
+    edit(tree, '"deep|comutants emu image proofs-all coverage repro miri fuzz mutants"',
+         '"deep|comutants emu image proofs-all coverage repro miri fuzz"')
     edit(tree, "mutants\"\n)", "\"\n)")
     rc, out = self_test(tree)
     assert rc == 1

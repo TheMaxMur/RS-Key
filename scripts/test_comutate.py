@@ -21,6 +21,8 @@ import pytest
 sys.path.insert(0, str(pathlib.Path(__file__).parent))
 import comutate
 
+pytestmark = pytest.mark.assurance
+
 SPEC = """\
 pending_floor = 1
 phase2_count = 3
@@ -322,7 +324,7 @@ def test_a_registration_that_outlived_its_directory_still_measures(tmp_path):
     # naming it, so `wt.exists()` prunes nothing and the add dies "missing but
     # already registered". The dev loop's, not CI's: `comutants` checks out fresh.
     root = git_tree(tmp_path)
-    wt = comutate.worktree_path("BugAlpha")
+    wt = comutate.worktree_path(root, "BugAlpha")
     shutil.rmtree(wt, ignore_errors=True)
     subprocess.run(
         ["git", "worktree", "add", "--detach", str(wt), "HEAD"],
@@ -335,6 +337,27 @@ def test_a_registration_that_outlived_its_directory_still_measures(tmp_path):
     entry = {"file": "src/lib.rs", "find": "GUARD_LINE\n", "slice": ["false"]}
     verdict, _ = comutate.run_one(root, "BugAlpha", entry, "any-host")
     assert verdict == "killed", verdict
+
+
+def test_a_measurement_leaves_another_checkouts_worktree_alone(tmp_path):
+    # Two gates at once, each in its own clone, measured BugAlpha at one /tmp path:
+    # one's cleanup deleted the other's live worktree, or its add died "already exists".
+    held = git_tree(tmp_path / "held")
+    wt = comutate.worktree_path(held, "BugAlpha")
+    subprocess.run(
+        ["git", "worktree", "add", "--force", "--detach", str(wt), "HEAD"],
+        cwd=held,
+        check=True,
+        capture_output=True,
+    )
+    try:
+        other = git_tree(tmp_path / "other")
+        entry = {"file": "src/lib.rs", "find": "GUARD_LINE\n", "slice": ["false"]}
+        verdict, _ = comutate.run_one(other, "BugAlpha", entry, "any-host")
+        assert verdict == "killed", verdict
+        assert (wt / "src/lib.rs").exists(), "the other checkout's run deleted this worktree"
+    finally:
+        subprocess.run(["git", "worktree", "remove", "--force", str(wt)], cwd=held, check=False)
 
 
 def test_drifted_anchor_in_run_is_named(tmp_path):
@@ -921,7 +944,7 @@ def proof_tree(tmp_path):
 
 
 def row(root: pathlib.Path) -> subprocess.CompletedProcess:
-    """`python scripts/comutate.py --lint` over `root` — the `check.sh` row itself.
+    """`python scripts/comutate.py --lint` over `root` — the gate row itself.
 
     The row keys on the PROCESS exit code of the entry point, and every other arm
     in this file drives `lint()`, one function below it. Fourteen of thirty gates

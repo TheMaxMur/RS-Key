@@ -7,7 +7,9 @@
 #![cfg_attr(not(test), no_std)]
 
 use core::cell::RefCell;
-use rsk_devconf::{DEV_CONF_WRITE_MAX, DevConfError, config_tlv, persist_dev_conf};
+use rsk_devconf::{
+    DEV_CONF_WRITE_MAX, DevConfError, LOCK_SET_CONFIRM, config_tlv, persist_dev_conf,
+};
 use rsk_fs::{Fs, Storage};
 // The user-presence seam gating WRITE CONFIG against a hostile USB host is
 // `rsk-sdk`'s, shared with every sibling applet — the board has one button.
@@ -22,27 +24,15 @@ pub const MANAGEMENT_AID: &[u8] = &[0xA0, 0x00, 0x00, 0x05, 0x27, 0x47, 0x11, 0x
 /// all agree.
 pub const VERSION: (u8, u8, u8) = rsk_sdk::FIRMWARE_VERSION;
 
+/// What a YubiKey 5.8.0's SELECT answers ahead of its version, byte for byte.
+const SELECT_PREFIX: &[u8] = b"Virtual mgr - FW version ";
+
 const INS_WRITE_CONFIG: u8 = 0x1C;
 const INS_READ_CONFIG: u8 = 0x1D;
-const INS_RESET: u8 = 0x1E;
-// ykman's device-wide reset (ManagementSession.device_reset) is INS 0x1F; RS-Key's
-// own placeholder was 0x1E. The DEFAULT build honours BOTH as a factory reset;
-// strict-config keeps them unsupported. DEFAULT-build only.
-#[cfg(not(feature = "strict-config"))]
-const INS_DEVICE_RESET: u8 = 0x1F;
-
-/// Pending device-wide factory-reset request, set by the Management RESET command
-/// and drained by the firmware after the command's SW_OK. DEFAULT build only.
-#[cfg(not(feature = "strict-config"))]
-static DEVICE_RESET: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
-
-/// Take (and clear) a pending device-wide factory-reset request. The firmware
-/// polls this after the RESET SW_OK, then wipes all flash (keeping attestation)
-/// and reboots. `strict-config` never sets it (RESET stays `6D00`).
-#[cfg(not(feature = "strict-config"))]
-pub fn take_device_reset() -> bool {
-    DEVICE_RESET.swap(false, core::sync::atomic::Ordering::Relaxed)
-}
+/// Answered `9000` with nothing done, whatever the P1-P2 or body, as a YubiKey 5.8.0
+/// answers it. It and `1F` were a factory reset here, which the rescue and vendor
+/// applets' `1E`/`1F`, sent while this applet was selected, could reach.
+const INS_ACKNOWLEDGED: u8 = 0x1E;
 
 pub struct ManagementApplet<'a> {
     /// First 4 bytes of the chip id → the 8-digit serial.
@@ -73,6 +63,20 @@ impl<'a> ManagementApplet<'a> {
         config_tlv(&self.serial, fs, res)
     }
 
+    /// Serve WRITE CONFIG to a non-CCID transport (the CTAPHID vendor command): the
+    /// same record under the same configuration lock, without the write's presence
+    /// gate — a `strict-config` build does not route that command here at all. A
+    /// lock set where none is still takes its touch.
+    pub fn persist_config<S: Storage>(
+        &self,
+        fs: &mut Fs<S>,
+        blob: &[u8],
+    ) -> Result<(), DevConfError> {
+        persist_dev_conf(&self.serial, fs, blob, &mut || {
+            self.require_presence(LOCK_SET_CONFIRM)
+        })
+    }
+
     /// WRITE CONFIG: the first data byte is the length of the rest; persist that
     /// TLV blob as `EF_DEV_CONF`.
     fn write_config<S: Storage>(&mut self, apdu: &Apdu, fs: &mut Fs<S>) -> Sw {
@@ -87,33 +91,21 @@ impl<'a> ManagementApplet<'a> {
             return Sw::WRONG_DATA;
         }
         // Rewriting the reported DeviceInfo is a privileged, sticky change. Under
-        // `strict-config` gate it on operator presence (the CONFIG_LOCK byte is
-        // only reported, never enforced, so presence is the authentication of
-        // record). The DEFAULT build is ungated for full YubiKey/ykman parity —
-        // any USB host can rewrite DeviceInfo (docs/threat-model.md).
+        // `strict-config` gate it on operator presence as well as the lock. The
+        // DEFAULT build has the lock alone, as a YubiKey does: with no code set, any
+        // USB host can rewrite DeviceInfo (docs/threat-model.md).
         if cfg!(feature = "strict-config")
             && !self.require_presence(Confirm::titled("Write device config?"))
         {
             return Sw::CONDITIONS_NOT_SATISFIED;
         }
-        match persist_dev_conf(fs, &apdu.data[1..apdu.nc]) {
+        // Under `strict-config` the touch above covers a lock the write sets.
+        let mut confirm =
+            || cfg!(feature = "strict-config") || self.require_presence(LOCK_SET_CONFIRM);
+        match persist_dev_conf(&self.serial, fs, &apdu.data[1..apdu.nc], &mut confirm) {
             Ok(()) => Sw::OK,
-            Err(DevConfError::TooLong | DevConfError::BadTlv) => Sw::WRONG_DATA,
-            Err(DevConfError::Store) => Sw::MEMORY_FAILURE,
+            Err(e) => e.sw(),
         }
-    }
-
-    /// Management RESET (INS 0x1E / ykman's 0x1F): request a device-wide factory
-    /// reset. Even on the permissive default this is presence-gated — an
-    /// unauthenticated one-APDU wipe from any USB host would be a silent-brick
-    /// footgun. The firmware does the flash wipe + reboot after this SW_OK.
-    #[cfg(not(feature = "strict-config"))]
-    fn request_device_reset(&mut self) -> Sw {
-        if !self.require_presence(Confirm::titled("Factory reset device?")) {
-            return Sw::CONDITIONS_NOT_SATISFIED;
-        }
-        DEVICE_RESET.store(true, core::sync::atomic::Ordering::Relaxed);
-        Sw::OK
     }
 }
 
@@ -122,9 +114,11 @@ impl<S: Storage> Applet<Fs<S>> for ManagementApplet<'_> {
         MANAGEMENT_AID
     }
 
-    /// SELECT returns the firmware version as an ASCII string.
+    /// SELECT answers `Virtual mgr - FW version X.Y.Z` in ASCII, as a YubiKey 5.8.0
+    /// does; yubikit reads the version out of the words around it.
     fn select(&mut self, _reselect: bool, _fs: &mut Fs<S>, res: &mut ResBuf) -> Sw {
         let (maj, min, patch) = VERSION;
+        res.extend(SELECT_PREFIX);
         push_dec(res, maj);
         res.push(b'.');
         push_dec(res, min);
@@ -134,19 +128,13 @@ impl<S: Storage> Applet<Fs<S>> for ManagementApplet<'_> {
     }
 
     fn process(&mut self, apdu: &Apdu, fs: &mut Fs<S>, res: &mut ResBuf) -> Sw {
-        if apdu.cla != 0x00 {
+        if !apdu.is_basic_class() {
             return Sw::CLA_NOT_SUPPORTED;
         }
         match apdu.ins {
             INS_READ_CONFIG => config_tlv(&self.serial, fs, res),
             INS_WRITE_CONFIG => self.write_config(apdu, fs),
-            // DEFAULT build: a presence-gated device-wide factory reset (ykman
-            // parity), serviced by the firmware after this SW_OK. strict-config
-            // keeps it unsupported (ykman resets FIDO over CTAP instead).
-            #[cfg(not(feature = "strict-config"))]
-            INS_RESET | INS_DEVICE_RESET => self.request_device_reset(),
-            #[cfg(feature = "strict-config")]
-            INS_RESET => Sw::INS_NOT_SUPPORTED,
+            INS_ACKNOWLEDGED => Sw::OK,
             _ => Sw::INS_NOT_SUPPORTED,
         }
     }

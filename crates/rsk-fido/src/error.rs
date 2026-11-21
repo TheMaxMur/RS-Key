@@ -50,6 +50,10 @@ pub enum CtapError {
 }
 
 impl CtapError {
+    /// Past the fuse latch the fused key did not read: nothing opens or seals, so
+    /// the command refuses, as `rsk_sdk::Sw::FUSED_KEY_UNREAD` does over CCID.
+    pub const FUSED_KEY_UNREAD: CtapError = CtapError::Other;
+
     /// The status byte for this error.
     pub fn as_u8(self) -> u8 {
         self as u8

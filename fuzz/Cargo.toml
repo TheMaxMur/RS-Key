@@ -14,18 +14,23 @@ rsk-sdk = { path = "../crates/rsk-sdk" }
 rsk-fs = { path = "../crates/rsk-fs", features = ["test-util"] }
 rsk-usb = { path = "../crates/rsk-usb" }
 rsk-crypto = { path = "../crates/rsk-crypto" }
-rsk-fido = { path = "../crates/rsk-fido" }
+# test-util: FidoState::establish_mse_for_test, to start past the MSE handshake.
+rsk-fido = { path = "../crates/rsk-fido", features = ["test-util"] }
 rsk-openpgp = { path = "../crates/rsk-openpgp" }
 # The EC key type the two openpgp_ec* targets drive directly (`PrivKey` over
 # `Curve`); the applet no longer owns it, only its algorithm-attribute mapping.
 rsk-ec = { path = "../crates/rsk-ec" }
-# The RSA layer the two openpgp_* RSA targets now fuzz directly: the DigestInfo
-# parser (`rsa_sign_em`) and the import-side key rebuild (`rsa_from_pqe`).
+# The RSA layer the openpgp_key_load target fuzzes directly: the import-side key
+# rebuild (`rsa_from_pqe`).
 rsk-rsa = { path = "../crates/rsk-rsa" }
 rsk-devconf = { path = "../crates/rsk-devconf", features = ["test-util"] }
 rsk-mgmt = { path = "../crates/rsk-mgmt" }
 rsk-oath = { path = "../crates/rsk-oath" }
-rsk-otp = { path = "../crates/rsk-otp" }
+# test-util: SlotRecord::from_bytes, the one way to seal a record the fuzzer chose.
+rsk-otp = { path = "../crates/rsk-otp", features = ["test-util"] }
+# otp_slot_seal reads a slot back through rsk-otp's seal, which unseals only
+# into a Secret.
+rsk-secret = { path = "../crates/rsk-secret" }
 rsk-phy = { path = "../crates/rsk-phy" }
 rsk-piv = { path = "../crates/rsk-piv" }
 rsk-rescue = { path = "../crates/rsk-rescue" }
@@ -51,8 +56,8 @@ embedded-graphics = { version = "0.8", default-features = false }
 minicbor = { version = "2.2", default-features = false }
 # The piv_apdu seed runs the AES-192 management-key auth dance host-side.
 aes = { version = "0.8", default-features = false }
-# sha512_diff's differential reference — the exact `sha2` version rsk-sha512 is
-# byte-identical to; the shared digest 0.10 makes the `Digest` traits unify.
+# Independent references for sha256_diff and sha512_diff; digest 0.10 keeps
+# their streaming APIs compatible with the facade's software hash cores.
 sha2 = { version = "0.10", default-features = false }
 # openpgp_key_load reconstructs an RSA key from attacker MPIs and checks n == p*q
 # against a plain BigUint multiply — the same bignum rsk-rsa is arithmetic over.
@@ -62,6 +67,38 @@ num-bigint-dig = { version = "0.8.6", default-features = false, features = ["i12
 sequential-storage = { version = "=8.0.0", features = ["_test"] }
 embedded-storage-async = "0.4"
 embassy-futures = "0.1"
+
+[features]
+# The shipped build flavours, forwarded exactly as firmware/Cargo.toml forwards
+# them: identical names let a target carry the applet crate's own
+# `cfg(feature = "…")` rather than ask which union it is in (cross_applet does).
+advertise-pqc = ["rsk-fido/advertise-pqc"]
+fips-profile = ["rsk-fido/fips-profile", "rsk-piv/fips-profile"]
+strong-pin = ["rsk-fido/strong-pin"]
+strict-up = ["rsk-fido/strict-up"]
+always-uv = ["rsk-fido/always-uv"]
+# `rsk-device/display` is on for every config here (the dependency line above), so
+# its display-only paths are fuzzed in every flavour, strict-config included.
+strict-config = [
+    "rsk-mgmt/strict-config",
+    "rsk-fido/strict-config",
+    "rsk-otp/strict-config",
+    "rsk-vendor/strict-config",
+    "rsk-device/strict-config",
+]
+# All six at once — the second config the deep-checks `fuzz` and `miri` rows run;
+# one union and not six configs because they are additive and no crate refuses a
+# combination. `largeblob-ext` is out: CTAP 2.3 §12.4 forbids serving both
+# large-blob designs, so it WITHDRAWS command 0x0C instead of adding to it, and
+# would take the 2.1 path out of the fuzzed set.
+flavours = [
+    "advertise-pqc",
+    "fips-profile",
+    "strong-pin",
+    "strict-up",
+    "always-uv",
+    "strict-config",
+]
 
 [[bin]]
 name = "apdu"
@@ -225,13 +262,6 @@ doc = false
 bench = false
 
 [[bin]]
-name = "openpgp_rsa_sign"
-path = "fuzz_targets/openpgp_rsa_sign.rs"
-test = false
-doc = false
-bench = false
-
-[[bin]]
 name = "drbg"
 path = "fuzz_targets/drbg.rs"
 test = false
@@ -365,6 +395,13 @@ doc = false
 bench = false
 
 [[bin]]
+name = "authenticated_store"
+path = "fuzz_targets/authenticated_store.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
 name = "kv_durability"
 path = "fuzz_targets/kv_durability.rs"
 test = false
@@ -388,6 +425,13 @@ bench = false
 [[bin]]
 name = "oath_otp_pin"
 path = "fuzz_targets/oath_otp_pin.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "sha256_diff"
+path = "fuzz_targets/sha256_diff.rs"
 test = false
 doc = false
 bench = false
@@ -441,4 +485,7 @@ bench = false
 # kv_durability fuzz targets exercise the exact KV code the firmware ships (see the
 # root Cargo.toml [patch] note + third_party/sequential-storage.patch).
 [patch.crates-io]
+crypto-bigint = { path = "../third_party/crypto-bigint" }
+p256 = { path = "../third_party/p256" }
+p384 = { path = "../third_party/p384" }
 sequential-storage = { path = "../third_party/sequential-storage" }

@@ -11,13 +11,14 @@
 # suite list and the attach sequence are the part that changes, and a change here
 # must not mean rebuilding a virtual machine.
 #
-# Two identities, because two suites need one the others must not have. `73`
+# Two identities, because three suites need one the others must not have. `73`
 # drives ykman's own `OtpConnection`, which binds Yubico USB ids and nothing else,
-# and `77` needs a slot ykman armed with `--touch`. The rest must run on the
-# DEFAULT identity — that is the one whose CCID interface a stock driver skips,
-# the whole reason `nix/ccid.nix` exists. So the host runs both emulators at once
-# on separate ports and the guest attaches one at a time; `emu-suites.sh` splits
-# the same way, with sessions instead of ports.
+# `77` needs a slot ykman armed with `--touch`, and p11test's PIV keys are made by
+# `ykman --reader`, which refuses the default identity's reader. The rest must
+# run on the DEFAULT identity — that is the one whose CCID interface a stock
+# driver skips, the whole reason `nix/ccid.nix` exists. So the host runs both
+# emulators at once on separate ports and the guest attaches one at a time;
+# `emu-suites.sh` splits the same way, with sessions instead of ports.
 set -uo pipefail
 cd /repo
 
@@ -113,6 +114,7 @@ echo
 echo "== third_party: the pico-fido conformance suite"
 tp=0
 python tests/third_party.py fido -q || tp=$?
+run tests/third_party.py python-fido2 -q
 detach "RS-Key Security Key" || exit 1
 
 echo
@@ -132,7 +134,23 @@ else
   fail=$((fail + 1))
   failed+=("otp-arming")
 fi
+
+# OpenSC's PKCS#11 suite. ykman makes its PIV keys, and binds no other identity.
+echo "::: p11test"
+if bash tests/p11test/run.sh /out/p11test; then
+  pass=$((pass + 1))
+else
+  fail=$((fail + 1))
+  failed+=("p11test")
+fi
 detach "YubiKey" || exit 1
+
+echo
+echo "== phase 3: the firmware ROM loader and mass storage"
+for scenario in picoboot msc; do
+  run "tools/emu/image_$scenario.py" --emulator /out/rsk-emu \
+    --image /out/firmware-pt.elf --rom /out/bootrom.bin --work "/out/image/$scenario"
+done
 
 echo
 echo "usb suites: $pass passed, $fail failed"

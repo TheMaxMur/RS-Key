@@ -9,6 +9,27 @@
 //! the raw shares back to the secret (the inverse the host runs on restore).
 
 use super::*;
+
+#[test]
+fn interpolation_at_a_member_returns_that_member() {
+    let shares = [(1, [0x11; SECRET_LEN]), (2, [0x22; SECRET_LEN])];
+    for (index, value) in shares {
+        assert_eq!(interpolate(&shares, index), value);
+    }
+}
+
+#[test]
+fn all_sixteen_shares_preserve_the_nonzero_identifier_on_the_wire() {
+    let mut out = Secret::new([[0u16; WORDS_PER_SHARE]; MAX_SHARES]);
+    let mut rng = |bytes: &mut [u8]| {
+        assert_eq!(bytes.len(), 2);
+        bytes.copy_from_slice(&[0xab, 0xcd]);
+    };
+    generate(&[0x5a; 32], 1, 16, &mut rng, out.expose_mut()).unwrap();
+    for share in out.expose() {
+        assert_eq!(&share[..2], &[350, 417]);
+    }
+}
 extern crate std;
 use std::string::String;
 use std::vec::Vec;
@@ -180,7 +201,7 @@ fn cipher_decrypt(ct: &[u8; 32], identifier: u16) -> [u8; 32] {
     for i in (0..ROUNDS as u8).rev() {
         let f = round_function(i, &salt, &r);
         let mut new_r = l;
-        for (a, b) in new_r.iter_mut().zip(f.iter()) {
+        for (a, b) in new_r.iter_mut().zip(f.expose().iter()) {
             *a ^= *b;
         }
         l = r;
@@ -210,7 +231,7 @@ fn recover_secret(threshold: u8, shares: &[Point]) -> [u8; 32] {
 fn cipher_round_trips() {
     let s = seq_secret();
     for id in [0u16, 1, 0x1234, 0x7fff] {
-        assert_eq!(cipher_decrypt(&cipher_encrypt(&s, id), id), s);
+        assert_eq!(cipher_decrypt(cipher_encrypt(&s, id).expose(), id), s);
     }
 }
 
@@ -225,12 +246,16 @@ fn shamir_round_trips_any_threshold_subset() {
     let identifier = (((idb[0] as u16) << 8) | idb[1] as u16) & 0x7fff;
     let ems = cipher_encrypt(&secret, identifier);
     let mut data = [[0u8; 32]; MAX_SHARES];
-    split_secret(3, 5, &ems, &mut rng, &mut data);
+    split_secret(3, 5, ems.expose(), &mut rng, &mut data);
 
     for subset in [[0usize, 1, 2], [0, 2, 4], [1, 3, 4]] {
         let shares: Vec<Point> = subset.iter().map(|&i| (i as u8, data[i])).collect();
         let rec_ems = recover_secret(3, &shares);
-        assert_eq!(rec_ems, ems, "subset {subset:?} ciphertext mismatch");
+        assert_eq!(
+            &rec_ems,
+            ems.expose(),
+            "subset {subset:?} ciphertext mismatch"
+        );
         assert_eq!(
             cipher_decrypt(&rec_ems, identifier),
             secret,
@@ -248,10 +273,27 @@ fn one_of_one_round_trips() {
     let identifier = (((idb[0] as u16) << 8) | idb[1] as u16) & 0x7fff;
     let ems = cipher_encrypt(&secret, identifier);
     let mut data = [[0u8; 32]; MAX_SHARES];
-    split_secret(1, 1, &ems, &mut rng, &mut data);
+    split_secret(1, 1, ems.expose(), &mut rng, &mut data);
     let shares = [(0u8, data[0])];
     assert_eq!(
         cipher_decrypt(&recover_secret(1, &shares), identifier),
         secret
     );
+}
+
+#[test]
+fn runtime_shamir_tables_form_the_complete_nonzero_field() {
+    let generate = std::hint::black_box(gf_tables as fn() -> ([u8; 255], [u8; 256]));
+    let (exp, log) = generate();
+    let mut seen = [false; 256];
+    assert_eq!(&exp[..5], &[1, 3, 5, 15, 17]);
+    for (power, &value) in exp.iter().enumerate() {
+        assert!(!seen[usize::from(value)]);
+        seen[usize::from(value)] = true;
+        assert_eq!(usize::from(log[usize::from(value)]), power);
+    }
+    assert!(!seen[0]);
+    assert!(seen[1..].iter().all(|value| *value));
+    assert_eq!(exp, EXP);
+    assert_eq!(log, LOG);
 }

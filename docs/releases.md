@@ -3,11 +3,19 @@
 Releases live on the [GitHub Releases](https://github.com/TheMaxMur/RS-Key/releases)
 page. Each is cut from a `v*` git tag by the
 [release workflow](https://github.com/TheMaxMur/RS-Key/blob/main/.github/workflows/release.yml).
-It builds every artifact reproducibly, hashes it, and signs the manifest.
+It builds every artifact reproducibly, hashes it, and signs the manifest. It
+runs only at the tag it releases: a run started by hand from a branch, or from
+another tag, stops before it builds anything. A run started by hand uses the
+workflow file at the ref it starts from, though, and the tags published up to
+v0.4.11 carry one without that test. A run started at one of them can still
+build another tag, signed under the old tag's name; the tag pin in step 1 below
+refuses it, and so does `gh attestation verify --source-ref`
+([supply-chain.md](supply-chain.md#3-build-provenance-github-attestation),
+step 3).
 
 ## What a release contains
 
-- **Fourteen firmware images**: `rs-key-<tag>-<flavor>.uf2`. Every published image
+- **Fifteen firmware images**: `rs-key-<tag>-<flavor>.uf2`. Every published image
   requires a physical touch; the `no-touch` test builds are never released (a
   signed presence-bypass asset would remove the consent gate):
 
@@ -26,9 +34,11 @@ It builds every artifact reproducibly, hashes it, and signs the manifest.
   | `display` | + display | experimental trusted-display build (Waveshare RP2350-Touch-LCD-2.8, [guides/display.md](guides/display.md)) |
   | `2mb` | `FLASH_SIZE=2M KVMAIN=896K` | 2 MB boards (Seeed XIAO RP2350, Waveshare RP2350-Zero-CM) |
   | `16mb` | `FLASH_SIZE=16M` | 16 MB boards (e.g. TenStar RP2350-USB) |
+  | `romu` | `BOARD=romu` | Bitmerse Romu's 2 MiB flash, discrete RGB and capacitive touch |
   | `strict-config` | + strict-config | the historical strict admin-write posture: config writes stay presence/PIN-gated and the ungated transport writes are refused ([build.md](build.md), [threat-model.md](threat-model.md)). The `default` build is now the permissive full-ykman admin surface |
 
-  All fourteen present the default **RS-Key** USB identity (`0x1209:0x0001`). For the
+  All fifteen present the default **RS-Key** USB identity: `0x1209:0xF1D2`
+  from build `0x0A8A`; older images use the test PID `0x1209:0x0001`. For the
   YubiKey-interop identity, build `VIDPID=Yubikey5` yourself ([build.md](build.md)).
 - **`SHA256SUMS`**: a checksum for every image and the SBOM.
 - **`SHA256SUMS.sigstore.json`**: a keyless [cosign](https://docs.sigstore.dev/)
@@ -42,8 +52,8 @@ It builds every artifact reproducibly, hashes it, and signs the manifest.
 - **`rs-key-<tag>.intoto.jsonl`**: the build-provenance attestation, as a file.
   The authoritative copy stays in GitHub's attestation API and in Rekor; this one
   is for checking a download offline.
-- **`rs-key-<tag>-sbom.cdx.json`**: a CycloneDX software bill of materials for the
-  firmware's dependency tree.
+- **`rs-key-<tag>-sbom.cdx.json`** and **`rs-key-<tag>-sbom-nonsecure.cdx.json`**:
+  CycloneDX bills of materials for the Secure and Non-secure dependency trees.
 
 > **The images are UNSIGNED for secure boot.** The cosign signature attests *who
 > built them*, not the boot seal. On a secure-boot device you seal an image with
@@ -55,17 +65,22 @@ It builds every artifact reproducibly, hashes it, and signs the manifest.
 
 Grab the images you want plus `SHA256SUMS` and the signature —
 `SHA256SUMS.sigstore.json`, or `SHA256SUMS.cosign.bundle` on releases up to
-v0.4.10. Same bytes either way; substitute the name you actually downloaded.
+v0.4.10. Same bytes either way; substitute the name you actually downloaded, and
+the release's tag for `<tag>`.
 
 ```sh
 # 1. the checksums file is authentic (keyless cosign — needs cosign >= 2.0)
 #    The signer is the *reusable* build workflow (release-build.yml), not the
 #    thin release.yml caller: a workflow_call job's OIDC identity is its own
-#    job_workflow_ref, so that is what the Fulcio cert's SAN carries.
+#    job_workflow_ref, so that is what the Fulcio cert's SAN carries. The ref
+#    flag pins the release's own tag; any repository can call the workflow, so
+#    the last flag pins the repository of the run.
 cosign verify-blob \
   --bundle SHA256SUMS.sigstore.json \
-  --certificate-identity-regexp '^https://github\.com/TheMaxMur/RS-Key/\.github/workflows/release-build\.yml@refs/tags/v.*' \
+  --certificate-identity-regexp '^https://github\.com/TheMaxMur/RS-Key/\.github/workflows/release-build\.yml@refs/tags/v.*$' \
+  --certificate-github-workflow-ref refs/tags/<tag> \
   --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' \
+  --certificate-github-workflow-repository TheMaxMur/RS-Key \
   SHA256SUMS
 
 # 2. the images match the (now-trusted) checksums
@@ -74,6 +89,18 @@ sha256sum -c SHA256SUMS
 
 Both must pass. Step 1 proves `SHA256SUMS` was produced by this repo's release
 workflow; step 2 ties each `.uf2` (and the SBOM) to it.
+
+`rsk flash` runs these checks and flashes only when they pass. Keep
+`SHA256SUMS` and `SHA256SUMS.sigstore.json` in the folder with the image, put
+the board in BOOTSEL, and:
+
+```sh
+rsk flash rs-key-<tag>-default.uf2    # --dry-run checks and writes nothing
+```
+
+It also runs `gh attestation verify`, pinned to the release's own tag, when the
+GitHub CLI is installed, and says so when it is not
+([supply-chain.md](supply-chain.md#3-build-provenance-github-attestation), step 3).
 
 ## Verify the build is reproducible
 

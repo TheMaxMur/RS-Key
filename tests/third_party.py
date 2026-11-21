@@ -4,11 +4,11 @@
 
 """Run the vendored upstream suites against RS-Key, with every divergence named.
 
-`third_party/` holds two ecosystems' own conformance suites — pico-fido's and
-pico-openpgp/Gnuk's. They are somebody else's tests under somebody else's
-license, so the run is steered from outside by a pytest plugin and everything
-RS-Key deliberately does not do for them is listed in [`DIVERGENCES`] with its
-reason.
+`third_party/` holds three ecosystems' own conformance suites — pico-fido's,
+pico-openpgp/Gnuk's and Yubico's (ykman's `tests/device`). They are somebody
+else's tests under somebody else's license, so the run is steered from outside
+by a pytest plugin and everything RS-Key deliberately does not do for them is
+listed in [`DIVERGENCES`] with its reason.
 
 No assertion in those directories is ever edited — a disagreement about
 behaviour belongs in that list, where it stays visible. A defect in the suite's
@@ -24,15 +24,22 @@ by one that did (`tests/interop`).
 
     python tests/third_party.py fido            # the pico-fido suite
     python tests/third_party.py openpgp         # the OpenPGP card suite
+    python tests/third_party.py ykman           # ykman's device tests
+    python tests/third_party.py python-fido2    # Yubico's FIDO device tests
     python tests/third_party.py all -- -x       # everything; extra pytest args
 
-Both suites want a device that answers like a flashed no-touch build. Against
+The suites want a device that answers like a flashed no-touch build. Against
 `tools/emu` that means `--usbip` on a Linux host (they use python-fido2's and
 pyscard's own transports, which want real USB), and `pcscd` carrying the
-`ccid-rs-key` reader list for the card half.
+`ccid-rs-key` reader list for the card half. The card suites also run over the
+emulator's socket; ykman's runs only there, the emulator started `--yubico`.
 """
+import atexit
 import os
+import shutil
 import sys
+import tempfile
+import types
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -48,15 +55,20 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SUITES = {
     "fido": ("third_party/pico-fido-tests/pico-fido", False),
     "openpgp": ("third_party/openpgp-card-tests", True),
+    # Yubico's own: ykman's `tests/device`, CCID half, against the Yubico identity. The
+    # root is `tests/` because its conftest declares `--device`; nothing else there runs.
+    "ykman": ("third_party/ykman-tests/tests", True),
+    "python-fido2": ("third_party/python-fido2-tests/tests/device", False),
 }
 
 # What RS-Key deliberately does not do the way these suites expect. The key is a
-# substring of the pytest node id; the value is why, in one line, aimed at
-# whoever finds the entry in three years.
+# substring of the pytest node id (`$` anchors its end); the value is why, in
+# one line, aimed at whoever finds the entry in three years.
 #
 # Only *deliberate* divergences belong here. A test failing because RS-Key is
 # wrong is a bug, and putting it here hides it.
 DIVERGENCES: dict[str, dict[str, str]] = {
+    "python-fido2": {},
     "fido": {
         # An empty `saltEnc` is a parameter that is present and the wrong length,
         # not a missing one: §12.5 says to answer CTAP1_ERR_INVALID_LENGTH unless
@@ -90,10 +102,6 @@ DIVERGENCES: dict[str, dict[str, str]] = {
         # The FIDO conformance tool checks both (MakeCredential Req-6, P-3/F-1)
         # and RS-Key passes it; the suite asserts the opposite for `up: true`.
         "test_000_getinfo.py::test_Check_up_option": "CTAP 2.1 accepts an explicit up:true; only up:false is INVALID_OPTION",
-        # CTAP 2.1 §6.5.5.5, verbatim: "If a PIN has already been set,
-        # authenticator returns CTAP2_ERR_PIN_AUTH_INVALID error". The suite wants
-        # NOT_ALLOWED, which is the CTAP 2.0 answer.
-        "test_010_pin.py::test_set_pin_twice": "§6.5.5.5 makes a second setPIN PIN_AUTH_INVALID, not NOT_ALLOWED",
         # CTAP 2.1 zero-length-pinUvAuthParam probe: PIN_INVALID when a PIN is set,
         # PIN_NOT_SET when it is not. The suite wants PIN_AUTH_INVALID — again the
         # 2.0 answer. Both halves are pinned by `conformance::pin`.
@@ -103,6 +111,10 @@ DIVERGENCES: dict[str, dict[str, str]] = {
         # PUAT_REQUIRED unconditionally, without reading the option.
         "test_010_pin.py::test_get_no_pin_auth": "makeCredUvNotRqd: a non-discoverable credential needs no token",
         "test_010_pin.py::test_make_credential_no_pin": "makeCredUvNotRqd: a non-discoverable credential needs no token",
+        # Absent and empty algorithm lists use the same selection path. A
+        # YubiKey 5.8.0 answers UNSUPPORTED_ALGORITHM for both (2026-09-30),
+        # which `makecredential_tests` pins through the dispatcher.
+        "test_020_register.py::test_missing_pubKeyCredParams$": "an absent pubKeyCredParams answers UNSUPPORTED_ALGORITHM, as on a YubiKey 5.8.0",
         # The test calls `device.reboot()` when it sees PIN_AUTH_BLOCKED and then
         # asserts PIN_AUTH_BLOCKED again — a ladder that only holds while that
         # reboot does nothing. Given a real power cycle (which the runner supplies,
@@ -118,12 +130,12 @@ DIVERGENCES: dict[str, dict[str, str]] = {
         # Both reach `SET CODE` with a 13-byte secret, so its `73` value is 14
         # bytes where a YubiKey 5.7.4 takes 15..=65 — that is where they fail now
         # (E59). Behind it, and the reason they were listed: after the card reset
-        # the test performs, no applet is selected, so a bare LIST is 6A82 (file
-        # not found) rather than 6982. Dropping the selection on a power transition
+        # the test performs, no applet is selected, so a bare LIST is 6D00, as on a
+        # YubiKey 5.8.0, rather than 6982. Dropping the selection on a power transition
         # is deliberate — it is what makes a second local process re-authenticate
         # (ApduHandler::reset_card).
-        "test_070_oath.py::test_auth": "a 13-byte access code; and a card reset deselects the applet, so LIST without SELECT is 6A82",
-        "test_070_oath.py::test_noauth": "a 13-byte access code; and a card reset deselects the applet, so LIST without SELECT is 6A82",
+        "test_070_oath.py::test_auth": "a 13-byte access code; a card reset deselects the applet, so LIST without SELECT is 6D00; and it expects a re-SELECT to re-lock, where a YubiKey 5.8.0 keeps the VALIDATE",
+        "test_070_oath.py::test_noauth": "a 13-byte access code; and a card reset deselects the applet, so LIST without SELECT is 6D00",
         # These send CALCULATE with a bare `74` tag — no length byte, no value —
         # which is not a TLV. With the encoded empty challenge `74 00` that ykman
         # actually sends, RS-Key computes the same truncation these expect. It no
@@ -141,10 +153,6 @@ DIVERGENCES: dict[str, dict[str, str]] = {
         # listed for the challenge TLV and now fail one step earlier.
         "test_070_oath.py::test_rename_prefix_extension": "enrolls a 7-byte OATH secret; a YubiKey refuses a KEY TLV under 16 bytes",
         "test_070_oath.py::test_delete": "enrolls a 9-byte OATH secret; a YubiKey refuses a KEY TLV under 16 bytes",
-        # pinComplexityPolicy (0x1B) IS advertised. What this case asks for is
-        # SETTING it through setMinPINLength, which is a different surface: RS-Key's
-        # policy is the build's, not a host-writable flag.
-        "test_037_minpinlength.py::test_pin_complexity_policy_extension": "pinComplexityPolicy (0x1B) is advertised but not settable through setMinPINLength",
         # The suite hardcodes its own device's limit (120) instead of reading
         # `maxRPIDsForSetMinPINLength`, which §6.11.4 tells platforms to read:
         # "Platform can track how many RP IDs it can set, by checking value of the
@@ -193,8 +201,12 @@ DIVERGENCES: dict[str, dict[str, str]] = {
         # Name; whether it must be absent is unstated.
         "::test_name_lang_sex": "§4.4.1 vs §7.2.6 wrapper, plus: unset cardholder children present vs absent",
         # The same wrapper question, reached through the new pcsc section: it reads
-        # DO 6E and asserts the response *starts* with the child tag `4F`.
-        "::test_openpgp_status_objects": "§4.4.1 vs §7.2.6: DO 6E arrives with its own tag, so it starts 6E, not 4F",
+        # DO 6E and asserts the response *starts* with the child tag `4F`. It fails a
+        # line earlier now, on 5F52: it pins pico-openpgp's historical bytes.
+        "::test_openpgp_status_objects": "5F52 is a YubiKey 5.8.0's historical bytes, not the pico-openpgp ones pinned here; past it, §4.4.1 vs §7.2.6: DO 6E starts 6E, not 4F",
+        # 5F52 carries a YubiKey 5.8.0's historical bytes. The suite accepts those only
+        # from a card it knows is a YubiKey, and `is_yubikey` is never set.
+        "test_000_initial_card.py::test_historical_bytes": "5F52 is a YubiKey 5.8.0's historical bytes, which the suite accepts only from a card it knows is a YubiKey",
         # Replacing or changing a password does not drop the security status the
         # OLD one earned. Gnuk clears it, so this suite verifies PW1 no. 82 early,
         # then resets PW1 through the admin, then expects the private DOs shut.
@@ -209,13 +221,12 @@ DIVERGENCES: dict[str, dict[str, str]] = {
         "::test_private_do_0103_read_fail_with_pw1_81": "a replaced PW1 does not drop the old PW1.82 latch; a YubiKey 5.7.4 keeps it too",
         "::test_private_do_0104_read_fail_without_auth": "a replaced PW1 does not drop the old PW3 latch; a YubiKey 5.7.4 keeps it too",
         "::test_private_do_0104_read_fail_with_pw1": "a replaced PW1 does not drop the old PW3 latch; a YubiKey 5.7.4 keeps it too",
-        # Gnuk's own capability bits. The pattern pins byte 1 to one of Gnuk's
-        # four values and the DO's shape to Gnuk's build; RS-Key advertises a
-        # different set (it has no secure messaging, a different maximum
-        # challenge, and its own DO lengths), so the string cannot match and
-        # nothing about the mismatch is a defect. The capabilities RS-Key does
-        # claim are pinned by its own tests, not by this one.
-        "test_000_initial_card.py::test_extended_capabilities": "the pattern pins Gnuk's own capability bits, which RS-Key does not claim",
+        # C0 read alone is 6B00, as on a YubiKey 5.8.0, where the suite skips this.
+        # Past that, the pattern pins byte 1 to one of Gnuk's four values and the
+        # DO's shape to Gnuk's build; RS-Key advertises a different set (no secure
+        # messaging, a different maximum challenge, its own DO lengths), so the
+        # string could not match either, and nothing about that is a defect.
+        "test_000_initial_card.py::test_extended_capabilities": "C0 is 6B00 read alone, as on a YubiKey 5.8.0, where the suite skips this; past it the pattern pins Gnuk's own capability bits",
         # The three `_ok_with_pw3` cells are NOT listed: they pass, but not
         # because PW3 has any authority over `0101`/`0103` — it does not, on this
         # card or on a YubiKey 5.7.4 (VERIFY 83 alone answers 6982 to both, each
@@ -237,6 +248,14 @@ DIVERGENCES: dict[str, dict[str, str]] = {
         # because a YubiKey 5.7.4 does — measured, 3 runs. RS-Key answers 6B00 for
         # OpenPGP's 82 and 84 alike.
         "::test_openpgp_reset_code_and_pw_status": "§7.2.3 defines P2 81/83 only, so 82 is 6B00 (wrong P1-P2), not 6A88",
+        # A wrong password is 6982, a YubiKey 5.8.0's answer, where OpenPGP 3.4 §7.2.2
+        # says 63Cx. The suite's verify_pw1/verify_pw3 fall back to the factory
+        # password only on 63cx, so the first raises; the three after it sign on the
+        # PW1 status it would have left behind, and meet 6982 there.
+        "::test_openpgp_pin_put_data_and_change": "a wrong PW1 is 6982 as on a YubiKey 5.8.0; the suite's verify_pw1 falls back only on 63Cx (§7.2.2)",
+        "::test_openpgp_imported_ec_crypto": "PSO:CDS 6982: no PW1 status, which test_openpgp_pin_put_data_and_change leaves before its wrong-password 6982 stops it",
+        "::test_openpgp_imported_rsa_crypto": "PSO:CDS 6982: no PW1 status, which test_openpgp_pin_put_data_and_change leaves before its wrong-password 6982 stops it",
+        "::test_openpgp_keygen_public_key_round_trip": "PSO:CDS 6982: no PW1 status, which test_openpgp_pin_put_data_and_change leaves before its wrong-password 6982 stops it",
         # Reported firmware version. RS-Key reports `FW_VERSION` — a current YubiKey 5's
         # by default, `FW_VERSION=X.Y.Z` at build time — and the suite hardcodes its own
         # device's 5.7.0. One number, read through the Management DeviceInfo TLV and
@@ -249,6 +268,26 @@ DIVERGENCES: dict[str, dict[str, str]] = {
         # reaches the witness comparison that would answer 6984. 6A80 is the
         # bad-data-field code for a witness the card never issued.
         "::test_piv_management_auth_flow_binding": "the replayed witness is refused by challenge kind (6A80) before the comparison that answers 6984",
+        # GET PUBLIC KEY on an empty slot: the suite wants 6581 only from a card it
+        # knows is a YubiKey, and this harness never says so. RS-Key answers 6581 as
+        # a YubiKey 5.8.0 does — all three slots, RSA and P-256 attributes, two rounds.
+        "test_000_initial_card.py::test_public_key_1": "6581 for an empty slot, as a YubiKey 5.8.0 answers; the suite wants 6A88 from a card it does not know is one",
+        "test_000_initial_card.py::test_public_key_2": "6581 for an empty slot, as a YubiKey 5.8.0 answers; the suite wants 6A88 from a card it does not know is one",
+        "test_000_initial_card.py::test_public_key_3": "6581 for an empty slot, as a YubiKey 5.8.0 answers; the suite wants 6A88 from a card it does not know is one",
+        # A DO nested in 6E answers GET DATA 6B00 on its own, as on a YubiKey 5.8.0,
+        # key or no key; the suite reads these one by one and skips each on a card
+        # it knows is a YubiKey. Each reason also names what fails past the read.
+        "test_000_initial_card.py::test_fingerprint_": "C5 and C7-C9 are 6B00 read alone, as on a YubiKey 5.8.0, where the suite skips this; past it `_all` wants Gnuk's three entries, C5 has four",
+        "test_000_initial_card.py::test_ca_fingerprint_": "C6 and CA-CC are 6B00 read alone, as on a YubiKey 5.8.0, where the suite skips this; past it `_all` wants Gnuk's three entries, C6 has four",
+        "test_000_initial_card.py::test_timestamp_": "CD and CE-D0 are 6B00 read alone, as on a YubiKey 5.8.0, where the suite skips this; past it `_all` wants Gnuk's three entries, CD has four",
+        "test_000_initial_card.py::test_key_attributes_": "C1-C3 are 6B00 read alone, as on a YubiKey 5.8.0, where the suite skips this; past it RSA-2048 reads 01 0800 0011 00, the suite wants Gnuk's 0020",
+        "test_091_reset_attr.py::Test_Reset_ATTRS::test_keyattr_reset_": "the PUT restores the attribute; C1-C3 read alone after it are 6B00, as on a YubiKey 5.8.0, where the suite skips the read; past it the card stores 0011 for the 0020 it was sent",
+    },
+    "ykman": {
+        # A capacity RS-Key keeps on purpose: more accounts than a YubiKey holds.
+        "cli/test_oath.py::TestOATH::test_add_max_creds": "RS-Key holds 255 OATH accounts; the suite wants a YubiKey 5.7's 64, the 65th refused",
+        # brainpoolP512r1 (OID tail 01 01 0D): no no_std arithmetic for it yet.
+        "\\x01\\x01\\r]": "brainpoolP512r1 is not offered: no no_std arithmetic for it (docs/guides/openpgp.md)",
     },
 }
 
@@ -263,6 +302,7 @@ DIVERGENCES: dict[str, dict[str, str]] = {
 # after upstream deleted it. Removing an entry is a claim that RS-Key grew the
 # feature, and the tests are here to check that claim.
 INAPPLICABLE: dict[str, dict[str, str]] = {
+    "python-fido2": {},
     "fido": {},
     "openpgp": {
         # Gnuk's admin-less mode: setting PW1 equal to PW3 makes PW1 authorize
@@ -294,6 +334,16 @@ INAPPLICABLE: dict[str, dict[str, str]] = {
         "030_kdfsingle/test_066_adminfull_kdfsingle.py": "clearing PW3 to empty: §4.3.1 sets an 8-character minimum",
         "030_kdfsingle/test_076_adminless_kdfsingle.py": "clearing PW3 to empty: §4.3.1 sets an 8-character minimum",
     },
+    "ykman": {
+        "test_hsmauth.py": "YubiHSM Auth: RS-Key has no hsmauth application",
+        "test_securitydomain.py": "the GlobalPlatform security domain: RS-Key has no SCP03/SCP11",
+        "test_scp.py": "SCP03/SCP11 secure channels: RS-Key has none",
+        # This runner's limit, not RS-Key's: it serves CCID and hides HID, and on USB
+        # ykman reaches OTP over the keyboard interface. They stay deselected here.
+        "[OtpConnection": "OTP over the keyboard HID interface: the socket shim serves CCID only",
+        "test_interfaces.py": "reopens every USB interface, HID ones included",
+        "cli/test_otp.py::TestSlotCalculate": "`ykman otp calculate` on USB needs the OTP HID connection",
+    },
 }
 
 # Sections moved to the end of the run. `040_pcsc_extra` switches applets (PIV,
@@ -303,17 +353,18 @@ INAPPLICABLE: dict[str, dict[str, str]] = {
 # because nothing comes after it, and keeps a listed divergence from failing seven
 # tests in `090_finalize` that have nothing to do with it.
 LAST: dict[str, tuple[str, ...]] = {
+    "python-fido2": (),
     "fido": (),
     "openpgp": ("040_pcsc_extra/",),
+    "ykman": (),
 }
 
 
 def _match(patterns, nodeid):
-    """The first pattern that is a substring of `nodeid`, with its reason."""
-    for pattern, reason in patterns.items():
-        if pattern in nodeid:
-            return pattern, reason
-    return None, None
+    """Longest substring pattern and reason; `$` anchors the end of the node id."""
+    hits = [(pattern, reason) for pattern, reason in patterns.items()
+            if (nodeid.endswith(pattern[:-1]) if pattern.endswith("$") else pattern in nodeid)]
+    return max(hits, key=lambda hit: len(hit[0]), default=(None, None))
 
 
 class Plugin:
@@ -330,6 +381,11 @@ class Plugin:
         _install_power_cycle()
         _install_reboot()
         config.addinivalue_line("markers", "rsk_divergence: expected, and why")
+
+    def pytest_fixture_setup(self, fixturedef, request):
+        if self.suite == "python-fido2" and fixturedef.argname == "dev_manager":
+            if not request.config.getoption("no_device"):
+                _install_fido2(fixturedef.func.__globals__["DeviceManager"])
 
     def pytest_collection_modifyitems(self, config, items):
         import pytest
@@ -365,6 +421,31 @@ class Plugin:
         terminalreporter.write_sep("=", "RS-Key divergences (expected, xfail)")
         for nodeid, reason in self.marked:
             terminalreporter.write_line(f"  {nodeid}\n      {reason}")
+
+
+def _install_fido2(manager):
+    """Supply the operator's selection and replug in the isolated USB/IP guest."""
+    from dataclasses import replace
+    from fido2.ctap2 import Ctap2
+    from _device import find_fido2
+
+    def select(self):
+        device = find_fido2()
+        if device is None:
+            raise RuntimeError("python-fido2: no RS-Key USB/IP device")
+        Ctap2(device).reset()
+        return device
+
+    def reconnect(self):
+        before = self.info
+        emu.power_cycle()
+        after = self.info
+        assert replace(before, enc_identifier=None, enc_cred_store_state=None) == replace(
+            after, enc_identifier=None, enc_cred_store_state=None)
+        return self.device
+
+    manager._select = select
+    manager._reconnect_usb = reconnect
 
 
 def _install_power_cycle():
@@ -418,12 +499,60 @@ def _install_reboot():
     device.reboot = reboot
 
 
+# What ykman's PC/SC half takes for a USB YubiKey: it reads the kind off the reader name.
+YKMAN_READER = "Yubico YubiKey OTP+FIDO+CCID 00 00"
+
+
+def _install_ykman():
+    """Point ykman at the emulator alone, and return the `--device` its fixtures want:
+    a reader named like a YubiKey's, and HID backends that list nothing, since they
+    would reach every real key on this host."""
+    emu.EmuReader.name = YKMAN_READER
+    # ykman's CLI records every serial it meets; the emulator's is none of the user's.
+    os.environ["XDG_DATA_HOME"] = tempfile.mkdtemp(prefix="rsk-ykman-")
+    atexit.register(shutil.rmtree, os.environ["XDG_DATA_HOME"], True)
+    if sys.platform == "darwin":
+        _stub_macos_hid()
+    import ykman.device
+    from yubikit.core.fido import FidoConnection
+    from yubikit.core.otp import OtpConnection
+
+    for kind in (OtpConnection, FidoConnection):
+        ykman.device._CONNECTION_LIST_MAPPING[kind] = lambda: []
+    devices = ykman.device.list_all_devices()
+    if len(devices) != 1:
+        print(f"ykman sees {len(devices)} devices over the emulator socket: is tools/emu up?")
+        return None
+    return ["--device", str(devices[0][1].serial)]
+
+
+def _stub_macos_hid():
+    """nix Python's libffi aborts on macOS (`closures.c:258`) at the ctypes callbacks
+    fido2's and ykman's macOS HID backends build on import; neither is used here."""
+
+    def refuse(*_):
+        raise OSError("HID is not served over the emulator socket")
+
+    fido = types.ModuleType("fido2.hid.macos")
+    fido.list_descriptors = lambda: []
+    fido.get_descriptor = refuse
+    fido.open_connection = refuse
+    ykman_hid = types.ModuleType("ykman.hid.macos")
+    ykman_hid.list_devices = lambda: []
+    sys.modules.update({"fido2.hid.macos": fido, "ykman.hid.macos": ykman_hid})
+
+
 def run(suite, extra):
     import pytest
 
     rel, shim = SUITES[suite]
     if shim:
         emu.install()
+    if suite == "ykman":
+        device = _install_ykman()
+        if device is None:
+            return 1
+        extra = [*device, *extra]
     print(f"== {suite}: {rel}{' (over the emulator socket)' if shim else ''}")
     return pytest.main([os.path.join(ROOT, rel), *extra], plugins=[Plugin(suite)])
 

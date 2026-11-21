@@ -7,6 +7,9 @@ use rsk_fs::storage::ram::RamStorage;
 
 use super::*;
 
+#[path = "keydev_restart_tests.rs"]
+mod restarts;
+
 struct LcgRng(u64);
 impl Rng for LcgRng {
     fn fill(&mut self, buf: &mut [u8]) {
@@ -27,6 +30,7 @@ fn dev() -> Device<'static> {
         serial_hash: &[0xAB; 32],
         serial_id: &[1, 2, 3, 4, 5, 6, 7, 8],
         otp_key: None,
+        latched: false,
     }
 }
 
@@ -41,6 +45,91 @@ fn fs() -> Fs<RamStorage> {
     Fs::new(RamStorage::new())
 }
 
+#[test]
+fn key_generation_retries_an_invalid_scalar_and_refuses_an_unpersisted_key() {
+    struct RejectFirst(usize);
+    impl Rng for RejectFirst {
+        fn fill(&mut self, out: &mut [u8]) {
+            if out.len() == 32 {
+                out.fill(if self.0 == 0 { 0xff } else { 1 });
+                self.0 += 1;
+            } else {
+                out.fill(0x22);
+            }
+        }
+    }
+    let mut fs = fs();
+    let mut rng = RejectFirst(0);
+    let key = load_or_generate(&dev(), None, &mut fs, &mut rng).unwrap();
+    assert_eq!(rng.0, 2);
+    assert_eq!(key.to_bytes().as_slice(), &[1; 32]);
+    let mut record = [0; GCM_LEN];
+    assert_eq!(fs.read_key(EF_DEVCERT_KEY, &mut record), Some(GCM_LEN));
+    assert_eq!(&record[1..13], &[0x22; 12]);
+    assert_eq!(
+        load_or_generate(&dev(), None, &mut fs, &mut rng)
+            .unwrap()
+            .to_bytes(),
+        key.to_bytes()
+    );
+    assert_eq!(rng.0, 2);
+
+    let (backend, medium) = Cut::new();
+    let mut fs = Fs::new(backend);
+    fs.scan();
+    medium.arm(0);
+    assert!(load_or_generate(&dev(), None, &mut fs, &mut LcgRng(7)).is_none());
+    assert_eq!(medium.value(EF_DEVCERT_KEY.get()), None);
+    assert_eq!(fs.write_gen(), 1);
+    medium.arm(u32::MAX);
+    assert!(load_or_generate(&dev(), None, &mut fs, &mut LcgRng(7)).is_some());
+}
+
+#[test]
+fn otp_tagged_legacy_cbc_keeps_its_scalar_when_migrated_to_gcm() {
+    let mut fs = fs();
+    let mut iv = [0; 16];
+    iv.copy_from_slice(&otp_dev().serial_hash[..16]);
+    let key = otp_dev().derive_kbase();
+    let mut cipher = rsk_secret::Secret::new([0x11; 32]);
+    aes_encrypt(key.expose(), &iv, Mode::Cbc, cipher.expose_mut()).unwrap();
+    let mut legacy = [0; 33];
+    legacy[0] = TAG_OTP;
+    legacy[1..].copy_from_slice(cipher.expose());
+    fs.put_key(EF_DEVCERT_KEY, Sealed::wrap(&legacy)).unwrap();
+    let mut rng = LcgRng(7);
+    let before = load_or_generate(&otp_dev(), None, &mut fs, &mut rng).unwrap();
+    assert_eq!(before.to_bytes().as_slice(), &[0x11; 32]);
+    legacy[0] = TAG_OTP + 1;
+    fs.put_key(EF_DEVCERT_KEY, Sealed::wrap(&legacy)).unwrap();
+    assert!(load_or_generate(&otp_dev(), None, &mut fs, &mut rng).is_none());
+    legacy[0] = TAG_OTP;
+    fs.put_key(EF_DEVCERT_KEY, Sealed::wrap(&legacy)).unwrap();
+    fs.put(rsk_fs::EF_HARDENED, &[1]).unwrap();
+    assert!(!migrate_kbase(&otp_dev(), &mut fs, &mut rng));
+    assert_eq!(fs.read(rsk_fs::EF_HARDENED, &mut [0; 1]), Some(1));
+    assert_eq!(fs.size(EF_DEVCERT_KEY.get()), Some(GCM_LEN));
+    assert_eq!(
+        load_or_generate(&otp_dev(), None, &mut fs, &mut rng)
+            .unwrap()
+            .to_bytes(),
+        before.to_bytes()
+    );
+    let generation = fs.write_gen();
+    assert!(!migrate_kbase(&otp_dev(), &mut fs, &mut rng));
+    assert_eq!(fs.write_gen(), generation);
+}
+
+#[test]
+fn an_empty_device_key_record_refuses_without_minting_or_panicking() {
+    let mut fs = fs();
+    fs.put_key(EF_DEVCERT_KEY, Sealed::wrap(&[])).unwrap();
+    let generation = fs.write_gen();
+    assert!(load_or_generate(&otp_dev(), None, &mut fs, &mut LcgRng(7)).is_none());
+    assert_eq!(fs.write_gen(), generation);
+    assert_eq!(fs.size(EF_DEVCERT_KEY.get()), Some(0));
+}
+
 /// Manually CBC-seal a scalar the pre-#16 way (fixed serial-hash IV, bare 32
 /// bytes) so the migration path can be exercised without the old code.
 fn write_legacy_cbc(dev: &Device, fs: &mut Fs<RamStorage>, scalar: &[u8; 32]) {
@@ -48,8 +137,8 @@ fn write_legacy_cbc(dev: &Device, fs: &mut Fs<RamStorage>, scalar: &[u8; 32]) {
     iv.copy_from_slice(&dev.serial_hash[..16]);
     let mut ct = *scalar;
     let mut kbase = dev.without_otp().derive_kbase();
-    aes_encrypt(&kbase, &iv, Mode::Cbc, &mut ct).unwrap();
-    kbase.zeroize();
+    aes_encrypt(kbase.expose(), &iv, Mode::Cbc, &mut ct).unwrap();
+    kbase.wipe();
     fs.put_key(EF_DEVCERT_KEY, Sealed::wrap(&ct)).unwrap();
 }
 
@@ -81,6 +170,10 @@ fn fresh_key_is_gcm_sealed_and_authenticated() {
     // malleability): the GCM tag rejects it, so the key no longer loads.
     let mut blob = [0u8; GCM_LEN];
     assert_eq!(fs.read_key(EF_DEVCERT_KEY, &mut blob), Some(GCM_LEN));
+    blob[0] ^= 1;
+    fs.put_key(EF_DEVCERT_KEY, Sealed::wrap(&blob)).unwrap();
+    assert!(load_or_generate(&otp_dev(), None, &mut fs, &mut rng).is_none());
+    blob[0] ^= 1;
     blob[1 + NONCE_LEN] ^= 0x01;
     fs.put_key(EF_DEVCERT_KEY, Sealed::wrap(&blob)).unwrap();
     assert!(load_or_generate(&otp_dev(), None, &mut fs, &mut rng).is_none());
@@ -103,6 +196,41 @@ fn gcm_keydev_migrates_from_preotp_to_otp_arm() {
     let migrated = load_or_generate(&otp_dev(), None, &mut fs, &mut rng).unwrap();
     assert_eq!(migrated.to_bytes(), key.to_bytes());
     assert!(load_or_generate(&dev(), None, &mut fs, &mut rng).is_none());
+}
+
+/// Past the fuse latch a device key only the pre-OTP arm opens was planted, GCM or
+/// legacy CBC: it neither loads nor moves, and nothing mints over it.
+#[test]
+fn past_the_latch_no_pre_otp_keydev_opens_or_moves() {
+    let latched = Device {
+        latched: true,
+        ..otp_dev()
+    };
+    type Plant = fn(&mut Fs<RamStorage>);
+    let plants: [(&str, Plant); 2] = [
+        ("GCM", |fs| {
+            load_or_generate(&dev(), None, fs, &mut LcgRng(5)).unwrap();
+        }),
+        ("CBC", |fs| write_legacy_cbc(&dev(), fs, &[0x33; 32])),
+    ];
+    for (shape, plant) in plants {
+        let mut fs = fs();
+        let mut rng = LcgRng(7);
+        plant(&mut fs);
+        let mut before = [0u8; GCM_LEN];
+        let n = fs.read(EF_DEVCERT_KEY.get(), &mut before).unwrap();
+        assert!(
+            load_or_generate(&latched, None, &mut fs, &mut rng).is_none(),
+            "{shape}: a planted device key loaded past the latch"
+        );
+        assert!(!migrate_kbase(&latched, &mut fs, &mut rng), "{shape}");
+        let mut after = [0u8; GCM_LEN];
+        assert_eq!(fs.read(EF_DEVCERT_KEY.get(), &mut after), Some(n));
+        assert_eq!(
+            after, before,
+            "{shape}: a planted device key moved past the latch"
+        );
+    }
 }
 
 #[test]
@@ -151,7 +279,10 @@ fn the_boot_pass_re_arms_the_lap_before_it_supersedes_a_pre_otp_keydev() {
         "fixture: an earlier boot latched the marker"
     );
     medium.clear_ops();
-    migrate_kbase(&otp_dev(), &mut fs, &mut rng);
+    assert!(
+        !migrate_kbase(&otp_dev(), &mut fs, &mut rng),
+        "the key it moved is not left"
+    );
     medium.assert_re_armed_before(EF_DEVCERT_KEY.get(), |_| false, "migrate_kbase");
     assert!(
         !fs.has_data(rsk_fs::EF_HARDENED),
@@ -172,7 +303,10 @@ fn the_boot_pass_re_arms_the_lap_before_it_supersedes_a_pre_otp_keydev() {
     let key = load_or_generate(&dev(), None, &mut fs, &mut rng).unwrap();
     fs.put(rsk_fs::EF_HARDENED, &[1]).unwrap();
     medium.refuse(Some(rsk_fs::EF_HARDENED));
-    migrate_kbase(&otp_dev(), &mut fs, &mut rng);
+    assert!(
+        migrate_kbase(&otp_dev(), &mut fs, &mut rng),
+        "a refused re-seal is left"
+    );
     assert!(
         load_or_generate(&dev(), None, &mut fs, &mut rng).is_some(),
         "the re-arm never landed, so the pre-OTP record must stay in force instead \
@@ -229,4 +363,55 @@ fn an_absent_devcert_key_is_still_minted_and_persisted() {
             "and the next call loads it rather than minting again"
         );
     }
+}
+
+/// A read the flash failed is not a key with nothing left in it: whichever read the
+/// fault lands on, or every read, the pass moved the pre-OTP key or reports it.
+#[test]
+fn a_faulted_read_of_a_pre_otp_keydev_is_never_reported_clear() {
+    for fault in [None, Some(0), Some(1), Some(2)] {
+        let (backend, medium) = rsk_fs::storage::faults::ProbeStuck::new();
+        let mut fs = Fs::new(backend);
+        fs.scan();
+        let mut rng = LcgRng(5);
+        load_or_generate(&dev(), None, &mut fs, &mut rng).unwrap();
+        let before = medium.value(EF_DEVCERT_KEY.get());
+        match fault {
+            None => medium.stick(Some(EF_DEVCERT_KEY.get())),
+            Some(skip) => medium.stick_after(EF_DEVCERT_KEY.get(), skip),
+        }
+        let left = migrate_kbase(&otp_dev(), &mut fs, &mut rng);
+        medium.stick(None);
+        assert!(
+            left || medium.value(EF_DEVCERT_KEY.get()) != before,
+            "fault {fault:?}: reported clear over the pre-OTP key it never moved"
+        );
+    }
+}
+
+/// A GCM-length record neither arm opens (corrupt, or restored from another chip)
+/// is not counted: no boot could ever move it, so counting it would refuse the
+/// page-58 lock for good with a hint that cannot help.
+#[test]
+fn a_keydev_no_arm_opens_is_not_reported_left() {
+    let mut fs = fs();
+    fs.put_key(EF_DEVCERT_KEY, Sealed::wrap(&[0xEE; GCM_LEN]))
+        .unwrap();
+    assert!(!migrate_kbase(&otp_dev(), &mut fs, &mut LcgRng(5)));
+}
+
+#[test]
+fn a_legacy_otp_width_with_an_unknown_tag_is_not_a_decryption_candidate() {
+    assert!(cbc_open(&dev(), &[0; 33]).is_none());
+}
+
+#[test]
+fn migrating_an_absent_device_certificate_key_is_a_noop() {
+    let mut fs = fs();
+    let mut rng = LcgRng(7);
+    let generation = fs.write_gen();
+    assert!(!migrate_kbase(&otp_dev(), &mut fs, &mut rng));
+    assert_eq!(fs.write_gen(), generation);
+    assert_eq!(rng.0, 7);
+    assert!(!fs.has_key(EF_DEVCERT_KEY));
 }

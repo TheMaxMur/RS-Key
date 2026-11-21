@@ -27,6 +27,7 @@ fn dispatch_seeded(data: &[u8], out: &mut [u8], with_token: bool) -> usize {
         serial_hash: &[0xAB; 32],
         serial_id: &[1, 2, 3, 4, 5, 6, 7, 8],
         otp_key: None,
+        latched: false,
     };
     let mut rng = SeqRng(1);
     if with_token {
@@ -85,6 +86,33 @@ fn dispatch_empty_is_invalid_length() {
 }
 
 #[test]
+fn dispatch_without_response_space_has_no_effect() {
+    let mut fs = Fs::new(RamStorage::new());
+    let mut state = FidoState::new();
+    state.paut.in_use = true;
+    state.paut.issued_at_ms = 0;
+    let mut rng = SeqRng(1);
+    let mut presence = AlwaysConfirm;
+    let mut ctx = Ctx {
+        dev: Device {
+            serial_hash: &[0xAB; 32],
+            serial_id: &[1; 8],
+            otp_key: None,
+            latched: false,
+        },
+        fs: &mut fs,
+        rng: &mut rng,
+        state: &mut state,
+        now_ms: u64::MAX,
+        presence: &mut presence,
+    };
+    assert_eq!(process_cbor(&mut ctx, &[consts::CTAP_RESET], &mut []), 0);
+    assert!(state.paut.in_use);
+    assert_eq!(fs.write_gen(), 0);
+    assert_eq!(rng.0, 1);
+}
+
+#[test]
 fn dispatch_get_assertion_routes_to_handler() {
     // getAssertion with empty params is malformed CBOR.
     let mut out = [0u8; 64];
@@ -135,3 +163,88 @@ fn dispatch_get_info_carries_the_encrypted_members_once_a_token_exists() {
         "the declared count must consume the map"
     );
 }
+
+/// Whether the live audit-journal window records `ev`, read as the panel reads it.
+/// The fault sweeps ask it: the journal swallows its own write failures, so a
+/// command's `Ok` says nothing about whether its entry landed.
+pub(crate) fn journals<S: Storage>(dev: &Device, fs: &mut Fs<S>, ev: u8) -> bool {
+    let mut seen = false;
+    crate::journal::for_each_event(dev, fs, |e| {
+        seen |= e.event == ev;
+        !seen
+    });
+    seen
+}
+
+/// Tests compare secrets by value: the bytes of a `Secret`, an `Option` of one or a
+/// reference to one, and plain arrays passed through as they are. Test-only.
+pub(crate) trait Bare {
+    type Out: PartialEq + core::fmt::Debug;
+    fn bare(self) -> Self::Out;
+}
+impl<const N: usize> Bare for rsk_secret::Secret<[u8; N]> {
+    type Out = [u8; N];
+    fn bare(self) -> [u8; N] {
+        *self.expose()
+    }
+}
+impl<const N: usize> Bare for &rsk_secret::Secret<[u8; N]> {
+    type Out = [u8; N];
+    fn bare(self) -> [u8; N] {
+        *self.expose()
+    }
+}
+impl<const N: usize> Bare for Option<rsk_secret::Secret<[u8; N]>> {
+    type Out = Option<[u8; N]>;
+    fn bare(self) -> Option<[u8; N]> {
+        self.map(|s| *s.expose())
+    }
+}
+impl<const N: usize> Bare for Option<&rsk_secret::Secret<[u8; N]>> {
+    type Out = Option<[u8; N]>;
+    fn bare(self) -> Option<[u8; N]> {
+        self.map(|s| *s.expose())
+    }
+}
+impl<const N: usize> Bare for [u8; N] {
+    type Out = [u8; N];
+    fn bare(self) -> [u8; N] {
+        self
+    }
+}
+impl<const N: usize> Bare for &[u8; N] {
+    type Out = [u8; N];
+    fn bare(self) -> [u8; N] {
+        *self
+    }
+}
+impl<const N: usize> Bare for Option<[u8; N]> {
+    type Out = Option<[u8; N]>;
+    fn bare(self) -> Option<[u8; N]> {
+        self
+    }
+}
+pub(crate) fn bare<T: Bare>(x: T) -> T::Out {
+    x.bare()
+}
+
+/// What a test of the default build takes a fresh store to be, stated so the same test
+/// runs on the `always-uv` flavour: alwaysUv off, as `toggleAlwaysUv` would leave it,
+/// unless the test set it first. A test of that flavour's own default leaves this out.
+pub(crate) fn uv_optional<S: Storage>(fs: &mut Fs<S>) {
+    if cfg!(feature = "always-uv") && !fs.has_data(crate::consts::EF_ALWAYS_UV) {
+        fs.put(crate::consts::EF_ALWAYS_UV, &[0]).unwrap();
+    }
+}
+
+/// Bytes from a hex vector — how the ARKG and previewSign references are written.
+#[cfg(feature = "preview-sign")]
+pub(crate) fn unhex(s: &str) -> std::vec::Vec<u8> {
+    (0..s.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap())
+        .collect()
+}
+
+#[path = "coverage_api_tests.rs"]
+mod coverage_api;

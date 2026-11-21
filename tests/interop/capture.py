@@ -11,7 +11,8 @@ mutating crypto-parity controls live in `parity.py`).
 Both keys can stay plugged: a genuine YubiKey and the RS-Key `VIDPID=Yubikey5`
 build are told apart by the **`RSK` marker** the RS-Key build carries in its USB
 product string, its FIDO HID descriptor, and its PC/SC reader name (a real key
-never has it), while ykman cells target by `--device <serial>`. Capture each:
+never has it — nor `RS-Key`, which the default identity and the emulator carry
+instead), while ykman cells target by `--device <serial>`. Capture each:
 
     python tests/interop/capture.py --label real --serial <yk-serial>  --out real.json
     python tests/interop/capture.py --label rsk  --serial <rsk-serial> --out rsk.json
@@ -43,6 +44,7 @@ sys.path.insert(0, os.path.dirname(_HERE))  # tests/  → ctaphid
 import subprocess  # noqa: E402
 
 import normalize as nz  # noqa: E402
+from _device import RSK_MARKERS  # noqa: E402
 
 # Env keys the nix dev-shell exports that would sabotage a Homebrew CLI child:
 # PYTHONPATH points ykman's own python at the nix site-packages (a mismatched,
@@ -66,7 +68,6 @@ def run(cmd, timeout=25, stdin=None):
 
 
 RSK_AAGUID_PREFIX = "2479c7bf"  # RS-Key's self-assigned AAGUID (crates/rsk-fido/src/consts.rs)
-RSK_MARKER = "RSK"  # RS-Key's product/reader marker; a genuine YubiKey never carries it
 FIDO_USAGE_PAGE = 0xF1D0
 MGMT_AID = [0xA0, 0x00, 0x00, 0x05, 0x27, 0x47, 0x11, 0x17]
 
@@ -82,7 +83,7 @@ def _bin(name):
 
 
 def _is_rsk(text):
-    return RSK_MARKER in (text or "")
+    return any(m in (text or "") for m in RSK_MARKERS)
 
 
 def cell(parsed=None, raw="", status="ok", transport="", touch=False, mutating=False, detail=""):
@@ -220,6 +221,12 @@ def c_usb_descriptors(label):
     """USB descriptor fields straight from hidapi's enumeration of the matched FIDO
     interface — portable and reliable where macOS `system_profiler` lists nothing
     for a hub-attached key. `release_number` is the bcdDevice."""
+    try:
+        import hid
+    except Exception:
+        hid = None
+    if getattr(hid, "NO_USB_STACK", False):
+        return cell(status="skip", transport="usb", detail="socket transport: no USB descriptors")
     d = fido_dict(label)
     if not d:
         return cell(status="skip", transport="usb", detail="no matching FIDO HID device")
@@ -410,6 +417,50 @@ def _kill_scdaemon():
         run([gpgconf, "--kill", "scdaemon"])
 
 
+# Dropped from a baseline: the device's own serial, and the reader name, which is
+# the host's PC/SC naming. encIdentifier and encCredStoreState are re-encrypted
+# under a fresh IV per call, so only whether the key emits them stays.
+BASELINE_DROP = ("mgmt.serial", "usb.serialNumber", "ccid.reader")
+BASELINE_PRESENCE = ("fido.getinfo.key_0x19", "fido.getinfo.key_0x1e")
+
+
+def strip_for_baseline(cells):
+    """Drop what identifies one device or changes per call, keeping presence where
+    presence is behaviour. The raw tool output carries all of it, so it goes too."""
+    for c in cells.values():
+        c["raw"] = ""
+        for key in BASELINE_DROP:
+            c["parsed"].pop(key, None)
+        for key in BASELINE_PRESENCE:
+            if key in c["parsed"]:
+                c["parsed"][key] = "<present>"
+    return cells
+
+
+def capture_baseline(label):
+    """The four identity cells a frozen baseline keeps, read over the raw transports
+    alone: the applet-content cells record secrets, and asking ykman which devices
+    exist would reach none under `tests/emu.py` and could mix in a second key."""
+    info = raw_getinfo(label)
+    aaguid = nz.uuid_str(info[0x03]) if info and 0x03 in info else None
+    identity_guard(label, "n/a", aaguid)
+    cells = strip_for_baseline({
+        "usb_descriptors": c_usb_descriptors(label),
+        "fido_getinfo": c_fido_getinfo(label, info),
+        "ccid_atr": c_ccid_atr(label),
+        "mgmt_tlv": c_mgmt_tlv(label),
+    })
+    meta = {
+        "label": label,
+        "baseline": True,
+        "date": datetime.date.today().isoformat(),
+        "fido_aaguid": aaguid,
+        "fw": cells["mgmt_tlv"]["parsed"].get("mgmt.version"),
+        "bcdDevice": cells["usb_descriptors"]["parsed"].get("usb.bcdDevice"),
+    }
+    return {"meta": meta, "cells": cells}
+
+
 def capture(label, serial):
     info = raw_getinfo(label)
     aaguid = nz.uuid_str(info[0x03]) if info and 0x03 in info else None
@@ -468,11 +519,17 @@ def main():
     ap.add_argument("--label", required=True, choices=["real", "rsk"])
     ap.add_argument("--serial", help="ykman serial to target (auto if a single device is plugged)")
     ap.add_argument("--out", help="write snapshot JSON here (default: stdout)")
+    ap.add_argument("--baseline", action="store_true",
+                    help="only the identity cells a frozen baseline keeps, serials stripped")
     args = ap.parse_args()
 
-    serial = resolve_serial(args.serial)
-    print(f"capturing {args.label} (serial {serial})…")
-    snap = capture(args.label, serial)
+    if args.baseline:
+        print(f"capturing {args.label} baseline…")
+        snap = capture_baseline(args.label)
+    else:
+        serial = resolve_serial(args.serial)
+        print(f"capturing {args.label} (serial {serial})…")
+        snap = capture(args.label, serial)
 
     n = {s: sum(1 for c in snap["cells"].values() if c["status"] == s) for s in ("ok", "skip", "error")}
     print(f"  cells: {n['ok']} ok, {n['skip']} skip, {n['error']} error")
@@ -483,7 +540,7 @@ def main():
     text = json.dumps(snap, indent=2, default=_jsonable)
     if args.out:
         with open(args.out, "w") as f:
-            f.write(text)
+            f.write(text + "\n")
         print(f"  wrote {args.out}")
     else:
         print(text)

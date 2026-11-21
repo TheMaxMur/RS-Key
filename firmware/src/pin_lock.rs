@@ -44,7 +44,7 @@ pub struct Boot {
     /// It was a warm reset (`sys_reset`), not a power-on: anything keying on "just
     /// powered up" must refuse to trust the restarted uptime.
     pub warm: bool,
-    /// The clientPIN soft lock as of the last CBOR dispatch before that reset.
+    /// The clientPIN soft lock as of the last FIDO dispatch before that reset.
     pub lock: PinLock,
 }
 
@@ -52,13 +52,6 @@ pub struct Boot {
 /// Refines `RSKeyBootHardening!TheWholeLockRides` — SEC-BOOT-002.
 pub fn set(lock: PinLock) {
     rp_pac::WATCHDOG.scratch2().write_value(encode(lock));
-}
-
-/// Was this a warm reset, without consuming the tag? [`restore_and_arm`] must run
-/// exactly once, so anything that needs the cold/warm distinction *before* the CTAP
-/// handler is built (the Yubico-OTP power-up bump) peeks here instead.
-pub fn was_warm_boot() -> bool {
-    decode(rp_pac::WATCHDOG.scratch2().read()).warm
 }
 
 /// Read what the last reset left, then re-arm the tag for this power cycle so the

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 RS-Key contributors
 
-#![no_main]
+#![cfg_attr(not(test), no_main)]
 
 //! Stateful `Fs` fuzzing against a shadow model. `fs_meta` parses one corrupt
 //! blob; this one drives an attacker-chosen *sequence* of file-system
@@ -19,13 +19,14 @@
 
 use std::collections::{BTreeSet, HashMap};
 
-use libfuzzer_sys::fuzz_target;
+#[cfg(not(test))]
+use libfuzzer_sys as fuzzing;
 use rsk_fs::storage::ram::RamStorage;
 use rsk_fs::{EF_META, Fs};
 
 const META_MAX: usize = 1024;
 
-fuzz_target!(|data: &[u8]| {
+pub(crate) fn exercise(data: &[u8]) {
     let mut fs = Fs::new(RamStorage::new());
     fs.scan();
     let mut model: HashMap<u16, Vec<u8>> = HashMap::new();
@@ -140,4 +141,7 @@ fuzz_target!(|data: &[u8]| {
             }
         }
     }
-});
+}
+
+#[cfg(not(test))]
+fuzzing::fuzz_target!(|data: &[u8]| exercise(data));

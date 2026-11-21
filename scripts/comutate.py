@@ -24,7 +24,7 @@ and how it fell is the point of writing exclusions down. The stated ground was
 that two of its three defended sites live in `firmware/`, which has no host
 tests by construction. Only one did: the scratch-word carry's model conjunct is
 `lock' = recorded`, and that assignment is `restore_pin_lock` at
-crates/rsk-fido/src/state.rs:449-452 — `firmware/src/pin_lock.rs` holds the
+crates/rsk-fido/src/state.rs:568-571 — `firmware/src/pin_lock.rs` holds the
 register encode, not the restore. The marker-after-lap order really was in
 `firmware/`, where a patch could not have scored a kill in any case since a
 build failure is classified `build-broke` below, so it was lifted into
@@ -86,7 +86,7 @@ SUCCESSFUL` is the only thing that verdict is read off now; anything else is
 
 Three modes:
 
-* `--lint` — the cheap closed-world half, a `check.sh` row. Every `Mut_*.cfg`
+* `--lint` — the cheap closed-world half, a gate row. Every `Mut_*.cfg`
   has exactly one entry and vice versa; every patch anchor resolves exactly
   once in the current tree (drifted code fails loudly instead of patching the
   wrong place); every patch names a slice and an expected verdict; the pending
@@ -110,6 +110,7 @@ sequence proofs' own falsifiability is measured by their own table).
 """
 
 import functools
+import hashlib
 import pathlib
 import re
 import shutil
@@ -988,19 +989,22 @@ def host_triple() -> str:
     return re.search(r"^host: (\S+)$", out.stdout, re.M).group(1)
 
 
-def worktree_path(bug: str) -> pathlib.Path:
-    """Where one comutant is measured.
+def worktree_path(root: pathlib.Path, bug: str) -> pathlib.Path:
+    """Where one comutant is measured: a directory per checkout and bug. Keyed by
+    the bug alone, two gates measuring one bug at once shared it: each removed the
+    other's live worktree or died adding its own ("already exists").
 
     A function rather than a literal because `test_comutate.py` has to arrange a
     stale registration at this exact path; a second typing of it leaves that case
     green over the defect the moment the path moves, which was measured.
     """
-    return pathlib.Path("/tmp") / f"rsk-comutant-{bug}"
+    checkout = hashlib.sha256(str(root.resolve()).encode()).hexdigest()[:12]
+    return pathlib.Path("/tmp") / f"rsk-comutant-{checkout}-{bug}"
 
 
 def run_one(root: pathlib.Path, bug: str, entry: dict, host: str) -> tuple[str, str]:
     """(verdict, detail) for one comutant, measured in a throwaway worktree."""
-    wt = worktree_path(bug)
+    wt = worktree_path(root, bug)
     if wt.exists():
         subprocess.run(
             ["git", "worktree", "remove", "--force", str(wt)], cwd=root, check=False

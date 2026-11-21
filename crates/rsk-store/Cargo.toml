@@ -5,6 +5,9 @@ license = "AGPL-3.0-only"
 edition = "2024"
 publish = false
 
+[lints]
+workspace = true
+
 # The `rsk_fs::Storage` backend the device actually runs: two `sequential-storage`
 # map partitions over one flash, counter FIDs routed away from the credential
 # pages, and the scrub lap that physically destroys superseded secrets. It was
@@ -14,6 +17,15 @@ publish = false
 [dependencies]
 rsk-fs = { workspace = true }
 rsk-sdk = { workspace = true }
+# Readback can meet legacy plaintext remnants when a NOR erase did not land.
+rsk-secret = { workspace = true }
+# `FlashBuf` implements `Zeroize` so a flashed staging buffer can live in a
+# `Secret`; the trait must be nameable here (the wrapper crate only bounds it).
+zeroize = { workspace = true }
+# The existing crypto facade authenticates the directory and complete payloads.
+rsk-crypto = { workspace = true }
+# The live directory has the filesystem's fixed file budget; no heap is used.
+heapless = "0.8"
 sequential-storage = "8"
 # The async NorFlash traits the backend is generic over (the same 0.4
 # `sequential-storage` uses).
@@ -31,7 +43,6 @@ embassy-futures = { workspace = true }
 # drags in — futures×7, approx, slab, and heapless's defmt→syn/thiserror/bitflags.
 # None of them is what the mock needs: `mock_flash.rs` imports only `core`,
 # `embedded_storage_async` and `Vec`, and `futures` appears in that crate solely in
-# doctests. Narrowing the feature would mean a second local change to the vendored
-# fork, whose patch notes deliberately record that only `src/map.rs` differs from
-# published 8.0.0. So the fake NOR chip lives in `src/tests.rs` — the store under
+# doctests. Enabling it would expand the firmware's dependency tree for a host-only
+# mock. The fake NOR chip lives in `src/tests.rs` — the store under
 # test is still the fork, which is the part that has to be the device's.

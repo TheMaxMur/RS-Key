@@ -2,6 +2,14 @@
 // Copyright (C) 2026 RS-Key contributors
 
 #![cfg_attr(not(test), no_std)]
+// Host bytes: a panic here is a board that answers nothing until unplugged.
+#![deny(
+    clippy::indexing_slicing,
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::cast_possible_truncation
+)]
 
 //! `rsk-piv` — the PIV card applet: the NIST SP 800-73-4 command subset plus the
 //! Yubico extensions `ykman piv` / `yubico-piv-tool` exercise (metadata, serial,
@@ -18,6 +26,7 @@ mod chuid;
 pub mod files;
 pub mod info;
 mod keygen;
+mod objects;
 mod seal;
 mod x509;
 
@@ -33,6 +42,7 @@ use rsk_rsa::{MAX_RSA_BYTES, MAX_RSA_PUBDO, RSA_PUB_EXP_BE, RsaError, RsaKey, ma
 use rsk_sdk::tlv::{find_tag, format_len};
 pub use rsk_sdk::{AlwaysConfirm, Presence, Rng, UserPresence};
 use rsk_sdk::{Apdu, Applet, ResBuf, Sw};
+use rsk_secret::Secret;
 use zeroize::Zeroize;
 
 use files::*;
@@ -81,12 +91,13 @@ impl rsk_rsa::Rng for RsaRng<'_> {
 }
 
 /// The status word each [`EcError`] answers with — the EC twin of [`rsa_sw`],
-/// and `rsk-openpgp` (`keys::ec_sw`) carries the same three arms for the same
-/// reason. `ec_sw_reproduces_every_status_word` pins them.
+/// and `rsk-openpgp` (`keys::ec_sw`) carries the same arms for the same reason.
+/// `ec_sw_reproduces_every_status_word` pins them.
 pub(crate) fn ec_sw(e: EcError) -> Sw {
     match e {
         EcError::Failed => Sw::EXEC_ERROR,
-        EcError::BadPoint => Sw::DATA_INVALID,
+        EcError::BadPoint => Sw::WRONG_DATA,
+        EcError::RejectedPoint => Sw::MEMORY_FAILURE,
         EcError::Unsupported => Sw::FUNC_NOT_SUPPORTED,
     }
 }
@@ -107,7 +118,6 @@ const INS_RESET_RETRY: u8 = 0x2C;
 /// Shared with the OpenPGP GENERATE INS; PIV uses P1 = 0x00 (OpenPGP: 0x80/0x81).
 pub const INS_ASYM_KEYGEN: u8 = 0x47;
 const INS_AUTHENTICATE: u8 = 0x87;
-const INS_SELECT: u8 = 0xA4;
 const INS_GET_DATA: u8 = 0xCB;
 const INS_PUT_DATA: u8 = 0xDB;
 const INS_MOVE_KEY: u8 = 0xF6;
@@ -192,12 +202,27 @@ impl Session {
         self.has_challenge = false;
         self.chal_kind = ChallengeKind::None;
         self.chal_algo = 0;
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "the challenge lives in the applet between GENERAL AUTHENTICATE's two halves; this is its wipe point"
+        )]
         self.challenge.zeroize();
     }
 
     fn reset(&mut self) {
+        // Every field is named, so a new one does not compile until its reset is decided:
+        // `set_pin` clears the PIN pair, `clear_challenge` the witness it wipes.
+        let Self {
+            has_pin: _,
+            pin_fresh: _,
+            has_mgm,
+            has_challenge: _,
+            chal_kind: _,
+            challenge: _,
+            chal_algo: _,
+        } = self;
+        *has_mgm = false;
         self.set_pin(false);
-        self.has_mgm = false;
         self.clear_challenge();
     }
 }
@@ -212,9 +237,8 @@ pub struct PivApplet<'a> {
     presence: &'a RefCell<dyn UserPresence>,
     sess: Session,
     /// Set once `scan_files` has provisioned the default files this power-cycle,
-    /// so a re-SELECT skips its five flash probes. Only ever cleared by the fresh
-    /// struct a reboot builds — nothing removes those files mid-power-cycle
-    /// without a reboot (see `select`).
+    /// so a re-SELECT skips its flash probes. Left clear while the 9B head is
+    /// owed, and cleared by a RESET that failed part-way (see `select`).
     files_ensured: bool,
 }
 
@@ -296,8 +320,8 @@ impl<'a> PivApplet<'a> {
         Some((p2, nbits, pol))
     }
 
-    /// Store the firmware-generated RSA key, certificate and metadata and write
-    /// the `7F49` response body + SW into `resp`; returns the total length.
+    /// Store the firmware-generated RSA key and its metadata and write
+    /// the `7F49` response body into `resp`; returns its length and the status.
     pub fn rsa_generate_finish<S: Storage>(
         &mut self,
         fs: &mut Fs<S>,
@@ -311,10 +335,8 @@ impl<'a> PivApplet<'a> {
             return (0, Sw::EXEC_ERROR);
         };
         let mkek = read_fused(self.mkek_source);
-        let dev = Device {
-            serial_hash: &self.serial_hash,
-            serial_id: &self.serial_id,
-            otp_key: mkek.as_deref(),
+        let Some(dev) = Device::fused(&self.serial_hash, &self.serial_id, &mkek) else {
+            return (0, Sw::FUSED_KEY_UNREAD);
         };
         let mut res = ResBuf::new(resp);
         let sw = keygen::finish_rsa(&dev, fs, rng, slot, algo, pol, key, &mut res);
@@ -325,19 +347,16 @@ impl<'a> PivApplet<'a> {
 /// The SELECT application property template (`61 { … }`); the outer length
 /// byte is filled in (some implementations leave it 0).
 fn apt(res: &mut ResBuf) -> Sw {
-    // NIST SP 800-73-4 §3.1.1: 4F is the PIV AID/PIX and 79 (coexistent tag
-    // allocation authority) MUST wrap a nested 4F holding the NIST RID. A flat 79
-    // (no inner 4F) makes OpenSC's piv_match_card fall back to the OpenPGP applet.
+    // NIST SP 800-73-4 §3.1.1: 4F is the PIV PIX and 79 MUST wrap a nested 4F with
+    // the NIST RID (a flat 79 makes OpenSC's piv_match_card fall back to OpenPGP).
+    // Nothing optional follows: byte for byte a YubiKey 5.8.0's template.
     const BODY: &[u8] = &[
         0x4F, 0x06, 0x00, 0x00, 0x10, 0x00, 0x01, 0x00, // PIV application AID (PIX)
         0x79, 0x07, 0x4F, 0x05, 0xA0, 0x00, 0x00, 0x03,
         0x08, // tag alloc authority → NIST RID
-        0x50, 0x0A, b'R', b'S', b'-', b'K', b'e', b'y', b' ', b'P', b'I',
-        b'V', // application label
-        0xAC, 0x0C, 0x80, 0x07, 0x07, 0x08, 0x0A, 0x0C, 0x11, 0x14, 0x2E, 0x06, 0x01,
-        0x00, // supported algorithms
     ];
-    if !res.push(0x61) || !res.push(BODY.len() as u8) || !res.extend(BODY) {
+    let len = u8::try_from(BODY.len()).unwrap_or(u8::MAX);
+    if !res.push(0x61) || !res.push(len) || !res.extend(BODY) {
         return Sw::WRONG_LENGTH;
     }
     Sw::OK
@@ -348,9 +367,9 @@ impl<S: Storage> Applet<Fs<S>> for PivApplet<'_> {
         PIV_AID
     }
 
-    /// PIV GET DATA (certificates) routinely exceeds 256 bytes; OpenSC/`ykman`
-    /// read it with a short `Le` and standard GET RESPONSE, so opt into the
-    /// dispatcher's response chaining.
+    /// PIV GET DATA (certificates) routinely exceeds 256 bytes, and a short
+    /// command (OpenSC, yubikey.rs) reads the rest with standard GET RESPONSE,
+    /// so opt into the dispatcher's response chaining.
     fn response_chaining(&self) -> bool {
         true
     }
@@ -371,20 +390,18 @@ impl<S: Storage> Applet<Fs<S>> for PivApplet<'_> {
         // and afterwards only ever removed by a path that recreates them (PIV
         // `reset_files`) or reboots (trusted-display factory wipe → `sys_reset`);
         // `authenticatorReset` leaves them. So past the first SELECT this
-        // power-cycle they are present — skip the five flash `has_data` probes
-        // scan_files would otherwise repeat on every re-SELECT.
+        // power-cycle they are present — skip the flash probes scan_files would
+        // otherwise repeat on every re-SELECT, unless it left the 9B head owed.
         if !self.files_ensured {
             let (serial_hash, serial_id, mkek) = self.device_ids();
-            let dev = Device {
-                serial_hash: &serial_hash,
-                serial_id: &serial_id,
-                otp_key: mkek.as_deref(),
+            let Some(dev) = Device::fused(&serial_hash, &serial_id, &mkek) else {
+                return Sw::FUSED_KEY_UNREAD;
             };
             let mut rng = self.rng.borrow_mut();
-            if files::scan_files(&dev, fs, &mut *rng).is_err() {
-                return Sw::MEMORY_FAILURE;
+            match files::scan_files(&dev, fs, &mut *rng) {
+                Ok(landed) => self.files_ensured = landed,
+                Err(_) => return Sw::MEMORY_FAILURE,
             }
-            self.files_ensured = true;
         }
         apt(res)
     }
@@ -406,10 +423,12 @@ impl<S: Storage> Applet<Fs<S>> for PivApplet<'_> {
             return Sw::WRONG_DATA;
         }
         let (serial_hash, serial_id, mkek) = self.device_ids();
-        let dev = Device {
-            serial_hash: &serial_hash,
-            serial_id: &serial_id,
-            otp_key: mkek.as_deref(),
+        let dev = Device::fused(&serial_hash, &serial_id, &mkek);
+        if apdu.ins == INS_VERIFY {
+            return self.verify(dev.as_ref(), fs, apdu, res);
+        }
+        let Some(dev) = dev else {
+            return Sw::FUSED_KEY_UNREAD;
         };
         match apdu.ins {
             INS_VERSION => {
@@ -420,17 +439,6 @@ impl<S: Storage> Applet<Fs<S>> for PivApplet<'_> {
                 res.extend(&rsk_sdk::serial4(self.serial_id));
                 Sw::OK
             }
-            INS_SELECT => {
-                // A re-SELECT addressed at the applet itself.
-                if apdu.p2 != 0x01 {
-                    return Sw::WRONG_P1P2;
-                }
-                if !apdu.data.is_empty() && PIV_AID.starts_with(apdu.data) {
-                    return apt(res);
-                }
-                Sw::OK
-            }
-            INS_VERIFY => self.verify(&dev, fs, apdu, res),
             INS_CHANGE_PIN => self.change_pin(&dev, fs, apdu),
             INS_RESET_RETRY => self.reset_retry(&dev, fs, apdu),
             INS_AUTHENTICATE => {
@@ -474,6 +482,9 @@ impl<S: Storage> Applet<Fs<S>> for PivApplet<'_> {
                 let mut rng = self.rng.borrow_mut();
                 keygen::import(&self.sess, &dev, fs, &mut *rng, apdu.p1, apdu.p2, apdu.data)
             }
+            // Only ever with no tail owed, which the dispatcher serves first. A
+            // YubiKey 5.8.0's PIV answers it `6A80`, its other applets `6D00`.
+            rsk_sdk::apdu::INS_GET_RESPONSE => Sw::WRONG_DATA,
             _ => Sw::INS_NOT_SUPPORTED,
         }
     }
@@ -483,7 +494,7 @@ impl PivApplet<'_> {
     /// VERIFY (INS 0x20): the PIV application PIN, reference 0x80.
     fn verify<S: Storage>(
         &mut self,
-        dev: &Device,
+        dev: Option<&Device>,
         fs: &mut Fs<S>,
         apdu: &Apdu,
         _res: &mut ResBuf,
@@ -548,6 +559,11 @@ impl PivApplet<'_> {
         // wrong PINs — the human reflex, and the standard advice for a card they
         // think is compromised — did not stop an attacker who already had a live
         // verified session.
+        // Only the compare needs the key: a logout or a status query still answers
+        // while it does not read past the latch, and a refusal here is no attempt.
+        let Some(dev) = dev else {
+            return Sw::FUSED_KEY_UNREAD;
+        };
         let sw = check_ref(dev, fs, EF_PIN, RETRY_PIN, apdu.data);
         self.sess.set_pin(sw.is_ok());
         sw
@@ -618,11 +634,11 @@ impl PivApplet<'_> {
         // keyed under the pre-OTP arm. Before them and gating them — a reset between
         // the two appends keeps whichever landed, and a REFUSED re-arm reaches that
         // same end state with no reset in it, so the re-seed must not go ahead.
-        if rsk_fs::request_rescrub(fs).is_err() {
+        let Ok(rearmed) = rsk_fs::request_rescrub(fs) else {
             return Sw::MEMORY_FAILURE;
-        }
-        let stored = put_pin_verifier(dev, fs, EF_PIN, &DEFAULT_PIN)
-            .and_then(|()| put_pin_verifier(dev, fs, EF_PUK, &DEFAULT_PUK));
+        };
+        let stored = put_pin_verifier(dev, fs, EF_PIN, &DEFAULT_PIN, Some(&rearmed))
+            .and_then(|()| put_pin_verifier(dev, fs, EF_PUK, &DEFAULT_PUK, Some(&rearmed)));
         if stored.is_err() {
             return Sw::MEMORY_FAILURE;
         }
@@ -680,7 +696,7 @@ impl PivApplet<'_> {
         }
         // A missing body is a bad request rather than a length error, the
         // spelling the reference uses for every framing refusal on this command.
-        if apdu.nc == 0 || apdu.data[0] != TAG_GEN_TEMPLATE {
+        if apdu.data.first() != Some(&TAG_GEN_TEMPLATE) {
             return Sw::WRONG_DATA;
         }
         if apdu.p1 != 0x00 || !is_key(apdu.p2) {
@@ -704,20 +720,25 @@ impl PivApplet<'_> {
 
     /// GET DATA (INS 0xCB).
     fn get_data<S: Storage>(&mut self, fs: &mut Fs<S>, apdu: &Apdu, res: &mut ResBuf) -> Sw {
+        // A YubiKey 5.8.0 answers a P1-P2 other than `3FFF`, and a tag list it
+        // cannot read, as it answers an object it does not hold: `6A82`.
         if apdu.p1 != 0x3F || apdu.p2 != 0xFF {
-            return Sw::INCORRECT_P1P2;
+            return Sw::FILE_NOT_FOUND;
         }
         let d = apdu.data;
-        if d.len() < 3 || d[0] != TAG_DATA_PATH {
-            return Sw::WRONG_DATA;
+        if d.len() < 3 || d.first() != Some(&TAG_DATA_PATH) {
+            return Sw::FILE_NOT_FOUND;
         }
-        let l = d[1] as usize;
-        if l == 0 || l > 3 || d.len() < 2 + l {
-            return Sw::WRONG_DATA;
+        let l = usize::from(d.get(1).copied().unwrap_or_default());
+        if l == 0 || l > 3 {
+            return Sw::FILE_NOT_FOUND;
         }
+        let Some(path) = d.get(2..2 + l) else {
+            return Sw::FILE_NOT_FOUND;
+        };
         let mut id: u32 = 0;
-        for &b in &d[2..2 + l] {
-            id = id << 8 | b as u32;
+        for &b in path {
+            id = id << 8 | u32::from(b);
         }
         // Before the object is looked up: an absent one must answer the same
         // 6982 a present one does, or the gate becomes a probe for what the card
@@ -734,35 +755,42 @@ impl PivApplet<'_> {
         if id == PRINTED_ID && mgm_is_protected(fs) {
             return self.get_protected_mgm(fs, res);
         }
-        let Some(fid) = object_fid(id) else {
-            return Sw::FILE_NOT_FOUND;
+        let mut obj = [0u8; objects::RECORD_MAX];
+        let n = match object_fid(id) {
+            // `Storage::read` returns the value's FULL stored length; clamp to the
+            // bytes we actually hold. Host writers cap at MAX_OBJECT (put_data), so
+            // this only bites a flash-corrupted over-length record.
+            Some(fid) => match fs.read(fid, &mut obj[..MAX_OBJECT]) {
+                Some(n) if n > 0 => n.min(MAX_OBJECT),
+                // No host-provisioned CHUID: synthesize a default so Windows' PIV
+                // minidriver has the card GUID it needs to enumerate the slots (a
+                // 6A82 here leaves RSA/EC auth "pending" under CAPI). A real PUT DATA
+                // persists at this same fid and wins the read above.
+                _ if id == CHUID_ID => {
+                    let synth = chuid::default_chuid(&self.serial_hash);
+                    obj[..chuid::CHUID_LEN].copy_from_slice(&synth);
+                    chuid::CHUID_LEN
+                }
+                _ if id == CCC_ID => {
+                    let Some(dst) = obj.get_mut(..ccc::CCC.len()) else {
+                        return Sw::EXEC_ERROR;
+                    };
+                    dst.copy_from_slice(&ccc::CCC);
+                    ccc::CCC.len()
+                }
+                _ => return Sw::FILE_NOT_FOUND,
+            },
+            None if objects::in_pool(id) => match objects::read(fs, id, &mut obj) {
+                Ok(Some(n)) => n,
+                Ok(None) => return Sw::FILE_NOT_FOUND,
+                Err(sw) => return sw,
+            },
+            None => return Sw::FILE_NOT_FOUND,
         };
-        let mut obj = [0u8; MAX_OBJECT];
-        // `Storage::read` returns the value's FULL stored length; clamp to the
-        // bytes we actually hold. Host writers cap at MAX_OBJECT (put_data), so
-        // this only bites a flash-corrupted over-length record — returning its
-        // prefix instead of panicking on the slice.
-        let n = match fs.read(fid, &mut obj) {
-            Some(n) if n > 0 => n.min(obj.len()),
-            // No host-provisioned CHUID: synthesize a default so Windows' PIV
-            // minidriver has the card GUID it needs to enumerate the slots (a
-            // 6A82 here leaves RSA/EC auth "pending" under CAPI). A real PUT DATA
-            // persists at this same fid and wins the read above.
-            _ if id == CHUID_ID => {
-                let synth = chuid::default_chuid(&self.serial_hash);
-                obj[..synth.len()].copy_from_slice(&synth);
-                synth.len()
-            }
-            // CCC is mandatory (SP 800-73-4 pt1 §3.1.1): a fresh card serves
-            // the synthesized default too, so a Windows key-container open finds
-            // the object. A real PUT DATA still wins the read above.
-            _ if id == CCC_ID => {
-                obj[..ccc::CCC.len()].copy_from_slice(&ccc::CCC);
-                ccc::CCC.len()
-            }
-            _ => return Sw::FILE_NOT_FOUND,
+        let Some(object) = obj.get(..n) else {
+            return Sw::EXEC_ERROR;
         };
-        if push_tlv(res, TAG_DATA_OBJECT, &obj[..n]).is_err() {
+        if push_tlv(res, TAG_DATA_OBJECT, object).is_err() {
             return Sw::WRONG_LENGTH;
         }
         Sw::OK
@@ -778,54 +806,47 @@ impl PivApplet<'_> {
             return Sw::SECURITY_STATUS_NOT_SATISFIED;
         }
         let mkek = read_fused(self.mkek_source);
-        let dev = Device {
-            serial_hash: &self.serial_hash,
-            serial_id: &self.serial_id,
-            otp_key: mkek.as_deref(),
+        let Some(dev) = Device::fused(&self.serial_hash, &self.serial_id, &mkek) else {
+            return Sw::FUSED_KEY_UNREAD;
         };
-        let mut key = [0u8; 32];
-        let klen = match seal::seal_read(&dev, fs, key_fid(SLOT_CARDMGM), &mut key) {
-            Ok(n) => n,
+        let mut mgm = match mgm_read(&dev, fs) {
+            Ok(k) => k,
             Err(sw) => return sw,
         };
+        let klen = mgm.key().len();
         // PivmanProtectedData: 88 { 89 <key> }, wrapped in the 53 response object.
-        let mut body = [0u8; 4 + 32];
-        body[0] = PROTECTED_TAG;
-        body[1] = (2 + klen) as u8;
-        body[2] = PROTECTED_MGM_TAG;
-        body[3] = klen as u8;
-        body[4..4 + klen].copy_from_slice(&key[..klen]);
-        key.zeroize();
-        let r = if push_tlv(res, TAG_DATA_OBJECT, &body[..4 + klen]).is_err() {
-            Sw::WRONG_LENGTH
-        } else {
-            Sw::OK
+        let mut body = Secret::<[u8; 4 + 32]>::zeroed();
+        let (Some(dst), Ok(len)) = (body.expose_mut().get_mut(4..4 + klen), u8::try_from(klen))
+        else {
+            mgm.wipe();
+            return Sw::EXEC_ERROR;
         };
-        body.zeroize();
+        dst.copy_from_slice(mgm.key());
+        mgm.wipe();
+        body.expose_mut()[..4].copy_from_slice(&[PROTECTED_TAG, len + 2, PROTECTED_MGM_TAG, len]);
+        let r = match body.expose().get(..4 + klen) {
+            Some(object) if push_tlv(res, TAG_DATA_OBJECT, object).is_ok() => Sw::OK,
+            _ => Sw::WRONG_LENGTH,
+        };
+        body.wipe();
         r
     }
 
     /// PUT DATA (INS 0xDB, management-gated).
     fn put_data<S: Storage>(&mut self, fs: &mut Fs<S>, apdu: &Apdu) -> Sw {
-        if apdu.p1 != 0x3F || apdu.p2 != 0xFF {
-            return Sw::INCORRECT_P1P2;
-        }
+        // A YubiKey 5.8.0 answers `6982` without the management key whatever the
+        // request (a one-byte body is refused before any command runs), then
+        // `6A80` to a P1-P2 or a body it cannot take.
         if !self.sess.has_mgm {
             return Sw::SECURITY_STATUS_NOT_SATISFIED;
         }
-        // Discovery / biometric writes are acknowledged with a bare OK (not stored).
-        if !apdu.data.is_empty() && (apdu.data[0] == 0x7E || apdu.data[0] == 0x7F) {
-            return Sw::OK;
+        if apdu.p1 != 0x3F || apdu.p2 != 0xFF {
+            return Sw::WRONG_DATA;
         }
-        let (Some(path), Some(obj)) = (
-            find_tag(apdu.data, TAG_DATA_PATH as u16),
-            find_tag(apdu.data, TAG_DATA_OBJECT as u16),
-        ) else {
+        let Some((path, obj)) = put_data_parts(apdu.data) else {
             return Sw::WRONG_DATA;
         };
-        if path.len() != 3 {
-            return Sw::WRONG_DATA;
-        }
+        let id = u32::from_be_bytes([0, path[0], path[1], path[2]]);
         let fid = match (path[0], path[1], path[2]) {
             // ADMIN DATA (5FFF00): the protection flags. Plaintext (non-secret).
             (0x5F, 0xFF, 0x00) => EF_PIVMAN_DATA,
@@ -853,14 +874,12 @@ impl PivApplet<'_> {
             },
             (0x5F, 0xC1, b) => match data_object_fid(b) {
                 Some(fid) => fid,
-                None => return Sw::WRONG_DATA,
+                None => return put_pooled(fs, id, obj),
             },
-            // Everything else, and `5FFF01` in particular: the attestation
-            // certificate is not host-writable. A YubiKey takes that write — one
-            // probe pass in this project destroyed a real YubiKey's factory chain
-            // with it, unrecoverably — and pairing it with a host-loaded F9 key
-            // would let the management key alone replace the device's attestation
-            // identity. Deliberate; pinned by a test and docs/limitations.md.
+            _ if objects::in_pool(id) => return put_pooled(fs, id, obj),
+            // An id not `5Fxxxx`, and `5FFF01`: no host replaces the attestation
+            // certificate, which a YubiKey allows (a probe here once destroyed a real
+            // YubiKey's factory chain with it). Deliberate; docs/limitations.md.
             _ => return Sw::WRONG_DATA,
         };
         if obj.is_empty() {
@@ -872,10 +891,10 @@ impl PivApplet<'_> {
         if obj.len() > MAX_OBJECT {
             return Sw::WRONG_LENGTH;
         }
-        if fs.put(fid, obj).is_err() {
-            return Sw::MEMORY_FAILURE;
+        match fs.put(fid, obj) {
+            Ok(()) => Sw::OK,
+            Err(e) => objects::put_sw(e),
         }
-        Sw::OK
     }
 
     /// GET METADATA (INS 0xF7, Yubico).
@@ -909,7 +928,10 @@ impl PivApplet<'_> {
                 let Some(PIN_REC_LEN) = fs.read(fid, &mut rec) else {
                     return Sw::REFERENCE_NOT_FOUND;
                 };
-                let is_default = ct_eq(&rec[2..PIN_REC_LEN], &dev.pin_derive_verifier(default));
+                let is_default = ct_eq(
+                    &rec[2..PIN_REC_LEN],
+                    dev.pin_derive_verifier(default).expose(),
+                );
                 let (total, left) = match retries(fs, retry) {
                     Ok(t) => t,
                     Err(sw) => return sw,
@@ -929,13 +951,14 @@ impl PivApplet<'_> {
                 if n < 3 {
                     return Sw::REFERENCE_NOT_FOUND;
                 }
-                let mut key = [0u8; 32];
-                let is_default = match seal::seal_read(dev, fs, key_fid(SLOT_CARDMGM), &mut key) {
-                    Ok(24) => ct_eq(&key[..24], &DEFAULT_MGM),
-                    Ok(_) => false,
+                let mut mgm = match mgm_read(dev, fs) {
+                    Ok(k) => k,
                     Err(sw) => return sw,
                 };
-                key.zeroize();
+                let is_default = ct_eq(mgm.key(), &DEFAULT_MGM);
+                mgm.wipe();
+                // The record's own algorithm and touch policy: the head only caches them.
+                let (algo, touch) = mgm.policy.unwrap_or((meta[0], meta[2]));
                 // Tag `05` answers "is this slot as it left the factory", not
                 // "are these the factory key bytes" — a YubiKey 5.7.4 clears it
                 // when the FACTORY key is written back with `P2 = 0xFE`,
@@ -948,9 +971,9 @@ impl PivApplet<'_> {
                 // the factory key — losing a true warning to make a byte no
                 // reference varies agree. `&`, not `&&`: the key compare is
                 // `ct_eq` and this must not reintroduce a branch on its result.
-                let is_default = is_default & (meta[2] == TOUCHPOLICY_NEVER);
-                res.extend(&[0x01, 0x01, meta[0]]);
-                res.extend(&[0x02, 0x02, meta[1], meta[2]]);
+                let is_default = is_default & (touch == TOUCHPOLICY_NEVER);
+                res.extend(&[0x01, 0x01, algo]);
+                res.extend(&[0x02, 0x02, meta[1], touch]);
                 res.extend(&[0x05, 0x01, is_default as u8]);
                 Sw::OK
             }
@@ -975,7 +998,10 @@ impl PivApplet<'_> {
                 res.extend(&[0x01, 0x01, meta[0]]);
                 res.extend(&[0x02, 0x02, meta[1], meta[2]]);
                 res.extend(&[0x03, 0x01, meta[3]]);
-                self.slot_pubkey_tlv(dev, fs, s, &meta[..n], res)
+                let Some(head) = meta.get(..n) else {
+                    return Sw::REFERENCE_NOT_FOUND;
+                };
+                self.slot_pubkey_tlv(dev, fs, s, head, res)
             }
             // F9 keeps no metadata record — `scan_files` mints the key, its
             // cached point and its certificate, and nothing needed a head. The
@@ -1002,48 +1028,39 @@ impl PivApplet<'_> {
         meta: &[u8],
         res: &mut ResBuf,
     ) -> Sw {
-        let mut body = [0u8; MAX_RSA_PUBDO];
-        let n = match meta[0] {
-            ALGO_RSA1024 | ALGO_RSA2048 | ALGO_RSA3072 | ALGO_RSA4096 => {
-                // Emit the public modulus without rebuilding the private key: GET
-                // METADATA needs only N (= p·q) + e (always 65537 for PIV), never
-                // `from_p_q`'s ~50 ms CRT precompute. Output byte-identical.
-                let mut nbuf = [0u8; MAX_RSA_BYTES];
-                let nlen = match seal::load_rsa_modulus(dev, fs, key_fid(slot), &mut nbuf) {
-                    Ok(l) => l,
-                    Err(_) => return Sw::EXEC_ERROR,
-                };
-                make_rsa_pub_body(&nbuf[..nlen], RSA_PUB_EXP_BE, &mut body)
-            }
-            ALGO_ECCP256 | ALGO_ECCP384 | ALGO_ED25519 | ALGO_X25519 => {
-                // Emit the slot public point without recomputing the ~tens-of-ms
-                // `d·G`. Prefer the per-slot cache file (O(1), works at any slot
-                // count); then the legacy in-EF_META cache (older keys that fit);
-                // finally derive it from the sealed scalar (pre-cache keys).
-                let mut point = [0u8; MAX_EC_POINT];
-                let pt: &[u8] = if let Some(pn) = fs.read(pubkey_fid(slot), &mut point) {
-                    &point[..pn.min(point.len())]
-                } else if meta.len() > 4 {
-                    &meta[4..]
-                } else {
-                    let key = match seal::load_ec_key(dev, fs, key_fid(slot)) {
-                        Ok(k) => k,
-                        Err(_) => return Sw::EXEC_ERROR,
-                    };
-                    let plen = match key.public_point(&mut point) {
-                        Ok(p) => p,
-                        Err(e) => return ec_sw(e),
-                    };
-                    &point[..plen]
-                };
-                body[0] = 0x86;
-                let ll = format_len(pt.len() as u16, &mut body[1..4]);
-                body[1 + ll..1 + ll + pt.len()].copy_from_slice(pt);
-                1 + ll + pt.len()
-            }
-            _ => return Sw::REFERENCE_NOT_FOUND,
+        let mut public = [0u8; MAX_RSA_BYTES];
+        let pn = match keygen::slot_public(dev, fs, slot, meta, &mut public) {
+            Ok(n) => n,
+            Err(sw) => return sw,
         };
-        if push_tlv(res, 0x04, &body[..n]).is_err() {
+        let (Some(&algo), Some(public)) = (meta.first(), public.get(..pn)) else {
+            return Sw::EXEC_ERROR;
+        };
+        let mut body = [0u8; MAX_RSA_PUBDO];
+        let n = match algo {
+            ALGO_RSA1024 | ALGO_RSA2048 | ALGO_RSA3072 | ALGO_RSA4096 => {
+                make_rsa_pub_body(public, RSA_PUB_EXP_BE, &mut body)
+            }
+            _ => {
+                let Ok(pn) = u16::try_from(public.len()) else {
+                    return Sw::EXEC_ERROR;
+                };
+                let mut len = [0u8; 3];
+                let ll = format_len(pn, &mut len);
+                // `86 <len> <point>`, as many bytes as `body` holds.
+                let tlv = [0x86].iter().chain(len.iter().take(ll)).chain(public);
+                let mut n = 0;
+                for (dst, &b) in body.iter_mut().zip(tlv) {
+                    *dst = b;
+                    n += 1;
+                }
+                n
+            }
+        };
+        let Some(tlv) = body.get(..n) else {
+            return Sw::EXEC_ERROR;
+        };
+        if push_tlv(res, 0x04, tlv).is_err() {
             return Sw::WRONG_LENGTH;
         }
         Sw::OK
@@ -1065,7 +1082,10 @@ impl PivApplet<'_> {
         if apdu.nc < 5 {
             return Sw::WRONG_LENGTH;
         }
-        let (algo, key_ref, klen) = (apdu.data[0], apdu.data[1], apdu.data[2] as usize);
+        let Some(&[algo, key_ref, klen]) = apdu.data.first_chunk::<3>() else {
+            return Sw::WRONG_LENGTH;
+        };
+        let klen = usize::from(klen);
         // The FIPS-style profile refuses *new* 3DES management keys
         // (SP 800-131A); an existing 3DES key still authenticates, so a
         // reflashed device can migrate itself to AES.
@@ -1077,42 +1097,78 @@ impl PivApplet<'_> {
         if apdu.nc != 3 + klen {
             return Sw::WRONG_LENGTH;
         }
-        let mut rng = self.rng.borrow_mut();
-        if seal::seal_put(
-            dev,
-            fs,
-            &mut *rng,
-            key_fid(SLOT_CARDMGM),
-            &apdu.data[3..3 + klen],
-        )
-        .is_err()
-        {
-            return Sw::MEMORY_FAILURE;
-        }
-        let mut meta = [0u8; 8];
-        let Some(n) = fs.meta_find(key_fid(SLOT_CARDMGM).get(), &mut meta) else {
-            return Sw::REFERENCE_NOT_FOUND;
+        let Some(key) = apdu.data.get(3..3 + klen) else {
+            return Sw::WRONG_LENGTH;
         };
-        if n < 3 {
-            return Sw::REFERENCE_NOT_FOUND;
+        // The head and the escrow record are read before anything is written: a read
+        // that failed after the key landed answered 6A88 or 6581 over a key in force.
+        let mut meta = [0u8; 8];
+        match fs.try_meta_find(key_fid(SLOT_CARDMGM).get(), &mut meta) {
+            Ok(Some(n)) if n >= 3 => {}
+            Ok(_) => return Sw::REFERENCE_NOT_FOUND,
+            Err(_) => return Sw::MEMORY_FAILURE,
         }
-        if fs
-            .meta_add(key_fid(SLOT_CARDMGM).get(), &[algo, meta[1], touch])
-            .is_err()
-        {
+        let revoke = match escrow_revocation(fs) {
+            Ok(r) => r,
+            Err(sw) => return sw,
+        };
+        // One record carries the key, its algorithm and its touch policy, so the
+        // change lands whole or not at all. The head is a cache of it that a refused
+        // write leaves stale until `files::scan_files`, not a reason to answer 6581.
+        let mut rng = self.rng.borrow_mut();
+        if mgm_put(dev, fs, &mut *rng, algo, touch, key).is_err() {
             return Sw::MEMORY_FAILURE;
         }
+        let _ = fs.meta_add(key_fid(SLOT_CARDMGM).get(), &[algo, meta[1], touch]);
         // Revoke the one-key escrow LAST, mirroring `protect_mgm_key`'s ordering:
         // clearing the flag before its key is really replaced would strand a
         // PRINTED-only owner whenever the seal write fails. ykman re-sets it.
-        if let Err(sw) = mgm_clear_protected(fs) {
-            return sw;
+        if let Some((admin, len)) = revoke
+            && admin
+                .get(..len)
+                .is_none_or(|rec| fs.put(EF_PIVMAN_DATA, rec).is_err())
+        {
+            return Sw::MEMORY_FAILURE;
         }
         Sw::OK
     }
 
+    /// The refusal a MOVE KEY from `from` to `to` gets before anything is read or
+    /// written, in the order a YubiKey 5.8.0 judges it; `None` when it may go on.
+    fn move_refusal<S: Storage>(fs: &mut Fs<S>, to: u8, from: u8) -> Option<Sw> {
+        // The destination, the source, then the pair: one that takes no key `6A80`,
+        // one that takes none `6A88`, and a self-move (which would write the key
+        // back and then delete it) `6A80`.
+        if !is_key(to) && to != 0xFF {
+            return Some(Sw::WRONG_DATA);
+        }
+        if !is_key(from) {
+            return Some(Sw::REFERENCE_NOT_FOUND);
+        }
+        if to == from {
+            return Some(Sw::WRONG_DATA);
+        }
+        // Then the slots, source first: an empty source is `6A88` even onto a key,
+        // and a move onto a key is `6A80` with both kept. A probe the medium could
+        // not serve is neither empty nor free.
+        match fs.try_has_key(key_fid(from)) {
+            Ok(true) => {}
+            Ok(false) => return Some(Sw::REFERENCE_NOT_FOUND),
+            Err(_) => return Some(Sw::MEMORY_FAILURE),
+        }
+        if to == 0xFF {
+            return None;
+        }
+        match fs.try_has_key(key_fid(to)) {
+            Ok(false) => None,
+            Ok(true) => Some(Sw::WRONG_DATA),
+            Err(_) => Some(Sw::MEMORY_FAILURE),
+        }
+    }
+
     /// MOVE KEY (INS 0xF6, Yubico 5.7, management-gated): move (or, to 0xFF,
-    /// delete) a key with its certificate object and metadata.
+    /// delete) a key with its metadata. Certificate objects stay where they are, as
+    /// a YubiKey 5.8.0 leaves them: carrying one wrote over the destination's own.
     fn move_key<S: Storage>(&mut self, fs: &mut Fs<S>, apdu: &Apdu) -> Sw {
         // The command's whole request is in P1P2, so a body says nothing and is
         // ignored rather than refused — a YubiKey 5.7.4 answers `6982`
@@ -1123,62 +1179,35 @@ impl PivApplet<'_> {
             return Sw::SECURITY_STATUS_NOT_SATISFIED;
         }
         let (to, from) = (apdu.p1, apdu.p2);
-        if (!is_key(to) && to != 0xFF) || !is_key(from) {
-            return Sw::INCORRECT_P1P2;
-        }
-        // A self-move would write the key back then delete the source — the same
-        // slot — destroying it; reject before any write, as real hardware does.
-        if to == from {
-            return Sw::INCORRECT_P1P2;
+        if let Some(sw) = Self::move_refusal(fs, to, from) {
+            return sw;
         }
         // The sealed blob is bound to the device, not the fid, so it moves
         // verbatim. Sized to the largest sealed record (RSA-4096 `P ‖ Q`); a
         // smaller buffer would truncate/overrun-slice a 3072/4096 key's blob.
-        let mut blob = [0u8; seal::MAX_BLOB];
-        // `try_read_key`: FILE_NOT_FOUND over a slot the medium merely could not
-        // read tells the host the slot is EMPTY, and its next move is to fill it.
-        let blob_n = match fs.try_read_key(key_fid(from), &mut blob) {
+        let mut blob = Secret::<[u8; seal::MAX_BLOB]>::zeroed();
+        // `try_read_key`: the empty-slot answer over a slot the medium merely could
+        // not read tells the host the slot is EMPTY, and its next move is to fill it.
+        let blob_n = match fs.try_read_key(key_fid(from), blob.expose_mut()) {
             Ok(Some(n)) => n,
-            Ok(None) => return Sw::FILE_NOT_FOUND,
+            Ok(None) => return Sw::REFERENCE_NOT_FOUND,
             Err(_) => return Sw::MEMORY_FAILURE,
         };
-        let (cert_from, cert_to) = (cert_fid_for_slot(from), cert_fid_for_slot(to));
         if to != 0xFF {
+            let Some(sealed) = blob.expose().get(..blob_n) else {
+                blob.wipe();
+                return Sw::MEMORY_FAILURE;
+            };
             // Same power-cut ordering as IMPORT: the destination's own origin
             // record goes before its new key, so a tear can never leave the moved
             // key wearing the destination's provenance.
-            if let Err(sw) = keygen::drop_slot_meta(fs, key_fid(to).get()) {
-                blob.zeroize();
+            if let Err(sw) = keygen::drop_slot_meta(fs, to) {
+                blob.wipe();
                 return sw;
             }
-            if fs
-                .put_key(key_fid(to), Sealed::wrap(&blob[..blob_n]))
-                .is_err()
-            {
-                blob.zeroize();
+            if fs.put_key(key_fid(to), Sealed::wrap(sealed)).is_err() {
+                blob.wipe();
                 return Sw::MEMORY_FAILURE;
-            }
-            let mut obj = [0u8; MAX_OBJECT];
-            // `try_read`: the absent arm below DELETES the destination's certificate
-            // and the source's goes at the end of the move, so a probe read as "no
-            // certificate" destroyed both and still answered 9000.
-            let cert = match cert_from.map(|f| fs.try_read(f, &mut obj)) {
-                Some(Ok(n)) => n,
-                None => None,
-                Some(Err(_)) => {
-                    blob.zeroize();
-                    return Sw::MEMORY_FAILURE;
-                }
-            };
-            // Clamp the full stored length to the buffer (flash-corruption guard,
-            // as in get_data); host-written certs are already <= MAX_OBJECT.
-            if let (Some(n), Some(tofid)) = (cert, cert_to) {
-                if fs.put(tofid, &obj[..n.min(obj.len())]).is_err() {
-                    blob.zeroize();
-                    return Sw::MEMORY_FAILURE;
-                }
-            } else if let Some(tofid) = cert_to {
-                let _ = fs.delete(tofid);
             }
             // Sized to read the full source record (head + any cached point).
             // The point is carried to the destination best-effort — kept when
@@ -1190,34 +1219,31 @@ impl PivApplet<'_> {
             let head = match fs.try_meta_find(key_fid(from).get(), &mut meta) {
                 Ok(n) => n,
                 Err(_) => {
-                    blob.zeroize();
+                    blob.wipe();
                     return Sw::MEMORY_FAILURE;
                 }
             };
             if let Some(n) = head {
-                let n = n.min(meta.len());
-                if let Err(e) = keygen::meta_add_slot(fs, key_fid(to).get(), &meta[..n]) {
-                    blob.zeroize();
+                let record = meta.get(..n).unwrap_or(&meta);
+                if let Err(e) = keygen::meta_add_slot(fs, key_fid(to).get(), record) {
+                    blob.wipe();
                     return e;
                 }
             }
         }
         // Carry the cached public point to the destination slot (best-effort), then
-        // drop the source's — MOVE relocates the whole slot. Skip the carry when
+        // drop the source's — the point is the key's, as its metadata is. Skip it when
         // `to == 0xFF` (the delete sentinel): there is no destination slot, so a put
         // to `pubkey_fid(0xFF)` would only strand an unread `0xD4FF` orphan file.
         if to != 0xFF {
             let mut pk = [0u8; MAX_EC_POINT];
             if let Some(pn) = fs.read(pubkey_fid(from), &mut pk) {
-                let _ = fs.put(pubkey_fid(to), &pk[..pn.min(pk.len())]);
+                let _ = fs.put(pubkey_fid(to), pk.get(..pn).unwrap_or(&pk));
             }
         }
-        blob.zeroize();
+        blob.wipe();
         let dropped = fs.delete_key(key_fid(from));
         let _ = fs.delete(pubkey_fid(from));
-        if let Some(f) = cert_from {
-            let _ = fs.delete(f);
-        }
         // A head left over a key that is GONE is what GET METADATA, and the
         // PIN/touch gate reading the same record, would answer for. One EF_META
         // read can fault where the next lands, so the head earns a retry; the key
@@ -1236,9 +1262,39 @@ impl PivApplet<'_> {
     }
 }
 
-/// Largest stored data-object body (certificate objects included); bounded so
-/// the `53`-wrapped response fits the 2 KiB CCID response buffer.
-const MAX_OBJECT: usize = 1900;
+/// Largest stored data-object body (certificate objects included): the 3072 bytes a
+/// command chain reassembles less the `5C 03 id 53 82 LL LL` header, 3063 as on a
+/// YubiKey 5.8.0 (one extended APDU carries 3046).
+pub const MAX_OBJECT: usize = 3072 - 9;
+
+/// PUT DATA for an object in the pool: an empty body deletes it, anything else is
+/// stored.
+fn put_pooled<S: Storage>(fs: &mut Fs<S>, id: u32, obj: &[u8]) -> Sw {
+    let stored = if obj.is_empty() {
+        objects::delete(fs, id)
+    } else {
+        objects::write(fs, id, obj)
+    };
+    match stored {
+        Ok(()) => Sw::OK,
+        Err(sw) => sw,
+    }
+}
+
+/// The `5C` path and the `53` object of a PUT DATA body, read as a YubiKey 5.8.0
+/// reads them: `5C 03` first, `53` straight after in its shortest length form, and
+/// anything past the object ignored. `None` is its `6A80`.
+fn put_data_parts(data: &[u8]) -> Option<(&[u8; 3], &[u8])> {
+    let rest = data.strip_prefix(&[TAG_DATA_PATH, 3])?;
+    let (path, rest) = rest.split_first_chunk::<3>()?;
+    let (len, rest) = match rest.strip_prefix(&[TAG_DATA_OBJECT])? {
+        [n @ 0..=0x7F, rest @ ..] => (usize::from(*n), rest),
+        [0x81, n @ 0x80..=0xFF, rest @ ..] => (usize::from(*n), rest),
+        [0x82, hi @ 1..=0xFF, lo, rest @ ..] => (usize::from(*hi) << 8 | usize::from(*lo), rest),
+        _ => return None,
+    };
+    Some((path, rest.get(..len)?))
+}
 
 const RETRY_PIN: usize = 0;
 const RETRY_PUK: usize = 2;
@@ -1248,7 +1304,10 @@ fn retries<S: Storage>(fs: &mut Fs<S>, idx: usize) -> Result<(u8, u8), Sw> {
     let Some(4) = fs.read(EF_RETRIES, &mut r) else {
         return Err(Sw::REFERENCE_NOT_FOUND);
     };
-    Ok((r[idx], r[idx + 1]))
+    match (r.get(idx), r.get(idx + 1)) {
+        (Some(&total), Some(&left)) => Ok((total, left)),
+        _ => Err(Sw::REFERENCE_NOT_FOUND),
+    }
 }
 
 fn retries_left<S: Storage>(fs: &mut Fs<S>, idx: usize) -> Result<u8, Sw> {
@@ -1260,7 +1319,10 @@ fn set_retries_left<S: Storage>(fs: &mut Fs<S>, idx: usize, left: u8) -> Result<
     let Some(4) = fs.read(EF_RETRIES, &mut r) else {
         return Err(Sw::REFERENCE_NOT_FOUND);
     };
-    r[idx + 1] = left;
+    let Some(slot) = r.get_mut(idx + 1) else {
+        return Err(Sw::REFERENCE_NOT_FOUND);
+    };
+    *slot = left;
     fs.put(EF_RETRIES, &r).map_err(|_| Sw::MEMORY_FAILURE)
 }
 
@@ -1286,8 +1348,9 @@ fn wire_reference_pair<'a>(apdu: &'a Apdu) -> Option<(&'a [u8], &'a [u8])> {
 
 /// Boot-pass migration: re-seal every sealed PIV key slot under the OTP kbase
 /// (no-op without the OTP key). PIN/PUK verifiers migrate lazily at their own
-/// verify instead — they are one-way derivations of the PIN.
-pub fn migrate_kbase<S: Storage>(dev: &Device, fs: &mut Fs<S>, rng: &mut dyn Rng) {
+/// verify instead — they are one-way derivations of the PIN. Answers whether a
+/// slot is left under the chip-serial arm.
+pub fn migrate_kbase<S: Storage>(dev: &Device, fs: &mut Fs<S>, rng: &mut dyn Rng) -> bool {
     seal::migrate_kbase(dev, fs, rng)
 }
 
@@ -1326,11 +1389,11 @@ fn check_ref<S: Storage>(dev: &Device, fs: &mut Fs<S>, fid: u16, retry: usize, p
         _ => return Sw::MEMORY_FAILURE,
     }
     let ver = dev.pin_derive_verifier(pin);
-    let mut matched = ct_eq(&ver, &rec[2..PIN_REC_LEN]);
+    let mut matched = ct_eq(ver.expose(), &rec[2..PIN_REC_LEN]);
     if !matched
         && dev.otp_key.is_some()
         && ct_eq(
-            &dev.without_otp().pin_derive_verifier(pin),
+            dev.without_otp().pin_derive_verifier(pin).expose(),
             &rec[2..PIN_REC_LEN],
         )
     {
@@ -1342,10 +1405,10 @@ fn check_ref<S: Storage>(dev: &Device, fs: &mut Fs<S>, fid: u16, retry: usize, p
         // (rsk-fs `EF_HARDENED` invariant; audit run-35). Ahead of the write and
         // gating it — the two are separate appends, and neither a reset between them
         // nor a medium that refuses the re-arm may leave the marker over the copy.
-        if rsk_fs::request_rescrub(fs).is_err() {
+        let Ok(rearmed) = rsk_fs::request_rescrub(fs) else {
             return Sw::MEMORY_FAILURE;
-        }
-        if put_pin_verifier(dev, fs, fid, pin).is_err() {
+        };
+        if put_pin_verifier(dev, fs, fid, pin, Some(&rearmed)).is_err() {
             return Sw::MEMORY_FAILURE;
         }
         matched = true;
@@ -1384,12 +1447,14 @@ impl PinRef {
 /// (trailing `0xFF`), matching ykman / yubico-piv-tool. On-device (panel) entry
 /// MUST store the verifier over this padded form, or a host `VERIFY` — which
 /// always pads — will not match. `None` for empty / over-long input.
-pub fn pad_pin(entered: &[u8]) -> Option<[u8; PIN_WIRE_LEN]> {
+pub fn pad_pin(entered: &[u8]) -> Option<Secret<[u8; PIN_WIRE_LEN]>> {
     if entered.is_empty() || entered.len() > PIN_WIRE_LEN {
         return None;
     }
-    let mut out = [0xFFu8; PIN_WIRE_LEN];
-    out[..entered.len()].copy_from_slice(entered);
+    let mut out = Secret::new([0xFFu8; PIN_WIRE_LEN]);
+    out.expose_mut()
+        .get_mut(..entered.len())?
+        .copy_from_slice(entered);
     Some(out)
 }
 
@@ -1441,7 +1506,7 @@ pub fn change_reference<S: Storage>(
     if let Err(sw) = check_new_reference(new) {
         return sw;
     }
-    if put_pin_verifier(dev, fs, fid, new).is_err() {
+    if put_pin_verifier(dev, fs, fid, new, None).is_err() {
         return Sw::MEMORY_FAILURE;
     }
     Sw::OK
@@ -1468,10 +1533,10 @@ pub fn unblock_pin_with_puk<S: Storage>(
     // still keyed under the pre-OTP arm. Before the write and gating it — a reset
     // between the two appends must not be able to keep the marker, and a medium that
     // refuses the re-arm reaches that state outright.
-    if rsk_fs::request_rescrub(fs).is_err() {
+    let Ok(rearmed) = rsk_fs::request_rescrub(fs) else {
         return Sw::MEMORY_FAILURE;
-    }
-    let stored = put_pin_verifier(dev, fs, EF_PIN, new);
+    };
+    let stored = put_pin_verifier(dev, fs, EF_PIN, new, Some(&rearmed));
     if stored.is_err() {
         return Sw::MEMORY_FAILURE;
     }
@@ -1545,28 +1610,23 @@ fn try_mgm_is_protected<S: Storage>(fs: &mut Fs<S>) -> Result<bool, Sw> {
     else {
         return Ok(false);
     };
-    let body = &obj[..n.min(obj.len())];
-    if body.len() < 2 || body[0] != PIVMAN_TAG {
-        return Ok(false);
-    }
-    let inner_len = (body[1] as usize).min(body.len() - 2);
-    Ok(matches!(
-        find_tag(&body[2..2 + inner_len], PIVMAN_FLAGS_TAG as u16),
-        Some(f) if !f.is_empty() && f[0] & PIVMAN_FLAG_MGM_PROTECTED != 0
-    ))
+    let body = obj.get(..n).unwrap_or(&obj);
+    Ok(find_tag(pivman_inner(body), PIVMAN_FLAGS_TAG as u16)
+        .and_then(|f| f.first())
+        .is_some_and(|flags| flags & PIVMAN_FLAG_MGM_PROTECTED != 0))
 }
 
-/// Revoke the PIN-readable escrow: clear the ADMIN-DATA `0x02` flag, carrying
-/// the rest of the record forward ([`pivman_set_protected`] with the bit off).
-/// A record without the flag is left untouched, so a host's PivmanData is only
-/// rewritten when there is an escrow to revoke.
+/// The record that revokes the PIN-readable escrow: ADMIN DATA with its `0x02`
+/// flag cleared and the rest carried forward ([`pivman_set_protected`] with the
+/// bit off). `None` without the flag, so a host's PivmanData is only rewritten
+/// when there is an escrow to revoke.
 ///
-/// Fallible on BOTH probes: its one caller has already replaced the key the flag
-/// escrows, so a record read absent out of a fault leaves the flag standing over
-/// the host's own new key — PIN-readable, under the `9000` that says revoked.
-fn mgm_clear_protected<S: Storage>(fs: &mut Fs<S>) -> Result<(), Sw> {
+/// Fallible on BOTH probes: a record read absent out of a fault leaves the flag
+/// standing over the host's own new key — PIN-readable, under the `9000` that
+/// says revoked. Its one caller reads it before it writes the key.
+fn escrow_revocation<S: Storage>(fs: &mut Fs<S>) -> Result<Option<([u8; PIVMAN_MAX], usize)>, Sw> {
     if !try_mgm_is_protected(fs)? {
-        return Ok(());
+        return Ok(None);
     }
     // Sized as in `try_mgm_is_protected`: a real ykman record (flags + salt + timestamp).
     let mut prior = [0u8; 64];
@@ -1574,12 +1634,11 @@ fn mgm_clear_protected<S: Storage>(fs: &mut Fs<S>) -> Result<(), Sw> {
         .try_read(EF_PIVMAN_DATA, &mut prior)
         .map_err(|_| Sw::MEMORY_FAILURE)?
     else {
-        return Ok(());
+        return Ok(None);
     };
     let mut admin = [0u8; PIVMAN_MAX];
-    let len = pivman_rebuild(&prior[..n.min(prior.len())], false, &mut admin);
-    fs.put(EF_PIVMAN_DATA, &admin[..len])
-        .map_err(|_| Sw::MEMORY_FAILURE)
+    let len = pivman_rebuild(prior.get(..n).unwrap_or(&prior), false, &mut admin);
+    Ok(Some((admin, len)))
 }
 
 /// Replace the PIV management key with a fresh random AES-256 key and mark it
@@ -1593,7 +1652,7 @@ fn mgm_clear_protected<S: Storage>(fs: &mut Fs<S>) -> Result<(), Sw> {
 /// unlocks the random mgmt key), exactly as YubiKey's `--protect`. Caller-gated
 /// behind the device PIN + a deliberate hold on the panel.
 ///
-/// Power-cut ordering: the key+meta are written before the ADMIN flag, so a torn
+/// Power-cut ordering: the key's record is written before the ADMIN flag, so a torn
 /// write leaves the flag clear → PRINTED reads absent (fail-closed, no half-key
 /// disclosure). Re-running this (or a PIV factory reset) recovers: the only prior
 /// state it reads is the touch byte, and an absent one resolves to the default.
@@ -1610,7 +1669,7 @@ pub fn protect_mgm_key<S: Storage>(dev: &Device, fs: &mut Fs<S>, rng: &mut dyn R
         return Sw::MEMORY_FAILURE;
     };
     let prior = match prior_len {
-        Some(n) => &prior_buf[..n.min(prior_buf.len())],
+        Some(n) => prior_buf.get(..n).unwrap_or(&prior_buf),
         None => &[][..],
     };
     let mut admin = [0u8; PIVMAN_MAX];
@@ -1629,28 +1688,41 @@ pub fn protect_mgm_key<S: Storage>(dev: &Device, fs: &mut Fs<S>, rng: &mut dyn R
     let Ok(head) = fs.try_meta_find(key_fid(SLOT_CARDMGM).get(), &mut cur) else {
         return Sw::MEMORY_FAILURE;
     };
-    let touch = match head {
-        Some(n) if n >= 3 && cur[2] == TOUCHPOLICY_ALWAYS => TOUCHPOLICY_ALWAYS,
+    // The record's own touch policy where it seals one; the head caches it. A read
+    // the flash failed is no absent record: the head's word then could drop a gate
+    // only the record carries. One no arm opens is re-keyed, as it always was.
+    let stored = match mgm_read(dev, fs) {
+        Ok(k) => k.policy.map(|(_, t)| t),
+        Err(sw)
+            if sw == Sw::REFERENCE_NOT_FOUND
+                && !matches!(fs.try_has_key(key_fid(SLOT_CARDMGM)), Ok(false)) =>
+        {
+            return Sw::MEMORY_FAILURE;
+        }
+        Err(_) => None,
+    };
+    let touch = match stored.or(head.filter(|&n| n >= 3).map(|_| cur[2])) {
+        Some(TOUCHPOLICY_ALWAYS) => TOUCHPOLICY_ALWAYS,
         _ => TOUCHPOLICY_NEVER,
     };
 
-    let mut key = [0u8; 32];
-    rng.fill(&mut key);
-    let sealed = seal::seal_put(dev, fs, rng, key_fid(SLOT_CARDMGM), &key);
-    key.zeroize();
+    let mut key = Secret::<[u8; 32]>::zeroed();
+    rng.fill(key.expose_mut());
+    let sealed = mgm_put(dev, fs, rng, ALGO_AES256, touch, key.expose());
+    key.wipe();
     if sealed.is_err() {
         return Sw::MEMORY_FAILURE;
     }
-    if fs
-        .meta_add(
-            key_fid(SLOT_CARDMGM).get(),
-            &[ALGO_AES256, MGM_PIN_POLICY, touch],
-        )
-        .is_err()
-    {
+    // A cache of the record: a refused write must not stop the flag below, without
+    // which the new key is reachable by no one.
+    let _ = fs.meta_add(
+        key_fid(SLOT_CARDMGM).get(),
+        &[ALGO_AES256, MGM_PIN_POLICY, touch],
+    );
+    let Some(record) = admin.get(..admin_len) else {
         return Sw::MEMORY_FAILURE;
-    }
-    if fs.put(EF_PIVMAN_DATA, &admin[..admin_len]).is_err() {
+    };
+    if fs.put(EF_PIVMAN_DATA, record).is_err() {
         return Sw::MEMORY_FAILURE;
     }
     Sw::OK
@@ -1674,13 +1746,7 @@ pub(crate) fn pivman_set_protected(prior: &[u8], out: &mut [u8; PIVMAN_MAX]) -> 
 /// `prior` contributes nothing (flags default to 0, no timestamp) and never
 /// panics — the record is always a well-formed `80 { 81 .. }`.
 fn pivman_rebuild(prior: &[u8], protected: bool, out: &mut [u8; PIVMAN_MAX]) -> usize {
-    // Parse the prior record's inner TLV run, if it is a `80 <len> { .. }`.
-    let inner = if prior.len() >= 2 && prior[0] == PIVMAN_TAG {
-        let l = (prior[1] as usize).min(prior.len() - 2);
-        &prior[2..2 + l]
-    } else {
-        &[][..]
-    };
+    let inner = pivman_inner(prior);
     let prior_flags = find_tag(inner, PIVMAN_FLAGS_TAG as u16)
         .and_then(|f| f.first().copied())
         .unwrap_or(0);
@@ -1690,26 +1756,36 @@ fn pivman_rebuild(prior: &[u8], protected: bool, out: &mut [u8; PIVMAN_MAX]) -> 
         prior_flags & !PIVMAN_FLAG_MGM_PROTECTED
     };
     let ts = find_tag(inner, PIVMAN_TS_TAG as u16)
-        .map(|t| &t[..t.len().min(PIVMAN_TS_MAX)])
+        .map(|t| t.get(..PIVMAN_TS_MAX).unwrap_or(t))
         .unwrap_or(&[]);
 
     // Body = 81 01 <flags> [83 <len> <ts>]; outer = 80 <body_len> <body>.
     let mut body = [0u8; 3 + 2 + PIVMAN_TS_MAX];
-    let mut n = 0;
-    body[n] = PIVMAN_FLAGS_TAG;
-    body[n + 1] = 0x01;
-    body[n + 2] = flags;
-    n += 3;
-    if !ts.is_empty() {
-        body[n] = PIVMAN_TS_TAG;
-        body[n + 1] = ts.len() as u8;
-        body[n + 2..n + 2 + ts.len()].copy_from_slice(ts);
+    body[..3].copy_from_slice(&[PIVMAN_FLAGS_TAG, 0x01, flags]);
+    let mut n = 3;
+    if !ts.is_empty()
+        && let Some(value) = body.get_mut(5..5 + ts.len())
+    {
+        value.copy_from_slice(ts);
+        body[3] = PIVMAN_TS_TAG;
+        body[4] = u8::try_from(ts.len()).unwrap_or(u8::MAX);
         n += 2 + ts.len();
     }
     out[0] = PIVMAN_TAG;
-    out[1] = n as u8;
-    out[2..2 + n].copy_from_slice(&body[..n]);
+    out[1] = u8::try_from(n).unwrap_or(u8::MAX);
+    if let (Some(dst), Some(src)) = (out.get_mut(2..2 + n), body.get(..n)) {
+        dst.copy_from_slice(src);
+    }
     2 + n
+}
+
+/// The inner TLV run of a `80 <len> { .. }` PivmanData record, clamped to what `record`
+/// holds; empty for anything else.
+fn pivman_inner(record: &[u8]) -> &[u8] {
+    match (record.first(), record.get(1), record.get(2..)) {
+        (Some(&PIVMAN_TAG), Some(&len), Some(rest)) => rest.get(..usize::from(len)).unwrap_or(rest),
+        _ => &[],
+    }
 }
 
 /// Constant-time slice equality (length public).
@@ -1719,9 +1795,11 @@ pub(crate) fn ct_eq(a: &[u8], b: &[u8]) -> bool {
 
 /// Append `tag { payload }` with a DER length to `res`.
 pub(crate) fn push_tlv(res: &mut ResBuf, tag: u8, payload: &[u8]) -> Result<(), Sw> {
+    let len = u16::try_from(payload.len()).map_err(|_| Sw::WRONG_LENGTH)?;
     let mut ll = [0u8; 3];
-    let n = format_len(payload.len() as u16, &mut ll);
-    if !res.push(tag) || !res.extend(&ll[..n]) || !res.extend(payload) {
+    let n = format_len(len, &mut ll);
+    let head = ll.get(..n).ok_or(Sw::WRONG_LENGTH)?;
+    if !res.push(tag) || !res.extend(head) || !res.extend(payload) {
         return Err(Sw::WRONG_LENGTH);
     }
     Ok(())
@@ -1729,11 +1807,14 @@ pub(crate) fn push_tlv(res: &mut ResBuf, tag: u8, payload: &[u8]) -> Result<(), 
 
 /// Build the GENERAL AUTHENTICATE response `7C { tag payload }`.
 pub(crate) fn dyn_auth_resp(res: &mut ResBuf, tag: u8, payload: &[u8]) -> Result<(), Sw> {
+    let len = u16::try_from(payload.len()).map_err(|_| Sw::WRONG_LENGTH)?;
     let mut ll = [0u8; 3];
-    let inner = 1 + format_len(payload.len() as u16, &mut ll) as u16 + payload.len() as u16;
+    let inner = u16::try_from(1 + format_len(len, &mut ll) + payload.len())
+        .map_err(|_| Sw::WRONG_LENGTH)?;
     let mut oll = [0u8; 3];
     let on = format_len(inner, &mut oll);
-    if !res.push(TAG_DYN_AUTH) || !res.extend(&oll[..on]) {
+    let head = oll.get(..on).ok_or(Sw::WRONG_LENGTH)?;
+    if !res.push(TAG_DYN_AUTH) || !res.extend(head) {
         return Err(Sw::WRONG_LENGTH);
     }
     push_tlv(res, tag, payload)
@@ -1742,17 +1823,20 @@ pub(crate) fn dyn_auth_resp(res: &mut ResBuf, tag: u8, payload: &[u8]) -> Result
 /// Wrap a DER certificate as the Yubico certificate object
 /// `70 { cert } 71 { 0 } FE { }` (uncompressed).
 pub fn wrap_cert_object(cert: &[u8], out: &mut [u8]) -> usize {
-    let mut p = 0;
-    out[p] = 0x70;
-    p += 1;
+    // A certificate is at most `x509::MAX_CERT`, far below the 65,535 a length holds.
     let mut ll = [0u8; 3];
-    let n = format_len(cert.len() as u16, &mut ll);
-    out[p..p + n].copy_from_slice(&ll[..n]);
-    p += n;
-    out[p..p + cert.len()].copy_from_slice(cert);
-    p += cert.len();
-    out[p..p + 5].copy_from_slice(&[0x71, 0x01, 0x00, 0xFE, 0x00]);
-    p + 5
+    let n = format_len(u16::try_from(cert.len()).unwrap_or(u16::MAX), &mut ll);
+    let object = [0x70]
+        .iter()
+        .chain(ll.iter().take(n))
+        .chain(cert)
+        .chain(&[0x71, 0x01, 0x00, 0xFE, 0x00]);
+    let mut p = 0;
+    for (dst, &b) in out.iter_mut().zip(object) {
+        *dst = b;
+        p += 1;
+    }
+    p
 }
 
 /// Kani proof harnesses (`cargo kani -p rsk-piv`): exhaustive over every input up
@@ -1762,16 +1846,48 @@ pub fn wrap_cert_object(cert: &[u8], out: &mut [u8]) -> usize {
 mod proofs;
 
 #[cfg(test)]
+#[allow(
+    clippy::indexing_slicing,
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::cast_possible_truncation,
+    reason = "a test's fixture is its own bound, and a panic is its failure report"
+)]
 mod tests;
 
 #[cfg(test)]
+#[allow(
+    clippy::indexing_slicing,
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::cast_possible_truncation,
+    reason = "a test's fixture is its own bound, and a panic is its failure report"
+)]
 #[path = "reselect_tests.rs"]
 mod reselect_tests;
 
 #[cfg(test)]
+#[allow(
+    clippy::indexing_slicing,
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::cast_possible_truncation,
+    reason = "a test's fixture is its own bound, and a panic is its failure report"
+)]
 #[path = "challenge_tests.rs"]
 mod challenge_tests;
 
 #[cfg(test)]
+#[allow(
+    clippy::indexing_slicing,
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::cast_possible_truncation,
+    reason = "a test's fixture is its own bound, and a panic is its failure report"
+)]
 #[path = "dying_tests.rs"]
 mod dying_tests;

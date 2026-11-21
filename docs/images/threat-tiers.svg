@@ -1,81 +1,73 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-only -->
 <!-- Copyright (C) 2026 RS-Key contributors -->
-<svg viewBox="0 0 780 372" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="ttl dsc" font-family="'Segoe UI', system-ui, -apple-system, sans-serif">
-  <title id="ttl">What RS-Key defends, and what is out of scope</title>
-  <desc id="dsc">Attacker-controlled USB bytes enter the RP2350, where three defense tiers compose: memory-safe parsers (safe Rust plus fuzzing), then protocol gates (PIN/UV, touch, management key), then the key material, which is also protected by an at-rest seal meaningful after the OTP master-key burn. Physical and lab attacks and a compromised, unlocked host are explicitly out of scope and reach the device undefended — the RP2350 is not a secure element.</desc>
+<svg viewBox="0 0 840 482" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc" font-family="system-ui, sans-serif">
+  <title id="title">RS-Key security boundaries</title>
+  <desc id="desc">A hostile host sends traffic to the Secure USB controller. Non-secure code frames commands, checked gateways copy them, and Secure applets authorize operations. Separately, a migrated OTP root protects sealed records from a flash dump, the partition table fences off the store in BOOTSEL, and enforced Secure Boot authenticates firmware. Invasive lab attacks are out of scope.</desc>
   <defs>
     <style>
-      .h1{font-size:23px;font-weight:700;fill:#2B2723}
-      .sub{font-size:12.5px;fill:#948A7F}
-      .lg{font-size:11px;fill:#6B645C}
-      .name{font-size:13px;font-weight:700;fill:#fff}
-      .desc{font-size:10px;fill:#F3ECE4}
-      .boxlab{font-size:11px;font-weight:700;fill:#948A7F;letter-spacing:.5px}
-      .boxlab2{font-size:10px;fill:#B7AEA3}
-      .flow{font-size:10px;fill:#8a8478;font-style:italic}
-      .oos{font-size:11px;fill:#6B645C}
-      .oosk{font-size:11px;font-weight:700;fill:#6B645C}
-      .nd{font-size:10.5px;font-style:italic;fill:#948A7F;font-weight:700}
-      .foot{font-size:10.5px;fill:#ADA398}
+      .title { fill: #29241f; font-size: 25px; font-weight: 700; }
+      .label { fill: #52473e; font-size: 15px; font-weight: 700; }
+      .note { fill: #52473e; font-size: 15px; }
+      .white { fill: #fff; }
+      .arrow { stroke: #61554c; stroke-width: 2; marker-end: url(#arrow); }
     </style>
-    <marker id="af" viewBox="0 0 8 8" refX="6.5" refY="4" markerWidth="6.5" markerHeight="6.5" orient="auto"><path d="M0 0 L8 4 L0 8 z" fill="#A9764F"/></marker>
-    <marker id="ag" viewBox="0 0 8 8" refX="6.5" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 L8 4 L0 8 z" fill="#948A7F"/></marker>
+    <marker id="arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M0 0 L8 4 L0 8 Z" fill="#61554c"/>
+    </marker>
   </defs>
-  <rect x="6" y="6" width="768" height="360" rx="16" fill="#FBFAF8" stroke="#E4DED5" stroke-width="1.5"/>
+  <rect x="1" y="1" width="838" height="480" rx="16" fill="#fbfaf8" stroke="#d8cfc6" stroke-width="2"/>
+  <text class="title" x="32" y="46">RS-Key security boundaries</text>
 
-  <text class="h1" x="34" y="46">What RS-Key defends</text>
-  <text class="sub" x="34" y="68">the defenses compose in tiers — each one assumes the ones before it</text>
+  <rect x="24" y="68" width="792" height="150" rx="12" fill="#f1ece6"/>
+  <text class="label" x="40" y="93">USB command path</text>
+  <g text-anchor="middle">
+    <rect x="40" y="109" width="114" height="65" rx="9" fill="#963c22"/>
+    <text class="label white" x="97" y="134">Hostile host</text>
+    <text class="note white" x="97" y="156">USB traffic</text>
 
-  <!-- legend -->
-  <rect x="500" y="34" width="13" height="13" rx="3" fill="#2F7E75"/>
-  <text class="lg" x="520" y="45">defense tier</text>
-  <rect x="596" y="34" width="13" height="13" rx="3" fill="#3E3A36"/>
-  <text class="lg" x="616" y="45">asset</text>
-  <rect x="656" y="34" width="13" height="13" rx="3" fill="#FBF6F2" stroke="#C9C1B6" stroke-dasharray="3 2"/>
-  <text class="lg" x="676" y="45">out of scope</text>
+    <rect x="176" y="109" width="136" height="65" rx="9" fill="#216b61"/>
+    <text class="label white" x="244" y="134">Secure USB</text>
+    <text class="note white" x="244" y="156">Controller &amp; setup</text>
 
-  <!-- attacker -->
-  <rect x="34" y="156" width="152" height="48" rx="11" fill="#C0562B"/>
-  <text class="name" x="110" y="180" text-anchor="middle">Attacker-controlled</text>
-  <text class="name" x="110" y="196" text-anchor="middle">USB bytes</text>
-  <line x1="186" y1="180" x2="242" y2="180" stroke="#A9764F" stroke-width="2" marker-end="url(#af)"/>
+    <rect x="334" y="109" width="140" height="65" rx="9" fill="#435972"/>
+    <text class="label white" x="404" y="134">Non-secure</text>
+    <text class="note white" x="404" y="156">Classes &amp; framing</text>
 
-  <!-- RP2350 boundary -->
-  <rect x="226" y="100" width="522" height="176" rx="14" fill="#F7F3EE" stroke="#D9D2C8" stroke-width="1.5"/>
-  <text class="boxlab" x="246" y="123">RP2350</text>
-  <text class="boxlab2" x="304" y="123">not a secure element</text>
+    <rect x="496" y="109" width="135" height="65" rx="9" fill="#216b61"/>
+    <text class="label white" x="563.5" y="134">Secure gateways</text>
+    <text class="note white" x="563.5" y="156">Check &amp; copy</text>
 
-  <!-- pipeline: parsers -> gates -> keys -->
-  <rect x="244" y="156" width="150" height="48" rx="10" fill="#2F7E75"/>
-  <text class="name" x="319" y="180" text-anchor="middle">Memory-safe parsers</text>
-  <text class="desc" x="319" y="196" text-anchor="middle">safe Rust + fuzzing</text>
+    <rect x="653" y="109" width="147" height="65" rx="9" fill="#216b61"/>
+    <text class="label white" x="726.5" y="134">Secure applets</text>
+    <text class="note white" x="726.5" y="156">Authorize key use</text>
+  </g>
+  <path class="arrow" d="M154 142 H173"/>
+  <path class="arrow" d="M312 142 H331"/>
+  <path class="arrow" d="M474 142 H493"/>
+  <path class="arrow" d="M631 142 H650"/>
+  <text class="note" x="40" y="199">A hostile host can request operations that applet policy allows.</text>
 
-  <rect x="414" y="156" width="150" height="48" rx="10" fill="#2F7E75"/>
-  <text class="name" x="489" y="180" text-anchor="middle">Protocol gates</text>
-  <text class="desc" x="489" y="196" text-anchor="middle">PIN·UV · touch · mgmt-key</text>
+  <text class="label" x="32" y="254">Physical access to the board</text>
+  <g>
+    <rect x="32" y="271" width="244" height="114" rx="10" fill="#f1ece6"/>
+    <text class="label" x="48" y="301">Flash dump</text>
+    <text class="note" x="48" y="327">OTP root protects records</text>
+    <text class="note" x="48" y="349">migrated under it.</text>
 
-  <rect x="584" y="156" width="144" height="48" rx="10" fill="#3E3A36"/>
-  <text class="name" x="656" y="184" text-anchor="middle">Key material</text>
+    <rect x="298" y="271" width="244" height="114" rx="10" fill="#f1ece6"/>
+    <text class="label" x="314" y="301">BOOTSEL access</text>
+    <text class="note" x="314" y="327">The partition table fences</text>
+    <text class="note" x="314" y="349">off the credential store.</text>
+    <text class="note" x="314" y="371">Raw writes can replay data.</text>
 
-  <line x1="394" y1="180" x2="414" y2="180" stroke="#A9764F" stroke-width="2" marker-end="url(#af)"/>
-  <line x1="564" y1="180" x2="584" y2="180" stroke="#A9764F" stroke-width="2" marker-end="url(#af)"/>
+    <rect x="564" y="271" width="244" height="114" rx="10" fill="#f1ece6"/>
+    <text class="label" x="580" y="301">Replacement firmware</text>
+    <text class="note" x="580" y="327">Enforced Secure Boot</text>
+    <text class="note" x="580" y="349">authenticates both worlds</text>
+    <text class="note" x="580" y="371">and the embedded table.</text>
+  </g>
 
-  <!-- at-rest seal -->
-  <rect x="414" y="224" width="150" height="36" rx="9" fill="#2F7E75"/>
-  <text class="name" x="489" y="246" text-anchor="middle">At-rest seal</text>
-  <path d="M564 242 C 620 242, 656 224, 656 204" fill="none" stroke="#A9764F" stroke-width="2" marker-end="url(#af)"/>
-  <text class="flow" x="612" y="236" text-anchor="middle">seals</text>
-  <text class="boxlab2" x="489" y="274" text-anchor="middle">meaningful after the OTP master-key burn</text>
-
-  <!-- out of scope -->
-  <rect x="34" y="300" width="452" height="50" rx="11" fill="#FBF6F2" stroke="#C9C1B6" stroke-width="1.5" stroke-dasharray="6 4"/>
-  <text class="oosk" x="50" y="322">Out of scope:</text>
-  <text class="oos" x="142" y="322">physical / lab attacks · a compromised, unlocked host</text>
-  <text class="oos" x="50" y="340">decap · fault injection · side channels · XIP TOCTOU</text>
-
-  <!-- not-defended dashed arrow into RP2350 -->
-  <path d="M360 300 C 360 288, 400 288, 400 278" fill="none" stroke="#948A7F" stroke-width="2" stroke-dasharray="6 4" marker-end="url(#ag)"/>
-  <text class="nd" x="440" y="294">not defended</text>
-
-  <text class="foot" x="34" y="360">Reference: threat-model.md · a hostile host, an at-rest thief, and foreign firmware are defended in tiers; a funded lab is not</text>
+  <rect x="32" y="411" width="776" height="47" rx="9" fill="none" stroke="#b1a599" stroke-dasharray="6 4"/>
+  <text class="label" x="48" y="440">Out of scope</text>
+  <text class="note" x="161" y="440">Invasive debug, fault injection and physical side-channel attacks</text>
 </svg>

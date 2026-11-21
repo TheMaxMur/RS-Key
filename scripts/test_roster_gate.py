@@ -25,10 +25,10 @@ import roster_gate
 
 CHECK = """#!/usr/bin/env bash
 run "clippy (embedded)"   env BOARD=x cargo clippy --workspace -- -D warnings
-run "clippy (host tests)" cargo clippy --workspace --exclude firmware --exclude rsk-wipe --target "$HOST" --all-targets -- -D warnings
-run "rustdoc (host)"      cargo doc --workspace --exclude firmware --exclude rsk-wipe --no-deps --target "$HOST"
+run "clippy (host tests)" cargo clippy --workspace --exclude firmware --exclude firmware-ns --exclude rsk-wipe --target "$HOST" --all-targets -- -D warnings
+run "rustdoc (host)"      cargo doc --workspace --exclude firmware --exclude firmware-ns --exclude rsk-wipe --no-deps --target "$HOST"
 run "rustdoc (embedded)"  env BOARD=x cargo doc -p firmware -p rsk-wipe --no-deps
-run "test (host)"         cargo test --workspace --exclude firmware --exclude rsk-wipe --target "$HOST"
+run "test (host)"         cargo test --workspace --exclude firmware --exclude firmware-ns --exclude rsk-wipe --target "$HOST"
 run "test (strict-cfg)"   cargo test -p rsk-a -p rsk-b --features strict-config --target "$HOST"
 run "crate roster"        python scripts/roster_gate.py
 run "pytest (gate)"       python -m pytest scripts -q
@@ -37,7 +37,7 @@ run "pytest (gate)"       python -m pytest scripts -q
 DOCS = """# Testing
 
 ```sh
-nix develop -c cargo test --workspace --exclude firmware --exclude rsk-wipe \\
+nix develop -c cargo test --workspace --exclude firmware --exclude firmware-ns --exclude rsk-wipe \\
     --target aarch64-apple-darwin
 ```
 
@@ -45,7 +45,7 @@ One crate at a time: `cargo test -p rsk-a`.
 """
 
 WORKFLOW = """# Local equivalents:
-#   nix develop -c cargo llvm-cov --summary-only --fail-under-lines 80 --target <host> --workspace --exclude firmware --exclude rsk-wipe
+#   nix develop -c cargo llvm-cov --summary-only --fail-under-lines 80 --target <host> --workspace --exclude firmware --exclude firmware-ns --exclude rsk-wipe
 
 name: deep-checks
 jobs:
@@ -55,20 +55,20 @@ jobs:
         run: |
           nix develop -c cargo llvm-cov --summary-only --fail-under-lines 80 \\
             --target x86_64-unknown-linux-gnu \\
-            --workspace --exclude firmware --exclude rsk-wipe
+            --workspace --exclude firmware --exclude firmware-ns --exclude rsk-wipe
 """
 
 FLAKE = """{
   cargo-test = {
     buildPhase = ''
       cargo test --offline --frozen --target ${hostTarget} \\
-        --workspace --exclude firmware --exclude rsk-wipe
+        --workspace --exclude firmware --exclude firmware-ns --exclude rsk-wipe
     '';
   };
 }
 """
 
-MEMBERS = ("firmware", "rsk-wipe", "crates/rsk-a", "crates/rsk-b")
+MEMBERS = ("firmware", "firmware-ns", "rsk-wipe", "crates/rsk-a", "crates/rsk-b")
 
 
 class Tree:
@@ -130,7 +130,7 @@ def test_this_checkout_is_green():
 def test_summary_counts_every_selection(tree):
     assert "4 crates under crates/" not in roster_gate.audit(tree.root)[1]
     assert "2 crates under crates/" in roster_gate.audit(tree.root)[1]
-    assert "firmware and rsk-wipe excluded" in roster_gate.audit(tree.root)[1]
+    assert "firmware and firmware-ns and rsk-wipe excluded" in roster_gate.audit(tree.root)[1]
 
 
 # --- a row stops selecting the whole tree ------------------------------------
@@ -139,7 +139,7 @@ def test_summary_counts_every_selection(tree):
 def test_row_reverted_to_a_hand_written_list(tree):
     tree.edit(
         roster_gate.CHECK,
-        'cargo test --workspace --exclude firmware --exclude rsk-wipe --target "$HOST"',
+        'cargo test --workspace --exclude firmware --exclude firmware-ns --exclude rsk-wipe --target "$HOST"',
         'cargo test -p rsk-a -p rsk-b --target "$HOST"',
     )
     assert only(tree.problems(), "`cargo test` picks rsk-a rsk-b by name")
@@ -150,7 +150,7 @@ def test_a_row_narrowed_to_one_crate(tree):
     """One crate is an example everywhere else; not for a verb the file promised."""
     tree.edit(
         roster_gate.CHECK,
-        'cargo doc --workspace --exclude firmware --exclude rsk-wipe --no-deps --target "$HOST"',
+        'cargo doc --workspace --exclude firmware --exclude firmware-ns --exclude rsk-wipe --no-deps --target "$HOST"',
         'cargo doc -p rsk-a --no-deps --target "$HOST"',
     )
     assert only(tree.problems(), "`cargo doc` picks rsk-a by name")
@@ -169,25 +169,25 @@ def test_a_narrowed_row_for_a_verb_the_file_never_promised(tree):
 def test_an_exclude_dropped(tree):
     tree.edit(
         roster_gate.WORKFLOW,
-        "            --workspace --exclude firmware --exclude rsk-wipe\n",
+        "            --workspace --exclude firmware --exclude firmware-ns --exclude rsk-wipe\n",
         "            --workspace --exclude firmware\n",
     )
     assert only(tree.problems(), "excludes firmware from a cargo `--workspace`")
 
 
-def test_a_third_exclude_added(tree):
+def test_a_host_library_exclude_added(tree):
     tree.edit(
         roster_gate.CHECK,
-        'cargo test --workspace --exclude firmware --exclude rsk-wipe --target "$HOST"',
-        'cargo test --workspace --exclude firmware --exclude rsk-wipe --exclude rsk-b --target "$HOST"',
+        'cargo test --workspace --exclude firmware --exclude firmware-ns --exclude rsk-wipe --target "$HOST"',
+        'cargo test --workspace --exclude firmware --exclude firmware-ns --exclude rsk-wipe --exclude rsk-b --target "$HOST"',
     )
-    assert only(tree.problems(), "excludes firmware rsk-b rsk-wipe")
+    assert only(tree.problems(), "excludes firmware firmware-ns rsk-b rsk-wipe")
 
 
 def test_the_row_deleted(tree):
     tree.edit(
         roster_gate.CHECK,
-        'run "test (host)"         cargo test --workspace --exclude firmware --exclude rsk-wipe --target "$HOST"\n',
+        'run "test (host)"         cargo test --workspace --exclude firmware --exclude firmware-ns --exclude rsk-wipe --target "$HOST"\n',
         "",
     )
     assert only(tree.problems(), "no `cargo test --workspace`")
@@ -208,7 +208,7 @@ def test_the_header_copy_deleted_while_the_row_runs(tree):
     tree.edit(
         roster_gate.WORKFLOW,
         "#   nix develop -c cargo llvm-cov --summary-only --fail-under-lines 80"
-        " --target <host> --workspace --exclude firmware --exclude rsk-wipe\n",
+        " --target <host> --workspace --exclude firmware --exclude firmware-ns --exclude rsk-wipe\n",
         "#   see the coverage step below\n",
     )
     assert only(tree.problems(), "is quoted")
@@ -219,7 +219,7 @@ def test_the_embedded_row_cannot_answer_for_the_host_one(tree):
     covers the two crates a host row cannot build — not the other way round."""
     tree.edit(
         roster_gate.CHECK,
-        'run "clippy (host tests)" cargo clippy --workspace --exclude firmware --exclude rsk-wipe --target "$HOST" --all-targets -- -D warnings\n',
+        'run "clippy (host tests)" cargo clippy --workspace --exclude firmware --exclude firmware-ns --exclude rsk-wipe --target "$HOST" --all-targets -- -D warnings\n',
         "",
     )
     assert only(tree.problems(), "no `cargo clippy --workspace`")
@@ -231,7 +231,7 @@ def test_the_docs_copy_deleted(tree):
 
 
 def test_an_exclude_built_from_a_substitution(tree):
-    tree.edit(roster_gate.FLAKE, "--exclude firmware --exclude rsk-wipe", "--exclude ${skip}")
+    tree.edit(roster_gate.FLAKE, "--exclude firmware --exclude firmware-ns --exclude rsk-wipe", "--exclude ${skip}")
     assert only(tree.problems(), "cannot read")
 
 
@@ -245,7 +245,7 @@ def test_two_commands_on_one_line_stay_two(tree):
     tree.edit(
         roster_gate.CHECK,
         'run "crate roster"',
-        'run "extra" sh -c \'cargo build --workspace --exclude rsk-a && cargo test --workspace --exclude firmware --exclude rsk-wipe\'\nrun "crate roster"',
+        'run "extra" sh -c \'cargo build --workspace --exclude rsk-a && cargo test --workspace --exclude firmware --exclude firmware-ns --exclude rsk-wipe\'\nrun "crate roster"',
     )
     assert only(tree.problems(), "excludes rsk-a")
 
@@ -262,9 +262,9 @@ def test_a_parameterised_helper(tree):
     """Five rows DRY'd into one: the verb is a variable, the flags are not."""
     tree.edit(
         roster_gate.CHECK,
-        'run "clippy (host tests)" cargo clippy --workspace --exclude firmware --exclude rsk-wipe --target "$HOST" --all-targets -- -D warnings\n'
-        'run "rustdoc (host)"      cargo doc --workspace --exclude firmware --exclude rsk-wipe --no-deps --target "$HOST"\n',
-        'host() { cargo "$1" --workspace --exclude firmware --exclude rsk-wipe --target "$HOST" "${@:2}"; }\n'
+        'run "clippy (host tests)" cargo clippy --workspace --exclude firmware --exclude firmware-ns --exclude rsk-wipe --target "$HOST" --all-targets -- -D warnings\n'
+        'run "rustdoc (host)"      cargo doc --workspace --exclude firmware --exclude firmware-ns --exclude rsk-wipe --no-deps --target "$HOST"\n',
+        'host() { cargo "$1" --workspace --exclude firmware --exclude firmware-ns --exclude rsk-wipe --target "$HOST" "${@:2}"; }\n'
         'run "clippy (host tests)" host clippy --all-targets -- -D warnings\n'
         'run "rustdoc (host)"      host doc --no-deps\n',
     )
@@ -337,7 +337,7 @@ def test_a_member_with_no_manifest(tree, tmp_path):
 
 def test_the_package_name_is_read_from_the_manifest(tree, tmp_path):
     """`--exclude` takes the package name; nothing makes it match the directory."""
-    tree = Tree(tmp_path / "b", ("fw", "rsk-wipe", "crates/rsk-a", "crates/rsk-b"))
+    tree = Tree(tmp_path / "b", ("fw", "firmware-ns", "rsk-wipe", "crates/rsk-a", "crates/rsk-b"))
     tree.write("fw/Cargo.toml", '[package]\nname = "firmware"\n')
     assert tree.problems() == []
 
@@ -372,7 +372,7 @@ def test_the_kani_hand_over_has_a_catcher():
 
     Skipping the verb here is only safe while the guard that OWNS it reads this
     file. For the whole life of `OTHER_GUARDS` it did not — `kani_gate.sources`
-    read the workflows and docs/testing.md — so the row above was skipped here,
+    read the workflows and assurance/reports/testing-evidence.md — so the row above was skipped here,
     unseen there, and both guards printed `ok` over a second roster in the gate.
     Asserted against the real checkout, because that is where the hole was.
 

@@ -2,7 +2,7 @@
 # Copyright (C) 2026 RS-Key contributors
 #
 # TenStar RP2350-USB — WS2812B-standard LED (GRB byte order),
-# GPIO button for presence. No display.
+# the BOOT button (BOOTSEL) for presence (issue #125). No display.
 
 [usb]
 vidpid = "RSKey"
@@ -13,9 +13,7 @@ pin = 22
 order = "grb"
 
 [presence]
-source = "gpio"
-pin = 15
-active_high = false
+source = "bootsel"
 
 [flash]
 size_mb = 16

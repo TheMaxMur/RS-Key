@@ -2,8 +2,9 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # Copyright (C) 2026 RS-Key contributors
 
-# Every suite that needs no board, in one command — the on-device `tests/*.py`
-# and the vendored OpenPGP conformance suite, all against `tools/emu`.
+# Every suite that needs no board, in one command — the on-device `tests/*.py`,
+# the vendored OpenPGP conformance suite, ykman's device tests and the diff against
+# a frozen YubiKey 5.8.0 (tests/interop/baseline), against `tools/emu`.
 #
 # One script so CI is a thin caller and the local run is the same thing, the way
 # `check.sh` is for the gate. What is NOT here is the half that wants real USB
@@ -63,7 +64,10 @@ run_suite() {
 }
 
 echo "== building the emulator"
-cargo build --release --manifest-path tools/emu/Cargo.toml --target "$HOST" \
+# The suites are the oracle, and a plain release build turns debug_assert! and
+# overflow checks off: a false assertion or a wrapped counter would answer on.
+CARGO_PROFILE_RELEASE_DEBUG_ASSERTIONS=true CARGO_PROFILE_RELEASE_OVERFLOW_CHECKS=true \
+  cargo build --release --manifest-path tools/emu/Cargo.toml --target "$HOST" \
   --features security-trace
 
 echo
@@ -71,12 +75,12 @@ echo "== on-device suites (socket transports)"
 start_emu default
 for t in tests/[0-9]*.py; do
   case "$(basename "$t")" in
-    # Their own sessions below: `30` wants the Yubico card identity, and `28`/`76`
-    # want a PIN already set. `16` wants one too and has no session of its own —
+    # Their own sessions below: `28`/`76` want a PIN already set (`30` runs here
+    # and again under the Yubico identity). `16` wants one too and has no session —
     # it exists for the recording, which runs it where `21` has just set it. `09`
     # is the mirror: it wants NO PIN, and in this sweep it would meet whichever
     # one an earlier suite left behind.
-    30_* | 28_* | 76_* | 16_* | 09_*) continue ;;
+    28_* | 76_* | 16_* | 09_*) continue ;;
     *) run_suite "$t" ;;
   esac
 done
@@ -156,13 +160,41 @@ else
 fi
 
 echo
+echo "== third_party: ykman's own device tests (Yubico card identity)"
+yk=0
+start_emu ykman --yubico --auto-touch-ms 1
+python tests/third_party.py ykman -q || yk=$?
+stop_emu
+
+echo
+echo "== interop: the emulator against the frozen YubiKey 5.8.0 (tests/interop/baseline)"
+# A fresh store is the factory state the key was frozen in, and `--yubico` makes
+# the ATR the YubiKey's, byte for byte. The USB descriptor cell skips here: this
+# socket transport has no USB stack for it to read.
+bl=0
+start_emu baseline --yubico
+python tests/emu.py tests/interop/capture.py --label rsk --baseline \
+  --out "$WORK/emu-baseline.json" >"$WORK/baseline.out" 2>&1 || bl=$?
+stop_emu
+if [ "$bl" -eq 0 ]; then
+  python tests/interop/diff.py tests/interop/baseline/yubikey-5.8.0.json \
+    "$WORK/emu-baseline.json" --cells fido_getinfo,ccid_atr,mgmt_tlv \
+    >>"$WORK/baseline.out" 2>&1 || bl=$?
+  tail -1 "$WORK/baseline.out"
+fi
+
+echo
 echo "on-device: $pass passed, $fail failed, $skip refused by name"
 if [ ${#failed[@]} -gt 0 ]; then
   printf 'failed: %s\n' "${failed[*]}"
 fi
 echo "third_party (openpgp): $tp_note"
+echo "third_party (ykman): pytest exit $yk"
+echo "interop baseline: exit $bl"
 
 [ "$fail" -eq 0 ] || exit 1
 [ "$tp" -eq 0 ] || exit 1
+[ "$yk" -eq 0 ] || exit 1
+[ "$bl" -eq 0 ] || { cat "$WORK/baseline.out"; exit 1; }
 echo
 echo "EMULATOR SUITES PASSED"

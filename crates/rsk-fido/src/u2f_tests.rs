@@ -11,6 +11,12 @@ use rsk_crypto::Device;
 use rsk_fs::Fs;
 use rsk_fs::storage::ram::RamStorage;
 
+#[path = "u2f_bounds_tests.rs"]
+mod bounds;
+
+#[path = "u2f_independence_tests.rs"]
+mod independence;
+
 struct SeqRng(u64);
 impl Rng for SeqRng {
     fn fill(&mut self, buf: &mut [u8]) {
@@ -26,6 +32,7 @@ fn dev() -> Device<'static> {
         serial_hash: &[0xAB; 32],
         serial_id: &[1, 2, 3, 4, 5, 6, 7, 8],
         otp_key: None,
+        latched: false,
     }
 }
 
@@ -75,6 +82,7 @@ impl crate::UserPresence for CountingPresence {
 #[test]
 fn register_without_touch_is_refused() {
     let mut fs = Fs::new(RamStorage::new());
+    crate::tests::uv_optional(&mut fs);
     let mut rng = SeqRng(1);
     ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
     let mut data = std::vec::Vec::new();
@@ -305,6 +313,7 @@ fn u2f_disabled_under_always_uv_when_the_pad_has_no_pin() {
 #[test]
 fn u2f_dont_enforce_still_runs_builtin_uv() {
     let mut fs = Fs::new(RamStorage::new());
+    crate::tests::uv_optional(&mut fs);
     let mut rng = SeqRng(1);
     ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
     crate::clientpin::store_local_pin(&dev(), &mut fs, PIN).unwrap();
@@ -373,6 +382,7 @@ fn u2f_dont_enforce_still_runs_builtin_uv() {
 #[test]
 fn register_then_authenticate() {
     let mut fs = Fs::new(RamStorage::new());
+    crate::tests::uv_optional(&mut fs);
     let mut rng = SeqRng(1);
     ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
 
@@ -412,8 +422,8 @@ fn register_then_authenticate() {
 
     // Verify the registration signature under the device (attestation) key.
     let mut seed = crate::seed::load_keydev(&dev(), &mut fs).unwrap();
-    let device_key = P256Key::from_scalar(&seed).unwrap();
-    seed.zeroize();
+    let device_key = P256Key::from_scalar(seed.expose()).unwrap();
+    seed.wipe();
     let (dx, dy) = device_key.public_xy();
     let mut base = std::vec![0x00u8];
     base.extend_from_slice(&APP);
@@ -468,6 +478,7 @@ fn register_then_authenticate() {
 #[test]
 fn check_only_and_bad_handle() {
     let mut fs = Fs::new(RamStorage::new());
+    crate::tests::uv_optional(&mut fs);
     let mut rng = SeqRng(2);
     ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
 
@@ -535,6 +546,7 @@ fn enforce_auth_rejects_unknown_handle_without_touch() {
     // keepalives that desynced the host. The handle check must win, and the
     // touch must not even be requested.
     let mut fs = Fs::new(RamStorage::new());
+    crate::tests::uv_optional(&mut fs);
     let mut rng = SeqRng(7);
     ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
 
@@ -575,6 +587,7 @@ fn authenticate_p1_matrix() {
     // reserved control byte used to skip the touch, clear the TUP flag and sign
     // anyway — a silent signing oracle; it must be INCORRECT_P1P2 instead.
     let mut fs = Fs::new(RamStorage::new());
+    crate::tests::uv_optional(&mut fs);
     let mut rng = SeqRng(11);
     ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
 
@@ -666,6 +679,7 @@ fn authenticate_p1_matrix() {
 #[test]
 fn version() {
     let mut fs = Fs::new(RamStorage::new());
+    crate::tests::uv_optional(&mut fs);
     let mut rng = SeqRng(3);
     let ver = Apdu::parse(&[0x00, CTAP_VERSION, 0x00, 0x00]).unwrap();
     let mut o = [0u8; 16];
@@ -687,6 +701,7 @@ fn version() {
 #[test]
 fn bad_cla_and_ins() {
     let mut fs = Fs::new(RamStorage::new());
+    crate::tests::uv_optional(&mut fs);
     let mut rng = SeqRng(9);
     ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
     let mut state = crate::FidoState::new();
@@ -722,6 +737,7 @@ fn bad_cla_and_ins() {
 #[test]
 fn no_enforce_authenticate_cannot_flush_the_audit_journal() {
     let mut fs = Fs::new(RamStorage::new());
+    crate::tests::uv_optional(&mut fs);
     let mut rng = SeqRng(1);
     ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
     let mut out = [0u8; 1024];
@@ -779,6 +795,7 @@ fn a_faulted_counter_probe_does_not_sign_a_fabricated_u2f_counter() {
     use crate::consts::EF_COUNTER;
     let (backend, medium) = rsk_fs::storage::faults::ProbeStuck::new();
     let mut fs = Fs::new(backend);
+    crate::tests::uv_optional(&mut fs);
     fs.scan();
     let mut rng = SeqRng(1);
     ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
@@ -810,8 +827,8 @@ fn a_faulted_counter_probe_does_not_sign_a_fabricated_u2f_counter() {
     let key_handle = out[67..67 + KEY_HANDLE_LEN].to_vec();
 
     // Off a first boot's zero, so a roll-back shows in the reported counter too.
-    fs.put(EF_COUNTER, &500u32.to_le_bytes()).unwrap();
-    let before = medium.value(EF_COUNTER).expect("on the medium");
+    fs.put_counter(EF_COUNTER, &500u32.to_le_bytes()).unwrap();
+    let before = medium.value(EF_COUNTER.get()).expect("on the medium");
 
     let mut ad = std::vec::Vec::new();
     ad.extend_from_slice(&CHAL);
@@ -821,11 +838,11 @@ fn a_faulted_counter_probe_does_not_sign_a_fabricated_u2f_counter() {
     let auth_bytes = ext_apdu(CTAP_AUTHENTICATE, U2F_AUTH_ENFORCE, &ad);
     let auth_apdu = Apdu::parse(&auth_bytes).unwrap();
     let mut out2 = [0u8; 256];
-    medium.stick(Some(EF_COUNTER));
+    medium.stick(Some(EF_COUNTER.get()));
     let (sw, n) = authenticate(&mut fs, &mut rng, &auth_apdu, &mut out2);
     medium.stick(None);
     assert_eq!(
-        medium.value(EF_COUNTER).as_deref(),
+        medium.value(EF_COUNTER.get()).as_deref(),
         Some(&before[..]),
         "a faulted probe rolled the U2F signature counter back"
     );
@@ -853,6 +870,7 @@ fn a_refused_counter_advance_signs_nothing() {
     use crate::consts::EF_COUNTER;
     let (backend, medium) = rsk_fs::storage::faults::Cut::new();
     let mut fs = Fs::new(backend);
+    crate::tests::uv_optional(&mut fs);
     fs.scan();
     let mut rng = SeqRng(1);
     ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
@@ -892,7 +910,7 @@ fn a_refused_counter_advance_signs_nothing() {
     ad.extend_from_slice(&out[67..67 + KEY_HANDLE_LEN]);
     let auth_bytes = ext_apdu(CTAP_AUTHENTICATE, U2F_AUTH_ENFORCE, &ad);
     let auth_apdu = Apdu::parse(&auth_bytes).unwrap();
-    fs.put(EF_COUNTER, &500u32.to_le_bytes()).unwrap();
+    fs.put_counter(EF_COUNTER, &500u32.to_le_bytes()).unwrap();
 
     // Each answer as the RP sees it: the status, and the counter a body carried.
     let mut signed = |fs: &mut Fs<rsk_fs::storage::faults::Cut>| {
@@ -918,3 +936,404 @@ fn a_refused_counter_advance_signs_nothing() {
         "a refused advance must sign nothing, and the counter must not repeat"
     );
 }
+
+// A U2F REGISTER's touch is not the CTAP2 user-presence test CTAP 2.1 §6.5.5.7
+// spends a pinUvAuthToken on: a live one survives it.
+#[test]
+fn a_u2f_register_touch_leaves_a_live_token_unspent() {
+    let mut fs = Fs::new(RamStorage::new());
+    crate::tests::uv_optional(&mut fs);
+    let mut rng = SeqRng(1);
+    ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
+    let mut data = std::vec::Vec::new();
+    data.extend_from_slice(&CHAL);
+    data.extend_from_slice(&APP);
+    let reg_bytes = ext_apdu(CTAP_REGISTER, 0, &data);
+    let reg_apdu = Apdu::parse(&reg_bytes).unwrap();
+    let mut out = [0u8; 1024];
+    let mut state = crate::FidoState::new();
+    let armed = crate::state::PERM_MC | crate::state::PERM_GA | crate::state::PERM_ACFG;
+    state.paut.permissions = armed;
+    state.begin_using_token(false, 0);
+    let (sw, _) = {
+        let mut presence = Fixed(crate::Presence::Confirmed);
+        let mut ctx = Ctx {
+            presence: &mut presence,
+            dev: dev(),
+            fs: &mut fs,
+            rng: &mut rng,
+            state: &mut state,
+            now_ms: 0,
+        };
+        process_u2f(&mut ctx, &reg_apdu, &mut out)
+    };
+    assert_eq!(sw, Sw::OK);
+    assert_eq!(state.paut.permissions, armed);
+    assert!(state.user_verified());
+}
+
+/// U2F HID frames every request in extended-length encoding, and a YubiKey 5.8.0
+/// holds CTAPHID_MSG to it: these are the cells measured there, with what it answered.
+#[test]
+fn a_hid_request_takes_the_extended_encoding_alone() {
+    let reads = |raw: &[u8]| hid_apdu(raw).map(|a| (a.ins, a.data.to_vec()));
+    // A bare header, and `00 Lc Lc` with that many data bytes; what follows is ignored.
+    assert_eq!(reads(&[0x00, 0x03, 0x00, 0x00]), Ok((0x03, vec![])));
+    assert_eq!(
+        reads(&[0x00, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00]),
+        Ok((0x03, vec![]))
+    );
+    let data = [0x00, 0x02, 0x07, 0x00, 0x00, 0x00, 0x02, 0xAA, 0xBB];
+    for tail in [&[][..], &[0x00, 0x00], &[0x01], &[0x00, 0x00, 0x00]] {
+        let raw = [&data[..], tail].concat();
+        assert_eq!(
+            reads(&raw),
+            Ok((0x02, vec![0xAA, 0xBB])),
+            "tail {tail:02X?}"
+        );
+    }
+    // Every short form is a wrong length, and so is an extended one with its data cut.
+    for raw in [
+        &[0x00, 0x03, 0x00, 0x00, 0x00][..],
+        &[0x00, 0x03, 0x00, 0x00, 0x06],
+        &[0x00, 0x03, 0x00, 0x00, 0x01, 0x00],
+        &[0x00, 0x03, 0x00, 0x00, 0x00, 0x00, 0x06],
+        &[0x00, 0x03, 0x00, 0x00, 0x00, 0x01],
+        &[0x00, 0x02, 0x07, 0x00, 0x00, 0x00, 0x03, 0xAA, 0xBB],
+        &[0x00, 0x03, 0x00],
+    ] {
+        assert_eq!(reads(raw), Err(Sw::WRONG_LENGTH), "{raw:02X?}");
+    }
+    // The class is judged before the lengths.
+    assert_eq!(
+        reads(&[0x80, 0x03, 0x00, 0x00, 0x00]),
+        Err(Sw::CLA_NOT_SUPPORTED)
+    );
+}
+
+/// U2F Raw Message Formats §6.1: VERSION "takes no data as input". A YubiKey 5.8.0
+/// refuses one that carries some `6700` over CTAPHID and CCID alike, and ignores P1.
+#[test]
+fn a_version_with_data_is_a_wrong_length() {
+    let mut fs = Fs::new(RamStorage::new());
+    crate::tests::uv_optional(&mut fs);
+    let mut rng = SeqRng(3);
+    let mut state = crate::FidoState::new();
+    let mut presence = crate::AlwaysConfirm;
+    let mut ctx = Ctx {
+        presence: &mut presence,
+        dev: dev(),
+        fs: &mut fs,
+        rng: &mut rng,
+        state: &mut state,
+        now_ms: 0,
+    };
+    let mut o = [0u8; 16];
+    for raw in [
+        &[0x00, CTAP_VERSION, 0x00, 0x00, 0x01, 0x00][..],
+        &ext_apdu(CTAP_VERSION, 0x00, &[0x00]),
+    ] {
+        let apdu = Apdu::parse(raw).unwrap();
+        assert_eq!(
+            process_u2f(&mut ctx, &apdu, &mut o),
+            (Sw::WRONG_LENGTH, 0),
+            "{raw:02X?}"
+        );
+    }
+    let flagged = Apdu::parse(&[0x00, CTAP_VERSION, 0x01, 0x00]).unwrap();
+    let (sw, n) = process_u2f(&mut ctx, &flagged, &mut o);
+    assert_eq!(
+        (sw, &o[..n]),
+        (Sw::OK, &b"U2F_V2"[..]),
+        "a P1 is not judged"
+    );
+}
+
+/// getInfo's `versions` (0x01), read over the real dispatch.
+fn get_info_versions(ctx: &mut Ctx<RamStorage, SeqRng>) -> std::vec::Vec<std::string::String> {
+    let mut out = [0u8; 1024];
+    let n = crate::process_cbor(ctx, &[crate::consts::CTAP_GET_INFO], &mut out);
+    assert_eq!(out[0], 0, "getInfo refused");
+    let mut d = minicbor::Decoder::new(&out[1..n]);
+    d.map().unwrap();
+    assert_eq!(d.u8().unwrap(), 0x01, "versions leads the map");
+    let count = d.array().unwrap().unwrap();
+    (0..count).map(|_| d.str().unwrap().into()).collect()
+}
+
+/// Every door that says whether U2F is served — VERSION, the SELECT body, getInfo's
+/// `U2F_V2` — in §7.2.4's states: off under alwaysUv, `6986` and `FIDO_2_0` as on a YubiKey
+/// 5.8.0 (measured 2026-09-30), unless a pad with a PIN keeps it on; all three agree.
+#[test]
+fn every_u2f_door_answers_from_one_gate() {
+    let version = Apdu::parse(&[0x00, CTAP_VERSION, 0x00, 0x00]).unwrap();
+    for (what, always_uv, pad, pin, served) in [
+        ("alwaysUv off", false, false, false, true),
+        ("alwaysUv on, no pad", true, false, false, false),
+        ("alwaysUv on, a pad with no PIN", true, true, false, false),
+        ("alwaysUv on, a pad with a PIN", true, true, true, true),
+        ("alwaysUv off, a pad with a PIN", false, true, true, true),
+    ] {
+        let mut fs = Fs::new(RamStorage::new());
+        crate::tests::uv_optional(&mut fs);
+        let mut rng = SeqRng(1);
+        ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
+        if pin {
+            crate::clientpin::store_local_pin(&dev(), &mut fs, PIN).unwrap();
+        }
+        fs.put(EF_ALWAYS_UV, &[u8::from(always_uv)]).unwrap();
+        let mut plain = crate::AlwaysConfirm;
+        let mut uv_pad = UvPad {
+            digits: PIN,
+            touches: 0,
+        };
+        let presence: &mut dyn crate::UserPresence = if pad { &mut uv_pad } else { &mut plain };
+        let selected = select_version(&mut fs, presence);
+        let mut state = crate::FidoState::new();
+        let mut ctx = Ctx {
+            presence,
+            dev: dev(),
+            fs: &mut fs,
+            rng: &mut rng,
+            state: &mut state,
+            now_ms: 0,
+        };
+        let mut out = [0u8; 16];
+        let (sw, n) = process_u2f(&mut ctx, &version, &mut out);
+        let listed = get_info_versions(&mut ctx).iter().any(|v| v == "U2F_V2");
+        let text = |b: &[u8]| std::string::String::from_utf8_lossy(b).into_owned();
+        let want = if served {
+            (Sw::OK, "U2F_V2".into(), "U2F_V2".into(), true)
+        } else {
+            (Sw::COMMAND_NOT_ALLOWED, "".into(), "FIDO_2_0".into(), false)
+        };
+        assert_eq!(
+            (sw, text(&out[..n]), text(selected), listed),
+            want,
+            "{what}: (VERSION, its body, the SELECT body, U2F_V2 in getInfo)"
+        );
+    }
+}
+
+/// The certificate a REGISTER response carries after the key handle: one DER
+/// SEQUENCE, however long its length field.
+fn registered_cert(resp: &[u8]) -> std::vec::Vec<u8> {
+    let cert = &resp[1 + 65 + 1 + KEY_HANDLE_LEN..];
+    let (head, body) = match cert[1] {
+        0x81 => (3, usize::from(cert[2])),
+        0x82 => (4, usize::from(u16::from_be_bytes([cert[2], cert[3]]))),
+        n => (2, usize::from(n)),
+    };
+    cert[..head + body].to_vec()
+}
+
+/// An org attestation key the flash could not read is not an absent one: REGISTER
+/// answers the `MEMORY_FAILURE` a counter fault answers, which the host retries,
+/// rather than swap the org batch attestation for the device's own for good. One
+/// stored but not openable here, and none at all, still take the device's.
+#[test]
+fn an_org_key_the_flash_would_not_read_fails_the_registration() {
+    use crate::consts::EF_ATT_KEY;
+    let mut leaf = [0u8; 64];
+    let n = crate::cert::att_chain_pack(&[0x30u8, 0x03, 1, 2, 3], &mut leaf).unwrap();
+    let elsewhere = Device {
+        serial_hash: &[0xBA; 32],
+        ..dev()
+    };
+    let register = |sealed_by: Option<&Device>, fault: bool| {
+        let (backend, medium) = rsk_fs::storage::faults::ProbeStuck::new();
+        let mut fs = Fs::new(backend);
+        crate::tests::uv_optional(&mut fs);
+        fs.scan();
+        let mut rng = SeqRng(1);
+        ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
+        if let Some(by) = sealed_by {
+            crate::seed::store_att_key(by, &mut fs, &[0x21u8; 32]).unwrap();
+            fs.put(EF_ATT_CHAIN, &leaf[..n]).unwrap();
+        }
+        let mut ee = [0u8; 1024];
+        let ee_len = fs.read(EF_EE_DEV, &mut ee).unwrap();
+        medium.stick(fault.then_some(EF_ATT_KEY.get()));
+        let reg_bytes = ext_apdu(CTAP_REGISTER, 0, &[CHAL, APP].concat());
+        let mut out = [0u8; 1024];
+        let mut state = crate::FidoState::new();
+        let mut presence = crate::AlwaysConfirm;
+        let mut ctx = Ctx {
+            presence: &mut presence,
+            dev: dev(),
+            fs: &mut fs,
+            rng: &mut rng,
+            state: &mut state,
+            now_ms: 0,
+        };
+        let (sw, len) = process_u2f(&mut ctx, &Apdu::parse(&reg_bytes).unwrap(), &mut out);
+        let cert = (sw == Sw::OK).then(|| registered_cert(&out[..len]));
+        (sw, len, cert, ee[..ee_len].to_vec())
+    };
+    let (sw, _, cert, _) = register(Some(&dev()), false);
+    assert_eq!(
+        (sw, cert),
+        (Sw::OK, Some(leaf[3..n].to_vec())),
+        "control: the org chain's leaf"
+    );
+    let (sw, len, _, _) = register(Some(&dev()), true);
+    assert_eq!((sw, len), (Sw::MEMORY_FAILURE, 0), "a faulted org key read");
+    for (what, sealed_by) in [("sealed elsewhere", Some(&elsewhere)), ("absent", None)] {
+        let (sw, _, cert, device) = register(sealed_by, false);
+        assert_eq!(
+            (sw, cert),
+            (Sw::OK, Some(device)),
+            "{what}: the device's cert"
+        );
+    }
+}
+
+#[test]
+fn registration_cannot_return_a_missing_unreadable_or_malformed_certificate() {
+    for (org, value, fault) in [
+        (true, None, false),
+        (true, Some(&[][..]), false),
+        (true, Some(&[1, 0, 0][..]), false),
+        (true, Some(&[1, 0, 8, 0x30][..]), false),
+        (true, Some(&[1, 0, 1, 0x30][..]), true),
+        (false, None, false),
+        (false, Some(&[][..]), false),
+        (false, Some(&[0x30, 0][..]), true),
+    ] {
+        let (backend, medium) = rsk_fs::storage::faults::ProbeStuck::new();
+        let mut fs = Fs::new(backend);
+        fs.scan();
+        crate::tests::uv_optional(&mut fs);
+        let mut rng = SeqRng(1);
+        ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
+        let fid = if org {
+            crate::seed::store_att_key(&dev(), &mut fs, &[0x21; 32]).unwrap();
+            EF_ATT_CHAIN
+        } else {
+            EF_EE_DEV
+        };
+        match value {
+            Some(value) => fs.put(fid, value).unwrap(),
+            None => fs.delete(fid).unwrap(),
+        }
+        let generation = fs.write_gen();
+        medium.stick(fault.then_some(fid));
+        let raw = ext_apdu(CTAP_REGISTER, 0, &[CHAL, APP].concat());
+        let mut state = crate::FidoState::new();
+        let mut presence = crate::AlwaysConfirm;
+        let mut ctx = Ctx {
+            dev: dev(),
+            fs: &mut fs,
+            rng: &mut rng,
+            state: &mut state,
+            now_ms: 0,
+            presence: &mut presence,
+        };
+        let mut out = [0xa5; 1024];
+        assert_eq!(
+            process_u2f(&mut ctx, &Apdu::parse(&raw).unwrap(), &mut out),
+            (Sw::EXEC_ERROR, 0)
+        );
+        assert_eq!(out, [0xa5; 1024]);
+        assert_eq!(fs.write_gen(), generation);
+    }
+}
+
+#[test]
+fn declining_the_named_u2f_card_never_opens_the_builtin_pin_pad() {
+    struct DecliningCard {
+        cards: usize,
+        pins: usize,
+    }
+    impl crate::UserPresence for DecliningCard {
+        fn request(&mut self, _: crate::Confirm<'_>) -> crate::Presence {
+            self.cards += 1;
+            crate::Presence::Timeout
+        }
+        fn shows_confirm(&self) -> bool {
+            true
+        }
+        fn uv_available(&self) -> bool {
+            true
+        }
+        fn collect_pin(&mut self, _: usize, _: &mut [u8]) -> crate::PinEntry {
+            self.pins += 1;
+            crate::PinEntry::Cancelled
+        }
+    }
+    let mut fs = Fs::new(RamStorage::new());
+    let mut rng = SeqRng(1);
+    ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
+    crate::clientpin::store_local_pin(&dev(), &mut fs, PIN).unwrap();
+    fs.put(EF_ALWAYS_UV, &[1]).unwrap();
+    let request = ext_apdu(CTAP_REGISTER, 0, &[CHAL, APP].concat());
+    let apdu = Apdu::parse(&request).unwrap();
+    let generation = fs.write_gen();
+    let entropy = rng.0;
+    let mut state = crate::FidoState::new();
+    let mut presence = DecliningCard { cards: 0, pins: 0 };
+    let mut output = [0xa5; 1024];
+    let mut ctx = Ctx {
+        dev: dev(),
+        fs: &mut fs,
+        rng: &mut rng,
+        state: &mut state,
+        now_ms: 0,
+        presence: &mut presence,
+    };
+    assert_eq!(
+        process_u2f(&mut ctx, &apdu, &mut output),
+        (Sw::CONDITIONS_NOT_SATISFIED, 0)
+    );
+    assert_eq!((presence.cards, presence.pins), (1, 0));
+    assert_eq!(output, [0xa5; 1024]);
+    assert_eq!(fs.write_gen(), generation);
+    assert_eq!(rng.0, entropy);
+}
+
+#[test]
+fn direct_u2f_calls_refuse_inconsistent_apdu_lengths_before_loading_a_key() {
+    let mut fs = Fs::new(RamStorage::new());
+    let mut state = crate::FidoState::new();
+    let mut rng = SeqRng(1);
+    let mut presence = crate::AlwaysConfirm;
+    let empty = Apdu::parse(&[0, CTAP_REGISTER, 0, 0]).unwrap();
+    let mut out = [0xa5; 512];
+    let mut ctx = Ctx {
+        dev: dev(),
+        fs: &mut fs,
+        state: &mut state,
+        rng: &mut rng,
+        presence: &mut presence,
+        now_ms: 0,
+    };
+    assert_eq!(
+        cmd_register(&mut ctx, &Apdu { nc: 64, ..empty }, &mut out),
+        (Sw::WRONG_LENGTH, 0)
+    );
+    assert_eq!(out, [0xa5; 512]);
+    let mut header = [0; 65];
+    header[64] = KEY_HANDLE_LEN as u8;
+    for data in [&header[..64], &header[..]] {
+        let request = Apdu {
+            ins: CTAP_AUTHENTICATE,
+            p1: U2F_AUTH_ENFORCE,
+            nc: 65 + KEY_HANDLE_LEN,
+            data,
+            ..empty
+        };
+        assert_eq!(
+            cmd_authenticate(&mut ctx, &request, &mut out),
+            (Sw::WRONG_DATA, 0)
+        );
+        assert_eq!(out, [0xa5; 512]);
+    }
+    assert_eq!(fs.write_gen(), 0);
+    assert_eq!(rng.0, 1);
+}
+
+#[path = "u2f_restart_tests.rs"]
+mod restarts;
+
+#[path = "u2f_primitive_tests.rs"]
+pub(super) mod primitives;

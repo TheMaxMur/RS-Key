@@ -8,9 +8,10 @@
 
 use rsk_crypto::Device;
 use rsk_fs::{Fs, KeyFid, Storage};
-use rsk_sdk::Sw;
+use rsk_sdk::{Rng, Sw};
 
 use crate::consts::*;
+use crate::keypairgen::{CrtKey, parse_crt};
 use crate::keys::{curve_from_attr, ec_sw, reset_sig_count, store_ec_key, store_rsa_key};
 use crate::origin;
 use crate::pin::Session;
@@ -43,15 +44,13 @@ pub fn import_data<S: Storage>(
     dev: &Device,
     fs: &mut Fs<S>,
     sess: &Session,
+    rng: &mut dyn Rng,
     p1: u8,
     p2: u8,
     data: &[u8],
 ) -> Sw {
     if p1 != 0x3F || p2 != 0xFF {
         return Sw::WRONG_P1P2;
-    }
-    if data.len() < 5 {
-        return Sw::WRONG_LENGTH;
     }
     // Key import is an admin (PW3) operation, judged before the body is read: the
     // control-reference template inside it names the key slot, so resolving first
@@ -60,15 +59,15 @@ pub fn import_data<S: Storage>(
     if !sess.has_pw3 {
         return Sw::SECURITY_STATUS_NOT_SATISFIED;
     }
-    match try_import(dev, fs, sess, data) {
+    match try_import(dev, fs, sess, rng, data) {
         Ok(()) => Sw::OK,
         Err(sw) => sw,
     }
 }
 
-/// Parse the `4D` header through the control-reference template tag: returns the
-/// key-slot FID and the position just after the (skipped) CRT body. Pure (no fs /
-/// crypto), so it is fuzzable in isolation.
+/// Parse the `4D` header through the control-reference template: returns the
+/// key-slot FID and the position just after the template. Pure (no fs / crypto),
+/// so it is fuzzable in isolation.
 pub fn parse_ehl_head(data: &[u8]) -> Result<(KeyFid, usize), Sw> {
     let mut pos = 0usize;
     // 4D extended-header-list tag + its (ignored) length.
@@ -78,12 +77,14 @@ pub fn parse_ehl_head(data: &[u8]) -> Result<(KeyFid, usize), Sw> {
     pos += 1;
     tag_len(data, &mut pos).ok_or(Sw::WRONG_DATA)?;
 
-    // Control-reference template tag selects the key slot.
-    let fid = crt_slot(*data.get(pos).ok_or(Sw::WRONG_DATA)?).ok_or(Sw::WRONG_DATA)?;
-    pos += 1;
-    // Skip the CRT body: a 1-byte length followed by that many bytes.
-    let crt_body = *data.get(pos).ok_or(Sw::WRONG_DATA)? as usize;
-    Ok((fid, pos + 1 + crt_body))
+    // The control-reference template names the key slot.
+    let (key, crt_len) = parse_crt(data.get(pos..).ok_or(Sw::WRONG_DATA)?)?;
+    match key {
+        CrtKey::Slot(fid) => Ok((fid, pos + crt_len)),
+        // A YubiKey takes a host's attestation key here. RS-Key takes none: a key a
+        // host chose could vouch for keys that were never on the card.
+        CrtKey::Attestation => Err(Sw::WRONG_DATA),
+    }
 }
 
 /// Parse the `7F48` template + `5F48` key data starting at `pos`: returns, for
@@ -137,6 +138,7 @@ fn try_import<S: Storage>(
     dev: &Device,
     fs: &mut Fs<S>,
     sess: &Session,
+    rng: &mut dyn Rng,
     data: &[u8],
 ) -> Result<(), Sw> {
     let (fid, pos) = parse_ehl_head(data)?;
@@ -178,20 +180,24 @@ fn try_import<S: Storage>(
             {
                 return Err(Sw::WRONG_DATA);
             }
-            let key = rsa_from_pqe(e, p, q).ok_or(Sw::EXEC_ERROR)?;
-            // §4.4.3.12: "The length of the key data shall match the values given
-            // in the DO 'Algorithm attributes'". Without this the card's two
-            // answers about one key disagree — C1 goes on saying 2048 while the
-            // public-key DO publishes the real modulus, and `gpg --card-status`
-            // prints the attribute. Measured on a YubiKey 5.7.4: 1024, 3072 and
-            // 4096 against a C1 of 2048 are all `6A80`.
+            // §4.4.3.12: the key data's length "shall match" DO C1. A YubiKey 5.8.0
+            // reads that as each prime sent at exactly half the modulus width, and
+            // answers `6A80` to any other width with the slot unchanged.
             if algo.len() < 3 {
                 return Err(Sw::WRONG_DATA);
             }
             let nbits = ((algo[1] as usize) << 8) | algo[2] as usize;
-            if key.size() * 8 != nbits {
+            if p.len() * 16 != nbits || q.len() * 16 != nbits {
                 return Err(Sw::WRONG_DATA);
             }
+            // A pair of the right widths that makes no working key -- no inverse, a
+            // short modulus, composite primes -- is a YubiKey's `6581`, where it also
+            // destroys the slot's key; this refusal writes nothing.
+            let key = rsa_from_pqe(e, p, q)
+                .filter(|key| key.size() * 8 == nbits)
+                .ok_or(Sw::MEMORY_FAILURE)?;
+            rsk_rsa::crt::pairwise_consistent(&key, &mut crate::keys::RsaRng(rng))
+                .map_err(|_| Sw::MEMORY_FAILURE)?;
             // Before the key is committed, never after: a tear in between leaves
             // the slot reading as imported, which is the honest claim either way.
             // Its failure is fatal for the same reason — storing on top of a mark

@@ -35,11 +35,15 @@ def export() -> list[str]:
             "TokenExport.cfg",
         ]:
             shutil.copy2(FORMAL / name, work / name)
+        # Its own java.io.tmpdir; formal/run-tlc.sh says why.
+        jtmp = work / "java-tmp"
+        jtmp.mkdir()
         result = subprocess.run(
             [
                 java,
                 "-XX:+UseParallelGC",
                 "-Xmx2g",
+                f"-Djava.io.tmpdir={jtmp}",
                 "-cp",
                 jar,
                 "tlc2.TLC",

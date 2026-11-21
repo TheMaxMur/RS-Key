@@ -5,7 +5,7 @@
 //!
 //! [`rsk_display`] holds the flow — which screen is shown when, and what a tap on
 //! it does — generic over the panel and the touch controller. The firmware fills
-//! those in with an ST7789 and a CST328; here they are an SDL2 window and a mouse.
+//! those in with an ST7789 and a touch controller; here they are an SDL2 window and a mouse.
 //! Nothing in between is re-implemented: the pixels come from the same
 //! `rsk_ui::render` the board runs, and a click enters the flow through the same
 //! `TouchPad::read` a finger does.
@@ -253,11 +253,18 @@ impl rsk_display::TouchPad for Touch {
 /// `every_display_hook_is_accounted_for` refuses a hook in neither column; it is
 /// this list's only reader, so the list is gated to a test build.
 #[cfg(test)]
-const DEFAULTED_HOOKS: &[(&str, &str)] = &[(
-    "secure_boot_enabled",
-    "read from OTP; there are no fuses here, and `false` is what a device without \
-     secure boot reports",
-)];
+const DEFAULTED_HOOKS: &[(&str, &str)] = &[
+    (
+        "secure_boot_enabled",
+        "read from OTP; there are no fuses here, and `false` is what a device without \
+         secure boot reports",
+    ),
+    (
+        "sweep_dead_stack",
+        "zeroes the board's own stack below a returned panel flow (firmware/src/sweep.rs); \
+         a flow here runs on a host thread, whose stack is not device memory",
+    ),
+];
 
 /// The board verbs, for a board that is a window.
 ///
@@ -271,10 +278,9 @@ pub struct EmuDisplayHooks {
     wake: Rc<Cell<bool>>,
     led: Cell<u8>,
     timeout_ms: Cell<u32>,
-    reboot: Cell<bool>,
-    /// The local-PIN event and the attach clock, both shared with the worker half
-    /// — a board reaches the same two through `crate::handler` and
-    /// `crate::usb_attach`.
+    /// The local-PIN event, the attach clock and the reboot queue, all shared with the
+    /// worker half — a board reaches the same three through `crate::handler`,
+    /// `crate::usb_attach` and `crate::vendor`.
     links: PanelLinks,
     /// Host requests the device thread has not picked up. A modal holds the single
     /// executor, so this is the only way the flow can learn one is waiting.
@@ -303,7 +309,6 @@ impl EmuDisplayHooks {
             wake,
             led: Cell::default(),
             timeout_ms: Cell::new(30_000),
-            reboot: Cell::new(false),
             links: PanelLinks::default(),
             queued,
             repaint,
@@ -311,7 +316,7 @@ impl EmuDisplayHooks {
         }
     }
 
-    /// The two cells the worker half shares with the panel. Read from here rather
+    /// The cells the worker half shares with the panel. Read from here rather
     /// than passed in beside the panel, so the two ends cannot be handed different
     /// ones — a pair that does not match is the defect this seam exists to prevent,
     /// and it fails nothing.
@@ -370,17 +375,18 @@ impl rsk_display::Hooks for EmuDisplayHooks {
                 && since.elapsed()
                     >= embassy_time::Duration::from_millis(rsk_display::UI_YIELD_FLOOR_MS))
     }
-    fn request_reboot(&mut self, _bootsel: bool) {
-        self.reboot.set(true);
+    /// Queued for the device thread, which takes it after a waiting job or on an idle pass.
+    fn request_reboot(&mut self, bootsel: bool) {
+        self.links.reboot.set(Some(bootsel));
     }
     fn reboot_pending(&self) -> bool {
-        self.reboot.get()
+        self.links.reboot.get().is_some()
     }
     fn note_local_pin_changed(&mut self) {
         self.links.local_pin.set(true);
     }
-    /// Both events mean the same thing to the worker — end the RAM
-    /// `pinUvAuthToken` before the next CBOR command — so they share one flag, as
+    /// Both events mean the same thing to the worker — end the RAM `pinUvAuthToken`
+    /// before either transport's next FIDO command — so they share one flag, as
     /// `firmware/src/display.rs` maps them to one signal.
     fn note_local_pin_failed(&mut self) {
         self.links.local_pin.set(true);

@@ -18,7 +18,7 @@ this doubles as a CI gate over a recorded pair of snapshots.
 
     python tests/interop/diff.py real.json rsk.json               # human report
     python tests/interop/diff.py real.json rsk.json --json        # machine-readable
-    python tests/interop/diff.py real.json rsk.json --markdown     # docs/interop.md block
+    python tests/interop/diff.py real.json rsk.json --markdown     # block for the interop report
 """
 import argparse
 import json
@@ -43,6 +43,23 @@ def flatten(snapshot):
         for path, value in (cell.get("parsed") or {}).items():
             out[path] = value
     return out
+
+
+def restrict(snapshot, cells):
+    """Keep only `cells`, refusing one either snapshot did not capture: skipped on
+    both sides, a cell compares zero fields and reports clean; on one, every field
+    reads as a gap the device may not have."""
+    if not cells:
+        sys.exit("--cells names no cell")
+    kept = {}
+    for name in cells:
+        c = snapshot.get("cells", {}).get(name)
+        if not c or c.get("status") != "ok":
+            label = snapshot.get("meta", {}).get("label", "?")
+            state = (c or {}).get("status", "absent")
+            sys.exit(f"--cells: {name} is {state} in the {label} snapshot")
+        kept[name] = c
+    return {**snapshot, "cells": kept}
 
 
 def compare(real_snap, rsk_snap):
@@ -98,7 +115,7 @@ def render_text(results, real_snap, rsk_snap):
 
 
 def render_markdown(results, real_snap, rsk_snap, date=None, host=None):
-    """A dated block in the docs/interop.md living-matrix style."""
+    """A dated block for the interop report."""
     rm, km = real_snap.get("meta", {}), rsk_snap.get("meta", {})
     date = date or km.get("date") or "????-??-??"
     host = host or km.get("host_os") or "?"
@@ -136,7 +153,9 @@ def main():
     ap.add_argument("real", help="snapshot JSON captured from the real YubiKey")
     ap.add_argument("rsk", help="snapshot JSON captured from RS-Key")
     ap.add_argument("--json", action="store_true", help="machine-readable output")
-    ap.add_argument("--markdown", action="store_true", help="docs/interop.md-style block")
+    ap.add_argument("--markdown", action="store_true", help="Markdown block for the interop report")
+    ap.add_argument("--cells", help="compare only these cells, comma-separated; each must "
+                    "have been captured on both sides")
     args = ap.parse_args()
 
     with open(args.real) as f:
@@ -146,6 +165,10 @@ def main():
 
     if real_snap.get("meta", {}).get("label") == rsk_snap.get("meta", {}).get("label"):
         sys.exit("both snapshots carry the same --label; did you capture the same device twice?")
+
+    if args.cells:
+        names = [c for c in args.cells.split(",") if c]
+        real_snap, rsk_snap = restrict(real_snap, names), restrict(rsk_snap, names)
 
     results = compare(real_snap, rsk_snap)
     if args.json:

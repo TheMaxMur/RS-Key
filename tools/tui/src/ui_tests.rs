@@ -62,6 +62,25 @@ fn renders_new_metadata_sections_in_demo() {
     );
 }
 
+/// AUDIT_CHECKPOINT always signs with the DEVK-derived key; an installed org
+/// attestation key used to rename the row after itself.
+#[test]
+fn the_checkpoint_key_row_names_the_devk_key_with_an_org_key_installed() {
+    let mut app = demo_app();
+    app.snapshot.attestation = Some(crate::model::AttestationState {
+        installed: true,
+        chain_sha256: Some("9f2c".into()),
+    });
+    app.set_section(Section::Audit);
+    let lines = buffer_lines(&app, 100, 40);
+    let row = lines
+        .iter()
+        .find(|l| l.contains("checkpoint key"))
+        .expect("the checkpoint key row is gone");
+    assert!(row.contains("DEVK-derived (run Verify)"), "{row:?}");
+    assert!(row.contains("[-] checkpoint key"), "not N/A: {row:?}");
+}
+
 #[test]
 fn renders_at_tiny_size_without_panicking() {
     // Below the log / 2-line-status thresholds — must still paint.

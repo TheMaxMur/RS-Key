@@ -32,13 +32,15 @@ mod ccid;
 mod ccid_fido;
 pub mod click;
 mod ctap;
+pub mod mpu_layout;
 pub mod presence;
+pub mod reboot;
+pub mod transport_session;
+pub mod usb_configuration;
+pub mod usb_epoch;
 
 pub use ccid::CcidApplets;
-// The union is only reachable where a device-wide wipe is: `Management RESET` on
-// the permissive build, and the trusted display's factory reset. The same gate the
-// function itself carries, or a strict non-display build fails to re-export it.
-#[cfg(any(not(feature = "strict-config"), feature = "display"))]
+// The records a device-wide wipe removes last: the trusted display's factory reset.
 pub use ccid::gates_wiped_last;
 pub use ctap::AppletHandler;
 #[cfg(feature = "security-trace")]
@@ -67,9 +69,9 @@ pub struct BootState {
 /// no such hardware does, so a host build implements none of them and a device
 /// implements exactly what it has.
 pub trait Hooks<S: rsk_fs::Storage> {
-    /// A vendor CBOR command wrote the device configuration; re-apply whatever
-    /// lives outside the file system. On the device that is the LED block, whose
-    /// live copy is a set of atomics the flash record does not reach.
+    /// A vendor CBOR command wrote the LED block; re-apply it outside the file
+    /// system. On the device its live copy is a set of atomics the flash record
+    /// does not reach.
     fn config_written(&mut self, _fs: &mut rsk_fs::Fs<S>) {}
 
     /// Queue a warm reboot, to run once the response has flushed. A phy write asks
@@ -107,6 +109,58 @@ pub trait Hooks<S: rsk_fs::Storage> {
     /// - `Some(Some(key))` — the key.
     fn rsa_search(&mut self, _nbits: usize, _rng: &mut dyn rsk_sdk::Rng) -> SearchResult {
         None
+    }
+}
+
+/// End the host's session token once the trusted display re-keyed or rejected the
+/// clientPIN, or wiped the device. Both transports call this before they dispatch:
+/// whichever reads the one-shot signal first ends the token in the state they share.
+pub(crate) fn reset_token_on_local_pin_change<S: rsk_fs::Storage, R: rsk_sdk::Rng>(
+    hooks: &core::cell::RefCell<dyn Hooks<S>>,
+    fido_state: &core::cell::RefCell<rsk_fido::FidoState>,
+    rng: &core::cell::RefCell<R>,
+) {
+    if hooks.borrow_mut().local_pin_changed() {
+        let mut rngb = rng.borrow_mut();
+        fido_state.borrow_mut().reset_pin_uv_auth_token(&mut *rngb);
+        // The host path also clears `needs_power_cycle` here; that field is
+        // crate-private and leaving the RAM soft lock armed only fails closed
+        // (host clientPIN stays blocked until a replug), so it stays as it is.
+    }
+}
+
+/// Hand the clientPIN soft lock to the board after a dispatch on either transport. It is
+/// RAM-only, and a host can ask for `SCB::sys_reset` ungated (vendor or rescue 0x1F P1=00,
+/// the phy config-write reboot): a lock left behind refunds the §6.5.5.6 retry budget.
+pub(crate) fn persist_pin_lock<S: rsk_fs::Storage>(
+    hooks: &core::cell::RefCell<dyn Hooks<S>>,
+    fido_state: &core::cell::RefCell<rsk_fido::FidoState>,
+) {
+    hooks
+        .borrow_mut()
+        .store_pin_lock(fido_state.borrow().pin_lock());
+}
+
+/// Re-apply what a vendor (0x41) config write left outside the file system — the LED
+/// atomics, and a warm reboot for a changed USB identity. Both transports call this
+/// after every command: the signal is the write itself, however it was framed.
+pub(crate) fn apply_vendor_config<S: rsk_fs::Storage>(
+    hooks: &core::cell::RefCell<dyn Hooks<S>>,
+    fs: &core::cell::RefCell<rsk_fs::Fs<S>>,
+    fido_state: &core::cell::RefCell<rsk_fido::FidoState>,
+) {
+    let (led, phy) = {
+        let mut state = fido_state.borrow_mut();
+        (state.take_led_written(), state.take_phy_written())
+    };
+    if led {
+        hooks.borrow_mut().config_written(&mut fs.borrow_mut());
+    }
+    if phy {
+        let phy = rsk_phy::load(&mut fs.borrow_mut()).unwrap_or_default();
+        if phy.opts & rsk_phy::OPT_DISABLE_POWER_RESET == 0 {
+            hooks.borrow_mut().request_reboot();
+        }
     }
 }
 

@@ -19,6 +19,45 @@ use crate::pin::Session;
 use rsk_ec::{MAX_EC_POINT, MAX_EC_PUBDO, PrivKey, make_ec_pubkey_do};
 use rsk_rsa::{MAX_RSA_PUBDO, RsaKey, generate_rsa, make_rsa_response};
 
+/// The key a control-reference template names.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CrtKey {
+    /// The SIG, DEC or AUT slot.
+    Slot(KeyFid),
+    /// `B6 { 84 01 81 }`, ykman's name for the attestation key.
+    Attestation,
+}
+
+/// The key the control-reference template at the front of `data` names, and its span,
+/// as a YubiKey 5.8.0 reads it: `84 01 81` anywhere in `B6` is the attestation key, a
+/// reference to the template's own slot changes nothing, and other tags are skipped.
+pub fn parse_crt(data: &[u8]) -> Result<(CrtKey, usize), Sw> {
+    let [tag, len, rest @ ..] = data else {
+        return Err(Sw::WRONG_DATA);
+    };
+    let slot = crt_slot(*tag).ok_or(Sw::WRONG_DATA)?;
+    let mut body = rest.get(..*len as usize).ok_or(Sw::WRONG_DATA)?;
+    let mut key = CrtKey::Slot(slot);
+    while let [t, l, tail @ ..] = body {
+        let value = tail.get(..*l as usize).ok_or(Sw::WRONG_DATA)?;
+        if *t == CRT_KEY_REF {
+            key = match (*tag, value) {
+                (CRT_SIG, [KEY_REF_SIG]) | (CRT_DEC, [KEY_REF_DEC]) | (CRT_AUT, [KEY_REF_AUT]) => {
+                    key
+                }
+                (CRT_SIG, [KEY_REF_ATT]) => CrtKey::Attestation,
+                _ => return Err(Sw::WRONG_DATA),
+            };
+        }
+        body = &tail[value.len()..];
+    }
+    // One byte left over is a tag with no length.
+    if !body.is_empty() {
+        return Err(Sw::WRONG_DATA);
+    }
+    Ok((key, 2 + *len as usize))
+}
+
 /// GENERATE ASYMMETRIC KEY PAIR (INS 0x47). Returns `(response_len, status)`;
 /// the response (written to `out`) is the public-key DO `7F49 { … }`.
 #[allow(clippy::too_many_arguments)]
@@ -32,25 +71,30 @@ pub fn keypair_gen<S: Storage>(
     data: &[u8],
     out: &mut [u8],
 ) -> (usize, Sw) {
+    // P2, the template, P1 and the password, in a YubiKey 5.8.0's order. `P1 = 81`
+    // reads a key with no password at all, so which templates are valid is no secret.
     if p2 != 0x00 {
         return (0, Sw::WRONG_P1P2);
     }
-    if data.len() != 2 && data.len() != 5 {
-        return (0, Sw::WRONG_LENGTH);
+    let key = match parse_crt(data) {
+        Ok((key, _)) => key,
+        Err(sw) => return (0, sw),
+    };
+    if !matches!(p1, 0x80 | 0x81) {
+        return (0, Sw::WRONG_P1P2);
     }
     // Generating overwrites a key, so it is an admin (PW3) operation; reading the
     // public key is not gated.
     if !sess.has_pw3 && p1 == 0x80 {
         return (0, Sw::SECURITY_STATUS_NOT_SATISFIED);
     }
-    let Some(fid) = data.first().and_then(|&t| crt_slot(t)) else {
-        return (0, Sw::WRONG_DATA);
-    };
 
-    let r = match p1 {
-        0x80 => generate(dev, fs, sess, rng, fid, out),
-        0x81 => read_public(fs, fid, out),
-        _ => return (0, Sw::WRONG_P1P2),
+    let r = match (p1, key) {
+        (0x80, CrtKey::Slot(fid)) => generate(dev, fs, sess, rng, fid, out),
+        (_, CrtKey::Slot(fid)) => read_public(fs, fid, out),
+        // The card mints the attestation key itself and no GENERATE replaces it.
+        (0x80, CrtKey::Attestation) => Err(Sw::WRONG_DATA),
+        (_, CrtKey::Attestation) => read_public(fs, EF_PK_ATT, out),
     };
     match r {
         Ok(n) => (n, Sw::OK),
@@ -176,11 +220,10 @@ fn keygen_tail<S: Storage>(
     // under it then deciphered to garbage at `9000`. Skipping the seed is the cheap
     // wrong answer — the next DEC generate makes it again.
     } else if fid == EF_PK_DEC && matches!(fs.try_has_key(EF_AES_KEY), Ok(false)) {
-        let mut aes = [0u8; 32];
-        rng.fill(&mut aes);
-        let _ = store_aes_key(dev, fs, sess, &aes);
-        use zeroize::Zeroize;
-        aes.zeroize();
+        let mut aes = rsk_secret::Secret::<[u8; 32]>::zeroed();
+        rng.fill(aes.expose_mut());
+        let _ = store_aes_key(dev, fs, sess, aes.expose());
+        aes.wipe();
     }
     Ok(())
 }
@@ -199,17 +242,19 @@ fn store_public<S: Storage>(
     Ok(pub_do.len())
 }
 
-/// `P1 = 0x81`: return the stored public-key DO from `EF_PB_*` (slot FID + 3).
+/// `P1 = 0x81`: return the stored public-key DO from `EF_PB_*` (slot FID + 3). A
+/// slot with no key answers `6581`, as a YubiKey 5.8.0 does for all three slots,
+/// and so does one whose DO the flash cannot serve.
 fn read_public<S: Storage>(fs: &mut Fs<S>, fid: KeyFid, out: &mut [u8]) -> Result<usize, Sw> {
     if !fs.has_data(slot_pub_fid(fid)) {
-        return Err(Sw::REFERENCE_NOT_FOUND);
+        return Err(Sw::MEMORY_FAILURE);
     }
     // Fs::read returns the value's full stored length; the backend copied only
     // min(len, out.len()). Clamp before returning, like every other reader in the
     // crate, so the caller's `scratch[..n]` slice can never run past `out`.
     fs.read(slot_pub_fid(fid), out)
         .map(|n| n.min(out.len()))
-        .ok_or(Sw::REFERENCE_NOT_FOUND)
+        .ok_or(Sw::MEMORY_FAILURE)
 }
 
 // --- CCID keepalive path: split RSA generate so the slow keygen can run async ---
@@ -230,22 +275,24 @@ pub fn rsa_generate_params<S: Storage>(
     p2: u8,
     data: &[u8],
 ) -> Result<Option<(KeyFid, usize)>, Sw> {
+    // The dual-core path runs ahead of `process`, so it asks what `process` does first:
+    // a terminated applet generates nothing, and `process` answers why.
+    if let Some(sw) = crate::terminate::lifecycle(fs).refusal() {
+        return Err(sw);
+    }
     if p1 != 0x80 {
         return Ok(None); // read-public (0x81) is fast
     }
     if p2 != 0x00 {
         return Err(Sw::WRONG_P1P2);
     }
-    if data.len() != 2 && data.len() != 5 {
-        return Err(Sw::WRONG_LENGTH);
-    }
+    let (key, _) = parse_crt(data)?;
     if !sess.has_pw3 {
         return Err(Sw::SECURITY_STATUS_NOT_SATISFIED);
     }
-    let fid = data
-        .first()
-        .and_then(|&t| crt_slot(t))
-        .ok_or(Sw::WRONG_DATA)?;
+    let CrtKey::Slot(fid) = key else {
+        return Err(Sw::WRONG_DATA);
+    };
     let mut algo_buf = [0u8; 16];
     let algo = read_advertised_algo(fs, fid, &mut algo_buf)?;
     if algo[0] != ALGO_RSA {

@@ -2,6 +2,9 @@
 // Copyright (C) 2026 RS-Key contributors
 
 use super::*;
+
+#[path = "reset_mutation_tests.rs"]
+mod mutation;
 use crate::FidoState;
 use crate::consts::{EF_BACKUP_SEALED, EF_CRED, EF_LARGEBLOB, EF_PIN, EF_RP, RESET_WINDOW_MS};
 use crate::seed::{bump_sign_counter, global_sign_counter, load_keydev};
@@ -25,6 +28,7 @@ fn dev() -> Device<'static> {
         serial_hash: &[0xAB; 32],
         serial_id: &[1, 2, 3, 4, 5, 6, 7, 8],
         otp_key: None,
+        latched: false,
     }
 }
 
@@ -43,8 +47,8 @@ fn reset_wipes_state_and_regenerates() {
     // The enterprise-attestation RP list is enterprise policy, and a reset is what
     // hands the key to someone else — it goes with the rest of the FIDO state.
     fs.put(crate::consts::EF_EA_RPIDS, &[0x11u8; 32]).unwrap();
-    // The credential-store tag summarises what the reset is erasing, so it goes too:
-    // a surviving tag would tell a platform its cache of the old store is still good.
+    // The credential-store tag summarises what the reset is erasing, so it must not
+    // survive: it would tell a platform its cache of the old store is still good.
     fs.put(crate::consts::EF_CRED_STATE, &[0x22u8; 16]).unwrap();
     // An OpenPGP file (EF_PW3 = 0x1083) shares the Fs and must survive a FIDO
     // reset — it sits in the 0x10xx range right next to FIDO's own files.
@@ -78,7 +82,7 @@ fn reset_wipes_state_and_regenerates() {
     // The device PIN is cleared by the reset (so a forgotten one is recoverable).
     assert!(!fs.has_data(EF_DEVICE_PIN));
     assert!(!fs.has_data(crate::consts::EF_EA_RPIDS));
-    assert!(!fs.has_data(crate::consts::EF_CRED_STATE));
+    assert_ne!(store_tag(&mut fs), [0x22; 16]);
     // The OpenPGP file is untouched by the FIDO reset.
     assert!(
         fs.has_data(0x1083),
@@ -571,8 +575,8 @@ fn a_faulted_metadata_drop_is_carried_to_the_end_of_the_sweep_and_still_answered
 #[test]
 fn a_truncated_enumeration_fails_the_sweep_instead_of_reading_it_as_clear() {
     let mut fs = Fs::new(TruncatedWalk::new());
-    fs.scan();
     fs.put(EF_CRED, &[0xC0; 8]).unwrap();
+    fs.scan();
     let mut rng = SeqRng(5);
     let mut state = FidoState::new();
     let mut presence = crate::AlwaysConfirm;
@@ -808,6 +812,7 @@ fn provision_passkey<S: rsk_fs::Storage>(fs: &mut Fs<S>, seed: &[u8; 32]) -> [u8
         seed,
         &dev(),
         fs,
+        &mut SeqRng(7),
         &cred_id[..n],
         &rp_id_hash,
         "example.com",
@@ -831,14 +836,14 @@ fn a_surviving_credential_is_dead_once_the_seed_is_replaced() {
     let mut rng = SeqRng(5);
     ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
     let owner = load_keydev(&dev(), &mut fs).unwrap();
-    let rp_id_hash = provision_passkey(&mut fs, &owner);
+    let rp_id_hash = provision_passkey(&mut fs, owner.expose());
 
     let mut rec = [0u8; 1024];
     let n = fs.read(EF_CRED, &mut rec).unwrap();
     let mut scratch = [0u8; 1024];
     assert!(
         credential_load(
-            &owner,
+            owner.expose(),
             cred_record_box(&rec[..n]),
             &rp_id_hash,
             &mut scratch
@@ -852,12 +857,13 @@ fn a_surviving_credential_is_dead_once_the_seed_is_replaced() {
     ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
     let fresh = load_keydev(&dev(), &mut fs).unwrap();
     assert_ne!(
-        fresh, owner,
+        crate::bare(&fresh),
+        crate::bare(&owner),
         "ensure_seed must mint a new seed, not reuse it"
     );
     assert!(
         credential_load(
-            &fresh,
+            fresh.expose(),
             cred_record_box(&rec[..n]),
             &rp_id_hash,
             &mut scratch
@@ -883,7 +889,7 @@ fn provisioned_with_seed_last(seed_fid: u16) -> (TearAfter, Vec<u8>) {
     let mut rng = SeqRng(11);
     ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
     let seed = load_keydev(&dev(), &mut fs).unwrap();
-    provision_passkey(&mut fs, &seed);
+    provision_passkey(&mut fs, seed.expose());
     fs.put(EF_PIN, &[8, 4, 1, 0, 0]).unwrap();
     let mut st = fs.into_storage();
     let at = st
@@ -993,8 +999,8 @@ fn a_torn_reset_never_starts_while_the_seed_is_still_readable() {
     a_torn_reset_keeps_the_seed_ahead_of_the_wipe(EF_KEY_DEV_ENC.get());
 }
 
-/// The device-wide `Fs::factory_wipe` — the Management RESET and the trusted
-/// display's factory reset — bypasses [`reset`] entirely, so the rule has to reach
+/// The device-wide `Fs::factory_wipe` — the trusted display's factory reset —
+/// bypasses [`reset`] entirely, so the rule has to reach
 /// it through an exported predicate. Same shape audit run-36 settled on for OATH's
 /// access code (`rsk_oath::tests::the_exported_lock_predicate_protects_the_device_
 /// wide_wipe`): assert the predicate really buys the ordering on that path.
@@ -1071,12 +1077,14 @@ fn provisioned_with_a_grant() -> TearAfter {
     let mut rng = SeqRng(17);
     ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
     let seed = load_keydev(&dev(), &mut fs).unwrap();
-    provision_passkey(&mut fs, &seed);
+    provision_passkey(&mut fs, seed.expose());
     let mut pin_file = [0u8; crate::clientpin::PIN_FILE_LEN];
     pin_file[0] = 8; // retries
-    pin_file[1] = 4; // min length
+    pin_file[1] = 4; // the PIN's own length, in code points
     pin_file[2] = 1;
     fs.put(EF_PIN, &pin_file).unwrap();
+    // ensure_seed minted an unissued bootstrap grant before the PIN existed.
+    fs.force_delete(EF_PAUTHTOKEN.get()).unwrap();
     crate::seed::ensure_ppuat(&dev(), &mut fs, &mut rng).unwrap();
     fs.into_storage()
 }
@@ -1124,7 +1132,7 @@ fn no_wipe_prefix_leaves_a_grant_without_its_pin(
         if !fs.has_data(EF_PAUTHTOKEN.get()) {
             continue;
         }
-        if crate::seed::load_ppuat(&dev(), &mut fs) != Some(issued) {
+        if crate::bare(crate::seed::load_ppuat(&dev(), &mut fs)) != Some(crate::bare(&issued)) {
             continue; // rotated: the holder's value is gone, which is the point
         }
         // Only a prefix that got as far as the lead delete counts as a tear point:
@@ -1152,8 +1160,8 @@ fn no_wipe_prefix_leaves_a_grant_without_its_pin(
     assert!(wipe(&mut fs), "the control run did not report success");
     assert!(!fs.has_data(EF_CRED), "the control run kept a credential");
     assert_ne!(
-        crate::seed::load_ppuat(&dev(), &mut fs),
-        Some(issued),
+        crate::bare(crate::seed::load_ppuat(&dev(), &mut fs)),
+        Some(crate::bare(&issued)),
         "the control run kept the issued grant"
     );
     assert!(!fs.has_data(EF_PIN), "the control run never reached a gate");
@@ -1223,7 +1231,7 @@ fn a_torn_reset_never_leaves_the_session_running_on_a_wiped_seed() {
         let mut state = FidoState::new();
         // The RAM copy the wipe must not leave behind, planted the way
         // `Ctx::load_keydev` caches it.
-        state.keydev_dec = Some([0x5A; 32]);
+        state.keydev_dec = Some(rsk_secret::Secret::new([0x5A; 32]));
         {
             let mut presence = crate::AlwaysConfirm;
             let mut ctx = Ctx {
@@ -1486,7 +1494,9 @@ fn cut_fs_with_a_pin() -> (Fs<Cut>, CutMedium) {
 fn run_reset<S: rsk_fs::Storage>(fs: &mut Fs<S>) -> CtapResult {
     let mut state = FidoState::new();
     let mut presence = crate::AlwaysConfirm;
-    let mut rng = SeqRng(3);
+    // Seeded by the store's write generation, as `credmgmt_tests`' `command_rng` is: a
+    // second reset of one store draws a seed and a store tag of its own.
+    let mut rng = SeqRng(3 + u64::from(fs.write_gen()));
     let mut ctx = Ctx {
         presence: &mut presence,
         dev: dev(),
@@ -1697,3 +1707,56 @@ fn a_reset_that_faults_mid_sweep_still_re_arms_the_lap() {
     );
     assert_eq!(sweep_only.answered, Err(CtapError::Other));
 }
+
+/// The `encCredStoreState` plaintext the store holds now: a reset must not leave the
+/// old store's tag behind, or a platform would keep its cache of the wiped store.
+fn store_tag<S: rsk_fs::Storage>(fs: &mut Fs<S>) -> [u8; 16] {
+    assert!(
+        fs.has_data(crate::consts::EF_CRED_STATE),
+        "no store tag at all: absent reads as zero, not as a new state"
+    );
+    crate::credential::cred_store_state(fs).unwrap()
+}
+
+/// A wipe the medium stops part-way has still changed the store, so the tag must not
+/// read as the old one. Here the tag's own removal is refused, which also stops the
+/// reset before `ensure_seed` could mint a new one (CTAP 2.3 §6.6).
+#[test]
+fn a_wipe_stopped_part_way_does_not_keep_the_old_store_tag() {
+    let (backend, medium) = RemoveStuck::new();
+    let mut fs = Fs::new(backend);
+    fs.scan();
+    ensure_seed(&dev(), &mut fs, &mut SeqRng(3)).unwrap();
+    let before = store_tag(&mut fs);
+    medium.refuse(Some(crate::consts::EF_CRED_STATE));
+    assert!(
+        run_reset(&mut fs).is_err(),
+        "control: the refused removal stops the reset"
+    );
+    assert_ne!(
+        store_tag(&mut fs),
+        before,
+        "the stopped wipe kept the old store's tag"
+    );
+}
+
+/// Two resets of one store each leave it a store tag of its own, as two credMgmt changes
+/// do: a platform that cached after the first reset must see the second as a change too.
+#[test]
+fn two_resets_in_a_row_leave_two_different_store_tags() {
+    let mut fs = Fs::new(RamStorage::new());
+    ensure_seed(&dev(), &mut fs, &mut SeqRng(1)).unwrap();
+    let before = store_tag(&mut fs);
+    assert_eq!(run_reset(&mut fs), Ok(0));
+    let once = store_tag(&mut fs);
+    assert_eq!(run_reset(&mut fs), Ok(0));
+    let twice = store_tag(&mut fs);
+    assert!(
+        once != before && twice != once && twice != before,
+        "the tag before, after one reset, after two: {:02x?}",
+        [before, once, twice]
+    );
+}
+
+#[path = "reset_restart_tests.rs"]
+mod restarts;

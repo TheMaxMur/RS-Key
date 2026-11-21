@@ -10,7 +10,6 @@
 
 use minicbor::Decoder;
 use rsk_fs::{Fs, Sealed, Storage};
-use zeroize::Zeroize;
 
 use rsk_crypto::sha256;
 
@@ -20,12 +19,12 @@ use crate::consts::{
     CONFIG_PHY_LED_BRIGHTNESS, CONFIG_PHY_LED_GPIO, CONFIG_PHY_OPTIONS, CONFIG_PHY_VIDPID,
     CONFIG_SET_MIN_PIN, CONFIG_TARGET_PHY, CONFIG_TOGGLE_ALWAYS_UV, CONFIG_VENDOR, CTAP_CONFIG,
     EF_ALWAYS_UV, EF_EA_ENABLED, EF_EA_RPIDS, EF_KEY_DEV, EF_KEY_DEV_ENC, EF_MINPINLEN, EF_PIN,
-    MAX_EA_RPIDS, MAX_MIN_PIN_RPIDS, MAX_RAW_SUBPARA, MIN_PIN_LENGTH,
+    MAX_EA_RPIDS, MAX_MIN_PIN_RPIDS, MAX_RAW_SUBPARA,
 };
 use crate::error::{CtapError, CtapResult};
 use crate::journal;
 use crate::seed::{encrypt_keydev_f1, load_keydev, lock_engaged, seal_seed_locked};
-use crate::state::{PERM_ACFG, puat_subcommand_msg};
+use crate::state::{MseChannel, PERM_ACFG, puat_subcommand_msg};
 use crate::vendor::open_channel_key;
 use crate::{Ctx, Rng};
 
@@ -65,6 +64,7 @@ struct Req<'a> {
     pin_uv_auth_param: Option<&'a [u8]>,
     new_min_pin: u64,
     force_change: bool,
+    pin_complexity: bool,
     rp_ids: [&'a str; MAX_MIN_PIN_RPIDS],
     rp_ids_len: usize,
     /// The list did not fit `MAX_MIN_PIN_RPIDS`. Reported as `KEY_STORE_FULL` by
@@ -95,6 +95,7 @@ fn parse(data: &[u8]) -> Result<Req<'_>, CtapError> {
         pin_uv_auth_param: None,
         new_min_pin: 0,
         force_change: false,
+        pin_complexity: false,
         rp_ids: [""; MAX_MIN_PIN_RPIDS],
         rp_ids_len: 0,
         rp_ids_overflow: false,
@@ -173,6 +174,7 @@ fn parse_min_pin_sub<'a>(d: &mut Decoder<'a>, req: &mut Req<'a>, sk: u64) -> Res
             }
         }
         3 => req.force_change = cbor(d.bool())?,
+        4 => req.pin_complexity = cbor(d.bool())?,
         _ => skip_value(d)?,
     }
     Ok(())
@@ -262,16 +264,15 @@ pub fn authenticator_config<S: Storage, R: Rng>(
             ctx,
             req.new_min_pin,
             req.force_change,
+            req.pin_complexity,
             &req.rp_ids[..req.rp_ids_len],
         ),
         CONFIG_VENDOR => match req.vendor_id {
             CONFIG_AUT_ENABLE => {
-                // The seed-backup channel is one-shot; spend it whatever the
-                // outcome. See `FidoState::mse_active` and `vendor::consumes_mse`,
-                // which does the same for the `0x41` consumers.
-                let res = aut_enable(ctx, req.vendor_param);
-                ctx.state.clear_mse();
-                res
+                // The seed-backup channel is one-shot: spend it whatever the outcome,
+                // as `vendor::consumes_mse` does for the `0x41` consumers.
+                let channel = ctx.state.take_mse();
+                aut_enable(ctx, channel.as_ref(), req.vendor_param)
             }
             CONFIG_AUT_DISABLE => aut_disable(ctx),
             // PicoForge physical config over FIDO → the phy record. Gated by the
@@ -295,13 +296,13 @@ pub fn authenticator_config<S: Storage, R: Rng>(
     }
 }
 
-/// Read-modify-write the phy record for a PicoForge physical-config command: apply
-/// `f`, persist to EF_PHY (effective on the next boot, like the CCID phy write),
-/// and journal it. The auth was already verified by the caller.
+/// Read-modify-write EF_PHY for a PicoForge physical-config command (effective on the
+/// next boot) and journal it; the caller verified the auth, the config lock is here.
 fn set_phy<S: Storage, R: Rng>(
     ctx: &mut Ctx<S, R>,
     f: impl FnOnce(&mut rsk_phy::PhyData),
 ) -> CtapResult {
+    rsk_devconf::ensure_unlocked(ctx.fs).map_err(crate::vendor::dev_conf_error)?;
     rsk_phy::update(ctx.fs, f).map_err(|_| CtapError::Other)?;
     journal::append_config_write(ctx, CONFIG_TARGET_PHY as u8);
     Ok(0)
@@ -334,8 +335,9 @@ pub(crate) fn always_uv_enabled<S: Storage>(fs: &mut Fs<S>) -> bool {
 fn always_uv_state<S: Storage>(fs: &mut Fs<S>) -> rsk_sdk::error::Result<bool> {
     let mut v = [0u8; 1];
     Ok(match fs.try_read(EF_ALWAYS_UV, &mut v)? {
-        Some(n) if n >= 1 => v[0] != 0,
-        _ => DEFAULT_ALWAYS_UV,
+        Some(1) if v[0] <= 1 => v[0] != 0,
+        Some(_) => return Err(rsk_sdk::error::Error::MemoryFatal),
+        None => DEFAULT_ALWAYS_UV,
     })
 }
 
@@ -366,27 +368,31 @@ fn toggle_always_uv<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>) -> CtapResult {
 /// `EF_KEY_DEV_ENC` and the plain `EF_KEY_DEV` is deleted. From here every
 /// power cycle needs a vendor UNLOCK before any FIDO operation; recovery from a
 /// lost lock key is an authenticatorReset (the identity is gone — by design).
-fn aut_enable<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, param: &[u8]) -> CtapResult {
+fn aut_enable<S: Storage, R: Rng>(
+    ctx: &mut Ctx<S, R>,
+    channel: Option<&MseChannel>,
+    param: &[u8],
+) -> CtapResult {
     if !ctx.fs.has_key(EF_KEY_DEV) {
         return Err(CtapError::NotAllowed); // already locked, or no seed at all
     }
-    if !ctx.state.mse_ready() {
+    let Some(channel) = channel else {
         return Err(CtapError::NotAllowed);
-    }
-    let mut lock_key = open_channel_key(ctx, param)?;
+    };
+    let mut lock_key = open_channel_key(channel, param)?;
     if !ctx.check_user_presence(crate::Confirm::titled("Lock device?")) {
-        lock_key.zeroize();
+        lock_key.wipe();
         return Err(CtapError::OperationDenied);
     }
     let seed = load_keydev(&ctx.dev, ctx.fs);
     let r = seed.map(|mut seed| {
-        let blob = seal_seed_locked(ctx.rng, &lock_key, &seed);
-        seed.zeroize();
+        let blob = seal_seed_locked(ctx.rng, lock_key.expose(), seed.expose());
+        seed.wipe();
         ctx.fs
             .put_key(EF_KEY_DEV_ENC, Sealed::wrap(&blob))
             .and_then(|()| ctx.fs.delete_key(EF_KEY_DEV))
     });
-    lock_key.zeroize();
+    lock_key.wipe();
     match r {
         Some(Ok(())) => {
             journal::append(ctx, journal::EV_LOCK_ENGAGE, 0, &[]);
@@ -402,7 +408,7 @@ fn aut_enable<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, param: &[u8]) -> CtapResu
 ///
 /// The gate is that the seed was unlocked this power cycle, which proves *someone*
 /// presented the lock key. It does not prove it was this caller: unlike
-/// [`crate::state::FidoState::mse_cid`] two fields above it, `keydev_dec` carries no channel,
+/// the seed-backup [`MseChannel`], `keydev_dec` carries no channel,
 /// token or timer and lives until power-off (audit run-34 #28). That is accepted —
 /// the lock key **is** the authorisation, and an attacker positioned to abuse the
 /// window already meets `BACKUP_EXPORT`'s prerequisites, which hand over the seed
@@ -418,9 +424,10 @@ fn aut_disable<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>) -> CtapResult {
     // `require_presence`, so a platform `CTAPHID_CANCEL` reports itself as one
     // instead of being flattened into "the user declined".
     ctx.require_presence(crate::Confirm::titled("Remove device lock?"))?;
-    let mut seed = ctx.state.keydev_dec.unwrap();
-    let r = encrypt_keydev_f1(&ctx.dev, ctx.fs, &seed);
-    seed.zeroize();
+    let r = match ctx.state.keydev_dec.as_ref() {
+        Some(seed) => encrypt_keydev_f1(&ctx.dev, ctx.fs, seed.expose()),
+        None => return Err(CtapError::PinAuthInvalid),
+    };
     r.map_err(|_| CtapError::Other)?;
     ctx.fs
         .delete_key(EF_KEY_DEV_ENC)
@@ -441,7 +448,7 @@ fn set_ea_rpids<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, rp_ids: &[&str]) -> Cta
         return Ok(0);
     }
     let mut data = [0u8; 32 * MAX_EA_RPIDS];
-    for (slot, id) in data.chunks_exact_mut(32).zip(rp_ids) {
+    for (slot, id) in data.as_chunks_mut::<32>().0.iter_mut().zip(rp_ids) {
         slot.copy_from_slice(&sha256(id.as_bytes()));
     }
     ctx.fs
@@ -455,9 +462,11 @@ fn set_min_pin_length<S: Storage, R: Rng>(
     ctx: &mut Ctx<S, R>,
     new_min_pin: u64,
     force_change: bool,
+    pin_complexity: bool,
     rp_ids: &[&str],
 ) -> CtapResult {
-    let current = current_min_pin(ctx).map_err(|_| CtapError::Other)? as u64;
+    let policy = crate::pinpolicy::Policy::read(ctx.fs).map_err(|_| CtapError::Other)?;
+    let current = policy.min as u64;
     let new_min = if new_min_pin == 0 {
         current
     } else {
@@ -479,12 +488,12 @@ fn set_min_pin_length<S: Storage, R: Rng>(
     // no change demanded, `force_change_pending` reads the cleared flag for good,
     // and the live token is not invalidated. Nothing is written yet here, so
     // refusing costs a retry.
-    let pin_set = ctx.fs.try_has_data(EF_PIN).map_err(|_| CtapError::Other)?;
+    let pin_set = ctx.fs.try_exists(EF_PIN).map_err(|_| CtapError::Other)?;
     if force_change && !pin_set {
         return Err(CtapError::PinNotSet);
     }
     // A PIN shorter than the new minimum must be changed before next use.
-    let mut force = force_change;
+    let mut force = policy.force || force_change;
     if pin_set {
         let mut pf = [0u8; crate::clientpin::PIN_FILE_LEN];
         if let Some(n) = ctx
@@ -501,13 +510,36 @@ fn set_min_pin_length<S: Storage, R: Rng>(
         ctx.state.reset_pin_uv_auth_token(ctx.rng);
         crate::seed::clear_ppuat(ctx.fs).map_err(|_| CtapError::Other)?;
     }
-    // EF_MINPINLEN = [minPINLength, forceChangePin, sha256(rpId)…]; the rp hash
+    // EF_MINPINLEN = [minPINLength, flags, sha256(rpId)…]; the rp hash
     // list authorises those RPs to read minPINLength via the makeCredential
     // extension.
     let mut data = [0u8; 2 + 32 * MAX_MIN_PIN_RPIDS];
     data[0] = new_min as u8;
-    data[1] = u8::from(force);
+    data[1] = crate::pinpolicy::Policy {
+        min: new_min as u8,
+        force,
+        complexity: policy.complexity || pin_complexity,
+    }
+    .flags();
     let mut len = 2;
+    if rp_ids.is_empty() {
+        let mut old = [0u8; 2 + 32 * MAX_MIN_PIN_RPIDS];
+        if let Some(n) = ctx
+            .fs
+            .try_read(EF_MINPINLEN, &mut old)
+            .map_err(|_| CtapError::Other)?
+        {
+            if n > old.len() {
+                return Err(CtapError::KeyStoreFull);
+            }
+            if let Some(hashes) = old.get(2..n) {
+                data.get_mut(2..n)
+                    .ok_or(CtapError::Other)?
+                    .copy_from_slice(hashes);
+                len = n;
+            }
+        }
+    }
     for id in rp_ids {
         data[len..len + 32].copy_from_slice(&sha256(id.as_bytes()));
         len += 32;
@@ -522,18 +554,6 @@ fn set_min_pin_length<S: Storage, R: Rng>(
         &[u8::from(force)],
     );
     Ok(0)
-}
-
-/// The standing floor the monotonic guard compares against. Fallible on purpose: the
-/// collapsed answer is the build's [`MIN_PIN_LENGTH`], which sits below any floor an
-/// owner configured, so a faulted probe let the guard pass and stored the LOWER value
-/// — and nothing short of a reset raises minPINLength back.
-fn current_min_pin<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>) -> rsk_sdk::error::Result<u8> {
-    let mut buf = [0u8; 2];
-    Ok(match ctx.fs.try_read(EF_MINPINLEN, &mut buf)? {
-        Some(n) if n >= 1 => buf[0],
-        _ => MIN_PIN_LENGTH,
-    })
 }
 
 #[cfg(test)]

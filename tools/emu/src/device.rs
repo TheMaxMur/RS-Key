@@ -8,16 +8,16 @@
 //! firmware runs, not a second implementation of them. What is left here is this
 //! build's half: the store, the DRBG, the presence prompt, and the [`Hooks`] that
 //! answer for hardware it does not have. The worker's own sequencing (refresh the
-//! capability set when the dirty latch is up, run a queued reboot only after the
-//! response is out) is mirrored from `firmware/src/worker.rs` and is the one thing
-//! still written twice.
+//! capability set when the dirty latch is up, run a queued reboot or wipe once the
+//! response is out or on an idle pass) is mirrored from `firmware/src/worker.rs` and
+//! is the one thing still written twice.
 //!
 //! Deliberately absent, because there is no hardware under them: the LED, the OTP
 //! keyboard interface, the vendor applet's LED / core1 / bench arms, the dual-core
 //! RSA keygen accelerator (the applets' own single-core path runs instead) and the
 //! watchdog register that carries the clientPIN soft lock across a warm reset.
 
-use std::cell::{Cell, RefCell};
+use std::cell::{Cell, RefCell, RefMut};
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -81,7 +81,7 @@ pub struct EmuHooks {
 
 impl Hooks<EmuStore> for EmuHooks {
     /// Consumed once, exactly as the firmware swaps its `LOCAL_PIN_CHANGED`: the
-    /// token dies before the next CBOR command, not before every later one.
+    /// token dies before either transport's next FIDO command, not every later one.
     fn local_pin_changed(&mut self) -> bool {
         self.local_pin.replace(false)
     }
@@ -136,8 +136,9 @@ pub enum Job {
     /// REGISTER or AUTHENTICATE waits for a touch, and only the owning channel's
     /// `CTAPHID_CANCEL` may end that wait (CTAP 2.1 §11.2.9.1.4).
     Msg { cid: u32, data: Vec<u8> },
-    /// A CTAPHID vendor command (the ykman Management reads).
-    Vendor { cmd: u8, data: Vec<u8> },
+    /// A CTAPHID vendor command (the ykman Management read and write) on channel
+    /// `cid`: arming the config lock waits for a touch its channel may cancel.
+    Vendor { cid: u32, cmd: u8, data: Vec<u8> },
     /// A CCID APDU.
     Apdu(Vec<u8>),
     /// One keyboard-interface OTP frame: `slot` is the command, `payload` its
@@ -251,23 +252,22 @@ impl Queued {
     /// leave every modal closing the moment it opened.
     fn release(&self, job: &Job) {
         if let Some(n) = self.slot(job) {
-            let _ = n.fetch_update(Ordering::Release, Ordering::Acquire, |n| {
+            let _ = n.try_update(Ordering::Release, Ordering::Acquire, |n| {
                 Some(n.saturating_sub(1))
             });
         }
     }
 }
 
-/// The two handles the panel and the worker hold jointly, where a board has two
-/// globals: the local-PIN event `EmuHooks` consumes before the next CBOR command
-/// (`firmware/src/handler.rs`'s `LOCAL_PIN_CHANGED`), and the USB attach clock a
-/// power cycle restarts (`crate::usb_attach`). One clock, not two, is what stops a
-/// panel-originated audit entry and a host-originated one from being stamped on
-/// different ones — which is the whole point of `Hooks::attach_elapsed_ms`.
+/// What the panel and the worker hold jointly, where a board has globals: the local-PIN
+/// event (`firmware/src/handler.rs`'s `LOCAL_PIN_CHANGED`), the one attach clock both stamp
+/// audit entries with (`crate::usb_attach`) and the reboot queue (`firmware/src/vendor.rs`).
 #[derive(Clone)]
 pub struct PanelLinks {
     pub local_pin: Rc<Cell<bool>>,
     pub attach: Rc<Cell<Instant>>,
+    /// A reboot the panel queued for the worker; `Some(true)` asks for BOOTSEL.
+    pub reboot: Rc<Cell<Option<bool>>>,
 }
 
 impl Default for PanelLinks {
@@ -275,6 +275,7 @@ impl Default for PanelLinks {
         Self {
             local_pin: Rc::new(Cell::new(false)),
             attach: Rc::new(Cell::new(Instant::now())),
+            reboot: Rc::new(Cell::new(None)),
         }
     }
 }
@@ -358,7 +359,7 @@ pub fn run(
     lines: Option<Receiver<String>>,
     taps: Option<crate::taps::TapPad>,
 ) {
-    let store = match crate::store::open(cfg.store.clone(), cfg.power_cut) {
+    let store = match crate::store::open(cfg.store.clone(), cfg.power_cut, &cfg.serial) {
         Ok(s) => s,
         Err(e) => {
             eprintln!("emu: cannot mount the flash image: {e}");
@@ -419,6 +420,13 @@ pub fn serve_display<P, T>(
     // Read off the hooks, not passed in beside them: the panel and the worker must
     // hold one pair, and two that do not match fail nothing.
     let links = parts.hooks.links();
+    let keys = Box::leak(Box::new(rsk_display::DeviceKeys {
+        serial_id: cfg.serial,
+        serial_hash: rsk_crypto::sha256(&cfg.serial),
+        mkek_source: None,
+    }));
+    // The panel's own screens get the cells; the presence backend gets the `Ui` alone.
+    let cells = rsk_display::Parked::new(fs, keys, rng);
     let ui = Box::leak(Box::new(RefCell::new(rsk_display::Ui::new(
         parts.panel,
         parts.touch,
@@ -427,17 +435,11 @@ pub fn serve_display<P, T>(
             version: crate::bcd::BCD_DEVICE,
             chipid: u64::from_le_bytes(cfg.serial),
         },
-        fs,
-        rsk_display::DeviceKeys {
-            serial_id: cfg.serial,
-            serial_hash: rsk_crypto::sha256(&cfg.serial),
-            mkek_source: None,
-        },
-        rng,
+        cells,
     ))));
     let presence = RefCell::new(rsk_display::TouchPresence::new(ui));
     crate::park::block_on(embassy_futures::select::select(
-        rsk_display::status_loop(ui),
+        rsk_display::status_loop(ui, cells),
         serve(cfg, jobs, signals, links, fs, rng, &presence),
     ));
 }
@@ -489,6 +491,7 @@ async fn serve<PR: rsk_sdk::UserPresence + 'static>(
         serial_hash: &serial_hash,
         serial_id: &serial_id,
         otp_key: None,
+        latched: false,
     };
 
     let mut fido_state = rsk_fido::FidoState::new();
@@ -496,7 +499,10 @@ async fn serve<PR: rsk_sdk::UserPresence + 'static>(
     // alike. The seal migrations are no-ops without an OTP root; `scan_files` lays
     // down the OpenPGP DOs, without which SELECT succeeds over an empty PW-status DO.
     let boot_block = || {
-        let mut fsb = fs.borrow_mut();
+        let mut fsb = rescan(fs);
+        if fsb.storage_state() == rsk_fs::storage::StorageState::Recovery {
+            return Ok(());
+        }
         let mut rngb = rng.borrow_mut();
         let _ = rsk_fido::seed::migrate_keydev_boot(&dev(), &mut fsb);
         rsk_rescue::keydev::migrate_kbase(&dev(), &mut fsb, &mut *rngb);
@@ -506,6 +512,8 @@ async fn serve<PR: rsk_sdk::UserPresence + 'static>(
         rsk_fido::credential::migrate_rp_seal(&dev(), &mut fsb);
         let seeded = rsk_fido::seed::ensure_seed(&dev(), &mut fsb, &mut *rngb);
         let _ = rsk_openpgp::scan_files(&dev(), &mut fsb, &mut *rngb);
+        let _ = rsk_devconf::scrub_legacy_lock(&mut fsb);
+        let _ = rsk_fido::credmgmt::settle_rp_records(&mut fsb);
         seeded
     };
     if let Err(e) = boot_block() {
@@ -513,17 +521,6 @@ async fn serve<PR: rsk_sdk::UserPresence + 'static>(
         return;
     }
     fido_state.ensure_initialized(&mut *rng.borrow_mut());
-
-    // The other half of `main.rs`'s boot, and the half a warm reboot must not
-    // repeat: advance every plain Yubico-OTP slot's use counter, so the
-    // `(use, session)` pair a validation server orders OTPs by cannot recur —
-    // the session half restarts at 0 on every power-up. The emulator's power-ups
-    // are process start and `Job::Replug`; the warm reboot below skips this, as
-    // `!pin_lock::was_warm_boot()` makes the device skip it.
-    let power_up_bump = || {
-        rsk_otp::power_up_bump(&dev(), &mut fs.borrow_mut(), &mut *rng.borrow_mut());
-    };
-    power_up_bump();
 
     // The wiring itself: the same two handlers `firmware`'s worker owns. One vendor
     // platform handle, cloned into both, because the reboot they queue is the same
@@ -577,9 +574,70 @@ async fn serve<PR: rsk_sdk::UserPresence + 'static>(
     // keeps it: the MSG applet selection is one global for every channel, so a
     // change of channel has to drop it (audit run-34 #27).
     let mut last_msg_cid: Option<u32> = None;
+    // Whether the last pass answered a job, so what that job queued runs before the next one.
+    let mut answered = false;
 
     loop {
-        let req = match jobs.try_next() {
+        let next = jobs.try_next();
+        // A queued reboot is taken after an answer or on an idle pass, never ahead of a
+        // waiting request: a board's worker takes it after each transport request and on its
+        // idle tick, and a request already waiting beats that tick.
+        if std::mem::take(&mut answered) || matches!(next, Err(TryRecvError::Empty)) {
+            let rescue_reboot = platform.borrow_mut().reboot_requested.take();
+            if let Some(true) = rescue_reboot {
+                eprintln!("emu: host asked for BOOTSEL; there is no bootloader to fall into");
+            }
+            let panel_reboot = links.reboot.take();
+            if let Some(true) = panel_reboot {
+                eprintln!("emu: the panel asked for BOOTSEL; there is no bootloader to fall into");
+            }
+            // A warm reboot drops RAM state and leaves the attach clock alone: only a power
+            // cycle reopens the §6.6 window, which is the distinction `Job::Replug` carries.
+            if reboot_requested.replace(false)
+                || rescue_reboot == Some(false)
+                || panel_reboot == Some(false)
+            {
+                let _ = boot_block();
+                hooks.borrow_mut().warm = true;
+                ctap = AppletHandler::new(
+                    fs,
+                    rng,
+                    &hooks,
+                    presence,
+                    &fido_state,
+                    EmuVendorPlatform {
+                        reboot: reboot_requested.clone(),
+                    },
+                    serial_id,
+                    serial_hash,
+                    mkek_source,
+                    devk_source,
+                );
+                // Every applet afresh, as a boot builds them: one that had provisioned its
+                // files already would skip that after a wipe (PIV answered `6A88`).
+                ccid = CcidApplets::new(
+                    fs,
+                    rng,
+                    &hooks,
+                    presence,
+                    &fido_state,
+                    &platform,
+                    EmuVendorPlatform {
+                        reboot: reboot_requested.clone(),
+                    },
+                    serial_id,
+                    serial_hash,
+                    mkek_source,
+                    devk_source,
+                    cfg.kv_total,
+                    cfg.flash_size,
+                    openpgp_mfr(cfg.yubico),
+                );
+                last_msg_cid = None;
+                eprintln!("emu: warm reboot — RAM state dropped, the reset window stays shut");
+            }
+        }
+        let req = match next {
             Ok(req) => req,
             // Nothing queued: yield, so a display loop selected against this one
             // gets to run. 1 ms keeps the socket latency invisible.
@@ -664,11 +722,12 @@ async fn serve<PR: rsk_sdk::UserPresence + 'static>(
                 ctap.scrub();
                 Some(body)
             }
-            // No `begin`/`end`: no vendor command is presence-gated, and
-            // `rsk_usb::ctaphid::run_vendor` streams no keepalive and watches for
-            // no CANCEL — so a board cannot cancel one either.
-            Job::Vendor { cmd, data } => {
+            // Bracketed as CBOR and MSG are: arming the config lock over `0x43`
+            // waits for a touch, which only this channel's CANCEL may end.
+            Job::Vendor { cid, cmd, data } => {
+                signals.begin(cid);
                 let body = ccid.ctap_mgmt(cmd, &data).map(<[u8]>::to_vec);
+                signals.end();
                 ccid.scrub();
                 body
             }
@@ -676,13 +735,14 @@ async fn serve<PR: rsk_sdk::UserPresence + 'static>(
                 let body = ccid.handle_apdu(&data, now_ms).to_vec();
                 ccid.scrub();
                 if cfg.trace {
-                    eprintln!(
-                        "emu: apdu {} B -> sw={:02x}{:02x} ({} B)",
-                        data.len(),
-                        body[body.len() - 2],
-                        body[body.len() - 1],
-                        body.len() - 2
-                    );
+                    match body.as_slice() {
+                        [rest @ .., sw1, sw2] => eprintln!(
+                            "emu: apdu {} B -> sw={sw1:02x}{sw2:02x} ({} B)",
+                            data.len(),
+                            rest.len()
+                        ),
+                        _ => eprintln!("emu: apdu {} B -> no answer", data.len()),
+                    }
                 }
                 Some(body)
             }
@@ -726,7 +786,6 @@ async fn serve<PR: rsk_sdk::UserPresence + 'static>(
                 // `main.rs` ignores a failed `ensure_seed` too: the next command
                 // answers for whatever store the boot left.
                 let _ = boot_block();
-                power_up_bump();
                 hooks.borrow_mut().warm = false;
                 ctap = AppletHandler::new(
                     fs,
@@ -774,44 +833,23 @@ async fn serve<PR: rsk_sdk::UserPresence + 'static>(
         signals.set_wait_scope(signals::SCOPE_NONE);
         // A disconnected client is not an error: it just stopped listening.
         let _ = req.reply.send(out);
+        answered = true;
 
         // The worker's own sequencing, mirrored: a config write flips the dirty
         // latch and every gate has to see the new set before the next request.
         if rsk_devconf::take_dev_conf_dirty() {
             ccid.refresh_enabled();
         }
-        // Both reboot paths — the vendor applet's INS_REBOOT and the rescue
-        // applet's twin — land in one queue on the device, and both run only after
-        // the response is out. A warm reboot drops RAM state and leaves the attach
-        // clock alone: only a power cycle reopens the §6.6 window, which is the
-        // whole distinction `Job::Replug` carries.
-        let rescue_reboot = platform.borrow_mut().reboot_requested.take();
-        if let Some(true) = rescue_reboot {
-            eprintln!("emu: host asked for BOOTSEL; there is no bootloader to fall into");
-        }
-        if reboot_requested.replace(false) || rescue_reboot == Some(false) {
-            ccid.reset_card();
-            let _ = boot_block();
-            hooks.borrow_mut().warm = true;
-            ctap = AppletHandler::new(
-                fs,
-                rng,
-                &hooks,
-                presence,
-                &fido_state,
-                EmuVendorPlatform {
-                    reboot: reboot_requested.clone(),
-                },
-                serial_id,
-                serial_hash,
-                mkek_source,
-                devk_source,
-            );
-            ccid.refresh_enabled();
-            last_msg_cid = None;
-            eprintln!("emu: warm reboot — RAM state dropped, the reset window stays shut");
-        }
     }
+}
+
+/// The store with its in-RAM file index rebuilt, as `main.rs` does before anything reads
+/// flash. Reads by FID reach flash either way, but without the index every slot bitmap
+/// reads empty: resident credentials and OATH entries enumerate as absent and lose their slots.
+fn rescan(fs: &RefCell<Fs<EmuStore>>) -> RefMut<'_, Fs<EmuStore>> {
+    let mut store = fs.borrow_mut();
+    store.scan();
+    store
 }
 
 /// What the phase-4 replay reads out of a request, taken from the applet's own

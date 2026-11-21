@@ -1,0 +1,42 @@
+TLC2 Version 2.19 of 08 August 2024 (rev: 5a47802)
+Running breadth-first search Model-Checking with fp 127 and seed 586589627539319054 with 2 workers on 18 cores with 3641MB heap and 64MB offheap memory (Mac OS X 27.0 aarch64, Azul Systems, Inc. 1.8.0_492 x86_64, MSBDiskFPSet, DiskStateQueue).
+Parsing file /Users/maxmur/rs-key-wt-store/formal/RSKeyStore.tla
+Parsing file /private/var/folders/gg/lgcg496924x384yd58t3b9180000gn/T/Naturals.tla
+Semantic processing of module Naturals
+Semantic processing of module RSKeyStore
+Starting... (2026-09-18 12:07:47)
+Computing initial states...
+Finished computing initial states: 1 distinct state generated at 2026-09-18 12:07:47.
+Error: Invariant NoFalseAbsent is violated.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+/\ val = [a |-> "none", b |-> "none"]
+/\ decided = [a |-> FALSE, b |-> FALSE]
+/\ metaAbsent = TRUE
+/\ meta = [a |-> FALSE, b |-> FALSE]
+/\ viol = {}
+/\ dead = FALSE
+/\ present = [a |-> FALSE, b |-> FALSE]
+
+State 2: <Next line 376, col 36 to line 376, col 53 of module RSKeyStore>
+/\ val = [a |-> "v1", b |-> "none"]
+/\ decided = [a |-> TRUE, b |-> FALSE]
+/\ metaAbsent = TRUE
+/\ meta = [a |-> FALSE, b |-> FALSE]
+/\ viol = {}
+/\ dead = FALSE
+/\ present = [a |-> TRUE, b |-> FALSE]
+
+State 3: <Next line 381, col 8 to line 381, col 20 of module RSKeyStore>
+/\ val = [a |-> "v1", b |-> "none"]
+/\ decided = [a |-> TRUE, b |-> TRUE]
+/\ metaAbsent = TRUE
+/\ meta = [a |-> FALSE, b |-> FALSE]
+/\ viol = {}
+/\ dead = FALSE
+/\ present = [a |-> FALSE, b |-> FALSE]
+
+59 states generated, 25 distinct states found, 20 states left on queue.
+The depth of the complete state graph search is 3.
+The average outdegree of the complete state graph is 10 (minimum is 10, the maximum 10 and the 95th percentile is 10).
+Finished in 00s at (2026-09-18 12:07:47)

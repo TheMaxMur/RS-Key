@@ -31,7 +31,7 @@
 (*                                                                           *)
 (* WHAT IS ABSTRACTED. The mask is a set of opaque capabilities, not the     *)
 (* 16-bit USB_ENABLED bitmask -- the clamp to SUPPORTED_CAPS                 *)
-(* (crates/rsk-devconf/src/lib.rs:592) is modelled as "the mask stays a      *)
+(* (crates/rsk-devconf/src/lib.rs:688) is modelled as "the mask stays a      *)
 (* subset of the gateable caps" and enforced by construction. The            *)
 (* config-lock TLV is present only as the class of write that carries no     *)
 (* capability change (`LockCodeWrite`); its unsealed-disclosure hole (audit  *)
@@ -51,13 +51,13 @@ CONSTANTS
     \* so three is padding the measurement does not need -- kept because it
     \* is the shipped vocabulary, now visible as a scope (formal/scopes.txt).
     Caps,
-    \* crates/rsk-device/src/ccid.rs:67-74 -- APPLET_CAPS marks management,
+    \* crates/rsk-device/src/ccid.rs:80-87 -- APPLET_CAPS marks management,
     \* vendor and rescue as cap `0` (always available), because gating them off
     \* would make `ykman config usb --disable` irreversible. The switch ties the
     \* admin channel to the mask being non-empty, the shape a naive
     \* "nothing selectable when all disabled" would take.
     BugAdminGateable,
-    \* crates/rsk-rescue/src/lib.rs:141-143 -- `require_presence` gates every
+    \* crates/rsk-rescue/src/lib.rs:149-151 -- `require_presence` gates every
     \* privileged runtime command (keydev sign, cert/config write, BOOTSEL
     \* reboot, fuse burns) so a USB host alone cannot drive them. The switch
     \* removes the gate.
@@ -66,15 +66,15 @@ CONSTANTS
     \* zero bytes; storing that verbatim left an EMPTY record, and
     \* `read_enabled_caps` reads empty as SUPPORTED_CAPS, so a lock-code write
     \* silently re-enabled every disabled application. The fix MERGES onto the
-    \* stored record (crates/rsk-devconf/src/lib.rs:254-268); the switch
+    \* stored record (crates/rsk-devconf/src/lib.rs:302-316); the switch
     \* replaces it.
     BugLockWriteResetsCaps,
     \* The pre-0x084A tree, shipped and fixed: USB_ENABLED was REPORTING-ONLY --
     \* the persisted mask echoed in DeviceInfo while SELECT and dispatch never
     \* consulted it, so `ykman config usb --disable PIV` disabled nothing. The
-    \* enforcement is Dispatcher::set_enabled (crates/rsk-sdk/src/applet.rs:203-205)
-    \* fed from the mask (crates/rsk-device/src/ccid.rs:243-251) and consulted at
-    \* select AND dispatch-to-current (crates/rsk-device/src/ccid.rs:340). The
+    \* enforcement is Dispatcher::set_enabled (crates/rsk-sdk/src/applet.rs:254-256)
+    \* fed from the mask (crates/rsk-device/src/ccid.rs:255-266) and consulted at
+    \* select AND dispatch-to-current (crates/rsk-device/src/ccid.rs:389). The
     \* switch removes exactly that consultation.
     BugMaskIsCosmetic
 
@@ -99,7 +99,7 @@ TypeOK ==
     /\ viol \in SUBSET InvNames
 
 \* A factory device: every gateable application enabled (the default record's
-\* USB_ENABLED is SUPPORTED_CAPS, crates/rsk-devconf/src/lib.rs:596).
+\* USB_ENABLED is SUPPORTED_CAPS, crates/rsk-devconf/src/lib.rs:692).
 Init ==
     /\ enabled = Caps
     /\ viol = {}
@@ -112,7 +112,7 @@ AdminChannelOpen ==
     IF BugAdminGateable THEN enabled # {} ELSE TRUE
 
 (***************************************************************************)
-(* WRITE CONFIG. crates/rsk-devconf/src/lib.rs:243 (persist_dev_conf) via    *)
+(* WRITE CONFIG. crates/rsk-devconf/src/lib.rs:280 (persist_dev_conf) via    *)
 (* the CCID applet and the FIDO vendor config-write. Sets the enabled set to *)
 (* any subset of the gateable caps. Modelled UNCONDITIONALLY enabled: the    *)
 (* default build does not presence-gate it (a documented, reversible DoS),   *)
@@ -136,8 +136,8 @@ LockCodeWrite ==
 
 (***************************************************************************)
 (* A PRIVILEGED RESCUE COMMAND. crates/rsk-rescue/src/lib.rs -- keydev_sign   *)
-(* (:173), write cert (:219), write config (:239), reboot-to-BOOTSEL (:363),  *)
-(* the page-58 / rollback fuse burns (:413). Each completes only on a         *)
+(* (:154), write cert (:210), write config (:230), reboot-to-BOOTSEL (:360),  *)
+(* the page-58 / rollback fuse burns (:413, :452). Each completes only on a   *)
 (* Confirmed operator presence; a USB host alone (Denied / Timeout) must not   *)
 (* drive it. `present` is the presence request's answer, nondeterministic     *)
 (* here -- the presence machinery is RSKeySecurityState's, this is only       *)
@@ -185,9 +185,11 @@ Spec == Init /\ [][Next]_vars
 \* administrative channel is reachable in EVERY state, so no sequence of config
 \* writes can strand the device unable to re-enable a disabled applet. Structural
 \* -- it needs no cooperation from any action, the strong form. This is the
-\* `APPLET_CAPS` cap-`0` carve-out (crates/rsk-device/src/ccid.rs:67-74) as an
+\* `APPLET_CAPS` cap-`0` carve-out (crates/rsk-device/src/ccid.rs:80-87) as an
 \* invariant: management/vendor/rescue are never gated by the mask, so `enabled =
 \* {}` (everything off) is not a dead end -- READ/WRITE CONFIG still answer there.
+\* A configuration lock narrows WHO can re-enable: the channel still answers, but
+\* a write without the code is refused, an authorization this module does not model.
 AdminSurfaceAlwaysReachable == AdminChannelOpen
 
 \* No privileged rescue command completes without a Confirmed operator presence.

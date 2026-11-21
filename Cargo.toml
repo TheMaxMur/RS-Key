@@ -1,6 +1,22 @@
 [workspace]
 resolver = "2"
-members = ["firmware", "rsk-wipe", "crates/rsk-sdk", "crates/rsk-fs", "crates/rsk-usb", "crates/rsk-crypto", "crates/rsk-fido", "crates/rsk-openpgp", "crates/rsk-rsa", "crates/rsk-ec", "crates/rsk-sha512", "crates/rsk-devconf", "crates/rsk-mgmt", "crates/rsk-oath", "crates/rsk-otp", "crates/rsk-piv", "crates/rsk-rescue", "crates/rsk-vendor", "crates/rsk-device", "crates/rsk-display", "crates/rsk-store", "crates/rsk-led", "crates/rsk-phy", "crates/rsk-ui", "crates/rsk-bip39", "crates/rsk-slip39", "crates/rsk-mldsa", "crates/rsk-bench"]
+members = ["firmware", "firmware/trustzone/nonsecure", "rsk-wipe", "crates/rsk-sdk", "crates/rsk-fs", "crates/rsk-usb", "crates/rsk-crypto", "crates/rsk-fido", "crates/rsk-openpgp", "crates/rsk-rsa", "crates/rsk-ec", "crates/rsk-sha512", "crates/rsk-sha256", "crates/rsk-devconf", "crates/rsk-mgmt", "crates/rsk-oath", "crates/rsk-otp", "crates/rsk-piv", "crates/rsk-x509", "crates/rsk-rescue", "crates/rsk-vendor", "crates/rsk-device", "crates/rsk-display", "crates/rsk-store", "crates/rsk-led", "crates/rsk-phy", "crates/rsk-ui", "crates/rsk-bip39", "crates/rsk-slip39", "crates/rsk-mldsa", "crates/rsk-bench", "crates/rsk-secret"]
+
+default-members = ["firmware", "rsk-wipe", "crates/*"]
+
+# One lint policy for every member, each opting in with `[lints] workspace = true`.
+# Kani proofs and cargo-llvm-cov instrumentation use explicit cfg names.
+[workspace.lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(kani)", "cfg(coverage)"] }
+# Lifted only at the roots of `firmware`, `firmware-ns`, `rsk-wipe` and `rsk-rsa` (docs/unsafe.md).
+unsafe_code = "deny"
+
+[workspace.lints.clippy]
+undocumented_unsafe_blocks = "deny"
+# The clippy.toml bans: a bare wipe or a `Zeroizing` anywhere is an error, and a
+# site that must keep one says why in an `#[expect(..., reason = ...)]`.
+disallowed_methods = "deny"
+disallowed_types = "deny"
 
 # Embassy crates are versioned together; pin them all to the same git source so
 # they stay mutually compatible. We track `branch = "main"`, not a crates.io
@@ -30,10 +46,13 @@ rsk-fido = { path = "crates/rsk-fido" }
 rsk-openpgp = { path = "crates/rsk-openpgp" }
 rsk-rsa = { path = "crates/rsk-rsa" }
 rsk-ec = { path = "crates/rsk-ec" }
+rsk-x509 = { path = "crates/rsk-x509" }
 # Fast byte-identical SHA-512/384 for the Cortex-M33 — a compact rolled
 # compression that fits the XIP cache, replacing `sha2`'s ~28 KB unrolled soft
 # backend on the FIDO key-derivation ratchet without changing any credential key.
 rsk-sha512 = { path = "crates/rsk-sha512" }
+# Isolate SHA-256 compression optimization from the applet code working set.
+rsk-sha256 = { path = "crates/rsk-sha256" }
 rsk-devconf = { path = "crates/rsk-devconf" }
 rsk-mgmt = { path = "crates/rsk-mgmt" }
 rsk-oath = { path = "crates/rsk-oath" }
@@ -66,6 +85,9 @@ rsk-mldsa = { path = "crates/rsk-mldsa" }
 # firmware `bench` feature (a debug/measurement build, never shipped). Host-tested
 # + Kani-proved; the device computes the summary so the reported number is gated.
 rsk-bench = { path = "crates/rsk-bench" }
+# Key-grade bytes in a type that wipes itself — the bottom of the crate graph, so
+# every crate that holds a secret, the algorithm crates included, can name it.
+rsk-secret = { path = "crates/rsk-secret" }
 # Trusted-display driver stack — compiled ONLY into the `display` firmware flavor
 # (and rsk-ui's host tests), never the standard key (all `dep:`-gated). embedded-
 # graphics: no_std 2D text/primitives + the `DrawTarget` trait the renderer is
@@ -85,7 +107,9 @@ k256 = { version = "0.14", default-features = false, features = ["ecdsa", "arith
 # (no stable release yet), but their ecdsa/elliptic-curve/primeorder deps resolve to
 # the SAME stable 0.14 line as the NIST curves above — one EC generation, no
 # duplication. The looped crypto-bigint field backend is picked in .cargo/config
-# (`bp*_backend="bigint"`) — smaller than fiat, and brainpool is not a hot path.
+# (`bp*_backend="bigint"`) — its compact field kernels fit the RP2350 XIP cache.
+# Already used by the curve crates; exposes their canonical Jacobian coefficient.
+primeorder = { version = "0.14", default-features = false }
 bp256 = { version = "=0.14.0-rc.15", default-features = false, features = ["ecdsa", "arithmetic", "sha256"] }
 bp384 = { version = "=0.14.0-rc.15", default-features = false, features = ["ecdsa", "arithmetic", "sha384"] }
 # ecdsa 0.17 / elliptic-curve 0.14: the single EC generation shared by every curve.
@@ -94,7 +118,7 @@ bp384 = { version = "=0.14.0-rc.15", default-features = false, features = ["ecds
 ecdsa = { version = "0.17", default-features = false, features = ["algorithm"] }
 elliptic-curve = { version = "0.14", default-features = false, features = ["ecdh", "arithmetic", "sec1"] }
 # EdDSA (Ed25519) — OKP key, deterministic 64-byte signature.
-ed25519-dalek = { version = "2", default-features = false, features = ["zeroize"] }
+ed25519-dalek = { version = "2", default-features = false, features = ["fast", "zeroize"] }
 # X25519 ECDH for OpenPGP Cv25519. Same curve25519-dalek 4 backend as
 # ed25519-dalek, so no version split. The bare `x25519()` needs no extra feature.
 x25519-dalek = { version = "2", default-features = false }
@@ -181,5 +205,18 @@ opt-level = "s"    # embassy/HAL needs some opt even in dev to fit/behave
 # rollback. This is the flash KV store that holds every sealed secret, so the
 # fork is deliberately kept that narrow — one file, and the patch says which
 # functions; upstream tracks the idea in tweedegolf/sequential-storage#105.
+# P-384 keeps its existing RustCrypto types and validation; only 32-bit field
+# products use the local CIOS kernel (provenance: third_party/p384.patch).
 [patch.crates-io]
+crypto-bigint = { path = "third_party/crypto-bigint" }
+p256 = { path = "third_party/p256" }
+p384 = { path = "third_party/p384" }
 sequential-storage = { path = "third_party/sequential-storage" }
+
+# Optimize only the software SHA-256 core, keeping applet code compact.
+[profile.release.package.rsk-sha256]
+opt-level = 3
+
+# Journal replay and authenticated lookups run on every card operation.
+[profile.release.package.rsk-store]
+opt-level = 3

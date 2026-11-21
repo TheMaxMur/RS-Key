@@ -3,6 +3,28 @@
 
 use super::*;
 
+#[test]
+fn response_truncate_never_extends_or_overwrites_the_buffer() {
+    let mut bytes = [0xa5; 8];
+    let mut response = ResBuf::new(&mut bytes);
+    assert!(response.is_empty());
+    assert!(response.extend(b"abcd"));
+    assert!(!response.is_empty());
+    response.truncate(8);
+    assert_eq!(response.as_slice(), b"abcd");
+    response.truncate(2);
+    assert_eq!(response.as_slice(), b"ab");
+    assert!(!response.is_empty());
+    response.truncate(0);
+    assert!(response.is_empty());
+}
+
+#[path = "applet_registry_tests.rs"]
+mod registry;
+
+#[path = "applet_mutation_tests.rs"]
+mod mutation;
+
 struct Echo {
     selected: bool,
 }
@@ -103,7 +125,7 @@ fn select_then_dispatch() {
     // Unknown command before any selection.
     assert_eq!(
         disp.process(&[0x00, 0x10, 0, 0], &mut applets, &mut (), &mut res),
-        Sw::FILE_NOT_FOUND
+        Sw::INS_NOT_SUPPORTED
     );
 
     // SELECT by AID.
@@ -141,7 +163,7 @@ fn clear_selection_drops_the_applet() {
     let cmd = [0x00, 0x10, 0x00, 0x00, 0x03, 0xDE, 0xAD, 0xBE];
     assert_eq!(
         disp.process(&cmd, &mut applets, &mut (), &mut res),
-        Sw::FILE_NOT_FOUND
+        Sw::INS_NOT_SUPPORTED
     );
 }
 
@@ -158,6 +180,7 @@ fn command_chaining_reassembles() {
     assert_eq!(disp.process(&sel, &mut applets, &mut (), &mut res), Sw::OK);
 
     // Two chaining segments (CLA bit 0x10) are acknowledged with no body…
+    assert!(!disp.chain_open());
     assert_eq!(
         disp.process(
             &[0x10, 0x10, 0, 0, 0x02, 0xAA, 0xBB],
@@ -168,6 +191,7 @@ fn command_chaining_reassembles() {
         Sw::OK
     );
     assert!(res.is_empty());
+    assert!(disp.chain_open());
     assert_eq!(
         disp.process(
             &[0x10, 0x10, 0, 0, 0x02, 0xCC, 0xDD],
@@ -188,6 +212,7 @@ fn command_chaining_reassembles() {
         Sw::OK
     );
     assert_eq!(res.as_slice(), &[0xAA, 0xBB, 0xCC, 0xDD, 0xEE]);
+    assert!(!disp.chain_open());
 }
 
 #[test]
@@ -246,9 +271,9 @@ fn select_unknown_aid() {
     );
 }
 
-// Mimics OpenPGP/PIV: a current applet whose own SELECT handler answers a
-// non-6D00 status (6A88, exactly as OpenPGP's `cmd_select` does) for a SELECT it
-// does not recognise. Used to prove the dispatcher shadows it on a by-FID SELECT.
+// Mimics OpenPGP/PIV as they were: a current applet whose own SELECT handler
+// answered a non-6D00 status (6A88, as OpenPGP's `cmd_select` did) for a SELECT it
+// did not recognise. Used to prove the dispatcher shadows it on a by-FID SELECT.
 struct PickySelect;
 impl Applet<()> for PickySelect {
     fn aid(&self) -> &'static [u8] {
@@ -259,7 +284,7 @@ impl Applet<()> for PickySelect {
     }
     fn process(&mut self, apdu: &Apdu, _ctx: &mut (), _res: &mut ResBuf) -> Sw {
         if apdu.ins == 0xA4 {
-            Sw::REFERENCE_NOT_FOUND // 6A88 — what OpenPGP returns for a foreign SELECT
+            Sw::REFERENCE_NOT_FOUND // 6A88 — what OpenPGP returned for a foreign SELECT
         } else {
             Sw::INS_NOT_SUPPORTED
         }
@@ -272,8 +297,8 @@ fn select_by_fid_is_unsupported_like_a_yubikey() {
     // master file). A real YubiKey answers 6D00, which is the trigger for scdaemon
     // to recognise it and read its serial from the management applet. RS-Key is
     // applet-only (no MF), so the dispatcher must answer 6D00 *before* dispatch —
-    // otherwise the current applet (OpenPGP) returns 6A88 and scdaemon shows a raw
-    // serial and drops PIV (issue #44).
+    // otherwise the current applet (OpenPGP, then) returned 6A88 and scdaemon showed a raw
+    // serial and dropped PIV (issue #44).
     let mut app = PickySelect;
     let mut applets: [&mut dyn Applet<()>; 1] = [&mut app];
     let mut disp = Dispatcher::new();
@@ -376,16 +401,21 @@ impl Applet<()> for Chunky {
         self.chain
     }
     fn process(&mut self, apdu: &Apdu, _ctx: &mut (), res: &mut ResBuf) -> Sw {
-        if apdu.ins == 0xCA {
+        if apdu.ins == 0xCA || apdu.ins == INS_WARNED {
             for i in 0..self.body_len {
                 res.push((i & 0xFF) as u8);
             }
-            Sw::OK
-        } else {
-            Sw::INS_NOT_SUPPORTED
+        }
+        match apdu.ins {
+            0xCA => Sw::OK,
+            // A body under a warning, which ISO 7816-4 allows and nothing chains.
+            INS_WARNED => Sw::new(0x62, 0x82),
+            _ => Sw::INS_NOT_SUPPORTED,
         }
     }
 }
+
+const INS_WARNED: u8 = 0xB0;
 
 fn select_chunky(disp: &mut Dispatcher, applets: &mut [&mut dyn Applet<()>], res: &mut ResBuf) {
     let sel = [
@@ -564,6 +594,210 @@ fn extended_le_response_is_not_chained() {
     assert_eq!(res.len(), 269);
 }
 
+/// An extended `Le` asks for more than one CCID frame carries back: past
+/// [`FRAME_BODY`] the answer leaves through `61xx` too, the rest by GET RESPONSE.
+#[test]
+fn extended_le_past_a_frame_is_chained() {
+    let body_len = FRAME_BODY + 7;
+    let mut c = Chunky {
+        body_len,
+        chain: true,
+    };
+    let mut applets: [&mut dyn Applet<()>; 1] = [&mut c];
+    let mut disp = Dispatcher::new();
+    let mut out = [0u8; RESP_BUILD];
+    let mut res = ResBuf::new(&mut out);
+    select_chunky(&mut disp, &mut applets, &mut res);
+    let get = [0x00, 0xCA, 0x00, 0x00, 0x00, 0x00, 0x00];
+    assert_eq!(
+        disp.process(&get, &mut applets, &mut (), &mut res),
+        bytes_remaining(7)
+    );
+    assert_eq!(res.len(), FRAME_BODY);
+    let first = res.as_slice().to_vec();
+    let rest = [0x00, 0xC0, 0x00, 0x00, 0x00, 0x00, 0x00];
+    assert_eq!(disp.process(&rest, &mut applets, &mut (), &mut res), Sw::OK);
+    let whole = [first, res.as_slice().to_vec()].concat();
+    let want: Vec<u8> = (0..body_len).map(|i| (i & 0xFF) as u8).collect();
+    assert_eq!(whole, want);
+}
+
+/// An applet the dispatcher cannot chain is handed one frame's body however large
+/// the buffer, so its answer always leaves in one frame.
+#[test]
+fn an_unchained_applet_fills_one_frame_at_most() {
+    let mut c = Chunky {
+        body_len: RESP_BUILD,
+        chain: false,
+    };
+    let mut applets: [&mut dyn Applet<()>; 1] = [&mut c];
+    let mut disp = Dispatcher::new();
+    let mut out = [0u8; RESP_BUILD];
+    let mut res = ResBuf::new(&mut out);
+    select_chunky(&mut disp, &mut applets, &mut res);
+    let get = [0x00, 0xCA, 0x00, 0x00, 0x00, 0x00, 0x00];
+    assert_eq!(disp.process(&get, &mut applets, &mut (), &mut res), Sw::OK);
+    assert_eq!(res.len(), FRAME_BODY);
+}
+
+/// A tail left by a one-byte first read is longer than a frame, and a GET RESPONSE
+/// asking for all of it still gets one frame's body and `61xx` for the rest.
+#[test]
+fn a_get_response_serves_one_frame_at_most() {
+    let mut c = Chunky {
+        body_len: RESP_BUILD,
+        chain: true,
+    };
+    let mut applets: [&mut dyn Applet<()>; 1] = [&mut c];
+    let mut disp = Dispatcher::new();
+    let mut out = [0u8; RESP_BUILD];
+    let mut res = ResBuf::new(&mut out);
+    select_chunky(&mut disp, &mut applets, &mut res);
+    let get = [0x00, 0xCA, 0x00, 0x00, 0x01];
+    assert_eq!(
+        disp.process(&get, &mut applets, &mut (), &mut res),
+        bytes_remaining(RESP_BUILD - 1)
+    );
+    let mut whole = res.as_slice().to_vec();
+    let rest = [0x00, 0xC0, 0x00, 0x00, 0x00, 0x00, 0x00];
+    let left = RESP_BUILD - 1 - FRAME_BODY;
+    assert_eq!(
+        disp.process(&rest, &mut applets, &mut (), &mut res),
+        bytes_remaining(left)
+    );
+    assert_eq!(res.len(), FRAME_BODY);
+    whole.extend_from_slice(res.as_slice());
+    assert_eq!(disp.process(&rest, &mut applets, &mut (), &mut res), Sw::OK);
+    assert_eq!(res.len(), left);
+    whole.extend_from_slice(res.as_slice());
+    let want: Vec<u8> = (0..RESP_BUILD).map(|i| (i & 0xFF) as u8).collect();
+    assert_eq!(whole, want);
+}
+
+/// Answers its SELECT with as much as the dispatcher lets it write.
+struct Loud;
+impl Applet<()> for Loud {
+    fn aid(&self) -> &'static [u8] {
+        &[0xA0, 0x00, 0x00, 0x06, 0x47, 0x2F, 0x00, 0x02]
+    }
+    fn select(&mut self, _reselect: bool, _ctx: &mut (), res: &mut ResBuf) -> Sw {
+        while res.push(0x5A) {}
+        Sw::OK
+    }
+    fn process(&mut self, _apdu: &Apdu, _ctx: &mut (), _res: &mut ResBuf) -> Sw {
+        Sw::INS_NOT_SUPPORTED
+    }
+}
+
+/// A SELECT hands an applet it cannot chain one frame's body as well.
+#[test]
+fn a_select_hands_an_unchained_applet_one_frame() {
+    let mut applets: [&mut dyn Applet<()>; 1] = [&mut Loud];
+    let mut disp = Dispatcher::new();
+    let mut out = [0u8; RESP_BUILD];
+    let mut res = ResBuf::new(&mut out);
+    select_chunky(&mut disp, &mut applets, &mut res);
+    assert_eq!(res.len(), FRAME_BODY);
+}
+
+/// The end of a command chain hands an applet it cannot chain one frame's body too.
+#[test]
+fn a_chained_command_to_an_unchained_applet_fills_one_frame_at_most() {
+    let mut c = Chunky {
+        body_len: RESP_BUILD,
+        chain: false,
+    };
+    let mut applets: [&mut dyn Applet<()>; 1] = [&mut c];
+    let mut disp = Dispatcher::new();
+    let mut out = [0u8; RESP_BUILD];
+    let mut res = ResBuf::new(&mut out);
+    select_chunky(&mut disp, &mut applets, &mut res);
+    let segment = [0x10, 0xCA, 0x00, 0x00, 0x01, 0xAA];
+    assert_eq!(
+        disp.process(&segment, &mut applets, &mut (), &mut res),
+        Sw::OK
+    );
+    let last = [0x00, 0xCA, 0x00, 0x00, 0x01, 0xBB];
+    assert_eq!(disp.process(&last, &mut applets, &mut (), &mut res), Sw::OK);
+    assert_eq!(res.len(), FRAME_BODY);
+}
+
+/// Past one frame a body the dispatcher cannot chain is refused whole: a transport
+/// would send it without its status word, or not at all.
+#[test]
+fn a_body_past_a_frame_that_cannot_chain_is_refused_whole() {
+    let mut c = Chunky {
+        body_len: FRAME_BODY + 1,
+        chain: true,
+    };
+    let mut applets: [&mut dyn Applet<()>; 1] = [&mut c];
+    let mut disp = Dispatcher::new();
+    let mut out = [0u8; RESP_BUILD];
+    let mut res = ResBuf::new(&mut out);
+    select_chunky(&mut disp, &mut applets, &mut res);
+    let warned = [0x00, INS_WARNED, 0x00, 0x00, 0x00, 0x00, 0x00];
+    assert_eq!(
+        disp.process(&warned, &mut applets, &mut (), &mut res),
+        Sw::EXEC_ERROR
+    );
+    assert!(res.is_empty());
+    let mut c = Chunky {
+        body_len: FRAME_BODY,
+        chain: true,
+    };
+    let mut applets: [&mut dyn Applet<()>; 1] = [&mut c];
+    assert_eq!(
+        disp.process(&warned, &mut applets, &mut (), &mut res),
+        Sw::new(0x62, 0x82)
+    );
+    assert_eq!(res.len(), FRAME_BODY);
+}
+
+/// A caller's buffer can hold more than the tail can: past it the answer is refused
+/// whole rather than cut, the transport being unable to send it either way.
+#[test]
+fn a_tail_past_the_held_buffer_is_refused_whole() {
+    let mut c = Chunky {
+        body_len: FRAME_BODY + RESP_BUILD + 1,
+        chain: true,
+    };
+    let mut applets: [&mut dyn Applet<()>; 1] = [&mut c];
+    let mut disp = Dispatcher::new();
+    let mut out = [0u8; FRAME_BODY + RESP_BUILD + 1];
+    let mut res = ResBuf::new(&mut out);
+    select_chunky(&mut disp, &mut applets, &mut res);
+    let get = [0x00, 0xCA, 0x00, 0x00, 0x00, 0x00, 0x00];
+    assert_eq!(
+        disp.process(&get, &mut applets, &mut (), &mut res),
+        Sw::EXEC_ERROR
+    );
+    assert!(res.is_empty());
+}
+
+/// A limit bounds every way a producer writes, and never reaches past the buffer.
+#[test]
+fn a_limit_bounds_every_way_into_the_buffer() {
+    let mut out = [0u8; 8];
+    let mut res = ResBuf::new(&mut out);
+    res.limit(4);
+    assert_eq!(res.capacity(), 4);
+    assert!(res.extend(&[1, 2, 3]));
+    assert_eq!(res.spare_mut().len(), 1);
+    assert!(!res.extend(&[4, 5]));
+    assert!(res.push(4));
+    assert!(!res.push(5));
+    res.clear();
+    res.limit(4);
+    res.commit(6);
+    assert_eq!(res.len(), 4);
+    res.limit(usize::MAX);
+    assert_eq!(res.capacity(), 8);
+    assert_eq!(res.spare_mut().len(), 4);
+    res.limit(2);
+    res.clear();
+    assert_eq!(res.capacity(), 8, "a cleared buffer is a whole one");
+}
+
 #[test]
 fn set_enabled_hides_a_disabled_applet() {
     // A cleared enable bit makes an applet invisible: its AID matches nothing on
@@ -621,7 +855,7 @@ fn disabling_the_current_applet_makes_it_unreachable() {
     let cmd = [0x00, 0x10, 0x00, 0x00, 0x03, 0xDE, 0xAD, 0xBE];
     assert_eq!(
         disp.process(&cmd, &mut applets, &mut (), &mut res),
-        Sw::FILE_NOT_FOUND
+        Sw::INS_NOT_SUPPORTED
     );
 }
 
@@ -735,7 +969,7 @@ impl Applet<()> for Verifiable {
             0x87 if self.verified => Sw::OK,
             0x87 => Sw::SECURITY_STATUS_NOT_SATISFIED,
             // A SELECT that reaches `process` instead of the dispatcher, answered
-            // the way OpenPGP's `cmd_select` does: prefix-match, so a buffer that
+            // the way OpenPGP's `cmd_select` did: prefix-match, so a buffer that
             // merely *starts* with this AID is accepted (audit run-37).
             0xA4 if apdu.data.starts_with(self.aid()) => Sw::OK,
             _ => Sw::INS_NOT_SUPPORTED,
@@ -783,7 +1017,7 @@ fn reset_card_clears_selection_and_security_status() {
     let mut res = ResBuf::new(&mut out);
     assert_eq!(
         disp.process(&[0x00, 0x87, 0, 0], &mut applets, &mut (), &mut res),
-        Sw::FILE_NOT_FOUND
+        Sw::INS_NOT_SUPPORTED
     );
     // ...and re-selecting without verifying is refused: the status really is gone,
     // which `clear_selection` alone would not have achieved.
@@ -1148,9 +1382,9 @@ fn select_matches_an_aid_by_prefix() {
     assert_eq!(d.current(), Some(0), "the lower index wins a shared prefix");
 }
 
-/// The class byte, measured on a YubiKey 5.7.4 across PIV, OpenPGP and OATH: a
-/// class asking for secure messaging is `6E00`, and the chaining bit is looked at
-/// FIRST — `1C`, `90` and `FF` are plain segments there, not SM refusals.
+/// The class byte, measured on a YubiKey 5.8.0 across PIV, OpenPGP and OATH: a
+/// class asking for secure messaging is `6E00` for all but a SELECT, and the
+/// chaining bit is looked at FIRST — `1C`, `90` and `FF` are plain segments there.
 #[test]
 fn a_secure_messaging_class_is_refused() {
     let mut echo = Echo { selected: false };
@@ -1167,9 +1401,9 @@ fn a_secure_messaging_class_is_refused() {
     sel.extend_from_slice(&[0xA0, 0x00, 0x00, 0x06, 0x47, 0x2F, 0x00, 0x01]);
     assert_eq!(go(&mut d, &mut apps, &sel).0, Sw::OK);
 
-    // 04 and 84 are the two the oracle could be asked directly (macOS PC/SC
-    // refuses to transmit the rest); 0C and 8C are the ISO SM encodings the same
-    // rule covers, and the applet must never see any of them.
+    // 04 and 84 are the SM classes the oracle's CCID layer passes on; 0C and 8C it
+    // answers with an empty data block (rsk-device's gate), and here they are refused
+    // too. The applet must never see any of them.
     for cla in [0x04u8, 0x84, 0x0C, 0x8C, 0x4C] {
         assert_eq!(
             go(&mut d, &mut apps, &[cla, 0x10, 0, 0, 0x02, 0xAA, 0xBB]),
@@ -1177,16 +1411,23 @@ fn a_secure_messaging_class_is_refused() {
             "CLA {cla:02X} asks for secure messaging"
         );
     }
-    // A SELECT is not privileged: the class is judged before the command is.
+    // A SELECT is served under 04 and 84, as the oracle serves it; under 0C, a class
+    // it never answers at all, it is refused like any SM command.
     let mut sm_sel = sel.clone();
     sm_sel[0] = 0x04;
     assert_eq!(
         go(&mut d, &mut apps, &sm_sel).0,
-        Sw::CLA_NOT_SUPPORTED,
+        Sw::OK,
         "SELECT at an SM class"
     );
+    sm_sel[0] = 0x0C;
+    assert_eq!(
+        go(&mut d, &mut apps, &sm_sel).0,
+        Sw::CLA_NOT_SUPPORTED,
+        "SELECT at 0C"
+    );
 
-    // Everything the oracle serves must still be served, byte for byte.
+    // No SM indication, no refusal here; over CCID 40 and C0 never get this far.
     for cla in [0x00u8, 0x80, 0x40, 0xC0] {
         assert_eq!(
             go(&mut d, &mut apps, &[cla, 0x10, 0, 0, 0x02, 0xAA, 0xBB]),
@@ -1286,4 +1527,124 @@ fn a_chain_past_the_reassembly_buffer_is_a_length_error_at_either_end() {
         Sw::WRONG_LENGTH,
         "a final segment past the buffer"
     );
+}
+
+#[path = "frames_tests.rs"]
+mod frames;
+
+/// With nothing selected every command but a SELECT is an unknown instruction,
+/// secure-messaging classes included: a YubiKey 5.8.0 answers `6D00` there and keeps
+/// its `6E00` for an SM class sent to an applet it has selected.
+#[test]
+fn with_no_applet_selected_even_an_sm_class_is_an_unknown_instruction() {
+    let mut echo = Echo { selected: false };
+    let mut applets: [&mut dyn Applet<()>; 1] = [&mut echo];
+    let mut disp = Dispatcher::new();
+    let mut out = [0u8; 64];
+    let mut res = ResBuf::new(&mut out);
+    let mut go =
+        |disp: &mut Dispatcher, apdu: &[u8]| disp.process(apdu, &mut applets, &mut (), &mut res);
+
+    for sm in [[0x84, 0x10, 0x00, 0x00], [0x04, 0xC0, 0x00, 0x00]] {
+        assert_eq!(
+            go(&mut disp, &sm),
+            Sw::INS_NOT_SUPPORTED,
+            "{sm:02X?} with none"
+        );
+    }
+    // A chain's segments are acknowledged; the command they close finds no applet.
+    assert_eq!(go(&mut disp, &[0x10, 0x10, 0x00, 0x00, 0x01, 0xAA]), Sw::OK);
+    assert_eq!(
+        go(&mut disp, &[0x00, 0x10, 0x00, 0x00, 0x01, 0xBB]),
+        Sw::INS_NOT_SUPPORTED
+    );
+
+    let mut sel = vec![0x84, 0xA4, 0x04, 0x00, 0x08];
+    sel.extend_from_slice(&[0xA0, 0x00, 0x00, 0x06, 0x47, 0x2F, 0x00, 0x01]);
+    assert_eq!(
+        go(&mut disp, &sel),
+        Sw::OK,
+        "a SELECT under 84 is served as under 00"
+    );
+    assert_eq!(
+        go(&mut disp, &[0x84, 0x10, 0x00, 0x00]),
+        Sw::CLA_NOT_SUPPORTED,
+        "with one"
+    );
+    disp.set_enabled(0);
+    assert_eq!(
+        go(&mut disp, &[0x84, 0x10, 0x00, 0x00]),
+        Sw::INS_NOT_SUPPORTED,
+        "one disabled since is none"
+    );
+}
+
+#[test]
+#[should_panic(expected = "a response made outside an open chain")]
+fn a_response_cannot_bypass_an_open_command_chain() {
+    let mut echo = Echo { selected: false };
+    let mut applets: [&mut dyn Applet<()>; 1] = [&mut echo];
+    let mut disp = Dispatcher::new();
+    let mut out = [0; 64];
+    let mut res = ResBuf::new(&mut out);
+    let mut select = vec![0, 0xA4, 4, 0, 8];
+    select.extend_from_slice(&[0xA0, 0, 0, 6, 0x47, 0x2F, 0, 1]);
+    assert_eq!(
+        disp.process(&select, &mut applets, &mut (), &mut res),
+        Sw::OK
+    );
+    res.clear();
+    assert_eq!(
+        disp.process(&[0x10, 0x10, 0, 0, 1, 7], &mut applets, &mut (), &mut res),
+        Sw::OK
+    );
+    assert!(disp.chain_open());
+    disp.chain_response(Sw::OK, 64, true, &mut res);
+}
+
+#[test]
+fn disabling_an_applet_during_a_chain_refuses_and_discards_the_accumulated_body() {
+    let mut echo = Echo { selected: false };
+    let mut applets: [&mut dyn Applet<()>; 1] = [&mut echo];
+    let mut dispatcher = Dispatcher::new();
+    let mut output = [0; 64];
+    let mut response = ResBuf::new(&mut output);
+    let select = [0, 0xa4, 4, 0, 8, 0xa0, 0, 0, 6, 0x47, 0x2f, 0, 1];
+    assert_eq!(
+        dispatcher.process(&select, &mut applets, &mut (), &mut response),
+        Sw::OK
+    );
+    assert_eq!(
+        dispatcher.process(
+            &[0x10, 0x10, 0, 0, 2, 0xaa, 0xbb],
+            &mut applets,
+            &mut (),
+            &mut response
+        ),
+        Sw::OK
+    );
+    assert!(dispatcher.chain_open());
+    dispatcher.set_enabled(0);
+    assert_eq!(
+        dispatcher.process(
+            &[0, 0x10, 0, 0, 1, 0xcc],
+            &mut applets,
+            &mut (),
+            &mut response
+        ),
+        Sw::INS_NOT_SUPPORTED
+    );
+    assert!(response.is_empty());
+    assert!(!dispatcher.chain_open());
+    dispatcher.set_enabled(u32::MAX);
+    assert_eq!(
+        dispatcher.process(
+            &[0, 0x10, 0, 0, 1, 0xdd],
+            &mut applets,
+            &mut (),
+            &mut response
+        ),
+        Sw::OK
+    );
+    assert_eq!(response.as_slice(), &[0xdd]);
 }

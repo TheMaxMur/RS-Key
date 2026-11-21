@@ -131,25 +131,33 @@ def ctaphid_init(dev):
     return bytes(r[15:19])
 
 
-def send_cbor(dev, cid, payload):
+def send_cbor(dev, cid, payload, *, check_deadline=None):
+    def receive():
+        if check_deadline is not None:
+            check_deadline()
+        report = read(dev)
+        if check_deadline is not None:
+            check_deadline()
+        return report
+
     n = len(payload)
     write(dev, cid + bytes([CTAPHID_CBOR, n >> 8, n & 0xFF]) + payload[:57])
     off, seq = 57, 0
     while off < n:
         write(dev, cid + bytes([seq]) + payload[off:off + 59])
         off, seq = off + 59, seq + 1
-    r = read(dev)
+    r = receive()
     deadline = time.monotonic() + KEEPALIVE_DEADLINE_S
     while len(r) >= 5 and r[4] == CTAPHID_KEEPALIVE:  # still processing
-        if time.monotonic() > deadline:
+        if check_deadline is None and time.monotonic() > deadline:
             raise IOError("device kept sending CTAPHID keepalives past the deadline")
-        r = read(dev)
+        r = receive()
     assert len(r) >= 5, "empty HID read (device timed out / dropped report)"
     assert r[4] == CTAPHID_CBOR, f"cmd {r[4]:#x}"
     bcnt = (r[5] << 8) | r[6]
     data = bytearray(r[7:7 + bcnt])
     while len(data) < bcnt:
-        c = read(dev)
+        c = receive()
         if not c:
             raise IOError("device did not send the full CTAPHID response")
         if len(c) < 6:

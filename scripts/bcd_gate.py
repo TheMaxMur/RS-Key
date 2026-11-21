@@ -105,7 +105,7 @@ A surviving line is one that can change the emitted image, and `bcdDevice` is a
 *build* counter — CHANGELOG.md's own words. Bumping for a behaviour-neutral
 refactor that still moves the binary is correct, not noise, and costs one hex
 digit. So there is no env var and no skip list: a floor the environment can lower
-is not a ratchet (`scripts/fuzz-coverage.sh:39-41`). If this guard is ever *wrong*
+is not a ratchet (`scripts/fuzz-coverage.sh:47-49`). If this guard is ever *wrong*
 about reachability, fix the reachability rule here where the fix is reviewable.
 
 ## The counter only goes up
@@ -129,11 +129,14 @@ least six were prose-only (diagrams, naming, tightening), which is exactly the
 class no mechanical rule can tell from a wire change.
 """
 
+import difflib
 import pathlib
 import re
 import subprocess
 import sys
 import tomllib
+
+import gate_lines
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 MAIN = pathlib.Path("firmware/src/main.rs")
@@ -201,6 +204,9 @@ NO_STD = re.compile(r"^#!\[\s*no_std\s*\]$")
 #: line itself emits nothing either way, and the code it gates is judged on its
 #: own lines.
 CFG_TEST = re.compile(r"#!?\[\s*cfg(?:_attr)?\s*\([^)]*\b(?:test|kani)\b")
+# Ordinary builds expand this exact coverage-only spelling to #[inline].
+# Comparing that expansion keeps the attribute and any accompanying code edits.
+COVERAGE_INLINE = re.compile(r"(?m)^([ \t]*)#\[cfg_attr\(not\(coverage\), inline\)\](?=[ \t]*$)")
 PATH_ATTR = re.compile(r'#\s*!?\[\s*path\s*=\s*"([^"]+)"\s*\]')
 #: `const _: () = …` — an anonymous const item, evaluated at compile time and
 #: emitting no code. Anchored at both ends (rustfmt keeps one item per line), so
@@ -257,15 +263,28 @@ def bump_commit(root):
     `-G` yields candidates: it also matches a commit that only moved the line,
     and taking the first one blindly would let a reformat of `main.rs` reset the
     base and wave a whole span of firmware changes through. Each candidate is
-    confirmed against its parent, so a mover is skipped rather than trusted.
+    confirmed against its parents, so a mover is skipped rather than trusted.
+
+    A merge is a candidate through its first-parent diff (`-G` lists none
+    otherwise, and a line that landed by a merge read the side line's last bump
+    as the base), and a bump only when its value is none of its parents': a merge
+    that keeps the side line's number built a new image under an old one.
     """
-    listing = git(root, "log", "--format=%H", "-G", RELEASE_TEXT, "--", str(MAIN), missing_ok=True)
+    listing = git(
+        root, "log", "--format=%H", "--diff-merges=first-parent", "--no-patch",
+        "-G", RELEASE_TEXT, "--", str(MAIN), missing_ok=True,
+    )
     for sha in listing.split():
         now = release(read(root, sha, MAIN))
-        before = release(read(root, f"{sha}^", MAIN))
-        if now is not None and now != before:
-            return sha, now, before
+        befores = [release(read(root, p, MAIN)) for p in parents(root, sha)]
+        if now is not None and now not in befores:
+            return sha, now, max((b for b in befores if b is not None), default=None)
     return None, None, None
+
+
+def parents(root, sha):
+    """Every parent of `sha`: none for a first commit, two for a merge."""
+    return git(root, "rev-list", "--parents", "-n", "1", sha).split()[1:]
 
 
 def parent(root, sha):
@@ -325,8 +344,15 @@ def sources(root, rev, unit):
 
 def declarations(text):
     """(module name, `#[path]` operand or None, cfg-gated) per `mod x;` in `text`."""
-    held = []
+    held, depth = [], 0
     for line in text.splitlines():
+        if depth > 0:
+            # rustfmt breaks a long attribute over lines — the `#[allow(…)]` the
+            # host-bytes deny puts on each test module — and read one line at a
+            # time it ended the run, dropping the `#[cfg(test)]` above it.
+            held[-1] += "\n" + line
+            depth += line.count("[") - line.count("]")
+            continue
         found = MOD_DECL.match(line)
         if found:
             attrs = "\n".join(held)
@@ -335,6 +361,7 @@ def declarations(text):
             held = []
         elif ATTRIBUTE.match(line):
             held.append(line)
+            depth = line.count("[") - line.count("]")
         else:
             # A blank line ends the run too: an attribute is attached to the item
             # it touches, and treating a gap as transparent let a file-level
@@ -416,6 +443,14 @@ def manifest(text, rel):
     return {name: value for name, value in parsed.items() if name in MANIFEST_TABLES}
 
 
+def ordinary_inline(text):
+    """Expand the known coverage-only attribute outside comments and literals."""
+    matches = list(COVERAGE_INLINE.finditer(gate_lines.rust_code(text)))
+    for found in reversed(matches):
+        text = text[:found.start()] + found.group(1) + "#[inline]" + text[found.end():]
+    return text
+
+
 def changed_lines(root, base, rel, untracked):
     """Added and removed lines for one file, blank-line changes dropped.
 
@@ -427,9 +462,17 @@ def changed_lines(root, base, rel, untracked):
     if rel in untracked:
         yield from read(root, None, rel).splitlines()
         return
-    diff = git(
-        root, "diff", "--ignore-blank-lines", "-U0", base, "--", rel, missing_ok=True
-    )
+    before, after = read(root, base, rel), read(root, None, rel)
+    ordinary_before = ordinary_inline(before)
+    ordinary_after = ordinary_inline(after)
+    if before != ordinary_before or after != ordinary_after:
+        diff = "\n".join(difflib.unified_diff(
+            ordinary_before.splitlines(), ordinary_after.splitlines(), n=0,
+        ))
+    else:
+        diff = git(
+            root, "diff", "--ignore-blank-lines", "-U0", base, "--", rel, missing_ok=True
+        )
     for line in diff.splitlines():
         if line[:1] in "+-" and not line.startswith(("+++", "---")):
             yield line[1:]

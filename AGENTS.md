@@ -21,10 +21,14 @@ project — see [README.md](README.md) and
 
 ## Golden rules
 
-- **The gate is the source of truth.** Run `nix develop -c ./scripts/check.sh`
-  and make it fully green before you call a change done. Don't infer success
-  from a partial build — CI runs exactly this script, so green locally is the
-  whole bar.
+- **The gate is the source of truth, in two layers.** Every commit:
+  `nix develop -c ./scripts/check.sh`, fully green before you call a change
+  done. Once before opening a pull request, not per commit:
+  `nix develop -c ./scripts/check-assurance.sh` (the TLA+ plumbing and the
+  registries held against the prose), and commit what its `--write`/`--relock`
+  asks for in the same PR. CI runs each as its own job on every pull request,
+  so both green locally is the whole bar. Don't infer success from a partial
+  build.
 - **Bump `bcdDevice` on a firmware-behaviour change.** `config.device_release`
   in [firmware/src/main.rs](firmware/src/main.rs), +1 hex. Host-only changes
   (CLI, docs, CI) do **not** bump it. (Background, plus the separate
@@ -32,10 +36,37 @@ project — see [README.md](README.md) and
   "Firmware changes bump bcdDevice".)
 - **`no_std`, no alloc.** If a firmware change needs a heap, it's the wrong
   change. Clippy runs `-D warnings`; justify any `#[allow]` inline at the
-  smallest scope.
-- **`unsafe` and new dependencies are not free.** A new `unsafe` site needs an
-  entry in [docs/unsafe.md](docs/unsafe.md); a new dependency needs a stated
-  reason — it's joining an authenticator's trust base.
+  smallest scope. The lint policy is `[workspace.lints]` in the root
+  `Cargo.toml`; a new crate opts in with `[lints] workspace = true`.
+- **`unsafe` and new dependencies are not free.** `unsafe` compiles only in
+  `firmware`, `firmware-ns`, `rsk-wipe` and — on the device target — `rsk-rsa`; a new site
+  there needs an entry in [docs/unsafe.md](docs/unsafe.md) (held by
+  `check-assurance.sh`), and a new `unsafe` block or `unsafe impl` a
+  `// SAFETY:` comment (clippy refuses it otherwise). A new dependency needs a
+  stated reason — it's joining an authenticator's trust base.
+- **Secrets live in `rsk_secret::Secret`.** Key-grade bytes go in a `Secret`,
+  or under a `WipeGuard` when the buffer outlives the scope: both wipe on every
+  exit, a `?` included. The root `clippy.toml` refuses a bare
+  `Zeroize::zeroize` or a `Zeroizing` in every crate; a wipe no `Secret` can
+  make (state that outlives a command, a key type's own `Drop`) stays bare
+  under an `#[expect]` that names its wipe point. A hand-written wipe of a whole
+  value (a type's `Drop`, a long-lived value's `scrub`, a session's reset) names
+  every field and every variant — no `_` arm — so a new one does not compile
+  until its wipe is decided. Wipe early with `.wipe()`,
+  never `drop(secret)`: that moves the bytes and wipes the copy.
+- **A reset goes through `Worker::reboot`**, which scrubs the RAM secrets
+  first. Clippy refuses a direct `SCB::sys_reset`,
+  `rom_data::reset_to_usb_boot` / `reboot` / `reboot_ns` or
+  `Watchdog::trigger_reset`; the secure reboot and `rsk-wipe` keep theirs under
+  an `#[expect]`.
+- **Host bytes cannot panic a parser.** A module that reads what a host sent —
+  a transport, an APDU / TLV / CBOR parser, a record codec, an applet crate, a
+  CTAP handler — denies `clippy::indexing_slicing`, `unwrap_used`,
+  `expect_used`, `panic` and `cast_possible_truncation` at its top (an applet
+  crate on its root). An access there is checked and fails to the error its
+  path already answers; an exemption is an `#[expect(…, reason = …)]` on the
+  smallest item, never a byte picked out of `to_le_bytes()`. A new parser module
+  starts with the block (CONTRIBUTING.md → "Code").
 - **Every new file starts with the SPDX header** (`AGPL-3.0-only` — copy it from
   any neighbouring source file).
 - **Don't commit, push, flash, sign, or write OTP fuses unless asked.** The
@@ -60,6 +91,10 @@ project — see [README.md](README.md) and
   repro otherwise — then fixes it. A refactor preserves behaviour and proves it
   with the existing tests and an unchanged wire surface. For multi-step work,
   each step names its verification.
+- **Ask which test would notice the fix gone.** For a change under `crates/`,
+  `nix develop -c ./scripts/mutants-container.sh --in-diff HEAD` (`HEAD~1` once it is
+  committed) mutates only the lines you touched; each survivor is a test to write
+  or a reason to state. CI runs the same over every pull request, advisory.
 - **Never report unverified success.** Don't claim a fix works, a command
   succeeded, or the gate is green unless you observed it. If something couldn't
   be verified (e.g. it needs hardware), say exactly what remains unchecked.
@@ -166,24 +201,25 @@ CONTRIBUTING.md → "Code".
   private items, which a plain sibling `mod` would lose. cfg-gated code never
   reaches the firmware image, so moving it is not a behaviour change (no
   `bcdDevice` bump).
-- **`check.sh` leaves the *no-touch* test image** at
-  `target/.../release/firmware`. Anything meant to be flashed must be rebuilt
-  with `cargo build --release -p firmware` first — flag this if your change
-  affects which image is produced. A bare `cargo build` also carries **no
-  partition table** (it is applied after linking), so a key flashed straight from
-  that ELF has an unfenced KV store: run `scripts/pt.sh <elf> <out>` over it
-  first, or build with `nix build .#firmware`, which does it for you
-  ([docs/build.md](docs/build.md#the-partition-table)).
+- **Use the combined TrustZone image.** `nix build .#firmware` and
+  `nix develop -c bash scripts/build.sh` build S and NS together,
+  including the partition table. Rebuild without `no-touch` or diagnostic
+  features before flashing; sign the combined ELF. `check.sh` leaves a combined
+  **no-touch** image at `target/trustzone/combined.elf`. TrustZone is mandatory;
+  bare Cargo refuses to build outside the S/NS link stages. TUI development
+  uses `nix develop .#tui`; the full
+  gate invokes that environment for its TUI rows.
 
 ## Layout
 
 | Path | What |
 |---|---|
 | `firmware/` | The binary: boot, USB, the worker's sequencing, LED, presence, and the board halves of `rsk-device`'s `Hooks` / `rsk-vendor`'s `Platform`. `no_std`, embedded-only. |
+| `firmware/trustzone/nonsecure/` | `firmware-ns`, the TrustZone USB classes/framing and TIMER1 binary; it shares the root workspace and is built with the Secure half by `scripts/build.sh`. |
 | `crates/rsk-*` | The libraries, and the one thing that separates them from `firmware/`: they are **host-tested**, so host-testable logic belongs here. Which crates exist is [`docs/architecture.md`](docs/architecture.md#crates) — `scripts/crate_graph.py` holds that table to the workspace members, so it is the list that cannot go stale. Naming them here instead is what drifted across four refactors. |
 | `tools/rsk/` | The Python host CLI (`rsk …`). Match the neighbouring modules: `register(sub)`, `die()`, flake-provided deps (no pip). |
 | `tools/tui/` | The Rust TUI cockpit — **its own workspace** (build/clippy/test via its own manifest). |
-| `tools/emu/` | The software emulator — **its own workspace**. Runs the applet crates on the host over TCP, so `tests/*.py` need no board. |
+| `tools/emu/` | The software emulator — **its own workspace**. Runs the applet crates on the host over TCP, so `tests/*.py` need no board; `--image` serves the firmware ELF itself on an emulated RP2350 (picoem) behind the same ports. |
 | `docs/` | mdBook (`SUMMARY.md` = nav). [`docs/protocol.md`](docs/protocol.md) is the **third-party / PicoForge wire spec** — keep it in sync when a wire format changes. |
 | `fuzz/` | Fuzz targets (nightly, own workspace): `nix develop .#fuzz -c cargo fuzz run <target>`. |
 | `tests/*.py` | On-device tests, run by hand against a no-touch board — or against `tools/emu` with no board (`python tests/emu.py tests/NN_*.py`). |

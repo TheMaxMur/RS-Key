@@ -177,6 +177,8 @@ fn nowhere() -> rsk_ui::Point {
             && rsk_ui::hit_security(p).is_none()
             && rsk_ui::hit_onboard(p).is_none()
             && !rsk_ui::hit_title_back(p)
+            && !rsk_ui::hit_pk_back(p)
+            && !rsk_ui::hit_del_hold(p)
             && !rsk_ui::ALLOW_RECT.contains(p)
             && !rsk_ui::DENY_RECT.contains(p)
     };
@@ -414,7 +416,7 @@ fn drive(jobs: Jobs, taps: SyncSender<Tap>, _signals: Arc<Signals>) {
 fn panel_bench(
     host: impl FnOnce(Jobs, SyncSender<Tap>, Arc<Signals>) + Send + 'static,
 ) -> PanelLinks {
-    let store = crate::store::open(None, None).expect("a memory-backed store");
+    let store = crate::store::open(None, None, &crate::DEFAULT_SERIAL).expect("the bench's store");
     let fs: &'static RefCell<rsk_fs::Fs<crate::store::EmuStore>> =
         Box::leak(Box::new(RefCell::new(rsk_fs::Fs::new(store))));
     let rng: &'static RefCell<crate::rng::EmuRng> = Box::leak(Box::new(RefCell::new(
@@ -636,7 +638,7 @@ fn an_open_menu_does_not_hold_a_power_cycle() {
 }
 
 /// …and only an operator's. `PoweredPort::attach` queues a power cycle per USB/IP
-/// import and `usbip::listen` accepts them in an unbounded loop, so a peer that
+/// import and `usbip_server::listen` accepts them in an unbounded loop, so a peer that
 /// reconnects in a loop would otherwise close every on-panel screen on its first
 /// poll — the denial `UI_YIELD_FLOOR_MS` exists to stop (audit run-35), and worse
 /// than the one it stops, because no touch resets a floor that is not applied.
@@ -751,7 +753,11 @@ fn the_panel_generates_the_rsa_key_the_wire_can() {
     let started = Instant::now();
     let key = rsk_display::Hooks::rsa_search_progress(&mut hooks, RSA_BITS, &mut rng, &mut || {
         ticks += 1;
-        at_first_tick.get_or_insert(pushes.get());
+        if ticks == 1 {
+            at_first_tick = Some(pushes.get());
+            // Make a repaint due on this tick even on a fast host.
+            std::thread::sleep(Duration::from_millis(crate::display::SPIN_PRESENT_MS));
+        }
     })
     .expect("the panel has a single-core path to fall through to, as the wire does");
     let took = started.elapsed();
@@ -866,6 +872,102 @@ fn drive_panel_presence(jobs: Jobs, taps: SyncSender<Tap>, signals: Arc<Signals>
 #[test]
 fn the_panels_presence_flags_are_the_transports() {
     panel_bench(drive_panel_presence);
+}
+
+/// Past `rsk_display`'s 800 ms `HOLD_MS` with room for a late poll, and short of that hold
+/// plus the success pop after it, so the finger is up before the panel reads its pad again.
+const WIPE_HOLD_MS: u64 = 2_000;
+
+/// How many members a getInfo answer carries. `encIdentifier` and `encCredStoreState` need
+/// the seed and the grant a boot provisions, so a store wiped with no reboot after it
+/// answers two fewer — silently, where a lookup would ask a `strict-up` build for a touch.
+fn info_members(body: &[u8]) -> u8 {
+    assert_eq!(body[0], CTAP2_OK, "getInfo");
+    match body[1] {
+        0xB8 => body[2],
+        head => head & 0x1F,
+    }
+}
+
+/// The panel's factory reset wipes, then queues its reboot for the worker, which a board
+/// services on its idle tick. The emulator never read that request: the panel parked on it
+/// for good, and the host was answered from a store nothing had provisioned again.
+fn drive_panel_factory_reset(jobs: &Jobs, taps: SyncSender<Tap>) {
+    let skip = target(|p| rsk_ui::hit_onboard(p) == Some(rsk_ui::OnboardChoice::Skip));
+    push(&taps, Tap::at(skip.x, skip.y));
+    settle(&taps);
+    let provisioned = info_members(&ask(jobs, get_info_req()));
+    let set_pin = || {
+        let (ax, ay) = parse_key_agreement(&ask(jobs, get_key_agreement_req()));
+        ask(jobs, set_pin_req(&Platform::agree(&ax, &ay), PIN))[0]
+    };
+    assert_eq!(set_pin(), CTAP2_OK, "set a FIDO PIN the wipe must erase");
+    for step in [
+        nav_tab(rsk_ui::NavTab::Settings),
+        target(|p| rsk_ui::hit_settings_root(p) == Some(rsk_ui::RootEntry::Security)),
+        target(|p| rsk_ui::hit_security(p) == Some(rsk_ui::SecurityEntry::FactoryReset)),
+    ] {
+        push(&taps, Tap::at(step.x, step.y));
+        settle(&taps);
+    }
+    let hold = target(rsk_ui::hit_del_hold);
+    push(
+        &taps,
+        Tap {
+            hold: Duration::from_millis(WIPE_HOLD_MS),
+            ..Tap::at(hold.x, hold.y)
+        },
+    );
+    // Wait for pad reads to resume so a host command cannot interrupt the hold
+    // or beat the reboot to the worker.
+    settle(&taps);
+    assert_eq!(
+        info_members(&ask(jobs, get_info_req())),
+        provisioned,
+        "the reboot must provision the wiped device for the host"
+    );
+    assert_eq!(
+        set_pin(),
+        CTAP2_OK,
+        "setPIN must work again after the wipe erases the previous FIDO PIN"
+    );
+}
+
+#[test]
+fn a_factory_reset_on_the_panel_reboots_the_device() {
+    panel_bench(|jobs, taps, _signals| drive_panel_factory_reset(&jobs, taps));
+}
+
+/// A board builds every applet afresh after the panel's wipe, so PIV lays its default PIN
+/// down again on the next SELECT. The emulator kept the applet that had provisioned its
+/// files, and VERIFY with the default PIN answered `6A88` until the process restarted.
+#[test]
+fn piv_takes_its_default_pin_again_after_a_panel_reset() {
+    use rsk_piv::files::{DEFAULT_PIN, REF_PIN};
+    panel_bench(|jobs, taps, _signals| {
+        let sw = |jobs: &Jobs, data: Vec<u8>| {
+            let (reply, answer) = mpsc::channel();
+            jobs.send(Job::Apdu(data), reply)
+                .expect("the device thread is alive");
+            let body = answered(&answer);
+            [body[body.len() - 2], body[body.len() - 1]]
+        };
+        let aid = rsk_piv::PIV_AID;
+        let select = [&[0x00, 0xA4, 0x04, 0x00, aid.len() as u8][..], aid].concat();
+        assert_eq!(
+            sw(&jobs, select.clone()),
+            [0x90, 0x00],
+            "PIV provisions its files"
+        );
+        drive_panel_factory_reset(&jobs, taps);
+        let mut verify = vec![0x00, 0x20, 0x00, REF_PIN, DEFAULT_PIN.len() as u8];
+        verify.extend_from_slice(&DEFAULT_PIN);
+        assert_eq!(
+            (sw(&jobs, select), sw(&jobs, verify)),
+            ([0x90, 0x00], [0x90, 0x00]),
+            "a factory-reset PIV must take its default PIN"
+        );
+    });
 }
 
 // --- the class, not the site -----------------------------------------------

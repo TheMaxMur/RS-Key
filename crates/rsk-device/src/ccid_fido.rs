@@ -15,18 +15,23 @@
 use core::cell::RefCell;
 
 use rsk_crypto::{Device, FusedKey, read_fused};
+use rsk_fido::CtapError;
+use rsk_fido::consts::{CTAP_AUTHENTICATE, CTAP_REGISTER, CTAP_VERSION};
 use rsk_fs::{Fs, Storage};
 use rsk_sdk::{Apdu, Applet, ResBuf, Sw};
+// CTAP 2.1 §11.2.1 gives CTAP-over-ISO7816 the proprietary class; U2F refuses it.
+use rsk_sdk::apdu::CLA_PROPRIETARY;
 
-/// CTAP-over-ISO7816 lives in the proprietary class (CTAP 2.1 §11.2.1).
-const CLA_PROPRIETARY: u8 = 0x80;
 /// `NFCCTAP_MSG`: one CTAP2 command in the data field, its response in the body.
 const INS_CTAP_MSG: u8 = 0x10;
 /// `NFCCTAP_GETRESPONSE`: the poll a host issues after a `91 00`, and at
 /// `P1 = 0x11` the cancel. This device never answers `91 00` — see `process` below.
 const INS_CTAP_GETRESPONSE: u8 = 0x11;
-/// The `P1` that makes a GETRESPONSE a cancel rather than a poll.
-const P1_CANCEL: u8 = 0x11;
+/// `NFCCTAP_CONTROL` (CTAP 2.3 §11.3.4). A YubiKey 5.8.0 takes `P1 01` (end of
+/// session) with `P2 00` alone.
+const INS_CTAP_CONTROL: u8 = 0x12;
+/// END: the applet stops serving FIDO until it is selected again.
+const P1_CONTROL_END: u8 = 0x01;
 
 /// FIDO over CCID. Holds no FIDO state of its own; every field is a handle the
 /// CTAPHID transport also holds.
@@ -37,7 +42,7 @@ pub struct FidoCcidApplet<'a, R: rsk_sdk::Rng + 'static> {
     /// the restart-by-reboot attack `FidoState::restore_pin_lock` exists to close.
     /// It also carries the PIN/UV token, the credential-management walk and the
     /// soft lock's RAM seed, none of which may fork per transport.
-    state: &'a RefCell<rsk_fido::FidoState>,
+    pub(crate) state: &'a RefCell<rsk_fido::FidoState>,
     rng: &'a RefCell<R>,
     presence: &'a RefCell<dyn rsk_sdk::UserPresence>,
     serial_id: [u8; 8],
@@ -53,6 +58,10 @@ pub struct FidoCcidApplet<'a, R: rsk_sdk::Rng + 'static> {
     /// separately, so the *commands* are gated rather than only the SELECT — else
     /// disabling FIDO2 would leave every CTAP2 command reachable behind U2F's bit.
     enabled_caps: u16,
+    /// Set by NFCCTAP_CONTROL END, cleared by the next SELECT. CTAP 2.3 §11.3.4 has
+    /// the applet ignore FIDO commands in between, and a YubiKey 5.8.0 answers each
+    /// `6986`; the selection is this transport's, so CTAPHID serves on.
+    ended: bool,
 }
 
 impl<'a, R: rsk_sdk::Rng + 'static> FidoCcidApplet<'a, R> {
@@ -73,6 +82,7 @@ impl<'a, R: rsk_sdk::Rng + 'static> FidoCcidApplet<'a, R> {
             mkek_source,
             now_ms: 0,
             enabled_caps: 0,
+            ended: false,
         }
     }
 
@@ -87,17 +97,14 @@ impl<'a, R: rsk_sdk::Rng + 'static> FidoCcidApplet<'a, R> {
 
     /// Run `f` against a fully-built FIDO context. Every borrow is taken here and
     /// released with the closure, so no `RefCell` is held across two commands.
+    /// `None` past the latch when the fused key did not read ([`Device::fused`]).
     fn with_ctx<S: Storage, T>(
         &mut self,
         fs: &mut Fs<S>,
         f: impl FnOnce(&mut rsk_fido::Ctx<'_, S, R>) -> T,
-    ) -> T {
+    ) -> Option<T> {
         let mkek = read_fused(self.mkek_source);
-        let dev = Device {
-            serial_hash: &self.serial_hash,
-            serial_id: &self.serial_id,
-            otp_key: mkek.as_deref(),
-        };
+        let dev = Device::fused(&self.serial_hash, &self.serial_id, &mkek)?;
         let mut rngb = self.rng.borrow_mut();
         let mut presence = self.presence.borrow_mut();
         let mut stb = self.state.borrow_mut();
@@ -109,7 +116,7 @@ impl<'a, R: rsk_sdk::Rng + 'static> FidoCcidApplet<'a, R> {
             now_ms: self.now_ms,
             presence: &mut *presence,
         };
-        f(&mut ctx)
+        Some(f(&mut ctx))
     }
 }
 
@@ -125,56 +132,79 @@ impl<S: Storage, R: rsk_sdk::Rng + 'static> Applet<Fs<S>> for FidoCcidApplet<'_,
         true
     }
 
-    /// SELECT answers `U2F_V2`, which is how a host learns CTAP1 is served here.
-    /// A re-SELECT clears nothing: the session state is the device's, shared with
-    /// the CTAPHID transport, and dropping a PIN token because a reader re-selected
-    /// the applet would let either transport revoke the other's authorization.
-    fn select(&mut self, _reselect: bool, _fs: &mut Fs<S>, res: &mut ResBuf) -> Sw {
-        if res.extend(rsk_fido::consts::U2F_VERSION) {
+    /// SELECT answers `U2F_V2` while CTAP1 is served here, `FIDO_2_0` once alwaysUv has
+    /// switched it off (`select_version`), and lifts an END. Nothing else: the session is
+    /// the device's, and a re-SELECT on this transport must not revoke CTAPHID's token.
+    fn select(&mut self, _reselect: bool, fs: &mut Fs<S>, res: &mut ResBuf) -> Sw {
+        self.ended = false;
+        let version = rsk_fido::u2f::select_version(fs, &*self.presence.borrow());
+        if res.extend(version) {
             Sw::OK
         } else {
             Sw::WRONG_LENGTH
         }
     }
 
-    /// `80 10` is a CTAP2 command; anything in the interindustry class is U2F.
+    /// CTAP2's three instructions are served under `00` as under `80`, and U2F's
+    /// under `00` alone, which is how a YubiKey 5.8.0 answers them. Over CCID no
+    /// other class gets here; called directly, one goes to U2F and is refused there.
     ///
     /// **No `91 00` keep-alive is ever returned**, so the host's GETRESPONSE poll
     /// loop never runs. A touch wait blocks inside this call while the CCID
     /// transport streams T=1 time extensions on its own task — the same thing an
     /// OATH `PROP_TOUCH` calculate and an OpenPGP UIF signature already do, and the
-    /// reason those need no keep-alive of their own either. The cancel arm is still
-    /// answered, because a host that gave up on a wait sends it regardless.
+    /// reason those need no keep-alive of their own either. A poll or a cancel is
+    /// still answered, because a host that gave up on a wait sends one regardless.
     fn process(&mut self, apdu: &Apdu, fs: &mut Fs<S>, res: &mut ResBuf) -> Sw {
-        if apdu.cla == CLA_PROPRIETARY {
-            return match apdu.ins {
-                INS_CTAP_MSG
-                    if !rsk_devconf::cap_enabled(self.enabled_caps, rsk_devconf::CAP_FIDO2) =>
-                {
-                    Sw::COMMAND_NOT_ALLOWED
-                }
-                INS_CTAP_MSG => {
-                    let n = self.with_ctx(fs, |ctx| {
-                        rsk_fido::process_cbor(ctx, apdu.data, res.spare_mut())
-                    });
-                    res.commit(n);
-                    Sw::OK
-                }
-                // Nothing is ever pending, so a poll has nothing to report and a
-                // cancel has nothing to stop. Both are answered rather than
-                // refused: a host that sends one is following the protocol.
-                INS_CTAP_GETRESPONSE if apdu.p1 == P1_CANCEL || apdu.p1 == 0 => Sw::OK,
-                _ => Sw::INS_NOT_SUPPORTED,
-            };
+        match (apdu.is_basic_class(), apdu.ins) {
+            // Ahead of every other arm: a YubiKey refuses U2F under `80` `6986` here too.
+            _ if self.ended => Sw::COMMAND_NOT_ALLOWED,
+            (true, INS_CTAP_MSG)
+                if !rsk_devconf::cap_enabled(self.enabled_caps, rsk_devconf::CAP_FIDO2) =>
+            {
+                Sw::COMMAND_NOT_ALLOWED
+            }
+            (true, INS_CTAP_MSG) => {
+                let Some(n) = self.with_ctx(fs, |ctx| {
+                    rsk_fido::process_cbor(ctx, apdu.data, res.spare_mut())
+                }) else {
+                    res.push(CtapError::FUSED_KEY_UNREAD.as_u8());
+                    return Sw::OK;
+                };
+                res.commit(n);
+                Sw::OK
+            }
+            // Nothing is ever pending, so a poll has nothing to report and a cancel
+            // nothing to stop; a YubiKey 5.8.0 answers either, whatever its P1-P2,
+            // with the status of a wait that ran out.
+            (true, INS_CTAP_GETRESPONSE) => {
+                res.push(CtapError::UserActionTimeout.as_u8());
+                Sw::OK
+            }
+            (true, INS_CTAP_CONTROL) if (apdu.p1, apdu.p2) == (P1_CONTROL_END, 0) => {
+                self.ended = true;
+                Sw::OK
+            }
+            (true, INS_CTAP_CONTROL) => Sw::INCORRECT_P1P2,
+            (_, CTAP_REGISTER | CTAP_AUTHENTICATE | CTAP_VERSION)
+                if apdu.cla == CLA_PROPRIETARY =>
+            {
+                Sw::CLA_NOT_SUPPORTED
+            }
+            _ if apdu.cla == CLA_PROPRIETARY => Sw::INS_NOT_SUPPORTED,
+            _ if !rsk_devconf::cap_enabled(self.enabled_caps, rsk_devconf::CAP_U2F) => {
+                Sw::COMMAND_NOT_ALLOWED
+            }
+            _ => {
+                let Some((sw, n)) = self.with_ctx(fs, |ctx| {
+                    let spare = res.spare_mut();
+                    rsk_fido::u2f::process_u2f(ctx, apdu, spare)
+                }) else {
+                    return Sw::FUSED_KEY_UNREAD;
+                };
+                res.commit(n);
+                sw
+            }
         }
-        if !rsk_devconf::cap_enabled(self.enabled_caps, rsk_devconf::CAP_U2F) {
-            return Sw::COMMAND_NOT_ALLOWED;
-        }
-        let (sw, n) = self.with_ctx(fs, |ctx| {
-            let spare = res.spare_mut();
-            rsk_fido::u2f::process_u2f(ctx, apdu, spare)
-        });
-        res.commit(n);
-        sw
     }
 }

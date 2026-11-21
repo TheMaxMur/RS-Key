@@ -10,8 +10,8 @@
 //!   for user presence, naming the operation and the *real* relying party, and
 //!   block-waits an on-screen tap. A tap on **Allow** confirms; a tap on **Deny**
 //!   is a genuine `Declined` (→ `OPERATION_DENIED`) — the BOOTSEL button has no
-//!   such gesture. This is the anti-WebUSB-phishing guarantee: a signature can't
-//!   be obtained without a physical tap on a screen showing the true rp.
+//!   such gesture. This is what closes the intent gap: malware on the host cannot
+//!   get a signature without a physical tap on a screen showing the true rp.
 //!
 //! The *what to draw*, the untrusted-string sanitizing, the Allow/Deny button
 //! geometry and the touch-report parse live in `rsk-ui` (host-tested + Kani). What
@@ -40,7 +40,10 @@ extern crate alloc;
 use core::cell::RefCell;
 use core::sync::atomic::{AtomicU32, Ordering};
 
-use embassy_time::{Duration, Instant, Timer, block_for};
+#[cfg(not(test))]
+use embassy_time::block_for;
+use embassy_time::{Duration, Instant, Timer};
+
 use embedded_graphics::{
     Pixel,
     draw_target::DrawTarget,
@@ -49,7 +52,7 @@ use embedded_graphics::{
     prelude::RgbColor,
     primitives::Rectangle,
 };
-use zeroize::Zeroize;
+use rsk_secret::Secret;
 
 use rsk_crypto::{Device, FusedKey, FusedRead, read_fused};
 use rsk_fs::Fs;
@@ -107,7 +110,7 @@ pub trait Hooks {
     fn host_request_pending(&self) -> bool {
         false
     }
-    /// Queue a warm reboot, optionally into BOOTSEL (Settings → Firmware update).
+    /// Queue a warm reboot, optionally into BOOTSEL; `reboot_pending` then holds until the reset.
     fn request_reboot(&mut self, _bootsel: bool) {}
     fn reboot_pending(&self) -> bool {
         false
@@ -139,6 +142,9 @@ pub trait Hooks {
         30_000
     }
     fn set_presence_timeout_ms(&mut self, _ms: u32) {}
+    /// Zero the stack below the caller once a flow the panel ran has returned: its
+    /// frames held what it handled (a PIN, a revealed phrase), and no request follows.
+    fn sweep_dead_stack(&mut self) {}
     /// Search for an RSA key on whatever accelerator the board has, calling
     /// `on_tick` often enough to keep the on-screen spinner moving. `None` means
     /// no accelerator *and* no key — the caller reports the failure either way, so
@@ -271,12 +277,9 @@ pub struct DeviceKeys {
 }
 
 impl DeviceKeys {
-    fn device<'k>(&'k self, mkek: &'k FusedRead) -> Device<'k> {
-        Device {
-            serial_hash: &self.serial_hash,
-            serial_id: &self.serial_id,
-            otp_key: mkek.as_deref(),
-        }
+    /// `None` past the latch when the fused key did not read ([`Device::fused`]).
+    fn device<'k>(&'k self, mkek: &'k FusedRead) -> Option<Device<'k>> {
+        Device::fused(&self.serial_hash, &self.serial_id, mkek)
     }
 }
 
@@ -355,18 +358,112 @@ impl DrawTarget for BandCoverage<'_> {
     }
 }
 
-/// Panel + touch + the last-painted screen, owned behind a `RefCell` shared by
-/// [`status_loop`] and [`TouchPresence`].
-///
-/// `panel` and `touch` are type parameters rather than accessors on [`Hooks`] on
-/// purpose: they are named by ~180 sites in this crate, and a field keeps every
-/// one of them reading the way it did when this was the firmware's own module.
-pub struct Ui<'a, P, T, H, S, R>
+/// The store and DRBG a host dispatch holds borrowed for its whole command, plus the
+/// device keys: what the device's own screens use, handed to [`Ui::new`] and
+/// [`status_loop`] only. A host ceremony reaches the panel through [`TouchPresence`] and
+/// its [`Ui`], which keeps no cell but the store's [`PinBit`] try-borrow (issue #107).
+pub struct Parked<'a, S: rsk_fs::Storage, R: rsk_sdk::Rng> {
+    fs: &'a RefCell<Fs<S>>,
+    keys: &'a DeviceKeys,
+    rng: &'a RefCell<R>,
+}
+
+impl<S: rsk_fs::Storage, R: rsk_sdk::Rng> Clone for Parked<'_, S, R> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<S: rsk_fs::Storage, R: rsk_sdk::Rng> Copy for Parked<'_, S, R> {}
+
+impl<'a, S: rsk_fs::Storage, R: rsk_sdk::Rng> Parked<'a, S, R> {
+    /// The shared store and DRBG — the same `RefCell`s the worker uses — and the device
+    /// identity that unboxes the resident-credential seed on demand.
+    pub fn new(fs: &'a RefCell<Fs<S>>, keys: &'a DeviceKeys, rng: &'a RefCell<R>) -> Self {
+        Parked { fs, keys, rng }
+    }
+}
+
+/// Whether a device PIN is set, read without waiting: `None` while a host dispatch
+/// holds the store, which is the one view of it a host ceremony may take — a sleep
+/// raised mid-ceremony falls back to the cached bit.
+pub trait PinBit {
+    fn try_pin_set(&self) -> Option<bool>;
+}
+
+impl<S: rsk_fs::Storage> PinBit for RefCell<Fs<S>> {
+    fn try_pin_set(&self) -> Option<bool> {
+        let mut fs = self.try_borrow_mut().ok()?;
+        Some(rsk_fido::passkeys::device_pin_is_set(&mut fs))
+    }
+}
+
+/// A screen the device raises: the [`Ui`] with the [`Parked`] cells, which are free
+/// here because the worker is parked while this thread-executor task runs.
+pub(crate) struct Local<'u, 'a, P, T, H, S, R>
 where
     P: rsk_ui::scene::FrameTarget,
     T: TouchPad,
     H: Hooks,
     S: rsk_fs::Storage,
+    R: rsk_sdk::Rng,
+{
+    ui: &'u mut Ui<'a, P, T, H>,
+    cells: Parked<'a, S, R>,
+}
+
+impl<'u, 'a, P, T, H, S, R> Local<'u, 'a, P, T, H, S, R>
+where
+    P: rsk_ui::scene::FrameTarget,
+    T: TouchPad,
+    H: Hooks,
+    S: rsk_fs::Storage,
+    R: rsk_sdk::Rng,
+{
+    pub(crate) fn new(ui: &'u mut Ui<'a, P, T, H>, cells: Parked<'a, S, R>) -> Self {
+        Local { ui, cells }
+    }
+}
+
+impl<'a, P, T, H, S, R> core::ops::Deref for Local<'_, 'a, P, T, H, S, R>
+where
+    P: rsk_ui::scene::FrameTarget,
+    T: TouchPad,
+    H: Hooks,
+    S: rsk_fs::Storage,
+    R: rsk_sdk::Rng,
+{
+    type Target = Ui<'a, P, T, H>;
+    fn deref(&self) -> &Self::Target {
+        self.ui
+    }
+}
+
+impl<P, T, H, S, R> core::ops::DerefMut for Local<'_, '_, P, T, H, S, R>
+where
+    P: rsk_ui::scene::FrameTarget,
+    T: TouchPad,
+    H: Hooks,
+    S: rsk_fs::Storage,
+    R: rsk_sdk::Rng,
+{
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.ui
+    }
+}
+
+/// Panel + touch + the last-painted screen, owned behind a `RefCell` shared by
+/// [`status_loop`] and [`TouchPresence`]. Of the cells a host dispatch holds borrowed it
+/// keeps only the store's [`PinBit`] try-borrow; the device's own screens get [`Parked`].
+///
+/// `panel` and `touch` are type parameters rather than accessors on [`Hooks`] on
+/// purpose: they are named by ~180 sites in this crate, and a field keeps every
+/// one of them reading the way it did when this was the firmware's own module.
+pub struct Ui<'a, P, T, H>
+where
+    P: rsk_ui::scene::FrameTarget,
+    T: TouchPad,
+    H: Hooks,
 {
     panel: P,
     touch: T,
@@ -382,7 +479,8 @@ where
     /// wait — land on `Screen::Onboard`, whose full-width "Continue without PIN"
     /// button covers the exact coordinates of the ceremony's Deny/Allow band, and
     /// silently consume a fresh device's one-time PIN offer (audit run-33). Every
-    /// modal flow already debounces on *entry*; this is the ambient screens' end.
+    /// modal flow already debounces on *entry*; this is the ambient screens' end. A
+    /// handled tap disarms it too, since the flow it opened can close on a contact still down.
     touch_armed: bool,
     /// Read-only identity shown on the settings Firmware screen.
     info: DeviceInfo,
@@ -398,7 +496,7 @@ where
     locked: bool,
     /// The first-run onboarding prompt is active: a fresh, PIN-less device that hasn't yet
     /// offered (and had dismissed) the "set a device PIN?" screen. While set, the idle loop
-    /// shows [`Screen::Onboard`] instead of Home and a tap routes to [`Ui::run_onboarding`];
+    /// shows [`Screen::Onboard`] instead of Home and a tap routes to [`Local::run_onboarding`];
     /// cleared once the user sets a PIN or chooses to continue without one. Mutually
     /// exclusive with `locked` (onboarding only exists when no device PIN is set).
     onboarding: bool,
@@ -410,22 +508,9 @@ where
     /// edited in Settings -> Security). Held here for the same reason as `pin_declined`:
     /// every write to that record goes through one function and must carry all of it.
     pub(crate) scramble_pin: bool,
-    /// The shared flash store — the same `RefCell` the worker uses. The Passkeys tab
-    /// borrows it to enumerate resident credentials; safe because the worker is parked
-    /// (it never holds the borrow across an `.await`) while this thread-executor task
-    /// runs.
-    fs: &'a RefCell<Fs<S>>,
-    /// Device identity for unboxing the resident-credential seed on demand.
-    keys: DeviceKeys,
-    /// The shared DRBG — the same `RefCell` the worker uses. Borrowed only to draw the
-    /// randomness an on-device SLIP-39 split needs (the share identifier + Shamir random
-    /// shares); the worker is parked while this thread-executor task runs, so no race.
-    ///
-    /// ⚠️ That parking is true of the DEVICE's own screens and false of a host ceremony:
-    /// `Ctx` holds this very cell borrowed for the whole CBOR/APDU dispatch and calls the
-    /// panel through `UserPresence`. Anything reachable from `collect_pin` or `request`
-    /// must not touch it — see [`Ui::shuffle_entropy`].
-    rng: &'a RefCell<R>,
+    /// Whether a device PIN is set, read without waiting — the one view of the store a
+    /// host ceremony may take ([`PinBit`]).
+    pin_bit: &'a dyn PinBit,
     /// Seed for [`Ui::shuffle_entropy`], drawn once at construction where the shared DRBG
     /// is provably free. The scrambled PIN pad is raised from host ceremonies too, and
     /// borrowing `rng` there is a BorrowMutError — a panic, which on `panic-halt` is a
@@ -435,19 +520,17 @@ where
     /// Four-bit scratch for the flicker-free PIN-title marquee blit ([`BandCoverage`]).
     marquee_coverage: [u8; MARQUEE_COVERAGE_BYTES],
     /// Cached Home status-card facts (device-PIN-set + resident passkey count), refreshed
-    /// by [`Ui::refresh_home_stats`] only at modal boundaries — boot, wake, a closed tab
+    /// by [`Local::refresh_home_stats`] only at modal boundaries — boot, wake, a closed tab
     /// modal — so the idle Home frame never triggers a per-paint flash enumeration.
     home_pin_set: bool,
     home_passkeys: u16,
 }
 
-impl<'a, P, T, H, S, R> Ui<'a, P, T, H, S, R>
+impl<'a, P, T, H> Ui<'a, P, T, H>
 where
     P: rsk_ui::scene::FrameTarget,
     T: TouchPad,
     H: Hooks,
-    S: rsk_fs::Storage,
-    R: rsk_sdk::Rng,
 {
     /// Take an already-initialized panel and touch controller, show the boot
     /// splash, restore the persisted display settings and raise the backlight.
@@ -455,14 +538,12 @@ where
     /// Bringing the hardware *up* — the SPI/mipidsi init, the CST328 reset pulse —
     /// is the caller's: it is the one part that differs between a board and a
     /// window, and it is done by the time the flow is handed them.
-    pub fn new(
+    pub fn new<S: rsk_fs::Storage, R: rsk_sdk::Rng>(
         mut panel: P,
         touch: T,
         mut hooks: H,
         info: DeviceInfo,
-        fs: &'a RefCell<Fs<S>>,
-        keys: DeviceKeys,
-        rng: &'a RefCell<R>,
+        cells: Parked<'a, S, R>,
     ) -> Self {
         let _ = rsk_ui::render(&mut rsk_ui::scene::Frame::new(&mut panel), &Screen::Splash);
 
@@ -472,7 +553,7 @@ where
         let mut dcfg = rsk_ui::DisplayConfig::default();
         {
             let mut buf = [0u8; rsk_ui::DISPLAY_CONF_LEN];
-            if let Some(n) = fs.borrow_mut().read(EF_DISPLAY, &mut buf) {
+            if let Some(n) = cells.fs.borrow_mut().read(EF_DISPLAY, &mut buf) {
                 dcfg.apply_block(&buf[..n.min(buf.len())]);
             }
         }
@@ -486,7 +567,7 @@ where
         // Boot locked when a device PIN is set: a security key should come up requiring
         // the PIN to reach its on-device UI, not open. Without a PIN there is nothing to
         // unlock with, so it boots open (the lock is a no-op then anyway).
-        let locked = rsk_fido::passkeys::device_pin_is_set(&mut fs.borrow_mut());
+        let locked = rsk_fido::passkeys::device_pin_is_set(&mut cells.fs.borrow_mut());
         // A fresh, PIN-less device that hasn't already had the prompt dismissed comes up on
         // the onboarding screen offering to set a device PIN (declining is remembered in
         // `EF_DISPLAY`, so it's a one-time first-run offer). Mutually exclusive with `locked`.
@@ -495,7 +576,7 @@ where
         // Drawn here and nowhere else: construction is boot, the one moment the shared
         // DRBG is provably unborrowed. Every later draw is a host ceremony away.
         let mut shuffle_seed = [0u8; 32];
-        rng.borrow_mut().fill(&mut shuffle_seed);
+        cells.rng.borrow_mut().fill(&mut shuffle_seed);
 
         Ui {
             panel,
@@ -510,9 +591,7 @@ where
             onboarding,
             pin_declined: dcfg.pin_declined,
             scramble_pin: dcfg.scramble_pin,
-            fs,
-            keys,
-            rng,
+            pin_bit: cells.fs,
             shuffle_seed,
             shuffle_ctr: 0,
             marquee_coverage: [0; MARQUEE_COVERAGE_BYTES],
@@ -533,7 +612,16 @@ where
     pub(crate) fn damage_frame(&mut self) -> rsk_ui::scene::DamageFrame<'_, P> {
         rsk_ui::scene::DamageFrame::new(&mut self.panel)
     }
+}
 
+impl<'a, P, T, H, S, R> Local<'_, 'a, P, T, H, S, R>
+where
+    P: rsk_ui::scene::FrameTarget,
+    T: TouchPad,
+    H: Hooks,
+    S: rsk_fs::Storage,
+    R: rsk_sdk::Rng,
+{
     /// Refresh the Home status-card facts — whether a device PIN is set and how many
     /// resident passkeys are stored — into the cache the idle Home frame reads. Enumerates
     /// flash (the seed-unboxing RP walk), so it runs only at modal boundaries (boot, wake,
@@ -541,17 +629,26 @@ where
     /// panel, the lesson the PIV `has_data` lag taught. Borrow-safe like [`Self::load_rps`]
     /// (the worker is parked while this thread-executor task runs).
     fn refresh_home_stats(&mut self) {
-        let mkek = read_fused(self.keys.mkek_source);
-        let dev = self.keys.device(&mkek);
-        let mut store = self.fs.borrow_mut();
+        let mkek = read_fused(self.cells.keys.mkek_source);
+        let dev = self.cells.keys.device(&mkek);
+        let mut store = self.cells.fs.borrow_mut();
         self.home_pin_set = rsk_fido::passkeys::device_pin_is_set(&mut store);
         let mut creds = 0u16;
-        let _ = rsk_fido::passkeys::for_each_rp(&dev, &mut store, |rp| {
-            creds = creds.saturating_add(rp.count as u16);
-        });
+        if let Some(dev) = dev {
+            let _ = rsk_fido::passkeys::for_each_rp(&dev, &mut store, |rp| {
+                creds = creds.saturating_add(rp.count as u16);
+            });
+        }
         self.home_passkeys = creds;
     }
+}
 
+impl<'a, P, T, H> Ui<'a, P, T, H>
+where
+    P: rsk_ui::scene::FrameTarget,
+    T: TouchPad,
+    H: Hooks,
+{
     /// Composite one marquee frame and blit the whole title band in one transaction.
     /// Only called for titles that overflow the band.
     fn render_marquee_frame(&mut self, title: &str, off: u32) {
@@ -585,7 +682,16 @@ where
             "direct display presentation failed"
         );
     }
+}
 
+impl<'a, P, T, H, S, R> Local<'_, 'a, P, T, H, S, R>
+where
+    P: rsk_ui::scene::FrameTarget,
+    T: TouchPad,
+    H: Hooks,
+    S: rsk_fs::Storage,
+    R: rsk_sdk::Rng,
+{
     /// Record a panel-originated action in the on-device audit journal.
     ///
     /// The panel renders the journal as its evidence surface, yet nothing under
@@ -595,12 +701,21 @@ where
     /// impact but does not remove it — the gap silently omitted the device's
     /// highest-value actions from the log of a user who deliberately turned it on.
     fn journal_local(&self, ev: u8) {
-        let mkek = read_fused(self.keys.mkek_source);
-        let dev = self.keys.device(&mkek);
+        let mkek = read_fused(self.cells.keys.mkek_source);
+        let Some(dev) = self.cells.keys.device(&mkek) else {
+            return;
+        };
         let now = self.hooks.attach_elapsed_ms();
-        rsk_fido::journal::append_local(&dev, &mut self.fs.borrow_mut(), now, ev, 0);
+        rsk_fido::journal::append_local(&dev, &mut self.cells.fs.borrow_mut(), now, ev, 0);
     }
+}
 
+impl<'a, P, T, H> Ui<'a, P, T, H>
+where
+    P: rsk_ui::scene::FrameTarget,
+    T: TouchPad,
+    H: Hooks,
+{
     /// Hand the panel back to the ambient loop on a modal's exit. Closing a tab back to
     /// idle is repainted *immediately* by the firmware's `status_task` dispatcher, and a
     /// tab → next tab hand-off renders the new tab directly, so neither needs the ambient-quiet
@@ -609,6 +724,12 @@ where
     fn end_modal(&mut self) {
         self.shown = None;
     }
+}
+
+#[cfg(test)]
+fn block_for(duration: Duration) {
+    // Yield host CPU while keeping the real deadlines the flow measures.
+    std::thread::sleep(std::time::Duration::from_micros(duration.as_micros()));
 }
 
 #[cfg(test)]

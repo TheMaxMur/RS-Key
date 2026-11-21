@@ -1,0 +1,74 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 RS-Key contributors
+#
+# crypto-bigint 0.7.6, RustCrypto/crypto-bigint c34044b8a1479ef32bec0a9030cf2f07b06506d9.
+# Package SHA256: 6bb08299a6046833a879ace115697f12fd2bd6c8d3e93c909ffc9e0738e7cae0.
+# Upstream sources and Apache-2.0/MIT notices are retained. Cargo.toml declares
+# the mixed license; LICENSE-AGPL is added. Cargo cache metadata and lock omitted.
+#
+# Uint::borrowing_sub keeps ctutils::Choice for 17-word, 32-bit integers only.
+# This is P-521's integer width; other widths retain the upstream word loop.
+# Each word still uses the original protected subtraction primitive. Only the
+# intermediate Choice-to-mask-to-Choice round trips are removed. Initial MSB
+# interpretation and the final protected full mask are unchanged; the upstream
+# zero-width path returns the original arbitrary borrow without normalizing it.
+# No change to Limb, UintRef, BoxedUint, division or safegcd implementations.
+# crypto-bigint 0.7.6 and ctutils 0.4.5 security fixes remain in place.
+#
+# crates/rsk-ec/tests/uint_borrow.rs compares this method with independent
+# two's-complement addition, including dense chains, boundaries and const use.
+# The same test can run against the actual 32-bit backend with cpubits="32"
+# in an isolated package; that checks arithmetic, not ARM code generation.
+#
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -47,7 +47,7 @@
+     "mathematics",
+     "no-std",
+ ]
+-license = "Apache-2.0 OR MIT"
++license = "AGPL-3.0-only AND (Apache-2.0 OR MIT)"
+ repository = "https://github.com/RustCrypto/crypto-bigint"
+ resolver = "3"
+ 
+--- a/src/uint/sub.rs
++++ b/src/uint/sub.rs
+@@ -14,18 +14,33 @@
+     /// Computes `self - (rhs + borrow)`, returning the result along with the new borrow.
+     #[inline(always)]
+     #[must_use]
+-    pub const fn borrowing_sub(&self, rhs: &Self, mut borrow: Limb) -> (Self, Limb) {
++    pub const fn borrowing_sub(&self, rhs: &Self, borrow: Limb) -> (Self, Limb) {
++        const P521_LIMBS_32: usize = 17;
+         let mut limbs = [Limb::ZERO; LIMBS];
++        // Limit this code-generation change to P-521's 32-bit integer width.
++        if Limb::BITS != 32 || LIMBS != P521_LIMBS_32 {
++            let mut borrow = borrow;
++            let mut i = 0;
++            while i < LIMBS {
++                let (w, b) = self.limbs[i].borrowing_sub(rhs.limbs[i], borrow);
++                limbs[i] = w;
++                borrow = b;
++                i += 1;
++            }
++            return (Self { limbs }, borrow);
++        }
++
++        // Keep the protected borrow between words without intermediate masks.
++        let mut borrow = word::choice_from_msb(borrow.0);
+         let mut i = 0;
+-
+         while i < LIMBS {
+-            let (w, b) = self.limbs[i].borrowing_sub(rhs.limbs[i], borrow);
+-            limbs[i] = w;
++            let (w, b) = word::borrowing_sub(self.limbs[i].0, rhs.limbs[i].0, borrow);
++            limbs[i] = Limb(w);
+             borrow = b;
+             i += 1;
+         }
+ 
+-        (Self { limbs }, borrow)
++        (Self { limbs }, Limb(word::choice_to_mask(borrow)))
+     }
+ 
+     /// Perform saturating subtraction, returning `ZERO` on underflow.

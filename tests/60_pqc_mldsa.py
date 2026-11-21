@@ -117,7 +117,7 @@ def main():
             print("getInfo: classic algorithms only (Firefox-safe default build)")
         assert gi[5] == 7609, f"maxMsgSize {gi[5]}, want 7609"
 
-        # 3. ML-DSA-44 registration. CTAP 2.1 §6.1.2 step 4 picks the FIRST
+        # 3. ML-DSA-44 registration. CTAP 2.1 §6.1.2 step 3 picks the FIRST
         # supported entry, so -48 must lead the list to be selected.
         (cred_id, alg, pk, auth_data, fmt, att), dt_mc = make_credential(dev, cid, [-48, -7])
         assert alg == -48, f"selected alg {alg}, want -48 (first supported)"

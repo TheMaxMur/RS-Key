@@ -48,6 +48,9 @@ if [ "${1:-}" != "--tiers" ]; then
   metaroot=$(mktemp -d "$STATES/run.XXXXXX")
   trap 'rm -rf "$metaroot"' EXIT
   [ -n "$metaroot" ] || { echo "run-tlc: no metadir under $STATES" >&2; exit 2; }
+  # SANY writes each standard module into java.io.tmpdir under its bare name and deletes
+  # it at exit: TLCs sharing that directory parse a half-written Naturals.tla, exit 150.
+  mkdir -p "$metaroot/java-tmp" || { echo "run-tlc: no java.io.tmpdir under $metaroot" >&2; exit 2; }
 fi
 
 # Which module a configuration belongs to: the seam configs are the second
@@ -242,7 +245,7 @@ one() {
   # first leaves a HOLE where the first writes on -- 1550 NUL bytes at offset
   # 153, measured. O_APPEND has no offset to go stale: truncate here, append below.
   : > "$log"
-  "$JAVA" -XX:+UseParallelGC -Xmx"${HEAP_OVERRIDE:-${heap:-$HEAP}}" -cp "$JAR" tlc2.TLC \
+  "$JAVA" -XX:+UseParallelGC -Xmx"${HEAP_OVERRIDE:-${heap:-$HEAP}}" -Djava.io.tmpdir="$metaroot/java-tmp" -cp "$JAR" tlc2.TLC \
       -nowarning -metadir "$metaroot/${cfg%.cfg}" -workers "$WORKERS" \
       "${cov[@]+"${cov[@]}"}" -config "$cfg" "$SPEC" \
       >> "$log" 2>&1
@@ -398,6 +401,8 @@ list_safety() {
   echo Lattice.cfg             # the fourth module: the retry/recovery lattice
   ls LatMut_*.cfg
   ls LatSolo_*.cfg
+  echo LatInduction.cfg    # IndInv /\ Next => IndInv' over the counters, and
+  ls LatInductionMut_*.cfg # what says that probe can go red
   echo Policies.cfg            # the four applets' stateful operation policies
   ls PolicyMut_*.cfg
   ls PolicySolo_*.cfg

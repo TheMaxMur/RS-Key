@@ -29,7 +29,7 @@ FIRMWARE='^(firmware/|crates/|Cargo\.(toml|lock)$|rust-toolchain|nix/(firmware|d
 
 # What the emulator runs, and what it runs against. `crates/` is in because the
 # emulator IS those crates; `tests/` and `third_party/` are the suites themselves.
-EMULATOR='^(tools/emu/|tests/|third_party/|crates/|firmware/|formal/|scripts/(emu-suites|usbip-suites|usbip-guest|security_trace|check)\.(sh|py)$|nix/|flake\.(nix|lock)$|Cargo\.(toml|lock)$|\.github/workflows/emulator\.yml$)'
+EMULATOR='^(tools/emu/|tests/|third_party/|crates/|firmware/|formal/|scripts/(emu-suites|image-suites|usbip-suites|usbip-guest|security_trace|check)\.(sh|py)$|nix/|flake\.(nix|lock)$|Cargo\.(toml|lock)$|\.github/workflows/emulator\.yml$)'
 
 # What the Kani proofs are about: the crate libraries they run over, the manifests
 # that decide what is compiled into them, and the tier script itself. Not
@@ -78,6 +78,48 @@ classify() {
   echo "proofs_state=$proofs_state"
 }
 
+github_scope() {
+  local files="" baseline="" merge_base scope integration_scope
+  case "$GITHUB_EVENT_NAME:$GITHUB_REF" in
+    pull_request:*) baseline="$(git merge-base "origin/$BASE" HEAD 2>/dev/null)" || baseline="" ;;
+    push:*) baseline="$(git rev-parse --verify "${BEFORE:-}^{commit}" 2>/dev/null)" || baseline="" ;;
+  esac
+  if [ -n "$baseline" ]; then
+    files="$(git diff --name-only "$baseline" HEAD 2>/dev/null)" || files=""
+  fi
+  printf '%s\n' "$files" >&2
+  scope="$(printf '%s\n' "$files" | classify)"
+  integration_scope="$scope"
+
+  # Kani and the ARM image suite check the candidate as a whole. The build
+  # matrix and diff mutants still follow the incoming push to avoid repeat work.
+  if [ "$GITHUB_EVENT_NAME:$GITHUB_REF" = push:refs/heads/develop ]; then
+    merge_base="$(git merge-base origin/main HEAD 2>/dev/null)" || merge_base=""
+    files="$(git diff --name-only "$merge_base" HEAD 2>/dev/null)" || files=""
+    integration_scope="$(printf '%s\n' "$files" | classify)"
+    baseline="${baseline:-$merge_base}"
+  fi
+  printf '%s\n' "$scope" | sed -n '/^firmware=/p; /^emulator=/p; /^docs_only=/p; s/^proofs=/mutants=/p'
+  printf '%s\n' "$integration_scope" | sed -n '/^proofs=/p; /^proofs_state=/p; s/^emulator=/image=/p'
+  printf 'mutants_base=%s\n' "$baseline"
+  mutant_shards "$baseline"
+}
+
+mutant_shards() {
+  local baseline="$1" stats="" shards=32
+  # Estimate only the runner count. Every shard receives the same complete diff.
+  if [ -n "$baseline" ] && stats="$(git diff --numstat "$baseline" HEAD -- ':(glob)crates/**/*.rs' \
+    ':(exclude,glob)**/*_kani.rs' ':(exclude,glob)**/kani.rs' \
+    ':(exclude,glob)**/*_tests.rs' ':(exclude,glob)**/tests.rs')"; then
+    shards="$(awk '{ lines += $1 } END { n = int((lines + 1023) / 1024); print (n < 1 ? 1 : (n > 32 ? 32 : n)) }' <<<"$stats")"
+  fi
+  awk -v n="$shards" 'BEGIN {
+    printf "mutants_shards=["
+    for (i = 1; i <= n; i++) printf "%s\"%d/%d\"", i == 1 ? "" : ",", i, n
+    print "]"
+  }'
+}
+
 self_test() {
   local fails=0
   # case | stdin | expected substring(s), space-separated
@@ -102,6 +144,7 @@ self_test() {
 crates/rsk-fido/src/getinfo.rs"                              "firmware=true emulator=true docs_only=false"
   check "the firmware"         "firmware/src/main.rs"        "firmware=true docs_only=false"
   check "an on-device test"    "tests/10_fido_getinfo.py"    "firmware=false emulator=true docs_only=false"
+  check "the image runner"     "scripts/image-suites.sh"    "firmware=false emulator=true docs_only=false"
   check "the host CLI"         "tools/rsk/led.py"            "firmware=false emulator=false docs_only=false"
   check "the toolchain pin"    "flake.lock"                  "firmware=true emulator=true docs_only=false"
   # The nix tree is split: what pins the toolchain reaches every image, what
@@ -136,9 +179,10 @@ crates/rsk-fido/src/getinfo.rs"                              "firmware=true emul
 
 case "${1:-}" in
   --self-test) self_test ;;
+  --github) github_scope ;;
   "") classify ;;
   *)
-    echo "usage: $0 [--self-test]   # changed paths on stdin" >&2
+    echo "usage: $0 [--self-test | --github]   # changed paths on stdin by default" >&2
     exit 2
     ;;
 esac

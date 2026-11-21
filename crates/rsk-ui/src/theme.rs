@@ -121,3 +121,7 @@ pub const DENY: Rgb565 = DANGER;
 pub const NAV_INACTIVE: Rgb565 = CAPTION;
 /// Hairline separators. Alias of [`DIVIDER`].
 pub const HAIRLINE: Rgb565 = DIVIDER;
+
+#[cfg(test)]
+#[path = "theme_tests.rs"]
+mod tests;

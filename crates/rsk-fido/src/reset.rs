@@ -6,7 +6,7 @@
 //! physical touch gates the wipe, inside the CTAP 2.1 §6.6 power-up window
 //! ([`RESET_WINDOW_MS`]) on a build whose presence backend shows no prompt.
 
-use rsk_fs::Storage;
+use rsk_fs::{RearmAttempted, Storage};
 
 use crate::consts::{
     EF_ALWAYS_UV, EF_ATT_CHAIN, EF_ATT_KEY, EF_BACKUP_SEALED, EF_COUNTER, EF_CRED, EF_CRED_BLOB,
@@ -55,16 +55,16 @@ pub fn reset<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>) -> CtapResult {
     //
     // The failure does NOT stop the write, unlike the gated sites: "leave the
     // record in force" means, on a wipe, leave the secrets live.
-    let _ = rsk_fs::request_rescrub(ctx.fs);
-    let wiped = wipe(ctx);
+    let attempted = rsk_fs::attempt_rescrub(ctx.fs);
+    let wiped = wipe(ctx, &attempted);
     // Retry, BETWEEN the wipe and its `?` rather than after its last one: a refused
     // head leaves the marker latched over every tombstone [`wipe`] appended, and a
     // wipe that faults on the way is exactly when that is true and unrecoverable.
     //
-    // A single-shot refusal is the only kind either call recovers from (`rsk_otp`'s
-    // BUMP_TRIES states the same), and where the head landed this costs no append at
-    // all — `Fs::delete` skips a backend it already marked absent.
-    let _ = rsk_fs::request_rescrub(ctx.fs);
+    // A single-shot refusal is the only kind either call recovers from, and where
+    // the head landed this costs no append at all — `Fs::delete` skips a backend it
+    // already marked absent.
+    let _retried = rsk_fs::attempt_rescrub(ctx.fs);
     // Ahead of `ensure_seed` because `ensure_seed`'s OWN `?` would skip it — not
     // because the sweeps' does, which skips either position identically, and not
     // because it supersedes nothing: its cert rewrite does, and `seed.rs` says why.
@@ -86,7 +86,10 @@ pub fn reset<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>) -> CtapResult {
 /// could not be PROVEN". Its own function so the at-rest re-arm can stand between
 /// it and the `?` that propagates it: every early return in here is one a re-arm
 /// written BELOW them would be skipped by, which is the case the re-arm exists for.
-fn wipe<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>) -> Result<bool, CtapError> {
+fn wipe<S: Storage, R: Rng>(
+    ctx: &mut Ctx<S, R>,
+    _attempted: &RearmAttempted,
+) -> Result<bool, CtapError> {
     // Drop every FIDO file, then regenerate the seed. The flash `Fs` is shared
     // with the OpenPGP applet, so delete only live, FIDO-owned keys
     // ([`is_fido_fid`]) — a blind 0..256 EF_CRED/EF_RP sweep would write a
@@ -115,6 +118,10 @@ fn wipe<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>) -> Result<bool, CtapError> {
         refused |= gone.value.is_err();
         orphaned |= gone.record.is_err();
     }
+    // Ahead of the sweeps, which can stop part-way: a store changed but not emptied
+    // still owes the platform a new tag (CTAP 2.3 §6.6). Not the wipe's result — one
+    // that completes drops this record anyway, and `ensure_seed` mints the one to keep.
+    let _renewed = crate::credential::renew_store_state(ctx.fs, ctx.rng);
     // Covers the seed fids too, so a refused seed removal stops the wipe HERE,
     // before the gate phase could drop `EF_BACKUP_SEALED` over a seed still live.
     orphaned |= sweep(ctx, |fid| is_fido_fid(fid) && !is_fido_gate_fid(fid))?;
@@ -268,19 +275,20 @@ fn in_reset_window<S: Storage, R: Rng>(ctx: &Ctx<S, R>) -> bool {
 /// in the 0x10xx range (FIDO `EF_PIN` 0x1080 vs OpenPGP PW1 0x1081), so this is an
 /// explicit set plus the resident-credential ranges, not a range test.
 fn is_fido_fid(fid: u16) -> bool {
-    // EF_KEY_DEV / EF_KEY_DEV_ENC / EF_PAUTHTOKEN are `KeyFid`s (sealed slots), so
-    // they can't sit in the `u16` match arm — compare their raw FIDs explicitly.
+    // EF_KEY_DEV / EF_KEY_DEV_ENC / EF_PAUTHTOKEN are `KeyFid`s (sealed slots) and
+    // EF_COUNTER / EF_CRED_CTR `CounterFid`s, so they can't sit in the `u16` match
+    // arm — compare their raw FIDs explicitly.
     fid == EF_KEY_DEV.get()
         || fid == EF_KEY_DEV_ENC.get()
         || fid == EF_PAUTHTOKEN.get()
+        || fid == EF_COUNTER.get()
+        || fid == EF_CRED_CTR.get()
         || matches!(
             fid,
             EF_BACKUP_SEALED
                 | EF_EE_DEV
-                | EF_COUNTER
-                | EF_CRED_CTR
-                // Goes with the credentials it summarises: absent reads as the
-                // zero tag, which is exactly the state of the store a reset leaves.
+                // Goes with the credentials it summarises; `ensure_seed` mints the new
+                // store's tag once the sweeps are through.
                 | EF_CRED_STATE
                 | EF_PIN
                 | EF_MINPINLEN

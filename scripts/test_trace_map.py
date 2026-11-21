@@ -17,6 +17,8 @@ import pytest
 sys.path.insert(0, str(pathlib.Path(__file__).parent))
 import trace_map
 
+pytestmark = pytest.mark.assurance
+
 GOOD = [
     {"ev": "select", "app": "piv", "sw": "9000"},
     {"ev": "verify", "app": "piv", "ref": "pivPin", "sw": "63C2"},
@@ -90,7 +92,28 @@ def test_a_strange_status_word_is_refused(tmp_path):
             {"ev": "verify", "app": "piv", "ref": "pivPin", "sw": "6983"},
         ],
     )
-    red(tmp_path, "neither success nor a retry count")
+    red(tmp_path, "neither success nor a wrong password")
+
+
+def test_a_wrong_password_is_read_per_applet(tmp_path):
+    """OpenPGP's wrong password is 6982 and PIV's is 63Cx; neither passes for the other."""
+    for app, ref, sw in (("pgp", "pw3", "63C2"), ("piv", "pivPin", "6982")):
+        root = build(
+            tmp_path / app,
+            [
+                {"ev": "select", "app": app, "sw": "9000"},
+                {"ev": "verify", "app": app, "ref": ref, "sw": sw},
+            ],
+        )
+        red(root, "neither success nor a wrong password")
+    records, problems = trace_map.map_events(
+        [
+            {"ev": "select", "app": "pgp", "sw": "9000"},
+            {"ev": "verify", "app": "pgp", "ref": "pw3", "sw": "6982"},
+        ]
+    )
+    assert problems == []
+    assert records[-1] == '[act |-> "PgpVerify", r |-> "pw3", ok |-> FALSE]'
 
 
 def test_a_verify_off_the_selected_applet_is_refused(tmp_path):

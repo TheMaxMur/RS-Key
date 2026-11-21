@@ -18,15 +18,13 @@ use core::cell::RefCell;
 use embassy_sync::blocking_mutex::Mutex as BlockingMutex;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::signal::Signal;
-use embassy_usb::class::hid::{HidWriter, ReportId, RequestHandler};
+use embassy_usb::class::hid::{ReportId, RequestHandler};
 use embassy_usb::control::OutResponse;
 use zeroize::Zeroize;
 
-use rsk_usb::kbd::keystroke;
-
 use rsk_otp::hid::{OtpHid, PAYLOAD_SIZE, REPORT_SIZE, status_frame};
+use rsk_secret::Secret;
 
-use crate::Drv;
 use crate::presence::otp_up_pending;
 
 type Cs = CriticalSectionRawMutex;
@@ -39,6 +37,7 @@ pub static OTP_REQ: Signal<Cs, ()> = Signal::new();
 /// The control-request handler for the keyboard interface: marshals the OTP frame
 /// protocol's GET/SET_REPORT feature transfers in and out of [`OTP_HID`]. A ZST —
 /// all state is in the static.
+#[expect(dead_code, reason = "the USB handler lives in Non-secure")]
 pub struct OtpHidHandler;
 
 impl RequestHandler for OtpHidHandler {
@@ -72,7 +71,7 @@ impl RequestHandler for OtpHidHandler {
 }
 
 /// Take a pending frame request, if any (called by the worker after [`OTP_REQ`]).
-pub fn take_request() -> Option<(u8, [u8; PAYLOAD_SIZE])> {
+pub fn take_request() -> Option<(u8, Secret<[u8; PAYLOAD_SIZE]>)> {
     OTP_HID.lock(|c| c.borrow_mut().take_request())
 }
 
@@ -84,9 +83,19 @@ pub fn scrub() {
     OTP_HID.lock(|c| c.borrow_mut().scrub());
     TYPE_Q.lock(|c| {
         let mut q = c.borrow_mut();
-        q.buf.zeroize();
-        q.len = 0;
-        q.pos = 0;
+        let TypeQueue {
+            buf,
+            len,
+            pos,
+            encode: _,
+        } = &mut *q;
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "a static queue: transport reset or reboot wipes it, not a scope's end"
+        )]
+        buf.zeroize();
+        *len = 0;
+        *pos = 0;
     });
 }
 
@@ -148,7 +157,7 @@ pub fn enqueue(bytes: &[u8], encode: bool) {
     TYPE_SIG.signal(());
 }
 
-fn pop_char() -> Option<(u8, bool)> {
+pub(crate) fn pop_char() -> Option<(u8, bool)> {
     TYPE_Q.lock(|c| {
         let mut q = c.borrow_mut();
         if q.pos < q.len {
@@ -163,23 +172,4 @@ fn pop_char() -> Option<(u8, bool)> {
             None
         }
     })
-}
-
-/// Drains the typed-ticket queue, emitting one press + release input report per
-/// character.
-#[embassy_executor::task]
-pub async fn kbd_task(mut writer: HidWriter<'static, Drv, 8>) {
-    use embassy_time::Timer;
-    loop {
-        TYPE_SIG.wait().await;
-        while let Some((b, encode)) = pop_char() {
-            let Some(press) = keystroke(b, encode) else {
-                continue; // unmapped — type nothing
-            };
-            let _ = writer.write(&press).await;
-            Timer::after_millis(10).await;
-            let _ = writer.write(&[0u8; 8]).await; // release
-            Timer::after_millis(10).await;
-        }
-    }
 }

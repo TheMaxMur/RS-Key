@@ -7,7 +7,7 @@
 //! host-testable: the device seed, serial, RNG and flash come from the caller
 //! ([`Ctx`]), never from globals; `firmware` wires in the RP2350 TRNG and flash.
 
-// The ML-DSA credential keys are heap-boxed (their ~13–23 KB `rsk-mldsa` expanded
+// The ML-DSA credential keys are heap-boxed (their ~16–32 KB `rsk-mldsa` expanded
 // keys would otherwise sit on the worker stack right below the stack-heavy sign;
 // see `ec::CredKey`). The firmware provides the heap; everything else stays
 // no-alloc.
@@ -32,11 +32,14 @@ pub mod largeblobext;
 pub mod largeblobs;
 pub mod makecredential;
 pub mod passkeys;
+mod pinpolicy;
 pub mod reset;
 pub mod seed;
 pub mod selection;
 pub mod state;
 pub mod u2f;
+mod up;
+mod uvm;
 pub mod vendor;
 
 #[cfg(any(test, kani, feature = "assurance-trace"))]
@@ -101,10 +104,15 @@ impl<S: Storage, R: Rng> Ctx<'_, S, R> {
     /// behind wins over flash; on a soft-locked device with no unlock this
     /// session, both fail and the operation errors out — that is the lock.
     /// Refines `RSKeySecurityState!ResetNeverWeakensSurvivingState` — SEC-FIDO-006.
-    pub fn load_keydev(&mut self) -> Option<[u8; 32]> {
-        self.state
-            .keydev_dec
-            .or_else(|| seed::load_keydev(&self.dev, self.fs))
+    pub fn load_keydev(&mut self) -> Option<rsk_secret::Secret<[u8; 32]>> {
+        match &self.state.keydev_dec {
+            Some(k) => {
+                let mut copy = rsk_secret::Secret::<[u8; 32]>::zeroed();
+                copy.expose_mut().copy_from_slice(k.expose());
+                Some(copy)
+            }
+            None => seed::load_keydev(&self.dev, self.fs),
+        }
     }
 }
 
@@ -160,22 +168,19 @@ pub fn process_cbor<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, data: &[u8], out: &
     }
 
     let result = match cmd {
-        consts::CTAP_GET_INFO => {
-            // minPINLength / forceChangePin come from EF_MINPINLEN ([len, force]).
-            let mut mp = [0u8; 2];
-            let (min_pin, force) = match ctx.fs.read(consts::EF_MINPINLEN, &mut mp) {
-                Some(n) if n >= 1 => (mp[0], n >= 2 && mp[1] == 1),
-                _ => (consts::MIN_PIN_LENGTH, false),
-            };
+        consts::CTAP_GET_INFO => (|| {
+            let policy = pinpolicy::Policy::read(ctx.fs).map_err(|_| CtapError::Other)?;
             let remaining_rk = credential::remaining_discoverable(ctx.fs);
             // Re-encrypted under a fresh IV on every getInfo, so the member cannot
-            // become a stable fingerprint (`seed::enc_identifier`).
-            let enc_id = seed::enc_identifier(&ctx.dev, ctx.fs, ctx.rng);
-            let enc_css = seed::enc_cred_store_state(&ctx.dev, ctx.fs, ctx.rng);
+            // become a stable fingerprint (`seed::enc_getinfo_members`).
+            let (enc_id, enc_css) = seed::enc_getinfo_members(&ctx.dev, ctx.fs, ctx.rng);
             getinfo::get_info(
-                ctx.fs.has_data(consts::EF_PIN),
-                min_pin,
-                force,
+                ctx.fs
+                    .try_exists(consts::EF_PIN)
+                    .map_err(|_| CtapError::Other)?,
+                policy.min,
+                policy.force,
+                policy.complexity,
                 ctx.fs.has_data(consts::EF_EA_ENABLED),
                 config::always_uv_enabled(ctx.fs),
                 ctx.presence.uv_available(),
@@ -184,7 +189,7 @@ pub fn process_cbor<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, data: &[u8], out: &
                 enc_css.as_ref(),
                 &mut out[1..],
             )
-        }
+        })(),
         consts::CTAP_MAKE_CREDENTIAL => makecredential::make_credential(ctx, params, &mut out[1..]),
         consts::CTAP_GET_ASSERTION => getassertion::get_assertion(ctx, params, &mut out[1..]),
         consts::CTAP_GET_NEXT_ASSERTION => getassertion::get_next_assertion(ctx, &mut out[1..]),
@@ -216,6 +221,8 @@ pub fn process_cbor<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, data: &[u8], out: &
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+use tests::bare;
 
 #[cfg(test)]
 mod conformance;
@@ -225,6 +232,13 @@ mod conformance;
 /// never shipped (see the module docs).
 #[cfg(feature = "bench")]
 pub mod bench;
+
+// The experimental `previewSign` extension and the ARKG-P256 half it runs on. The
+// `preview-sign` feature gates both, so a default build carries none of it.
+#[cfg(feature = "preview-sign")]
+mod arkg;
+#[cfg(feature = "preview-sign")]
+pub mod previewsign;
 
 #[cfg(test)]
 #[path = "test_pins.rs"]

@@ -2,8 +2,7 @@
 // Copyright (C) 2026 RS-Key contributors
 
 //! Parsing a capacitive-touch report into a panel coordinate. Two controllers
-//! appear on the reference board — a CST328 on V1 and a CST3530 on the V2 revision
-//! of 2026-10-14 — with different register maps and different report layouts. Pure
+//! appear on the reference board: CST328 on V1 and CST3530 on V2. Pure
 //! and host-tested: the firmware's `display.rs` does the I2C transfer (read the
 //! report block and hand the raw bytes here), so the bit-twiddling that turns a
 //! report into the point [`crate::hit_confirm`] will judge sits under test rather

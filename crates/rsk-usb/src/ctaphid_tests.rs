@@ -20,9 +20,9 @@
 //!
 //! | Defect | Anchor, and what it becomes | The assertion that fell, and its direction |
 //! |---|---|---|
-//! | wrong channel, INIT-type arm | the BUSY return at `crates/rsk-usb/src/ctaphid.rs:425-429`, deleted | `init_other_channel_busy`: `Error(cid, 4)` where `Error(cid, 6)` was owed — `INVALID_SEQ` in place of `CHANNEL_BUSY`. `an_interfering_frame_never_moves_the_owners_transaction`: `owner: None` where `Some(0x1122_3344)` was owed. Both say a stranger's frame was ACTED ON, not that an honest one was refused |
-//! | premature completion | `crates/rsk-usb/src/ctaphid.rs:469` relaxed to `self.cur + CONT_DATA >= self.bcnt` | NINE tests fall, and the count matters because most are not witnesses. `multi_frame_reassembly` is: `Message(..)` where `None` was owed after the INIT of a two-frame message — a message COMPLETED that had not arrived. `cont_wrong_cid_busy`, `init_other_channel_busy` and `wrong_seq_aborts` say the same at their own INIT. TWO fall the other way round — `max_length_message` and `roundtrip`, `None` where `Message` was owed — the far side of the same defect, which proves nothing alone; `the_declared_length_is_refused_one_byte_past_the_buffer` reads 7550 for 7609, one CONT frame short, on that same reading. And `an_interfering_frame_never_moves_the_owners_transaction:631` fells its own SETUP ("the pre-state is not a live transaction"), so it is a casualty, not evidence |
-//! | the copy bound | `crates/rsk-usb/src/ctaphid.rs:463` relaxed to `CONT_DATA` | Exactly ONE killer, which is the row's point: `a_partial_last_frame_advances_by_its_remainder_and_no_further` — "the tail advanced by more than it carried", `cur` 116 where 67 was owed, the index walked PAST the declared length. Nothing else in the suite sees it: `CTAP_MAX_MESSAGE - INIT_DATA` divides by `CONT_DATA` exactly, so every other test's last frame is full and the `min` never bites |
+//! | wrong channel, INIT-type arm | the BUSY return at `crates/rsk-usb/src/ctaphid.rs:473-477`, deleted | `init_other_channel_busy`: `Error(cid, 4)` where `Error(cid, 6)` was owed — `INVALID_SEQ` in place of `CHANNEL_BUSY`. `an_interfering_frame_never_moves_the_owners_transaction`: `owner: None` where `Some(0x1122_3344)` was owed. Both say a stranger's frame was ACTED ON, not that an honest one was refused |
+//! | premature completion | `crates/rsk-usb/src/ctaphid.rs:525` relaxed to `self.cur + CONT_DATA >= self.bcnt` | NINE tests fall, and the count matters because most are not witnesses. `multi_frame_reassembly` is: `Message(..)` where `None` was owed after the INIT of a two-frame message — a message COMPLETED that had not arrived. `cont_wrong_cid_busy`, `init_other_channel_busy` and `wrong_seq_aborts` say the same at their own INIT. TWO fall the other way round — `max_length_message` and `roundtrip`, `None` where `Message` was owed — the far side of the same defect, which proves nothing alone; `the_declared_length_is_refused_one_byte_past_the_buffer` reads 7550 for 7609, one CONT frame short, on that same reading. And `an_interfering_frame_never_moves_the_owners_transaction:631` fells its own SETUP ("the pre-state is not a live transaction"), so it is a casualty, not evidence |
+//! | the copy bound | `crates/rsk-usb/src/ctaphid.rs:514` relaxed to `CONT_DATA` | Exactly ONE killer, which is the row's point: `a_partial_last_frame_advances_by_its_remainder_and_no_further` — "the tail advanced by more than it carried", `cur` 116 where 67 was owed, the index walked PAST the declared length. Nothing else in the suite sees it: `CTAP_MAX_MESSAGE - INIT_DATA` divides by `CONT_DATA` exactly, so every other test's last frame is full and the `min` never bites |
 //! | CONTROL — no patch | — | 62 passed, exit 0: the row is not red for a reason of its own |
 
 use super::*;
@@ -142,6 +142,35 @@ fn broadcast_non_init_rejected() {
     let mut asm = Reassembler::new();
     let out = asm.feed(&init_frame(CID_BROADCAST, CTAPHID_PING, 0, &[]));
     assert_eq!(out, Outcome::Error(CID_BROADCAST, ERR_INVALID_CHANNEL));
+}
+
+#[test]
+fn a_broadcast_continuation_never_changes_the_owners_transaction() {
+    let mut asm = Reassembler::new();
+    let bad = cont_frame(CID_BROADCAST, 0, &[0xEE]);
+    assert_eq!(
+        asm.feed(&bad),
+        Outcome::Error(CID_BROADCAST, ERR_INVALID_CHANNEL)
+    );
+    assert!(!asm.in_progress());
+
+    let cid = 0x1122_3344;
+    let data = [0x5A; INIT_DATA + 1];
+    assert_eq!(
+        asm.feed(&init_frame(cid, CTAPHID_CBOR, data.len() as u16, &data)),
+        Outcome::None
+    );
+    assert_eq!(
+        asm.feed(&bad),
+        Outcome::Error(CID_BROADCAST, ERR_INVALID_CHANNEL)
+    );
+    assert!(asm.in_progress());
+    assert_eq!(asm.current_cid(), cid);
+    assert_eq!(
+        asm.feed(&cont_frame(cid, 0, &data[INIT_DATA..])),
+        Outcome::Message(cid, CTAPHID_CBOR)
+    );
+    assert_eq!(asm.message(), &data);
 }
 
 #[test]
@@ -429,9 +458,9 @@ struct StallSink {
     attempts: usize,
 }
 impl FrameSink for StallSink {
-    async fn write_frame(&mut self, _frame: &[u8; HID_RPT_SIZE]) {
+    async fn write_frame(&mut self, _frame: &[u8; HID_RPT_SIZE]) -> Result<(), EndpointError> {
         self.attempts += 1;
-        core::future::pending::<()>().await
+        core::future::pending::<Result<(), EndpointError>>().await
     }
 }
 
@@ -440,8 +469,9 @@ struct CountingSink {
     written: usize,
 }
 impl FrameSink for CountingSink {
-    async fn write_frame(&mut self, _frame: &[u8; HID_RPT_SIZE]) {
+    async fn write_frame(&mut self, _frame: &[u8; HID_RPT_SIZE]) -> Result<(), EndpointError> {
         self.written += 1;
+        Ok(())
     }
 }
 
@@ -558,16 +588,20 @@ fn only_a_broadcast_init_survives_someone_elses_lock() {
 /// command itself as producing "some visual or audible identification". A build
 /// with nothing to flash must therefore leave the bit clear: the host offers wink
 /// to tell two identical-looking keys apart, so a silent success points the user
-/// at the wrong key. CBOR and LOCK are unconditional — both commands are
-/// implemented, and a host decides whether to *try* CTAPHID_LOCK from this byte,
-/// so an unset bit hides a working feature. NMSG stays clear (U2F is implemented).
+/// at the wrong key. CBOR is unconditional, and NMSG stays clear (U2F is
+/// implemented). LOCK is implemented but claims no bit: CTAP defines none, and has
+/// the pre-standard `0x02` a YubiKey 5.8.0 leaves clear set to zero like any other.
 #[test]
 fn wink_is_claimed_only_where_something_can_flash() {
-    assert_eq!(
-        init_capabilities(true),
-        CAPFLAG_WINK | CAPFLAG_LOCK | CAPFLAG_CBOR
-    );
-    assert_eq!(init_capabilities(false), CAPFLAG_LOCK | CAPFLAG_CBOR);
+    assert_eq!(init_capabilities(true), CAPFLAG_WINK | CAPFLAG_CBOR);
+    assert_eq!(init_capabilities(false), CAPFLAG_CBOR);
+    for can_wink in [true, false] {
+        assert_eq!(
+            init_capabilities(can_wink) & CAPFLAG_LOCK,
+            0,
+            "a reserved bit"
+        );
+    }
     assert_eq!(
         init_capabilities(false) & CAPFLAG_WINK,
         0,
@@ -788,5 +822,181 @@ fn a_partial_last_frame_advances_by_its_remainder_and_no_further() {
         r.message(),
         &payload[..],
         "the assembled message is not what was sent"
+    );
+}
+
+#[test]
+fn default_transport_state_matches_a_fresh_session() {
+    let mut cids = CidAllocator::default();
+    assert_eq!(cids.allocate(), FIRST_CID);
+    let asm = Reassembler::default();
+    assert!(!asm.in_progress());
+    assert!(asm.message().is_empty());
+}
+
+#[test]
+fn an_overlarge_outgoing_message_emits_no_frame() {
+    let data = vec![0xA5; usize::from(u16::MAX) + 1];
+    assert!(TxFrames::new(1, CTAPHID_CBOR, &data).next().is_none());
+}
+
+#[test]
+fn default_handler_hooks_offer_no_vendor_command_or_indicator() {
+    struct Basic;
+    impl MsgHandler for Basic {
+        async fn handle_msg(&mut self, _: u32, _: &[u8], _: &mut [u8]) -> usize {
+            0
+        }
+        async fn handle_cbor(&mut self, _: u32, _: &[u8], _: &mut [u8]) -> usize {
+            0
+        }
+    }
+    let mut handler = Basic;
+    let mut out = [0xA5; 16];
+    assert_eq!(
+        embassy_futures::block_on(handler.handle_vendor(1, 0x40, &[], &mut out)),
+        None
+    );
+    assert_eq!(out, [0xA5; 16]);
+    assert!(!handler.can_wink());
+    handler.wink();
+    handler.reset_app_selection();
+}
+
+#[test]
+fn the_transport_projection_preserves_the_owners_concrete_state() {
+    use super::transport_assurance as probe;
+    let cid = 0x1122_3344;
+    let need = u16::try_from(INIT_DATA + CONT_DATA).unwrap();
+    let mut live = Reassembler::new();
+    assert_eq!(
+        live.feed(&probe::init_frame(cid, CTAPHID_PING, need)),
+        Outcome::None
+    );
+    let mut posed = Reassembler::mid_transaction(cid, 0, INIT_DATA, usize::from(need));
+    posed.cmd = CTAPHID_PING;
+    assert_eq!(live.tx_view(), posed.tx_view());
+    assert!(posed.within_the_buffer());
+    let mut fork = posed.clone_for_probe();
+    assert_eq!(
+        fork.feed(&probe::cont_frame(cid, 0)),
+        Outcome::Message(cid, CTAPHID_PING)
+    );
+    assert_eq!(fork.message().len(), usize::from(need));
+    assert!(fork.within_the_buffer());
+    assert_eq!(posed.tx_view().owner, Some(cid));
+    assert_eq!(posed.tx_view().got, INIT_DATA);
+    assert!(!Reassembler::mid_transaction(cid, 0, 2, 1).within_the_buffer());
+    assert!(!Reassembler::mid_transaction(cid, 0, 0, CTAP_MAX_MESSAGE + 1).within_the_buffer());
+}
+
+#[test]
+fn a_corrupt_probe_cursor_is_refused_before_copying_a_continuation() {
+    let cid = 0x1122_3344;
+    let mut posed =
+        Reassembler::mid_transaction(cid, 0, CTAP_MAX_MESSAGE + 1, CTAP_MAX_MESSAGE + 2);
+    assert_eq!(
+        posed.feed(&super::transport_assurance::cont_frame(cid, 0)),
+        Outcome::Error(cid, ERR_INVALID_LEN)
+    );
+    assert_eq!(posed.tx_view().owner, None);
+}
+
+#[test]
+fn write_frames_stops_after_an_endpoint_error() {
+    struct Closed {
+        attempts: usize,
+    }
+    impl FrameSink for Closed {
+        async fn write_frame(&mut self, _: &[u8; HID_RPT_SIZE]) -> Result<(), EndpointError> {
+            self.attempts += 1;
+            Err(EndpointError::Disabled)
+        }
+    }
+    let mut sink = Closed { attempts: 0 };
+    let data = [0xAB; FOUR_FRAME_LEN];
+    assert!(
+        poll_bounded(
+            write_frames(
+                &mut sink,
+                1,
+                CTAPHID_CBOR,
+                &data,
+                core::future::pending::<()>
+            ),
+            1000
+        )
+        .is_some()
+    );
+    assert_eq!(
+        sink.attempts, 1,
+        "an endpoint reset continued the old response"
+    );
+}
+
+/// The wire vocabulary, pinned to the protocol bytes (CTAP 2.3 §11.2.9.1.3, plus
+/// the pre-standard U2FHID commands `tools/emu` names). `TYPE_INIT | n` and
+/// `TYPE_INIT ^ n` agree for every command here by construction — the INIT bit is
+/// disjoint from every command nibble — so an OR→XOR swap is unobservable. An
+/// `&` in that place is not: `TYPE_INIT & 0x11` is 0x00, a command that erases
+/// itself, and this is the assertion that notices.
+#[test]
+fn the_command_bytes_are_the_protocol_constants() {
+    assert_eq!(CTAPHID_PING, 0x81);
+    assert_eq!(CTAPHID_MSG, 0x83);
+    assert_eq!(CTAPHID_LOCK, 0x84);
+    assert_eq!(CTAPHID_INIT, 0x86);
+    assert_eq!(CTAPHID_WINK, 0x88);
+    assert_eq!(CTAPHID_CBOR, 0x90);
+    assert_eq!(CTAPHID_CANCEL, 0x91);
+    assert_eq!(CTAPHID_KEEPALIVE, 0xBB);
+    assert_eq!(CTAPHID_SYNC, 0xBC);
+    assert_eq!(CTAPHID_ERROR, 0xBF);
+    assert_eq!(CTAPHID_VENDOR_FIRST, 0xC0);
+    assert_eq!(CTAPHID_VERSION, 0xE1);
+    assert_eq!(CTAPHID_UUID, 0xE2);
+}
+
+/// §11.2.9.2.2's lock lasts `seconds` — the field is scaled by 1000, not added to
+/// it. A `+` in place of the `*` makes a 3-second lock expire 1.997 s early, so the
+/// exclusion has to hold right up to `now + seconds * 1000` and end there.
+#[test]
+fn a_lock_lasts_its_whole_seconds_field() {
+    let mut lock = ChannelLock::default();
+    let (mine, theirs) = (0x0100_0000, 0x0100_0001);
+    lock.arm(mine, 3, 1_000);
+    assert!(
+        lock.blocks(theirs, 3_999),
+        "still locked just before expiry"
+    );
+    assert!(!lock.blocks(theirs, 4_000), "expired at now + 3 * 1000 ms");
+}
+
+/// A payload one byte past the INIT frame is one INIT plus one 1-byte
+/// continuation, and the walk must end there. Driving `next()` a bounded number
+/// of times (not collecting) is what makes a continuation whose cursor stops
+/// advancing, or stops a frame early, an assertion failure rather than a
+/// non-terminating stream or a hang.
+#[test]
+fn a_continuation_walk_ends_exactly_at_the_declared_length() {
+    let cid = 0x0100_0000;
+    let data = [0xCD; INIT_DATA + 1];
+    let mut frames = TxFrames::new(cid, CTAPHID_MSG, &data);
+    let init = frames.next().expect("the INIT frame");
+    assert_eq!(
+        ((init[5] as usize) << 8) | init[6] as usize,
+        data.len(),
+        "the INIT frame declares a different length than the payload"
+    );
+    let cont = frames.next().expect("the one continuation");
+    assert_eq!(cont[4], 0, "the continuation's seq");
+    assert_eq!(
+        &cont[5..6],
+        &data[INIT_DATA..],
+        "the continuation carries the remainder"
+    );
+    assert!(
+        frames.next().is_none(),
+        "the walk did not stop at the declared length"
     );
 }

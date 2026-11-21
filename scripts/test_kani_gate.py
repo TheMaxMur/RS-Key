@@ -717,7 +717,7 @@ def test_a_floor_deleted_outright(tree):
     [(1, "(3, 3, 4)"), (2, "(3, 3, 4)"), (3, "(3, 3, 4)")],
 )
 def test_the_page_s_own_copy_of_the_numbers_drifted(tree, column, printed):
-    """docs/testing.md is the fourth copy: a reader learns the row's rule there."""
+    """assurance/reports/testing-evidence.md is the fourth copy: a reader learns the row's rule there."""
     cells = "| `all` | 3 | 3 | 4 |".split("|")
     cells[column + 1] = f" {int(cells[column + 1]) + 1} "
     tree.edit(kani_gate.DOCS, "| `all` | 3 | 3 | 4 |", "|".join(cells))

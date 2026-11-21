@@ -32,6 +32,11 @@ cargo run --manifest-path tools/emu/Cargo.toml --target "$HOST" -- --store ./my.
                       strings, the ATR, the OpenPGP AID vendor — as the
                       VIDPID=Yubikey5 build does. `ykman` needs it.
   --power-cut <n>     cut the flash's power after n bytes of writes
+  --headless          capture --image --display without an SDL window
+  --image <elf>       serve that firmware ELF on an emulated RP2350 instead of
+                      the applet stack (below)
+  --rom <file>        the bootrom --image boots (default: picoem's pinned A4)
+  --inspect-port <n>  image laboratory socket on loopback (disabled by default)
 ```
 
 `--auto-touch-ms` is mutually exclusive with `--touch` and `--display`. During
@@ -72,9 +77,9 @@ power-cycle helper at the emulator — so the suites run unmodified, and neither
 hidapi nor pyscard need be installed. `RSK_EMU` / `RSK_EMU_CCID` override the
 addresses.
 
-**42 of the 53 suites pass; the other 10 are refused by name, with the reason,
-before they start** (exit 77 — so a sweep counts skips apart from failures). None
-of them is an unexplained failure:
+Suites that need hardware or the real USB transport are refused by name,
+with a reason, before they start (exit 77 — so a sweep counts skips apart from
+failures):
 
 | Skipped here | Why |
 |---|---|
@@ -83,11 +88,12 @@ of them is an unexplained failure:
 | `53` | the PC/SC `FEATURE_VERIFY_PIN_DIRECT` reader layer |
 | `61`, `65` | driven through python-fido2's own HID transport — faking it would leave the suite testing this shim instead of a third-party client. Under `--usbip` there is nothing to fake, and they run |
 | `29`, `54`, `90` | real power-cut, SRAM residue and OTP-fuse migration — hardware by definition |
+| `105` | physical getInfo latency; neither backend models XIP-cache misses |
 
 The list lives in `tests/emu.py` (`UNSUPPORTED`); removing an entry is a claim
 that the emulator grew the capability.
 
-`14` is the 43rd: it asserts with a credential a person enrolled
+`14` asserts with a credential a person enrolled
 (`ssh-keygen -t ed25519-sk`), so without that key it skips 77 too.
 
 `30` needs the Yubico card identity: start the emulator `--yubico` and it runs,
@@ -122,7 +128,7 @@ What attaches is the device's own USB stack, not a description of it: the same
 reads, and `fido2-token`, a browser, `ykman` and `gpg` all work.
 
 ```bash
-fido2-token -L                 # /dev/hidraw1: vendor=0x1209, product=0x0001
+fido2-token -L                 # /dev/hidraw1: vendor=0x1209, product=0xf1d2
 fido2-token -I /dev/hidraw1    # CTAP2.3 getInfo
 opensc-tool -a                 # 3b:fc:…:52:53:2d:4b:65:79  — the RS-Key ATR
 ```
@@ -158,18 +164,339 @@ with a real key, for the same reason.
 Needs Linux and root for `vhci_hcd`; the emulator itself can stay on a Mac,
 because USB/IP is network-transparent.
 
-All of that in one command — including the two identities, since `73` wants the
-Yubico one and the rest must not have it — is `scripts/usbip-suites.sh`, which is
-also what CI runs. It boots a guest that owns a `vhci_hcd`
-(`nix build .#usbip-vm`) because a GitHub-hosted runner cannot be one, and keeps
-the emulators outside it on the VM host. All six run: `02`, `61`, `65`, `73`,
-`77` and the pico-fido conformance suite.
+All of that in one command — including the two identities, since `73`, `77` and
+p11test want the Yubico one and the rest must not have it — is
+`scripts/usbip-suites.sh`, which is also what CI runs. It boots a guest that owns
+a `vhci_hcd` (`nix build .#usbip-vm`) because a GitHub-hosted runner cannot be
+one, and keeps the emulators outside it on the VM host. All seven run: `02`,
+`61`, `65`, `73`, `77`, the pico-fido conformance suite and OpenSC's p11test.
 
 `77` needs the emulator's stdin held **open** — the runner uses a fifo it never
 writes to. On EOF the emulator correctly stops pretending anyone could answer and
 times the touch out at once, which makes a `--touch` device behave like a
 no-touch one and leaves the suite nothing to watch; a fifo gives it the real
 thing, a wait nobody ever ends.
+
+## The firmware image itself (`--image`)
+
+`--image <elf>` serves the firmware's own ELF on the same two ports, in place of
+the applet crates. It cold-boots through the real bootrom on
+[picoem](https://github.com/TheMaxMur/picoem)'s RP2350 — two Cortex-M33 cores with
+TrustZone, and the bus — and `src/image/` models what the bootrom and the image
+lean on past it: the USB controller, OTP, the QMI with its SPI NOR flash, the
+SHA-256 block, the TRNG, BOOTRAM, the PSM and the BOOTSEL pad. A host controller
+on the emulated clock enumerates the image as Linux does and carries each
+socket's reports and CCID messages over its endpoints, so `tests/emu.py` and the
+suites run unchanged.
+
+```bash
+nix develop -c bash scripts/build.sh --features no-touch
+nix develop -c cargo run --release --manifest-path tools/emu/Cargo.toml --target "$HOST" -- \
+  --image target/trustzone/combined.elf --store ./image.store
+# First approve `rsk storage initialize` through the owned CCID socket.
+python tests/emu.py tests/10_fido_getinfo.py
+```
+
+- **Time** is held to the wall clock and never runs ahead of it, so the image's
+  own timeouts — the §6.6 reset window, keepalives, CCID time extensions — mean
+  what they mean on a desk. One busy core runs at about the board's speed; two run
+  slower (an on-card RSA-2048 keygen took 13.6 s, the board ~4.3 s). Empty PIO
+  `PULL` stalls advance in batches while preserving divider phase and counters;
+  active machines and other stalls keep the per-cycle path. On macOS arm64,
+  three 10-second idle samples on the same no-touch ELF reduced median host
+  CPU use from 68.7% to 22.4% of one core (2026-10-02). GetInfo after idle
+  still completed in 15–17 ms. This measures idle CPU cost, not command speed.
+- **The store** is the whole flash, image and KV store together, with the OTP
+  rows beside it in `<store>.otp`. A new one starts blank but for the chip id,
+  which is `--serial`. Placing the image rewrites only the sectors it covers, so
+  the KV store stays when a rebuilt image goes in, as a reflashed board's does.
+  The ELF's `__kvcnt_end` selects a 2, 4, 8 or 16 MiB part; the 16 MiB layout's
+  reserved E10 sector is included in the chip. ELFs without that symbol retain
+  the 4 MiB default. A file with another length is refused rather than resized.
+- **Storage setup**: a fresh firmware image exposes recovery until the attended
+  storage initialization command succeeds. `image_assurance.py` initializes only
+  the fresh image fixture it owns; its upgrade scenario explicitly imports the
+  legacy fixture. Existing unknown images are refused rather than automatically
+  interpreted as blank or legacy.
+- **Power**: a replug (`03`) is a power-on reset through the bootrom; a reboot the
+  image asks for keeps the watchdog scratch, as a warm reset does — so the soft
+  PIN lock and the reset window behave as on the board.
+  Every cold or warm boot advances the model's entropy stream, so repeated
+  resets cannot regenerate the deleted credential seed. `--seed` reproduces
+  the whole boot sequence rather than repeating one stream at every reboot.
+  Delayed ROM reboots count the normal 1 MHz watchdog ticks independently of
+  the CPU step quantum. Custom TICKS divisors and active debugger pauses are
+  outside this model.
+- **Faults**: a HardFault or a PC inside either core's ELF panic handler marks
+  the image dead until a power cycle. A sampled PC past the handler's entry
+  still counts as a panic. The log names the instruction before its return
+  address, which may otherwise point into the next function.
+- **Presence and identity are the image's.** A `--features no-touch` build
+  confirms presence; a touch build waits for BOOTSEL, which each line on the
+  terminal holds down for half a second under `--touch`, and a keepalive asking
+  for the touch says so there. The Yubico identity is a `VIDPID=Yubikey5` build. `--auto-touch-ms`, `--security-trace`, `--yubico`
+  and `--power-cut` are refused by name.
+- **Display images** use `--image display.elf --display`. The Waveshare board's
+  PIO0 serial pins drive an ST7789 GRAM model; the window presents those captured
+  RGB565 pixels and the PWM backlight. Mouse contacts reach the firmware through
+  the CST328 or CST3530 registers on I2C1. Space presses the active-low wake button. The
+  image executes its own rendering, hit tests, PIN verification and USB replies.
+  `--headless` suppresses only the window. `--taps` and `--taps-port` retain their
+  existing grammar, with durations measured on the image clock. A scripted pad
+  owns touch input exclusively. Rendering requires single-cycle PIO observation,
+  so display images run more slowly than the ordinary image backend. The image
+  samples mouse contacts and Space on its own clock. Brief presses in the window
+  can fall between those polls.
+- **`--usbip`** offers the image's current descriptors. Attach and detach
+  power-cycle a running image; in BOOTSEL they warm-boot back into the ROM
+  loader. A socket replug always cold-boots. Successful control and data
+  transfers complete after their final packet and ACK have crossed the bus.
+- `--trace` prints what the chip models log and, every five seconds, where each
+  core is. `--rom` boots another bootrom (the A2's, say); the default is the A4
+  one picoem pins, read from its checkout.
+
+Against the tests/emu.py sweep of `scripts/emu-suites.sh` — the default,
+reset-window, PIN and Yubico-identity sessions — the image passes the same 54
+suites the applet backend passes and refuses the same 11. It is still not
+silicon: each model goes as deep as the bootrom and the image reach, and the
+panel and the LED's light are not modelled. Power cuts use the explicit fault
+model below; they do not model analog NOR-cell failure.
+
+### Image laboratory
+
+`--inspect-port <n>` opens a separate TCP listener on `127.0.0.1`. One line per
+connection receives `ok ...` or `error ...`; this is emulator control, outside
+the device's USB interface. It can inspect and modify emulated SRAM. Leave it
+disabled for an ordinary protocol run.
+
+| Request | Result |
+|---|---|
+| `status` | Current cycle, readiness, fault state, power-up count and last injected cut |
+| `begin`, then `end` | Paint unused stacks, step by one cycle and record each core's lowest SP until `end` |
+| `transport-begin`, then `transport-end` | Time the next socket CBOR/CCID request at USB completion: elapsed nanoseconds, keepalive count and largest gap, including the first and final gaps |
+| `usb-reset` | Reset and re-enumerate the USB bus without restarting either CPU; returns whether a measured request was in flight |
+| `where` | Report the current symbol/PC of both CPU cores for a stalled-operation diagnosis |
+| `usb-disconnect`, then `usb-connect` | Remove/reconnect the host link with device RAM retained; loss of the link raises USB suspend, reconnect drives a new bus reset |
+| `usb-control HEX` | Submit an eight-byte SETUP packet with zero data length; wait for acceptance, STALL or disconnection |
+| `scan HEX` | Count and SRAM addresses of an exact 1–256-byte pattern; no secret bytes printed |
+| `plant ADDRESS HEX` | Write a synthetic positive-control pattern at a hexadecimal SRAM address |
+| `cut-cycles N` | Cut N cycles after the next socket HID report or CCID request is accepted |
+| `cut-program N` | Cut after N accepted page-program bytes, counted across programs |
+| `cut-program-cycles N` | Cut N cycles after the next page program starts |
+
+Transport timing ends at the first final HID report or complete CCID message.
+Later response fragments, GET RESPONSE commands and host scheduling delays do
+not extend it. It retains the ordinary stepping quantum and changes no USB bytes.
+
+Fault arms replace one another and clear on reboot. An injected cut immediately
+disconnects in-flight transfers, saves flash and cold-boots. With `--store`, a
+`<store>.cut` snapshot keeps the torn array *before* recovery can repair it.
+During a busy program or erase, a cycle cut retains a prefix proportional to
+elapsed operation time; a byte cut retains exactly that many program bytes.
+Program order wraps within a 256-byte page. This deterministic fault model
+exercises recovery from incomplete writes, not every physically possible cell
+pattern. It changes no flash timing when unarmed.
+
+Secure stack bounds come from the ELF, checked against the core's `MSPLIM`.
+For a split image, the embedded NS vector supplies its stack top; Secure SAU
+supplies the allocation floor, checked against the NS bank's `MSPLIM`.
+Measurements retain `core0_*` and `core1_*` for Secure and add `ns0_*` for NS.
+Each bank keeps its own sampled minimum and paint below its saved MSP, including
+while the other bank runs. PSP and a Non-secure core1 are refused explicitly.
+
+`coreN_used` is the ELF stack symbol's top minus the lowest sampled SP; core1's
+symbol includes `StaticCell` padding, so its value is a conservative bound.
+`coreN_painted` means bytes covered by writes. It is **not stack usage**: the
+firmware clears the entire dead stack after a command, which consumes all the
+paint. Sampling SP also catches a reserved frame that never writes its bottom.
+Single-cycle sampling slows the emulator and is enabled only between `begin`
+and `end`, or while a fault is armed.
+
+The image laboratory bounds CTAP commands to 120 seconds on the image clock,
+with a separate 1,200-second host watchdog. Both cover the final response and
+continuation reads; a reboot, a terminal fault or a backwards clock fails the
+command. Native runs retain the ordinary 120-second keepalive wait. Measured
+image operations also retain every CTAP transport sample and refuse USB gaps
+over 500 ms on the image clock, independently of host sampling overhead.
+
+The standalone runner owns fresh processes, socket ports and flash files:
+
+```sh
+nix develop -c python tools/emu/image_assurance.py \
+  --emulator tools/emu/target/"$HOST"/release/rsk-emu \
+  --image current-notouch-pt.elf --release-image v0.4.11-notouch-pt.elf \
+  --work /tmp/rsk-image-assurance
+```
+
+Use partitioned ELF fixtures built with `--features no-touch`. The TrustZone
+builder embeds the table by default. The runner compares native/image OATH and OpenPGP responses, measures
+ML-DSA-87 command stacks and verifies its signatures with dilithium-py,
+checks known OATH key/HMAC-pad residues with a planted
+leak through the same assertion, upgrades a release's OATH, FIDO signing key
+and OpenPGP PIN on the same flash, and reboots from cycle/byte-cut snapshots in
+new processes. `--only` selects a scenario. Logs, image hashes and measured
+results stay in the new `--work` directory; no board is enumerated.
+
+The display laboratory takes an ordinary Waveshare display ELF, built without
+`no-touch`, and owns a fresh flash file and loopback endpoints:
+
+```sh
+nix develop -c env BOARD=waveshare-touch-lcd LED_KIND=none FLASH_SIZE=16M \
+  bash scripts/build.sh --features display
+nix develop -c cargo build --manifest-path tools/emu/Cargo.toml \
+  --locked --release --target "$HOST"
+nix develop -c python tools/emu/image_display.py \
+  --emulator "tools/emu/target/$HOST/release/rsk-emu" \
+  --image target/trustzone/combined.elf --work /tmp/rsk-display-image --only ceremonies
+```
+
+`--only ceremonies` checks registration refusal/cancellation and approval, then
+tests the sign-in hold and verifies signatures. Registration's **Save** is a
+single tap; sign-in's **Hold to approve** requires 800 ms. `--only stale` checks
+that a held finger from a cancelled sign-in cannot approve its successor.
+`--only physical` drives a sliding contact, a lift and a foreign-channel CANCEL;
+`--only timeout` sets the on-panel deadline and checks expiry on the image clock.
+`--only pin` exercises device-PIN setup, mismatch, cancellation, wrong entry,
+persistent retries and unlock after reboot. `--only fido-pin` drives clientPIN
+0x06 and uses its decrypted token; `--only ccid-pin` drives actual CCID Secure
+VERIFY for OpenPGP and PIV, including refusal, cancellation and retry counts.
+PIN scenarios enable scrambling and locate digits in the captured pixels using
+the public font asset. They never read the firmware's keypad layout or PIN
+buffer. SRAM scans have a planted-PIN control through the same checker.
+
+Each run retains the exact ELF, emulator and Python sources, raw RGB565 frames,
+PNGs, hashes, transport samples and sampled stack bounds in a new output folder.
+The panel model supports this board's RGB565 command sequence and scan orders;
+unsupported commands and formats fail explicitly. I2C1 models the firmware's
+blocking CST328 and CST3530 transactions, FIFO status and interrupts. These models do not
+establish electrical timing, panel overclock tolerance or physical calibration.
+
+`--only operations` runs a second matrix against both backends. Every image
+command records both cores' minimum SP and checks their ELF/MSPLIM bounds:
+
+| Applet | Operations and independent oracle | SRAM patterns after the response |
+|---|---|---|
+| FIDO | Protocol-2 key agreement, set/get/change PIN, registration and assertion for ES256/384/512, ES256K, Ed25519 and ML-DSA-44/65/87; attestation and assertion signature verification; old-token refusal, reset and deleted-credential refusal | ECDH-derived HMAC/AES keys; old PIN token after changePIN |
+| Seed backup | Encrypted export, replacement and restore; independent certificate/key binding and signature checks after reboot; obsolete-credential and damaged-tag refusal; export sealing that survives reboot | Original/replacement seeds and one-shot MSE keys after completed and refused commands |
+| PIV | AES-192 management mutual authentication, EC/RSA-2048 import and signing, RSA-2048/3072/4096 generation and signing, P-256 ECDH, PIN verification/deauthentication and refused signing | Imported scalar and RSA factors; factors of the generated public modulus |
+| OpenPGP | EC/Ed25519/RSA-2048 import, signing, internal authentication, ECDH/RSA decipher, RSA-2048/3072/4096 generation and signing, and refused authentication after deselection | Imported scalar, Ed25519 seed and RSA factors; factors of the generated public modulus |
+| OTP | Slot programming, HMAC-SHA1 and AES challenge-response, deletion and empty-slot response | HMAC key/pads and AES key |
+
+The live FIDO token must first be found in SRAM; changePIN must remove its
+known bytes. A spent token retains its bytes by design, so a signature does
+not require their absence. Every applet also plants a leak in SRAM9, runs
+the same residue assertion, requires that exact address to fail and clears it.
+Scalar/factor probes search 16-byte prefixes and suffixes in both byte orders.
+These check selected known secrets and command paths, not arbitrary encodings
+of every secret; cached device/session keys have their own lifetimes. Logs and
+reports contain counts and addresses, not secret patterns.
+
+RSA generation also requires core1's ELF counters to show a taken job and
+candidate searches. Stack sampling continues through its background
+cancellation and cleanup, bounded by 30 seconds of emulated time and a separate
+host progress timeout.
+Inspection `status` reports `emulated_ns` alongside the instruction-cycle count.
+After it goes idle, the runner reads all 520 KiB of SRAM over the opt-in inspection
+socket (`read ADDRESS LENGTH`) and checks every 128-, 192- or 256-byte window,
+in both byte orders, for a nontrivial divisor of the returned 2048-, 3072- or
+4096-bit modulus. A planted RSA factor at each size must fail that same assertion.
+SRAM dumps and private factors are not saved. All three sizes run in PIV and
+OpenPGP, with independent signature verification after each generation.
+
+`nix develop -c ./scripts/image-suites.sh <new-output-directory>` builds the
+current no-touch firmware and its partition table, builds the emulator with
+assertions enabled, then runs the TrustZone, `basic`, `stack`, `operations`,
+`cuts` and OTP seal checks.
+Omitting the directory retains a fresh report directory under `target/`.
+The `image` jobs in `.github/workflows/emulator.yml` pass `platform` or
+`operations` after the directory to run the suites in parallel. The `platform`
+job runs TrustZone, stack, power-cut and OTP checks. The `operations` job runs
+the command matrix on both backends. Each uploads its own reports and logs.
+Historical-release upgrade and scratch-ELF regression probes use the fixtures above.
+
+### PICOBOOT through USB/IP
+
+`image_picoboot.py` runs real `picotool` against the image's A4 ROM loader.
+Run it in an isolated x86_64 Linux VM as root, with `vhci_hcd` and a matching
+`usbip` utility installed. The dev shell supplies `picotool` and Python; it
+does not install the kernel utilities. Build a no-touch, partitioned fixture:
+
+```sh
+nix develop -c ./scripts/image-suites.sh target/picoboot-fixture
+nix develop
+sudo modprobe vhci-hcd
+sudo env PATH="$PATH" LD_LIBRARY_PATH="$LD_LIBRARY_PATH" \
+  python tools/emu/image_picoboot.py \
+    --emulator tools/emu/target/x86_64-unknown-linux-gnu/release/rsk-emu \
+    --image target/picoboot-fixture/firmware-pt.elf \
+    --work target/picoboot-run
+```
+
+Both output directories must be new. `--usbip` and `--picotool` accept explicit
+utility paths. The runner owns a loopback emulator, a fresh flash/OTP pair and
+one virtual USB/IP port. It checks the sysfs `vhci_hcd` parent before choosing
+the bus/address for every `picotool` command. It requires all virtual ports to
+be unused and unbinds `usb-storage` only from its own ROM interface, keeping
+kernel SCSI probes out of the PICOBOOT session.
+
+The run covers info, SRAM and spare-flash load/save/verify, a full ELF reload,
+an unchanged-image update, reboot into the firmware and another cold boot.
+An OATH credential must survive, and USB/IP must advertise the original
+firmware descriptors again. A write into KV must fail with the ROM permission
+error and leave its bytes unchanged. Raw and ECC OTP writes, refused bit
+clearing and persistence across reboot are checked through `picotool` too.
+Logs, image/emulator hashes and `report.json` remain in `--work`; the owned
+virtual port is detached on exit. These are virtual OTP writes, not fuse writes
+on a connected key. The emulator workflow's `usb` job runs this scenario and
+MSC inside its throwaway NixOS guest, after detaching the native test devices.
+The host builds the emulator and a partitioned no-touch ELF; the guest owns
+the image processes, loopback USB/IP endpoints and virtual block devices.
+The host stages picoem's pinned A4 ROM after checking its SHA256; both reports
+record that ROM hash.
+`nix develop -c ./scripts/usbip-suites.sh <new-output-directory>` runs the
+same job locally on Linux. Omitting the directory retains evidence under
+`target/`. CI uploads reports and logs, including failures, without flash,
+OTP or executable fixtures. This remains separate from the default `image` job.
+
+`image_msc.py` uses the same Linux setup and arguments with a new `--work`
+directory. It leaves the owned ROM's `usb-storage` driver active, checks the
+FAT16 MBR, directory, `INDEX.HTM` and `INFO_UF2.TXT`, and repeats `picotool info` 20 times
+while MSC remains usable. A bad-magic UF2 sector must leave flash untouched.
+The runner then writes the complete UF2 through the owned kernel block device,
+checks every payload and unchanged bytes outside the image, and verifies reboot,
+refreshed descriptors and OATH persistence through a cold boot. Block I/O is
+guarded by the virtual sysfs parent and the block device's major/minor identity.
+This exercises kernel SCSI reads/writes without mounting the FAT filesystem.
+It uses fresh emulated flash/OTP and detaches its virtual port on exit.
+
+The image host controller serializes transactions across all endpoint pipes,
+including their packet/ACK time. A NAKing pipe yields to other ready pipes;
+the transport regression covers concurrent MSC/PICOBOOT-style bulk endpoints.
+Double-buffer completion status preserves both events and exposes the next
+buffer after the CPU clears the first, as RP2350 datasheet §12.7.3.8 specifies.
+The MSC runner invalidates its owned disk's cache before repeated file reads.
+The pinned external picoem fork also makes Non-secure RCP reads return zero and ignores writes
+to Secure RCP state (RP2350 datasheet §3.6.3.2), allowing BootROM's interrupted
+Non-secure memory routines to coexist with Secure buffer validation.
+
+For falsification, `--incompatible-image` takes a scratch current ELF with
+`EF_OATH_CRED` moved from `0xBA00` to `0xB900`: upgrade must lose the credential
+with `6984`, while boot and SELECT succeed. `--stack-regression` takes a distinct
+scratch ELF with larger ML-DSA stack frames and must exceed the baseline by
+more than 1 KiB of interrupt variation. Removing the `#[inline(never)]` attributes
+from the six ML-DSA helpers in `rsk-fido/src/ec.rs` is the historical regression
+probe; its result must be measured on the current compiler. These are separate
+fixtures, never changes to the tested production checkout.
+
+The historical probe was run on 2026-10-01 against `d7e19ad0`, Rust 1.96.0,
+`no-touch`, using independently built ELF files. ML-DSA-87's maximum sampled
+core0 use was 94,396 bytes with the helpers and 94,400 without their six
+`#[inline(never)]` attributes: the old failure no longer reproduced. A separate
+positive control kept a 65,536-byte local array live across `mldsa87_sign`, with
+`core::hint::black_box(&mut stack_probe)` before the operation and after
+`rnd.wipe()`. It raised the measured maximum to 159,640 bytes and exceeded the
+same baseline envelope. This calibrates frame-growth detection; it does not
+claim the historical wedge still exists.
 
 ## The wire
 
@@ -233,7 +560,8 @@ serial — is recognisable as emulator-made.
 - **The firmware's outer loop**: the applet wiring *is* shared now
   (`crates/rsk-device`), so a routing or gating bug shows up here. What is still
   written twice is the worker's sequencing — refresh the capability set when the
-  dirty latch is up, run a queued reboot only after the response is out — and
+  dirty latch is up, run a queued reboot once the response is out or on an idle
+  pass, never ahead of a request already waiting — and
   `firmware/src/{main,worker,presence,led}.rs`, which are the board's.
 
 A green run against the emulator is a protocol result, not a device result.

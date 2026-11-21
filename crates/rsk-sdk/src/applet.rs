@@ -3,9 +3,19 @@
 
 //! The `Applet` trait plus AID-based SELECT and APDU dispatch.
 
+// Host bytes: a panic here is a board that answers nothing until unplugged.
+#![deny(
+    clippy::indexing_slicing,
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::cast_possible_truncation
+)]
+
+use rsk_secret::WipeGuard;
 use zeroize::Zeroize;
 
-use crate::apdu::{Apdu, NE_SHORT_MAX};
+use crate::apdu::{Apdu, INS_GET_RESPONSE};
 use crate::sw::Sw;
 
 /// A response buffer an applet writes its RAPDU body into. The status word is
@@ -13,14 +23,24 @@ use crate::sw::Sw;
 pub struct ResBuf<'a> {
     buf: &'a mut [u8],
     len: usize,
+    /// How much of `buf` the producer may fill; see [`Self::limit`].
+    cap: usize,
 }
 
 impl<'a> ResBuf<'a> {
     pub fn new(buf: &'a mut [u8]) -> Self {
-        ResBuf { buf, len: 0 }
+        let cap = buf.len();
+        ResBuf { buf, len: 0, cap }
     }
+    /// Let the producer fill at most `cap` bytes, never more than the buffer holds:
+    /// the dispatcher hands an applet it cannot chain one frame's body.
+    pub fn limit(&mut self, cap: usize) {
+        self.cap = cap.min(self.buf.len());
+    }
+    /// Empty the buffer and lift any [`Self::limit`].
     pub fn clear(&mut self) {
         self.len = 0;
+        self.cap = self.buf.len();
     }
     pub fn len(&self) -> usize {
         self.len
@@ -29,27 +49,32 @@ impl<'a> ResBuf<'a> {
         self.len == 0
     }
     pub fn capacity(&self) -> usize {
-        self.buf.len()
+        self.cap
     }
     /// Append one byte; returns false if the buffer is full.
     pub fn push(&mut self, b: u8) -> bool {
-        if self.len < self.buf.len() {
-            self.buf[self.len] = b;
-            self.len += 1;
-            true
-        } else {
-            false
+        if self.len >= self.cap {
+            return false;
         }
+        let Some(slot) = self.buf.get_mut(self.len) else {
+            return false;
+        };
+        *slot = b;
+        self.len += 1;
+        true
     }
     /// Append a slice; returns false (and writes nothing) if it would overflow.
     pub fn extend(&mut self, data: &[u8]) -> bool {
-        if self.len + data.len() <= self.buf.len() {
-            self.buf[self.len..self.len + data.len()].copy_from_slice(data);
-            self.len += data.len();
-            true
-        } else {
-            false
+        let end = self.len + data.len();
+        if end > self.cap {
+            return false;
         }
+        let Some(dst) = self.buf.get_mut(self.len..end) else {
+            return false;
+        };
+        dst.copy_from_slice(data);
+        self.len = end;
+        true
     }
     /// The unwritten tail, so a producer can fill the response **in place**
     /// instead of building the body in a buffer of its own and copying it in.
@@ -57,7 +82,7 @@ impl<'a> ResBuf<'a> {
     /// it may return, which on a 520 KiB part is the difference between serving
     /// a 2 KiB data object and not. Commit what was written with [`Self::commit`].
     pub fn spare_mut(&mut self) -> &mut [u8] {
-        &mut self.buf[self.len..]
+        self.buf.get_mut(self.len..self.cap).unwrap_or_default()
     }
     /// Take `n` bytes written through [`Self::spare_mut`] into the body.
     ///
@@ -67,10 +92,10 @@ impl<'a> ResBuf<'a> {
     /// reused across commands, so the bytes would be the tail of the PREVIOUS
     /// response. Every caller must pass exactly what it wrote.
     pub fn commit(&mut self, n: usize) {
-        self.len = self.buf.len().min(self.len + n);
+        self.len = self.cap.min(self.len + n);
     }
     pub fn as_slice(&self) -> &[u8] {
-        &self.buf[..self.len]
+        self.buf.get(..self.len).unwrap_or_default()
     }
     /// Shorten the body to `n` bytes (no-op when already `≤ n`).
     pub fn truncate(&mut self, n: usize) {
@@ -90,7 +115,7 @@ pub trait Applet<C> {
     /// select), so registering a shortened form makes the real AID unselectable.
     fn aid(&self) -> &'static [u8];
     /// Called on SELECT. `reselect` is true when this applet was already current.
-    /// `res` receives the SELECT response body (e.g. an OpenPGP FCI); leave it
+    /// `res` receives the SELECT response body (e.g. the PIV APT); leave it
     /// empty for applets that return no data.
     fn select(&mut self, reselect: bool, ctx: &mut C, res: &mut ResBuf) -> Sw;
     /// Handle a non-SELECT command APDU.
@@ -99,8 +124,8 @@ pub trait Applet<C> {
     fn deselect(&mut self, _ctx: &mut C) {}
     /// Whether the dispatcher may apply ISO 7816-4 outgoing response chaining
     /// (a `61xx` status + GET RESPONSE `0xC0` follow-ups) when a response body
-    /// exceeds the command's short `Le`. Default off — only applets whose host
-    /// stacks speak standard GET RESPONSE opt in (OpenPGP for `gpg`/`scdaemon`,
+    /// exceeds the command's [`Apdu::frame_cap`]. Default off — only applets whose
+    /// host stacks speak standard GET RESPONSE opt in (OpenPGP for `gpg`/`scdaemon`,
     /// PIV for OpenSC/`ykman`). OATH has its own SEND REMAINING (`0xA5`) scheme
     /// and stays off; the vendor/rescue tools use extended `Le` so never need it.
     fn response_chaining(&self) -> bool {
@@ -108,30 +133,56 @@ pub trait Applet<C> {
     }
 }
 
-/// Holds a command chain's accumulated segments. It is the CCID handler's
-/// body cap — one frame — and `docs/protocol.md` publishes that number to
-/// third-party hosts. `rsk-sdk` cannot see `rsk-usb`, so nothing but this
-/// sentence ties the two together; `rsk-device` holds the compile-time
-/// assertions for the constants it can reach.
+/// Holds a command chain's accumulated segments: the 3072 bytes a YubiKey 5.8.0
+/// reassembles, and `docs/protocol.md` publishes that number. `rsk-sdk` cannot see
+/// `rsk-usb`, so `rsk-device` asserts it against the frame, and PIV's largest object.
 #[cfg(not(kani))]
-const CHAIN_BUF_SIZE: usize = 2038;
-/// Holds the unsent tail of a response while the host fetches it with GET
-/// RESPONSE. Sized to the largest response buffer a caller passes (the CCID
-/// handler's 2038-byte body cap).
+pub const CHAIN_BUF_SIZE: usize = 3072;
+/// The most a transport frame carries back, status word excluded: one CCID
+/// frame's payload less two. A longer body leaves through `61xx` whatever its `Le`.
 #[cfg(not(kani))]
-const RESP_CHAIN_CAP: usize = 2048;
+pub const FRAME_BODY: usize = 3060;
+/// The response buffer the CCID transport hands [`Dispatcher::process`]: an applet
+/// builds its answer whole in it before the dispatcher cuts it into frames, so it
+/// holds the largest a command can ask back. `rsk-device` asserts PIV's object fits.
+#[cfg(not(kani))]
+pub const RESP_BUILD: usize = 3072;
+/// Holds the unsent tail of a response while the host fetches it with GET RESPONSE.
+#[cfg(not(kani))]
+const RESP_CHAIN_CAP: usize = RESP_BUILD;
 
 // Proof-only: CBMC bit-blasts both arrays whole, and the sequence harness needs
 // 17.5 GiB at the real sizes. Sound because of the harness's window rather than
 // the size (`Nc <= 1` per command ⇒ `chain_len <= 2`) — see `applet_kani.rs`.
 #[cfg(kani)]
-const CHAIN_BUF_SIZE: usize = 16;
+pub const CHAIN_BUF_SIZE: usize = 16;
+#[cfg(kani)]
+pub const FRAME_BODY: usize = 16;
+#[cfg(kani)]
+pub const RESP_BUILD: usize = 16;
 #[cfg(kani)]
 const RESP_CHAIN_CAP: usize = 16;
 
+/// How much of the response buffer an applet may fill: all of it when the
+/// dispatcher can chain what passes one frame, else one frame's body.
+fn frame_room(chaining_ok: bool) -> usize {
+    if chaining_ok { usize::MAX } else { FRAME_BODY }
+}
+
 /// `61 XX` bytes-remaining; SW2 saturates to `00` (= 256+ left) per ISO 7816-4.
-const fn bytes_remaining(left: usize) -> Sw {
-    Sw::new(0x61, if left > 0xFF { 0 } else { left as u8 })
+pub const fn bytes_remaining(left: usize) -> Sw {
+    let [low, ..] = left.to_le_bytes();
+    Sw::new(0x61, if left > 0xFF { 0 } else { low })
+}
+
+/// Deselect the applet in slot `c`, by a walk rather than `get_mut(c)`: Kani's CBMC
+/// does not converge on a virtual call through a symbolically indexed slot (measured).
+fn deselect_slot<C>(applets: &mut [&mut dyn Applet<C>], c: usize, ctx: &mut C) {
+    for (k, prev) in applets.iter_mut().enumerate() {
+        if k == c {
+            prev.deselect(ctx);
+        }
+    }
 }
 
 /// Routes APDUs to applets: SELECT-by-AID, command chaining (CLA bit 0x10),
@@ -155,8 +206,8 @@ pub struct Dispatcher {
     chain: [u8; CHAIN_BUF_SIZE],
     chain_len: usize,
     /// Outgoing response chaining: when an opted-in applet's body exceeds the
-    /// command's short `Le`, the first `Le` bytes ship with `61xx` and this
-    /// holds the remainder for the GET RESPONSE (`0xC0`) follow-ups.
+    /// command's frame cap, the bytes within it ship with `61xx` and this holds
+    /// the remainder for the GET RESPONSE (`0xC0`) follow-ups.
     pending: [u8; RESP_CHAIN_CAP],
     pending_len: usize,
     pending_off: usize,
@@ -195,8 +246,8 @@ impl Dispatcher {
     }
 
     /// Restrict which registered applets are selectable: bit `i` set → applet
-    /// index `i` is active; cleared → invisible (SELECT and any command to it
-    /// return `FILE_NOT_FOUND`, exactly as if it were not registered). Indices
+    /// index `i` is active; cleared → invisible (a SELECT finds nothing, `6A82`, and a
+    /// command to it gets the `6D00` of no selection, as if never registered). Indices
     /// `≥ 32` are always active. The firmware sets this from the persisted
     /// enabled-applications config, so `ykman config usb --disable X` really
     /// removes X's applet rather than only hiding it from the DeviceInfo report.
@@ -250,21 +301,29 @@ impl Dispatcher {
             Err(_) => return Sw::WRONG_LENGTH,
         };
 
-        // The class byte, one owner for every applet. A YubiKey 5.7.4 examines
-        // exactly two bits and in this order: chaining wins outright (`1C`, `90`
-        // and `FF` are plain segments there, so an SM refusal must not touch
-        // them), else a secure-messaging class is `6E00` — measured on PIV,
-        // OpenPGP and OATH alike. Serving it instead would hand a client that
-        // believes it negotiated SM an unprotected exchange it cannot tell apart.
-        if !apdu.is_chaining() && apdu.is_secure_messaging() {
+        // GET RESPONSE (0xC0) is the transport's, not an applet's. While a tail is
+        // owed its SM bits are not judged: a YubiKey 5.8.0 serves the rest of an
+        // answer it already began in the clear.
+        let get_response = apdu.ins == INS_GET_RESPONSE;
+        if self.continues_response(&apdu) {
+            return self.serve_pending(apdu.frame_cap(), res);
+        }
+        // With the chaining bit and no chain open a YubiKey 5.8.0 answers it `9000`
+        // and changes nothing: no chain opens, a held tail waits for the next one.
+        if get_response && apdu.is_chaining() && !self.chaining {
+            return Sw::OK;
+        }
+
+        // Chaining wins outright (`1C`, `90`, `FF` are plain segments). Under an applet an SM
+        // class is `6E00` bar a SELECT under `04`/`84` (served as `00`); with none, `6D00` below.
+        if !apdu.is_chaining()
+            && apdu.is_secure_messaging()
+            && !(is_select(&apdu) && apdu.is_served_over_ccid())
+            && self.current.is_some_and(|i| self.selectable(i))
+        {
             return Sw::CLA_NOT_SUPPORTED;
         }
 
-        // GET RESPONSE (0xC0): hand back the next slice of a chained response
-        // before touching the applets — it is a transport command, not theirs.
-        if apdu.ins == 0xC0 && self.pending_off < self.pending_len {
-            return self.serve_pending(apdu.ne, res);
-        }
         // Any other command abandons a partially-read chained response.
         self.clear_pending();
 
@@ -281,22 +340,22 @@ impl Dispatcher {
                 // Only the terminator was ever bound to the opener, so a second
                 // process could splice its own segments into a live chain and have
                 // the opener's own final APDU dispatch them (audit run-37).
-                self.chain[..self.chain_len].zeroize();
-                self.chain_len = 0;
-                self.chaining = false;
+                self.clear_chaining();
                 return Sw::LAST_CHAIN_EXPECTED;
             }
             if self.chain_len + apdu.nc >= self.chain.len() {
                 // The accumulated segments may already hold key material.
-                self.chain[..self.chain_len].zeroize();
-                self.chain_len = 0;
-                self.chaining = false;
+                self.clear_chaining();
                 // The same length error the final segment's overflow gives
                 // below: the command is too long, and the class byte that
                 // carried it was right. A YubiKey 5.7.4 answers `6700` here too.
                 return Sw::WRONG_LENGTH;
             }
-            self.chain[self.chain_len..self.chain_len + apdu.nc].copy_from_slice(apdu.data);
+            let Some(segment) = self.chain.get_mut(self.chain_len..self.chain_len + apdu.nc) else {
+                self.clear_chaining();
+                return Sw::WRONG_LENGTH;
+            };
+            segment.copy_from_slice(apdu.data);
             self.chain_len += apdu.nc;
             self.chaining = true;
             return Sw::OK;
@@ -321,9 +380,7 @@ impl Dispatcher {
         if self.chaining
             && (select || (apdu.cla & !0x10, apdu.ins, apdu.p1, apdu.p2) != self.chain_hdr)
         {
-            self.chain[..self.chain_len].zeroize();
-            self.chain_len = 0;
-            self.chaining = false;
+            self.clear_chaining();
             // Dropping the chain and letting the SELECT run is the carve-out from
             // audit run-34 #26; everything else is refused, because absorbing it is
             // what let one process prefix another's command.
@@ -336,35 +393,40 @@ impl Dispatcher {
         // data and dispatch the reassembled command (needed by OpenPGP RSA IMPORT,
         // whose extended header list exceeds 255 bytes).
         if self.chaining {
-            if self.chain_len + apdu.nc > self.chain.len() {
-                self.chain[..self.chain_len].zeroize();
-                self.chain_len = 0;
-                self.chaining = false;
-                return Sw::WRONG_LENGTH;
-            }
-            self.chain[self.chain_len..self.chain_len + apdu.nc].copy_from_slice(apdu.data);
             let total = self.chain_len + apdu.nc;
+            let Some(segment) = self.chain.get_mut(self.chain_len..total) else {
+                self.clear_chaining();
+                return Sw::WRONG_LENGTH;
+            };
+            segment.copy_from_slice(apdu.data);
             self.chaining = false;
             self.chain_len = 0;
-            let combined = Apdu {
-                cla: apdu.cla,
-                ins: apdu.ins,
-                p1: apdu.p1,
-                p2: apdu.p2,
-                nc: total,
-                ne: apdu.ne,
-                data: &self.chain[..total],
-            };
             // A disabled current applet is unreachable, like a dropped selection.
             let cur = self.current.filter(|&i| self.selectable(i));
-            let chain_ok = cur.map(|i| applets[i].response_chaining()).unwrap_or(false);
-            let sw = match cur {
-                Some(i) => applets[i].process(&combined, ctx, res),
-                None => Sw::FILE_NOT_FOUND,
+            let chain_ok = cur
+                .and_then(|i| applets.get(i))
+                .is_some_and(|app| app.response_chaining());
+            res.limit(frame_room(chain_ok));
+            let sw = {
+                // A chained command can carry private-key IMPORT data: wiped when
+                // this block is left, however it is left.
+                let data = WipeGuard::new(self.chain.get_mut(..total).unwrap_or_default());
+                let combined = Apdu {
+                    cla: apdu.cla,
+                    ins: apdu.ins,
+                    p1: apdu.p1,
+                    p2: apdu.p2,
+                    nc: total,
+                    ne: apdu.ne,
+                    data: &data,
+                    extended: apdu.extended,
+                };
+                match cur.and_then(|i| applets.get_mut(i)) {
+                    Some(app) => app.process(&combined, ctx, res),
+                    None => Sw::INS_NOT_SUPPORTED,
+                }
             };
-            // A chained command can carry private-key IMPORT data.
-            self.chain[..total].zeroize();
-            return self.maybe_chain(sw, apdu.ne, chain_ok, res);
+            return self.maybe_chain(sw, apdu.frame_cap(), chain_ok, res);
         }
 
         // SELECT by AID, ISO 7816-4 truncated: the candidate must be a PREFIX of
@@ -388,44 +450,54 @@ impl Dispatcher {
                     if let Some(c) = self.current
                         && c != i
                     {
-                        applets[c].deselect(ctx);
+                        deselect_slot(applets, c, ctx);
                     }
                     self.current = Some(i);
-                    let chain_ok = applets[i].response_chaining();
-                    let sw = applets[i].select(reselect, ctx, res);
-                    self.maybe_chain(sw, apdu.ne, chain_ok, res)
+                    let Some(app) = applets.get_mut(i) else {
+                        return Sw::FILE_NOT_FOUND;
+                    };
+                    let chain_ok = app.response_chaining();
+                    res.limit(frame_room(chain_ok));
+                    let sw = app.select(reselect, ctx, res);
+                    self.maybe_chain(sw, apdu.frame_cap(), chain_ok, res)
                 }
                 None => Sw::FILE_NOT_FOUND,
             };
         }
 
-        // The master-file SELECT (`00 A4 00 0C …`, GnuPG scdaemon's `3F00` probe)
-        // must answer 6D00 like a YubiKey, or scdaemon skips its YubiKey detection
-        // and shows a raw serial (issue #44). Key on P2=0x0C (SELECT, no response
-        // data): INS 0xA4 is overloaded — OATH reuses it for CALCULATE ALL
-        // (`A4 p1=00 p2=01`), which must still reach the applet, not be shadowed.
+        // The master-file SELECT (`00 A4 00 0C …`, scdaemon's `3F00` probe) answers
+        // 6D00 like a YubiKey, or scdaemon skips its YubiKey detection: it shows a raw
+        // serial (issue #44), and stops forgiving the 6581 an empty OpenPGP slot's key
+        // read answers, which fails `gpg --card-status`. Key on P2=0x0C: INS 0xA4 is
+        // overloaded — OATH's CALCULATE ALL (`A4 p1=00 p2=01`) must still reach it.
         if apdu.ins == 0xA4 && apdu.p1 == 0x00 && apdu.p2 == 0x0C {
             return Sw::INS_NOT_SUPPORTED;
         }
 
-        // Dispatch to the selected applet (unless it was disabled since SELECT).
-        match self.current {
-            Some(i) if self.selectable(i) => {
-                let chain_ok = applets[i].response_chaining();
-                let sw = applets[i].process(&apdu, ctx, res);
-                self.maybe_chain(sw, apdu.ne, chain_ok, res)
+        // Dispatch to the selected applet; with none, or one disabled since, `6D00` like a YubiKey.
+        let current = self.current.filter(|&i| self.selectable(i));
+        match current.and_then(|i| applets.get_mut(i)) {
+            Some(app) => {
+                let chain_ok = app.response_chaining();
+                res.limit(frame_room(chain_ok));
+                let sw = app.process(&apdu, ctx, res);
+                self.maybe_chain(sw, apdu.frame_cap(), chain_ok, res)
             }
-            _ => Sw::FILE_NOT_FOUND,
+            None => Sw::INS_NOT_SUPPORTED,
         }
     }
 
     /// Drop any held GET RESPONSE remainder, scrubbing it (it can be PSO output).
-    /// Public so a transport that short-circuits [`Self::process`] (the firmware's
-    /// dual-core RSA-keygen fast path) can drop a stale chained-response tail the
-    /// way a normal dispatch would.
+    /// Public so a transport that dispatches around [`Self::process`] (the CCID
+    /// pinpad's out-of-band VERIFY) can drop a stale chained-response tail the way
+    /// a normal dispatch would.
     pub fn clear_pending(&mut self) {
-        if self.pending_len > 0 {
-            self.pending[..self.pending_len].zeroize();
+        if let Some(held) = self.pending.get_mut(..self.pending_len) {
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "the dispatcher's held GET RESPONSE tail: dropping it is its wipe point"
+            )]
+            held.zeroize();
         }
         self.pending_len = 0;
         self.pending_off = 0;
@@ -433,24 +505,65 @@ impl Dispatcher {
 
     /// Drop any half-accumulated incoming command chain, scrubbing it (chained
     /// segments can hold private-key IMPORT data). Public for the same reason as
-    /// [`Self::clear_pending`]: a transport that short-circuits [`Self::process`]
-    /// (the RSA-keygen fast path) must reset the incoming chaining state too, so a
-    /// stale chain cannot concatenate onto a later command.
+    /// [`Self::clear_pending`]: a transport that dispatches around [`Self::process`]
+    /// must reset the incoming chaining state too, so a stale chain cannot
+    /// concatenate onto a later command.
     pub fn clear_chaining(&mut self) {
-        if self.chain_len > 0 {
-            self.chain[..self.chain_len].zeroize();
+        if let Some(held) = self.chain.get_mut(..self.chain_len) {
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "the dispatcher's own chain buffer: dropping a chain is its wipe point"
+            )]
+            held.zeroize();
         }
         self.chain_len = 0;
         self.chaining = false;
     }
 
-    /// Serve the next chunk of a chained response to a GET RESPONSE (`0xC0`).
-    /// Returns `61xx` while bytes remain, then the original status word.
-    fn serve_pending(&mut self, ne: usize, res: &mut ResBuf) -> Sw {
-        let want = if ne == 0 { NE_SHORT_MAX } else { ne };
+    /// Whether a command chain is open: a segment taken and its final one due.
+    pub fn chain_open(&self) -> bool {
+        self.chaining
+    }
+
+    /// Whether a GET RESPONSE would be served a tail: an answer begun, not finished.
+    pub fn response_owed(&self) -> bool {
+        self.pending_off < self.pending_len
+    }
+
+    /// Whether dispatch only drains an answer already held in RAM.
+    pub fn continues_response(&self, apdu: &Apdu<'_>) -> bool {
+        apdu.ins == INS_GET_RESPONSE && !apdu.is_chaining() && self.response_owed()
+    }
+
+    /// The answer half of [`Self::process`], for a response an applet made outside
+    /// it (the RSA-keygen fast path): drop the held tail, then, for an applet whose
+    /// `response_chaining` is `chaining_ok`, cut the body at `cap` (the command's
+    /// [`Apdu::frame_cap`], one frame at most) and hold the rest for GET RESPONSE.
+    /// Never with a chain open: a command then is the dispatcher's, to join to it or
+    /// refuse `6883`.
+    pub fn chain_response(
+        &mut self,
+        sw: Sw,
+        cap: usize,
+        chaining_ok: bool,
+        res: &mut ResBuf,
+    ) -> Sw {
+        debug_assert!(!self.chaining, "a response made outside an open chain");
+        self.clear_pending();
+        self.maybe_chain(sw, cap, chaining_ok, res)
+    }
+
+    /// Serve the next chunk of a chained response to a GET RESPONSE (`0xC0`): as
+    /// much as its own [`Apdu::frame_cap`] allows, one frame at most, and `res`
+    /// holds. Returns `61xx` while bytes remain, then the original status word.
+    fn serve_pending(&mut self, cap: usize, res: &mut ResBuf) -> Sw {
         let remaining = self.pending_len - self.pending_off;
-        let take = want.min(remaining);
-        res.extend(&self.pending[self.pending_off..self.pending_off + take]);
+        let take = cap
+            .min(FRAME_BODY)
+            .min(remaining)
+            .min(res.capacity() - res.len());
+        let chunk = self.pending.get(self.pending_off..self.pending_off + take);
+        res.extend(chunk.unwrap_or_default());
         self.pending_off += take;
         let left = self.pending_len - self.pending_off;
         if left > 0 {
@@ -462,32 +575,37 @@ impl Dispatcher {
         }
     }
 
-    /// If an opted-in applet's success body overruns the command's short `Le`,
-    /// hold the tail for GET RESPONSE and ship the first `Le` bytes with `61xx`.
-    /// Otherwise the response (and status) pass through unchanged — so extended
-    /// `Le` consumers (ykman, our APDU tests) and non-chaining applets are
-    /// byte-for-byte unaffected.
+    /// If an opted-in applet's success body overruns the command's `cap` (its
+    /// [`Apdu::frame_cap`], one frame at most), hold the tail for GET RESPONSE and
+    /// ship the first `cap` bytes with `61xx`. Otherwise the response (and status)
+    /// pass through unchanged, as they always do for an applet that does not chain,
+    /// unless the body is longer than a frame: that is refused whole, never cut.
     ///
-    /// `ne == 0` is a case-3 command (data, no `Le`): ISO 7816-4 still caps its
-    /// response at the short maximum, so a larger body must chain via `61xx` too.
-    /// yubikey.rs / age-plugin read slot certs this way and drop any slot whose
-    /// cert overruns 256 bytes if we dump it whole instead of chaining.
-    fn maybe_chain(&mut self, sw: Sw, ne: usize, chaining_ok: bool, res: &mut ResBuf) -> Sw {
-        let ne = if ne == 0 { NE_SHORT_MAX } else { ne };
-        if !chaining_ok || !sw.is_ok() || res.len() <= ne {
-            return sw;
+    /// A short case-3 command (data, no `Le`) is capped at 256, so a larger body
+    /// chains via `61xx` too: yubikey.rs / age-plugin read slot certs this way and
+    /// drop any slot whose cert overruns 256 bytes if we dump it whole instead.
+    fn maybe_chain(&mut self, sw: Sw, cap: usize, chaining_ok: bool, res: &mut ResBuf) -> Sw {
+        let cap = cap.min(FRAME_BODY);
+        let tail_len = res.len().saturating_sub(cap);
+        if chaining_ok
+            && sw.is_ok()
+            && tail_len > 0
+            && let (Some(dst), Some(src)) =
+                (self.pending.get_mut(..tail_len), res.as_slice().get(cap..))
+        {
+            dst.copy_from_slice(src);
+            self.pending_len = tail_len;
+            self.pending_off = 0;
+            self.pending_sw = sw;
+            res.truncate(cap);
+            return bytes_remaining(tail_len);
         }
-        let tail_len = res.len() - ne;
-        if tail_len > self.pending.len() {
-            // Cannot buffer the remainder; leave the response intact (legacy).
-            return sw;
+        // A transport sends a longer body without its status word, or not at all.
+        if res.len() > FRAME_BODY {
+            res.clear();
+            return Sw::EXEC_ERROR;
         }
-        self.pending[..tail_len].copy_from_slice(&res.as_slice()[ne..]);
-        self.pending_len = tail_len;
-        self.pending_off = 0;
-        self.pending_sw = sw;
-        res.truncate(ne);
-        bytes_remaining(tail_len)
+        sw
     }
 }
 
@@ -497,5 +615,13 @@ impl Dispatcher {
 mod proofs;
 
 #[cfg(test)]
+#[allow(
+    clippy::indexing_slicing,
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::cast_possible_truncation,
+    reason = "a test's fixture is its own bound, and a panic is its failure report"
+)]
 #[path = "applet_tests.rs"]
 mod tests;

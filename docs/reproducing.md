@@ -24,7 +24,7 @@ omits what it cannot do is worse than the list of commands it replaced.
 ```sh
 nix develop -c ./scripts/reproduce.sh --list        # the phases and what each reproduces
 nix develop -c ./scripts/reproduce.sh --refusals    # what this checkout cannot produce, by name
-nix develop -c ./scripts/reproduce.sh quick merge   # minutes, then the per-commit gate
+nix develop -c ./scripts/reproduce.sh quick merge   # minutes, then both gate layers
 nix develop -c ./scripts/reproduce.sh model         # the TLA+ tiers, hours
 nix develop -c ./scripts/reproduce.sh deep          # the weekly rows, most of a day
 ```

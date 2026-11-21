@@ -4,10 +4,43 @@
 use super::*;
 use rsk_fs::storage::ram::RamStorage;
 
+#[test]
+fn calendar_fields_refuse_each_invalid_boundary_and_round_trip_months() {
+    for (month, day, hour, minute, second) in [
+        (12, 1, 0, 0, 0),
+        (0, 0, 0, 0, 0),
+        (0, 32, 0, 0, 0),
+        (0, 1, 24, 0, 0),
+        (0, 1, 0, 60, 0),
+        (0, 1, 0, 0, 61),
+    ] {
+        assert_eq!(
+            epoch_from_civil(2026, month, day, hour, minute, second),
+            None
+        );
+    }
+    for year in [1970, 2000, 2026, 2100] {
+        for month in 0..12 {
+            let epoch = epoch_from_civil(year, month, 1, 12, 34, 56).unwrap();
+            let civil = civil_from_epoch(epoch);
+            assert_eq!(
+                (
+                    civil.year, civil.mon0, civil.mday, civil.hour, civil.min, civil.sec
+                ),
+                (year as u16, month, 1, 12, 34, 56)
+            );
+        }
+    }
+}
+
+#[path = "command_bounds_tests.rs"]
+mod command_bounds;
+
 /// A provisioned MKEK for the tests. The applet holds a way to READ the fuses, not
 /// the key, so a test source has to be a plain `fn`.
-fn test_mkek() -> Option<[u8; 32]> {
-    Some([0x11; 32])
+fn test_mkek(out: &mut [u8; 32]) -> bool {
+    *out = [0x11; 32];
+    true
 }
 
 struct LcgRng(u64);
@@ -31,30 +64,41 @@ impl UserPresence for DenyPresence {
 }
 
 struct FakePlatform {
+    seal_status: seal::Status,
     time: Option<u32>,
     reboots: Vec<bool>,
     status: (bool, bool, u8),
     /// Simulated PAGE58_LOCK1 raw value; `None` models a read error.
     lock_raw: Option<u32>,
     lock_writes: u32,
+    /// What a burn ORs into the row: the latch, unless a test models one that
+    /// reported success without taking.
+    lock_burn: u32,
     /// Simulated anti-rollback rows; `None` models a read error.
     rollback_raw: Option<rollback::RollbackRaw>,
     rollback_writes: u32,
+    rollback_lands: bool,
+    /// What the boot's seal passes left under the pre-burn key.
+    pre_otp_left: Option<u16>,
 }
 impl Default for FakePlatform {
     fn default() -> Self {
         FakePlatform {
+            seal_status: seal::Status::Unchecked,
             time: None,
             reboots: Vec::new(),
             status: (false, false, 0xFF),
             lock_raw: Some(0),
             lock_writes: 0,
+            lock_burn: otp_lock::PAGE58_LATCH_VALUE,
             rollback_raw: Some(rollback::RollbackRaw {
                 flags0: [0; 3],
                 version0: [0; 3],
                 version1: [0; 3],
             }),
             rollback_writes: 0,
+            rollback_lands: true,
+            pre_otp_left: Some(0),
         }
     }
 }
@@ -78,10 +122,16 @@ impl Platform for FakePlatform {
     fn read_page58_lock_raw(&self) -> Option<u32> {
         self.lock_raw
     }
+    fn pre_otp_left(&self) -> Option<u16> {
+        self.pre_otp_left
+    }
+    fn auto_seal_status(&self) -> seal::Status {
+        self.seal_status
+    }
     fn lock_page58(&mut self) -> bool {
-        // OTP bits only go 0→1; model the fuse burning to our value.
+        // OTP bits only go 0→1; model the fuse burning our value into the row.
         self.lock_writes += 1;
-        self.lock_raw = Some(otp_lock::PAGE58_LOCK_VALUE);
+        self.lock_raw = Some(self.lock_raw.unwrap_or(0) | self.lock_burn);
         true
     }
     fn read_rollback_raw(&self) -> Option<rollback::RollbackRaw> {
@@ -90,7 +140,9 @@ impl Platform for FakePlatform {
     fn set_rollback_required(&mut self) -> bool {
         // OR the bit into every copy, like the firmware burn does.
         self.rollback_writes += 1;
-        if let Some(raw) = self.rollback_raw.as_mut() {
+        if self.rollback_lands
+            && let Some(raw) = self.rollback_raw.as_mut()
+        {
             for row in raw.flags0.iter_mut() {
                 *row |= rollback::ROLLBACK_REQUIRED_BIT;
             }
@@ -197,7 +249,7 @@ fn otp_lock_writes_once_then_idempotent() {
     let rng = RefCell::new(LcgRng(7));
     let platform = RefCell::new(FakePlatform::default()); // lock_raw = Some(0)
     let presence = RefCell::new(AlwaysConfirm);
-    let mut app = lock_app(&rng, &platform, &presence, Some(test_mkek as FusedKey));
+    let mut app = lock_app(&rng, &platform, &presence, Some(FusedKey::open(test_mkek)));
     let mut fs = Fs::new(RamStorage::new());
 
     let (sw, _) = run(&mut app, &mut fs, &lock_apdu());
@@ -205,7 +257,7 @@ fn otp_lock_writes_once_then_idempotent() {
     assert_eq!(platform.borrow().lock_writes, 1);
     assert_eq!(
         platform.borrow().lock_raw,
-        Some(otp_lock::PAGE58_LOCK_VALUE)
+        Some(otp_lock::PAGE58_LATCH_VALUE)
     );
 
     // A second call finds the row already locked: OK, no further fuse write.
@@ -231,7 +283,7 @@ fn otp_lock_rejects_bad_guards() {
     let rng = RefCell::new(LcgRng(7));
     let platform = RefCell::new(FakePlatform::default());
     let presence = RefCell::new(AlwaysConfirm);
-    let mut app = lock_app(&rng, &platform, &presence, Some(test_mkek as FusedKey));
+    let mut app = lock_app(&rng, &platform, &presence, Some(FusedKey::open(test_mkek)));
     let mut fs = Fs::new(RamStorage::new());
 
     // wrong P1 (not the page number)
@@ -262,13 +314,13 @@ fn otp_lock_rejects_bad_guards() {
 #[test]
 fn otp_lock_refuses_foreign_lock_value() {
     let rng = RefCell::new(LcgRng(7));
-    // a different, pre-existing lock config
+    // a different, pre-existing lock config: LOCK_S 2, a bit outside the latch
     let platform = RefCell::new(FakePlatform {
-        lock_raw: Some(0x14_14_14),
+        lock_raw: Some(0x3E_3E_3E),
         ..Default::default()
     });
     let presence = RefCell::new(AlwaysConfirm);
-    let mut app = lock_app(&rng, &platform, &presence, Some(test_mkek as FusedKey));
+    let mut app = lock_app(&rng, &platform, &presence, Some(FusedKey::open(test_mkek)));
     let mut fs = Fs::new(RamStorage::new());
     let (sw, _) = run(&mut app, &mut fs, &lock_apdu());
     assert_eq!(sw, Sw::CONDITIONS_NOT_SATISFIED);
@@ -288,7 +340,7 @@ fn otp_lock_read_error_is_exec_error() {
         ..Default::default()
     });
     let presence = RefCell::new(AlwaysConfirm);
-    let mut app = lock_app(&rng, &platform, &presence, Some(test_mkek as FusedKey));
+    let mut app = lock_app(&rng, &platform, &presence, Some(FusedKey::open(test_mkek)));
     let mut fs = Fs::new(RamStorage::new());
     let (sw, _) = run(&mut app, &mut fs, &lock_apdu());
     assert_eq!(sw, Sw::EXEC_ERROR);
@@ -336,7 +388,7 @@ fn rollback_require_needs_secure_boot() {
     let rng = RefCell::new(LcgRng(7));
     let platform = RefCell::new(FakePlatform::default()); // secure boot off
     let presence = RefCell::new(AlwaysConfirm);
-    let mut app = lock_app(&rng, &platform, &presence, Some(test_mkek as FusedKey));
+    let mut app = lock_app(&rng, &platform, &presence, Some(FusedKey::open(test_mkek)));
     let mut fs = Fs::new(RamStorage::new());
     let (sw, _) = run(&mut app, &mut fs, &rollback_apdu());
     assert_eq!(sw, Sw::CONDITIONS_NOT_SATISFIED);
@@ -348,7 +400,7 @@ fn rollback_require_rejects_bad_guards() {
     let rng = RefCell::new(LcgRng(7));
     let platform = RefCell::new(secure_platform());
     let presence = RefCell::new(AlwaysConfirm);
-    let mut app = lock_app(&rng, &platform, &presence, Some(test_mkek as FusedKey));
+    let mut app = lock_app(&rng, &platform, &presence, Some(FusedKey::open(test_mkek)));
     let mut fs = Fs::new(RamStorage::new());
 
     // wrong magic (including the *other* P1's magic)
@@ -395,7 +447,7 @@ fn rollback_require_read_error_is_exec_error() {
         ..secure_platform()
     });
     let presence = RefCell::new(AlwaysConfirm);
-    let mut app = lock_app(&rng, &platform, &presence, Some(test_mkek as FusedKey));
+    let mut app = lock_app(&rng, &platform, &presence, Some(FusedKey::open(test_mkek)));
     let mut fs = Fs::new(RamStorage::new());
     let (sw, _) = run(&mut app, &mut fs, &rollback_apdu());
     assert_eq!(sw, Sw::EXEC_ERROR);
@@ -499,6 +551,44 @@ fn keydev_sign_verifies_and_key_persists() {
         &apdu(0x80, INS_KEYDEV_SIGN, 0x01, 0, &[0; 16]),
     );
     assert_eq!(sw, Sw::WRONG_LENGTH);
+}
+
+/// Past the latch a fused key that did not read leaves no arm to open or seal the
+/// device key under: over an empty store nothing is minted, and a key planted under
+/// the chip-serial arm neither opens nor signs.
+#[test]
+fn past_the_latch_an_unread_key_refuses_and_mints_nothing() {
+    fn unread(_: &mut [u8; 32]) -> bool {
+        false
+    }
+    let rng = RefCell::new(LcgRng(7));
+    let platform = RefCell::new(FakePlatform::default());
+    let presence = RefCell::new(AlwaysConfirm);
+    let pub_apdu = apdu(0x80, INS_KEYDEV_SIGN, 0x02, 0, &[]);
+    let sign = apdu(0x80, INS_KEYDEV_SIGN, 0x01, 0, &[0x42; 32]);
+    let key = |fs: &mut Fs<RamStorage>| {
+        let mut buf = [0u8; 128];
+        let n = fs.read_key(keydev::EF_DEVCERT_KEY, &mut buf);
+        n.map(|n| buf[..n].to_vec())
+    };
+    let mut shut = lock_app(&rng, &platform, &presence, Some(FusedKey::latched(unread)));
+
+    let mut fs = Fs::new(RamStorage::new());
+    assert_eq!(run(&mut shut, &mut fs, &pub_apdu).0, Sw::FUSED_KEY_UNREAD);
+    assert_eq!(key(&mut fs), None, "a device key minted past the latch");
+
+    let mut plant = lock_app(&rng, &platform, &presence, None);
+    assert_eq!(run(&mut plant, &mut fs, &pub_apdu).0, Sw::OK);
+    let planted = key(&mut fs);
+    for cmd in [&pub_apdu, &sign] {
+        let (sw, body) = run(&mut shut, &mut fs, cmd);
+        assert_eq!((sw, body.len()), (Sw::FUSED_KEY_UNREAD, 0));
+    }
+    assert_eq!(
+        key(&mut fs),
+        planted,
+        "a planted device key moved past the latch"
+    );
 }
 
 #[test]
@@ -716,6 +806,31 @@ fn time_set_and_get_both_forms() {
     let bad = [0x07, 0xEA, 12, 11, 0, 0, 0, 0];
     let (sw, _) = run(&mut app, &mut fs, &apdu(0x80, INS_WRITE, 0x02, 0x01, &bad));
     assert_eq!(sw, Sw::DATA_INVALID);
+
+    let last = [0x07, 0xe0, 11, 31, 0, 23, 59, 60];
+    assert_eq!(
+        run(&mut app, &mut fs, &apdu(0x80, INS_WRITE, 0x02, 0x01, &last)).0,
+        Sw::OK
+    );
+    assert_eq!(
+        run(&mut app, &mut fs, &apdu(0x80, INS_READ, 0x04, 0x02, &[])),
+        (Sw::OK, 1483228800u32.to_be_bytes().to_vec())
+    );
+
+    let leap_day = 951782400u32.to_be_bytes();
+    assert_eq!(
+        run(
+            &mut app,
+            &mut fs,
+            &apdu(0x80, INS_WRITE, 0x02, 0x02, &leap_day)
+        )
+        .0,
+        Sw::OK
+    );
+    assert_eq!(
+        run(&mut app, &mut fs, &apdu(0x80, INS_READ, 0x04, 0x01, &[])),
+        (Sw::OK, vec![0x07, 0xd0, 1, 29, 2, 0, 0, 0])
+    );
 }
 
 #[test]
@@ -845,7 +960,7 @@ fn otp_fuse_writes_require_user_presence() {
     let mut app = RescueApplet::new(
         SERIAL_ID,
         SERIAL_HASH,
-        Some(test_mkek as FusedKey),
+        Some(FusedKey::open(test_mkek)),
         None,
         &rng,
         &platform,
@@ -857,6 +972,15 @@ fn otp_fuse_writes_require_user_presence() {
     let (sw, _) = run(&mut app, &mut fs, &lock_apdu());
     assert_eq!(sw, Sw::CONDITIONS_NOT_SATISFIED);
     assert_eq!(platform.borrow().lock_writes, 0, "no burn without presence");
+    // The latch over an older build's lock asks the same touch.
+    platform.borrow_mut().lock_raw = Some(otp_lock::PAGE58_LOCK_VALUE);
+    let (sw, _) = run(&mut app, &mut fs, &lock_apdu());
+    assert_eq!(sw, Sw::CONDITIONS_NOT_SATISFIED);
+    assert_eq!(
+        platform.borrow().lock_writes,
+        0,
+        "no latch without presence"
+    );
 
     // ROLLBACK_REQUIRED: secure boot on, not yet fused, presence denied.
     let platform = RefCell::new(secure_platform());
@@ -864,7 +988,7 @@ fn otp_fuse_writes_require_user_presence() {
     let mut app = RescueApplet::new(
         SERIAL_ID,
         SERIAL_HASH,
-        Some(test_mkek as FusedKey),
+        Some(FusedKey::open(test_mkek)),
         None,
         &rng,
         &platform,
@@ -1066,4 +1190,313 @@ fn a_faulted_devcert_key_probe_does_not_remint_the_device_key() {
     // medium recovers.
     let (sw, again) = run(&mut app, &mut fs, &pub_apdu);
     assert_eq!((sw, again), (Sw::OK, pubkey));
+}
+
+/// Audit run-27 #8's interim ratchet: the burn waits for a boot whose seal passes
+/// left nothing under the pre-burn key, and refuses before the touch, so the
+/// operator is never asked to confirm a burn that will not happen. READ `1E/07`
+/// says what it waits on, every bit set for a boot that could not check.
+#[test]
+fn otp_lock_waits_for_a_boot_that_left_nothing_under_the_pre_burn_key() {
+    struct Counting(u32);
+    impl UserPresence for Counting {
+        fn request(&mut self, _confirm: Confirm<'_>) -> Presence {
+            self.0 += 1;
+            Presence::Confirmed
+        }
+    }
+    let lefts = [
+        (Some(otp_lock::PRE_OTP_FIDO), [0, 1]),
+        (Some(otp_lock::PRE_OTP_DEVICE_KEY), [0, 2]),
+        (Some(otp_lock::PRE_OTP_PIV), [0, 4]),
+        (Some(otp_lock::PRE_OTP_OATH), [0, 8]),
+        (Some(otp_lock::PRE_OTP_OTP), [0, 16]),
+        (Some(otp_lock::PRE_OTP_STORAGE), [0, 32]),
+        (
+            Some(otp_lock::PRE_OTP_FIDO | otp_lock::PRE_OTP_OTP),
+            [0, 17],
+        ),
+        (None, [0xff, 0xff]),
+    ];
+    for (left, want) in lefts {
+        let rng = RefCell::new(LcgRng(7));
+        let platform = RefCell::new(FakePlatform {
+            pre_otp_left: left,
+            ..Default::default()
+        });
+        let presence = RefCell::new(Counting(0));
+        let mut app = RescueApplet::new(
+            SERIAL_ID,
+            SERIAL_HASH,
+            Some(FusedKey::open(test_mkek)),
+            None,
+            &rng,
+            &platform,
+            &presence,
+            KV_TOTAL,
+            FLASH_SIZE,
+        );
+        let mut fs = Fs::new(RamStorage::new());
+        assert_eq!(
+            run(&mut app, &mut fs, &lock_apdu()).0,
+            Sw::CONDITIONS_NOT_SATISFIED
+        );
+        assert_eq!(
+            platform.borrow().lock_writes,
+            0,
+            "{left:?}: the lock was burnt"
+        );
+        assert_eq!(
+            presence.borrow().0,
+            0,
+            "{left:?}: a touch was asked for a refused burn"
+        );
+        let (sw, body) = run(&mut app, &mut fs, &apdu(0x80, INS_READ, 0x07, 0, &[]));
+        assert_eq!(sw, Sw::OK);
+        assert_eq!(body, want, "{left:?}");
+    }
+}
+
+/// A row already holding the latch answers OK whatever the passes left: nothing
+/// is burnt, so there is nothing to wait for.
+#[test]
+fn an_already_latched_row_stays_ok_over_records_left_behind() {
+    let rng = RefCell::new(LcgRng(7));
+    let platform = RefCell::new(FakePlatform {
+        lock_raw: Some(otp_lock::PAGE58_LATCH_VALUE),
+        pre_otp_left: Some(otp_lock::PRE_OTP_OATH),
+        ..Default::default()
+    });
+    let presence = RefCell::new(AlwaysConfirm);
+    let mut app = lock_app(&rng, &platform, &presence, Some(FusedKey::open(test_mkek)));
+    let mut fs = Fs::new(RamStorage::new());
+    assert_eq!(run(&mut app, &mut fs, &lock_apdu()).0, Sw::OK);
+    assert_eq!(platform.borrow().lock_writes, 0);
+}
+
+/// A burn the bootrom reported done over an older build's lock, whose row still
+/// reads that lock, is no latch: the device must not answer OK for a latch its
+/// boots will never read.
+#[test]
+fn a_burn_that_left_the_secure_side_open_is_an_error() {
+    let rng = RefCell::new(LcgRng(7));
+    let platform = RefCell::new(FakePlatform {
+        lock_raw: Some(otp_lock::PAGE58_LOCK_VALUE),
+        lock_burn: otp_lock::PAGE58_LOCK_VALUE,
+        ..Default::default()
+    });
+    let presence = RefCell::new(AlwaysConfirm);
+    let mut app = lock_app(&rng, &platform, &presence, Some(FusedKey::open(test_mkek)));
+    let mut fs = Fs::new(RamStorage::new());
+    assert_eq!(run(&mut app, &mut fs, &lock_apdu()).0, Sw::EXEC_ERROR);
+    assert_eq!(platform.borrow().lock_writes, 1);
+}
+
+/// An older build's lock takes the latch under a first lock's guards: over records
+/// left behind it is refused before the touch, and over none it is burnt.
+#[test]
+fn an_older_builds_lock_takes_the_latch_only_over_a_finished_migration() {
+    let rng = RefCell::new(LcgRng(7));
+    let platform = RefCell::new(FakePlatform {
+        lock_raw: Some(otp_lock::PAGE58_LOCK_VALUE),
+        pre_otp_left: Some(otp_lock::PRE_OTP_OATH),
+        ..Default::default()
+    });
+    let presence = RefCell::new(AlwaysConfirm);
+    let mut app = lock_app(&rng, &platform, &presence, Some(FusedKey::open(test_mkek)));
+    let mut fs = Fs::new(RamStorage::new());
+    assert_eq!(
+        run(&mut app, &mut fs, &lock_apdu()).0,
+        Sw::CONDITIONS_NOT_SATISFIED
+    );
+    assert_eq!(
+        platform.borrow().lock_writes,
+        0,
+        "latched over a record left behind"
+    );
+
+    platform.borrow_mut().pre_otp_left = Some(0);
+    assert_eq!(run(&mut app, &mut fs, &lock_apdu()).0, Sw::OK);
+    assert_eq!(
+        (platform.borrow().lock_writes, platform.borrow().lock_raw),
+        (1, Some(otp_lock::PAGE58_LATCH_VALUE))
+    );
+}
+
+/// The configuration lock covers the phy record, and no code opens it here: while
+/// one is set, WRITE `1C/01` answers `6986` before its touch is asked, and the record
+/// stays as it was. Cleared, the same write asks and lands.
+#[test]
+fn a_locked_configuration_refuses_the_phy_write_before_its_touch() {
+    struct Counting(u32);
+    impl UserPresence for Counting {
+        fn request(&mut self, _confirm: Confirm<'_>) -> Presence {
+            self.0 += 1;
+            Presence::Confirmed
+        }
+    }
+    let rng = RefCell::new(LcgRng(7));
+    let platform = RefCell::new(FakePlatform::default());
+    let presence = RefCell::new(Counting(0));
+    let mut app = RescueApplet::new(
+        SERIAL_ID,
+        SERIAL_HASH,
+        None,
+        None,
+        &rng,
+        &platform,
+        &presence,
+        KV_TOTAL,
+        FLASH_SIZE,
+    );
+    let mut fs = Fs::new(RamStorage::new());
+    let owner = rsk_phy::PhyData {
+        vid_pid: Some((0x1234, 0x5678)),
+        ..Default::default()
+    };
+    rsk_phy::save(&mut fs, &owner).unwrap();
+    let mut code = vec![0x0A, 16];
+    code.extend_from_slice(&[0xA5; 16]);
+    rsk_devconf::persist_touched(&[0; 4], &mut fs, &code).unwrap();
+
+    let mut blob = [0u8; rsk_phy::PHY_MAX_SIZE];
+    let new = rsk_phy::PhyData {
+        vid_pid: Some((0x1050, 0x0407)),
+        ..Default::default()
+    };
+    let n = new.serialize(&mut blob).unwrap();
+    let write = apdu(0x80, INS_WRITE, 0x01, 0, &blob[..n]);
+    assert_eq!(run(&mut app, &mut fs, &write).0, Sw::COMMAND_NOT_ALLOWED);
+    assert_eq!(
+        presence.borrow().0,
+        0,
+        "a touch was asked for a refused write"
+    );
+    assert_eq!(rsk_phy::load(&mut fs).unwrap().vid_pid, owner.vid_pid);
+
+    let mut clear = vec![0x0B, 16];
+    clear.extend_from_slice(&[0xA5; 16]);
+    clear.extend_from_slice(&[0x0A, 16]);
+    clear.extend_from_slice(&[0; 16]);
+    rsk_devconf::persist_touched(&[0; 4], &mut fs, &clear).unwrap();
+    assert_eq!(run(&mut app, &mut fs, &write).0, Sw::OK);
+    assert_eq!(presence.borrow().0, 1);
+    assert_eq!(rsk_phy::load(&mut fs).unwrap().vid_pid, new.vid_pid);
+}
+
+/// A burn a power cut tore leaves a subset of the latch, and a second LOCK58 completes
+/// it under a first lock's guards: over records left behind it is refused before the
+/// touch and nothing burns (the host probes on that); over none it burns the latch.
+#[test]
+fn a_torn_latch_is_completed_only_over_a_finished_migration() {
+    struct Counting(u32);
+    impl UserPresence for Counting {
+        fn request(&mut self, _confirm: Confirm<'_>) -> Presence {
+            self.0 += 1;
+            Presence::Confirmed
+        }
+    }
+    for torn in [0x00_00_3D, 0x3D_00_00, 0x01_04_20, 0x3D_3D_3C, 0x3C_3C_00] {
+        let rng = RefCell::new(LcgRng(7));
+        let platform = RefCell::new(FakePlatform {
+            lock_raw: Some(torn),
+            pre_otp_left: Some(otp_lock::PRE_OTP_PIV),
+            ..Default::default()
+        });
+        let presence = RefCell::new(Counting(0));
+        let mut app = RescueApplet::new(
+            SERIAL_ID,
+            SERIAL_HASH,
+            Some(FusedKey::open(test_mkek)),
+            None,
+            &rng,
+            &platform,
+            &presence,
+            KV_TOTAL,
+            FLASH_SIZE,
+        );
+        let mut fs = Fs::new(RamStorage::new());
+        assert_eq!(
+            run(&mut app, &mut fs, &lock_apdu()).0,
+            Sw::CONDITIONS_NOT_SATISFIED,
+            "{torn:#08x}"
+        );
+        assert_eq!(
+            (platform.borrow().lock_writes, presence.borrow().0),
+            (0, 0),
+            "{torn:#08x}: burnt or asked over a record left behind"
+        );
+
+        platform.borrow_mut().pre_otp_left = Some(0);
+        assert_eq!(
+            run(&mut app, &mut fs, &lock_apdu()).0,
+            Sw::OK,
+            "{torn:#08x}"
+        );
+        let p = platform.borrow();
+        assert_eq!(
+            (p.lock_writes, presence.borrow().0, p.lock_raw),
+            (1, 1, Some(otp_lock::PAGE58_LATCH_VALUE)),
+            "{torn:#08x}"
+        );
+    }
+}
+
+#[test]
+fn rollback_require_refuses_a_reported_success_whose_readback_stays_clear() {
+    let rng = RefCell::new(LcgRng(7));
+    let platform = RefCell::new(FakePlatform {
+        rollback_lands: false,
+        ..secure_platform()
+    });
+    let presence = RefCell::new(AlwaysConfirm);
+    let mut app = lock_app(&rng, &platform, &presence, None);
+    let mut fs = Fs::new(RamStorage::new());
+    let generation = fs.write_gen();
+    assert_eq!(
+        run(&mut app, &mut fs, &rollback_apdu()),
+        (Sw::EXEC_ERROR, vec![])
+    );
+    assert_eq!(platform.borrow().rollback_writes, 1);
+    assert_eq!(platform.borrow().rollback_raw.unwrap().flags0, [0; 3]);
+    assert_eq!(fs.write_gen(), generation);
+    assert!(platform.borrow().reboots.is_empty());
+}
+
+#[path = "restart_tests.rs"]
+mod restarts;
+
+#[path = "storage_admin_tests.rs"]
+mod storage_admin;
+
+#[test]
+fn automatic_seal_report_is_read_only_and_preserves_migration_bits() {
+    let rng = RefCell::new(LcgRng(7));
+    let platform = RefCell::new(FakePlatform {
+        seal_status: seal::Status::MigrationPending,
+        pre_otp_left: Some(otp_lock::PRE_OTP_FIDO | otp_lock::PRE_OTP_OATH),
+        ..Default::default()
+    });
+    let presence = RefCell::new(DenyPresence);
+    let mut app = RescueApplet::new(
+        SERIAL_ID,
+        SERIAL_HASH,
+        Some(FusedKey::open(test_mkek)),
+        None,
+        &rng,
+        &platform,
+        &presence,
+        KV_TOTAL,
+        FLASH_SIZE,
+    );
+    let mut fs = Fs::new(RamStorage::new());
+    assert_eq!(
+        run(&mut app, &mut fs, &apdu(0x80, INS_READ, 0x09, 0, &[])),
+        (Sw::OK, vec![1, seal::Status::MigrationPending as u8, 0, 9])
+    );
+    assert_eq!(platform.borrow().lock_writes, 0);
+    assert_eq!(
+        run(&mut app, &mut fs, &apdu(0x80, INS_READ, 0x09, 1, &[])).0,
+        Sw::INCORRECT_P1P2
+    );
 }

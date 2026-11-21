@@ -69,7 +69,7 @@ def main():
 
     client = Fido2Client(dev, client_data_collector=DefaultClientDataCollector(ORIGIN))
 
-    # Register with -48 first: CTAP 2.1 §6.1.2 step 4 selects the FIRST supported
+    # Register with -48 first: CTAP 2.1 §6.1.2 step 3 selects the FIRST supported
     # entry of pubKeyCredParams, so the RP's order is what picks ML-DSA-44.
     reg = client.make_credential(
         PublicKeyCredentialCreationOptions(

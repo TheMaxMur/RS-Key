@@ -110,6 +110,29 @@ fn metrics_cover_ascii_em_dash_and_fallback() {
 }
 
 #[test]
+fn whitespace_and_fully_clipped_text_leave_the_target_untouched() {
+    for (text, at) in [
+        ("", EgPoint::new(20, 40)),
+        ("   ", EgPoint::new(20, 40)),
+        ("A", EgPoint::new(20, 100)),
+        ("A", EgPoint::new(20, -40)),
+    ] {
+        let mut target = Rec::new();
+        left(
+            &mut target,
+            text,
+            at,
+            Role::Body,
+            Rgb565::WHITE,
+            Rgb565::BLACK,
+        )
+        .unwrap();
+        assert!(target.pixels.iter().all(|color| *color == Rgb565::BLACK));
+    }
+    assert_eq!(glyph_index('\n'), glyph_index('?'));
+}
+
+#[test]
 fn middle_dot_has_its_own_glyph() {
     let mut dot = Rec::new();
     let mut question = Rec::new();
@@ -379,4 +402,37 @@ fn every_t9_key_label_has_its_own_glyph() {
             );
         }
     }
+}
+
+#[path = "font_contract_tests.rs"]
+mod contracts;
+
+#[test]
+#[should_panic(expected = "text glyph capacity exceeded")]
+fn a_wide_target_cannot_overrun_the_glyph_placement_array() {
+    struct Wide;
+    impl OriginDimensions for Wide {
+        fn size(&self) -> Size {
+            Size::new(4096, 80)
+        }
+    }
+    impl DrawTarget for Wide {
+        type Color = Rgb565;
+        type Error = core::convert::Infallible;
+        fn draw_iter<I>(&mut self, _: I) -> Result<(), Self::Error>
+        where
+            I: IntoIterator<Item = Pixel<Rgb565>>,
+        {
+            Ok(())
+        }
+    }
+    left(
+        &mut Wide,
+        &"i".repeat(129),
+        EgPoint::new(0, 40),
+        Role::Body,
+        Rgb565::WHITE,
+        Rgb565::BLACK,
+    )
+    .unwrap();
 }

@@ -7,32 +7,28 @@
 //!   MKEK @ rows 0xE90..=0xE9F — the kbase root (`Device.otp_key`)
 //!   chaff complements @ 0xEA0 / 0xEB0, hard page lock = PAGE58_LOCK1
 //!
-//! Key provisioning is a deliberate host-side picotool ritual; blank rows (the
-//! factory state) read as `None` → the pre-OTP kbase arm, so this build is safe
-//! on every board. The only things the firmware ever writes to OTP are the two
-//! one-way fuses the host ritual cannot reach from BOOTSEL — the page-58
-//! access lock ([`apply_page58_lock`], bootloader-read-only OTP page 63) and
-//! BOOT_FLAGS0.ROLLBACK_REQUIRED ([`apply_rollback_required`], page 1 once
-//! `rsk secure-boot lock` has made it bootloader-read-only) — each triggered
-//! explicitly via the rescue applet, never at boot. `FAKE_MKEK` / `FAKE_DEVK`
-//! (build.rs env) bake a fake key into the image INSTEAD of reading OTP — test
-//! builds only.
+//! Keys are provisioned by the host; boot validates them before storage migration.
+//! After migration and a successful scrub, boot seals page 58 automatically.
+//! ROLLBACK_REQUIRED remains an explicit rescue operation. Fake-key builds never
+//! write real OTP fuses.
 
+use core::sync::atomic::{AtomicBool, Ordering};
 use embassy_rp::otp;
-use rsk_rescue::otp_lock::{PAGE58_LOCK_VALUE, PAGE58_LOCK1_ROW};
+use rsk_rescue::otp_lock::{
+    KeyRows, PAGE58_LATCH_VALUE, PAGE58_LOCK_VALUE, PAGE58_LOCK1_ROW, key_rows,
+};
 use rsk_rescue::rollback::{
     BOOT_FLAGS0_ROW, DEFAULT_BOOT_VERSION0_ROW, DEFAULT_BOOT_VERSION1_ROW, ROLLBACK_REQUIRED_BIT,
     RollbackRaw,
 };
+use rsk_rescue::seal::{self, Otp};
+use rsk_rescue::seal::{DEVK_ROW, KEY_ROWS, MKEK_ROW};
 
-const DEVK_ROW: usize = 0xE80;
-const MKEK_ROW: usize = 0xE90;
-/// 32 bytes = 16 ECC rows of 16 data bits.
-const KEY_ROWS: usize = 16;
+static PROVISIONING_BLOCKED: AtomicBool = AtomicBool::new(false);
 /// The OTP page holding both keys and their chaff (0xE80 >> 6).
 const KEY_PAGE: usize = 58;
 
-/// Read the provisioned MKEK. `None` when unprovisioned.
+/// Read the provisioned MKEK into `out`. `false` when unprovisioned.
 ///
 /// Handed to the applets as a `fn` and called per operation rather than held: the
 /// root every sealed record hangs off had eight resident copies, and the derived
@@ -40,24 +36,73 @@ const KEY_PAGE: usize = 58;
 /// 48 µs against the milliseconds of crypto it precedes. Reading it late is only
 /// possible because [`sw_lock_key_page`] leaves the page's secure side open; see
 /// the note there.
-pub fn read_mkek() -> Option<[u8; 32]> {
+pub fn read_mkek(out: &mut [u8; 32]) -> bool {
+    read_boot_mkek(out) == KeyRows::Fused
+}
+
+/// [`read_mkek`], and why there is no key when there is none: the boot runs its seal
+/// passes only over a page it could read, since a blank one is a board never
+/// provisioned and an unreadable one is not.
+pub fn read_boot_mkek(out: &mut [u8; 32]) -> KeyRows {
+    if PROVISIONING_BLOCKED.load(Ordering::Relaxed) {
+        return KeyRows::Unreadable;
+    }
     match option_env!("PK_FAKE_MKEK") {
-        Some(hex) => Some(parse_hex32(hex)),
-        None => read_key(MKEK_ROW),
+        Some(hex) if parse_hex32(hex, out) => KeyRows::Fused,
+        Some(_) => KeyRows::Blank,
+        None => read_key(MKEK_ROW, out),
     }
 }
 
-/// Read the provisioned DEVK. `None` when unprovisioned.
+pub struct Page58;
+
+impl Otp for Page58 {
+    fn test_keys(&self) -> bool {
+        faked_keys()
+    }
+    fn read_raw(&mut self, row: usize) -> Option<u32> {
+        otp::read_raw_word(row).ok()
+    }
+    fn read_ecc(&mut self, row: usize) -> Option<u16> {
+        otp::read_ecc_word(row).ok()
+    }
+    fn burn_lock(&mut self, value: u32) -> bool {
+        !faked_keys()
+            && value & !PAGE58_LATCH_VALUE == 0
+            && value & PAGE58_LOCK_VALUE == PAGE58_LOCK_VALUE
+            && otp::write_raw_word(PAGE58_LOCK1_ROW, value).is_ok()
+    }
+}
+
+/// A torn provisioning must not migrate flash under a partially written root.
+pub fn check_boot_provisioning() -> Result<Option<u32>, seal::Status> {
+    let result = seal::check_provisioning(&mut Page58);
+    match result {
+        Err(seal::Status::TestKeys) => Ok(None),
+        Err(_) => {
+            quarantine_provisioning();
+            result
+        }
+        Ok(_) => result,
+    }
+}
+
+/// An unreadable post-burn latch cannot leave the old open root usable.
+pub fn quarantine_provisioning() {
+    PROVISIONING_BLOCKED.store(true, Ordering::Relaxed);
+}
+
+/// Read the provisioned DEVK into `out`. `false` when unprovisioned.
 ///
 /// Fetched per use rather than held: three rarely-run commands want it (the two
 /// rescue keydev ones and the opt-in audit checkpoint), and it is the one secret
 /// on the device that can never be rotated — it is fused. Passed around as this
 /// `fn` so no caller has to keep a copy. Reading it late is only possible because
 /// [`sw_lock_key_page`] leaves the page's secure side open; see the note there.
-pub fn read_devk() -> Option<[u8; 32]> {
+pub fn read_devk(out: &mut [u8; 32]) -> bool {
     match option_env!("PK_FAKE_DEVK") {
-        Some(hex) => Some(parse_hex32(hex)),
-        None => read_key(DEVK_ROW),
+        Some(hex) => parse_hex32(hex, out),
+        None => read_key(DEVK_ROW, out) == KeyRows::Fused,
     }
 }
 
@@ -108,18 +153,14 @@ pub fn read_page58_lock() -> Option<u32> {
         .map(|w| w & 0x00FF_FFFF)
 }
 
-/// Burn the permanent page-58 access lock (PAGE58_LOCK_VALUE → PAGE58_LOCK1)
-/// from secure firmware — the half the host burn ritual cannot do, since that
-/// lock row lives in bootloader-read-only OTP page 63 (page 63 `LOCK_S` = rw, so
-/// secure code can). The row and value are fixed constants here, so this call
-/// can only ever write that one lock; it is reached only after the rescue applet
-/// has confirmed the row is blank and the keys are provisioned. IRREVERSIBLE.
-/// Returns whether the bootrom write succeeded.
+/// Burn only the fixed page-58 latch. Boot or the legacy rescue handler must
+/// first validate provisioning, migration and the existing lock. Page 63 is
+/// BOOTSEL-read-only, but secure firmware can write this row. Irreversible.
 pub fn apply_page58_lock() -> bool {
     if faked_keys() {
         return false;
     }
-    otp::write_raw_word(PAGE58_LOCK1_ROW, PAGE58_LOCK_VALUE).is_ok()
+    otp::write_raw_word(PAGE58_LOCK1_ROW, PAGE58_LATCH_VALUE).is_ok()
 }
 
 /// Whether this image carries a baked test key instead of reading OTP.
@@ -184,32 +225,27 @@ pub fn apply_rollback_required() -> bool {
 }
 
 /// One 32-byte key at `row`: presence test first (all 16 raw rows zero =
-/// unprovisioned), then the ECC-corrected data. Read errors (a page locked away
-/// even from secure reads — a misconfiguration, not a factory state) also yield
-/// `None`: fail to the pre-OTP arm, never panic at boot.
-fn read_key(row: usize) -> Option<[u8; 32]> {
-    let mut any = false;
-    for i in 0..KEY_ROWS {
-        match otp::read_raw_word(row + i) {
-            Ok(w) => any |= w & 0x00FF_FFFF != 0,
-            Err(_) => return None,
-        }
+/// unprovisioned), then the ECC-corrected data, which lands in `key` only when the
+/// answer is [`KeyRows::Fused`]. A row that does not read — a page locked away even
+/// from secure reads — answers [`KeyRows::Unreadable`], never a panic at boot.
+fn read_key(row: usize, key: &mut [u8; 32]) -> KeyRows {
+    let rows = key_rows((0..KEY_ROWS).map(|i| otp::read_raw_word(row + i).ok()));
+    if rows != KeyRows::Fused {
+        return rows;
     }
-    if !any {
-        return None;
-    }
-    let mut key = [0u8; 32];
     for i in 0..KEY_ROWS {
-        let w = otp::read_ecc_word(row + i).ok()?;
+        let Ok(w) = otp::read_ecc_word(row + i) else {
+            return KeyRows::Unreadable;
+        };
         key[2 * i] = w as u8;
         key[2 * i + 1] = (w >> 8) as u8;
     }
-    Some(key)
+    KeyRows::Fused
 }
 
 /// Decode a build.rs-validated 64-char hex string; build.rs rejects anything
 /// else at compile time, so the panic arms are unreachable in a real image.
-fn parse_hex32(hex: &str) -> [u8; 32] {
+fn parse_hex32(hex: &str, out: &mut [u8; 32]) -> bool {
     fn nib(b: u8) -> u8 {
         match b {
             b'0'..=b'9' => b - b'0',
@@ -218,9 +254,8 @@ fn parse_hex32(hex: &str) -> [u8; 32] {
         }
     }
     let bytes = hex.as_bytes();
-    let mut out = [0u8; 32];
     for (i, o) in out.iter_mut().enumerate() {
         *o = (nib(bytes[2 * i]) << 4) | nib(bytes[2 * i + 1]);
     }
-    out
+    true
 }

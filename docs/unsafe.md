@@ -7,20 +7,21 @@ contained. Adding a new `unsafe` requires updating this page. (Safe Rust rules
 out memory-corruption bugs in this code. It is not a security audit; see the
 [threat model](threat-model.md).)
 
-**Runtime sites: 22.** Twelve in the firmware proper (`main.rs` + `presence.rs`):
-the interrupt-handler pair (2), the `Send` impl, the heap init, and the eight
-GPIO-pin `steal`s (the presence button, the LED power-enable rail, the nuisance
+**Runtime sites: 77.** Twenty-eight in the applet firmware and tools, thirty-seven in Secure startup and Non-secure transport, and twelve in disposable hardware diagnostics. Fourteen are in `main.rs` and `presence.rs`:
+the heap init and its zeroing
+allocator (5), and the eight GPIO-pin `steal`s (the presence button, the LED power-enable rail, the nuisance
 USR LED, the display build's wake button, and — display builds only — the panel's
-CS/DC/RST/TP_RST control lines). Three for the per-core prime sieves and one
-stack limit per core, three in the RSA assembly FFI, two in the standalone
-flash-wipe tool.
+CS/DC/RST/TP_RST control lines). Three for the per-core prime sieves; one
+stack limit per core, core0's in `main.rs` too; two for the dead-stack sweep and
+its probe; two in the standalone flash-wipe tool.
+One reads an uncached flash byte. Three align and clear complete response buffers.
+One restricts the shared flash context and backend to core0.
 
 ```mermaid
 flowchart TB
     subgraph fw["firmware/src/main.rs + firmware/src/presence.rs"]
-      a["interrupt executor (×2)"]
-      b["Send for SendUsb"]
       c["heap init"]
+      c2["zeroing allocator (×5)"]
       d["GPIO pin steal ×8 (presence, LED power, USR LED, display wake + CS/DC/RST/TP_RST)"]
       d2["core0 stack limit (MSPLIM)"]
     end
@@ -28,8 +29,10 @@ flowchart TB
       e["per-core prime sieves (×3)"]
       e2["core1 stack limit (MSPLIM)"]
     end
-    subgraph asm["rsk-rsa"]
-      f["modexp / sign_crt / modexp_pub FFI (×3)"]
+    subgraph sw["firmware/src/sweep.rs + sweep/buffer.rs"]
+      s1["dead-stack sweep"]
+      s2["residue probe (bench builds)"]
+      s3["complete response buffers (×3)"]
     end
     subgraph wipe["rsk-wipe"]
       g["raw flash erase/program (×2)"]
@@ -39,53 +42,78 @@ flowchart TB
 The `unsafe` lives only in plumbing. None of it is in a parser, applet, crypto
 wrapper, or the filesystem.
 
+The compiler holds the crate boundary: the workspace denies `unsafe_code`, and
+only `firmware`, `firmware-ns`, `rsk-wipe` and — on the device target, for SRAM
+link-section attributes — `rsk-rsa` lift the denial at their crate root. The build scripts
+lift it at their one `set_var` statement. Which file and site inside those
+crates is this page's business, held against the tree by
+`scripts/platform_gate.py`. Every `unsafe` block and `unsafe impl` also carries a
+`// SAFETY:` comment, which `clippy::undocumented_unsafe_blocks` refuses to build
+without.
+
 ## Firmware (`firmware/src/main.rs`, `firmware/src/presence.rs`)
 
-### 1–2. The high-priority interrupt executor — `PLAT-UNSAFE-001`
+### 1. Heap initialization — `PLAT-UNSAFE-003`
 
 ```rust
-#[interrupt]
-unsafe fn SWI_IRQ_1() {
-    unsafe { EXECUTOR_HIGH.on_interrupt() }
-}
+unsafe { HEAP.0.init(core::ptr::addr_of_mut!(HEAP_MEM) as usize, HEAP_SIZE) }
 ```
 
-USB and the transports run on an embassy `InterruptExecutor` so they preempt
-long synchronous work (RSA keygen, flash GC) and keep the bus alive. The
-handler itself is `unsafe fn` (hardware interrupt ABI). The `on_interrupt()`
-contract (call only from the interrupt the executor was started on) is upheld
-by construction: `EXECUTOR_HIGH.start(SWI_IRQ_1)` is the only starter and this
-is the only caller.
-*Safe alternative:* none; this is embassy's documented pattern for a second
-executor.
-*Containment:* two lines, no data touched.
-
-### 3. `unsafe impl Send for SendUsb` — `PLAT-UNSAFE-002`
-
-`embassy_usb::UsbDevice` is `!Send` only because it holds a list of
-`&mut dyn Handler` control-request handlers. Our only stateful handler is a
-zero-sized type whose state is `Sync` (critical-section-guarded statics). The
-device is moved into exactly one task on the interrupt executor and never
-touched from anywhere else: exclusive ownership after the move.
-*Safe alternative:* none while the USB device must live on the interrupt
-executor and embassy keeps the trait object `!Send`.
-*Containment:* the wrapper is private, constructed once, and the invariant
-(single task, single executor) is structural.
-
-### 4. Heap initialization — `PLAT-UNSAFE-003`
-
-```rust
-unsafe { HEAP.init(core::ptr::addr_of_mut!(HEAP_MEM) as usize, HEAP_SIZE) }
-```
-
-A 128 KiB heap exists solely for `rsk-rsa`'s big integers (`num-bigint-dig`,
-the only allocating dependency). `init`'s contract (call once, with exclusive access
+A 128 KiB heap exists for `rsk-rsa`'s big integers (`num-bigint-dig`, the only
+allocating dependency) and for FIDO's boxed ML-DSA keys. `init`'s contract (call once, with exclusive access
 to the region) is met: it runs once at the top of `main`, on a dedicated
 static buffer used by nothing else.
 *Safe alternative:* none; every embedded allocator initializes this way.
 *Containment:* one call, before any allocation can happen.
 
-### 5–12. GPIO pin type-erasure (presence button, LED power rail, USR-LED-off, display wake + control pins, ×8) — `PLAT-UNSAFE-004`
+### 2–6. The zeroing allocator — `PLAT-UNSAFE-013`
+
+```rust
+unsafe impl GlobalAlloc for ZeroingHeap {
+    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+        unsafe { self.0.alloc(layout) }
+    }
+    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+        let len = layout.size();
+        let head = ptr.align_offset(size_of::<u32>()).min(len);
+        let words = (len - head) / size_of::<u32>();
+        unsafe {
+            for i in 0..head {
+                ptr.add(i).write_volatile(0);
+            }
+            let body = ptr.add(head).cast::<u32>();
+            for i in 0..words {
+                body.add(i).write_volatile(0);
+            }
+            for i in head + words * size_of::<u32>()..len {
+                ptr.add(i).write_volatile(0);
+            }
+            self.0.dealloc(ptr, layout);
+        }
+    }
+}
+```
+
+The global allocator is `LlffHeap` behind a wrapper that zeroes each block as it
+is freed. `num-bigint-dig` frees the limbs of its own working buffers unwiped —
+a division's, an inverse's, a modular exponentiation's — `rsk-rsa` drops the
+primes of a key `RsaKey::from_p_q` refuses, and a freed block keeps its bytes
+until an allocation reuses it.
+`alloc` forwards unchanged. `dealloc` writes zeroes over exactly the
+`layout.size()` bytes the caller hands back, which `GlobalAlloc`'s contract
+makes a live block this allocator returned for that layout, then forwards. It
+stores words over the block's 4-aligned body and bytes only at its unaligned
+ends: an RSA key generation frees tens of megabytes through this path, and a
+byte loop is four times the stores.
+`realloc` is the trait's default, an alloc, a copy and a dealloc through these
+two, so a grown vector's old block is wiped as well. The writes are volatile,
+so no optimisation can drop them as stores into memory about to be freed.
+*Safe alternative:* none; `GlobalAlloc` is an `unsafe` trait with `unsafe fn`
+methods, and each forwarding call is an `unsafe` operation.
+*Containment:* two forwarding calls and three loops bounded by the caller's own
+layout.
+
+### 7–14. GPIO pin type-erasure (presence button, LED power rail, USR-LED-off, display wake + control pins, ×8) — `PLAT-UNSAFE-004`
 
 ```rust
 let any = unsafe { AnyPin::steal(pin) };
@@ -116,7 +144,8 @@ build default — so a host cannot aim the data pin at a pad another driver owns
 On top of that, compile-time `assert!`s reject a
 build that collides `LED_POWER_PIN` or `USR_LED_PIN` with the LED data pin or a GPIO
 `PRESENCE_PIN` (and refuse `USR_LED_PIN` outright on a display build, whose panel
-owns those pads), rejects a `WAKE_PIN` in the LCD/touch range (`10..=18`),
+owns those pads), rejects a `WAKE_PIN` in the LCD range (`10..=18`) or on the
+hard-wired touch I2C1 pair (PIN_6/7) — which a `WAKE_PIN=6` build did not, until 0x0A10 —
 **and rejects any of CS/DC/RST/TP_RST/BL colliding with each other, with the
 hard-wired PIO serial output (PIN_10/11) or I2C1 (PIN_6/7) lines, an enabled `WAKE_PIN`,
 or `LED_PIN`/`LED_POWER_PIN` when their LED driver is built** — a collision
@@ -124,7 +153,7 @@ silently drives one pad from two owners at runtime, so it is checked at build ti
 
 ## Firmware dual-core keygen (`firmware/src/core1.rs`)
 
-### 13–15. The per-core prime sieves — `PLAT-UNSAFE-005`
+### 15–17. The per-core prime sieves — `PLAT-UNSAFE-005`
 
 ```rust
 static mut CORE0_SIEVE: IncrementalSieve = IncrementalSieve::new();
@@ -135,8 +164,8 @@ unsafe { (*core::ptr::addr_of_mut!(CORE1_SIEVE)).scrub() };        // core1, on 
 let sieve = unsafe { &mut *core::ptr::addr_of_mut!(CORE0_SIEVE) }; // core0, in `run_rsa_search`
 ```
 
-The dual-core keygen runs one running small-prime sieve per core (each ~5 KiB
-of residues, too large to live on core1's stack beside the Baillie-PSW
+The dual-core keygen runs one running small-prime sieve per core (each 2.5 KiB
+of 16-bit residues, too large to live on core1's stack beside the Baillie-PSW
 bignum frames, so they are `static`). Each is **single-core-exclusive**:
 `CORE0_SIEVE` is taken `&mut` only inside `run_rsa_search` (core0),
 `CORE1_SIEVE` only inside `search` (core1), and the two cores never touch the
@@ -156,7 +185,7 @@ on core0; the partition (which core touches which sieve) is structural, and the 
 a candidate, scrubbed at the top of every keygen). A wrong residue can only let
 a composite through to the strong-MR/Lucas test, which still rejects it.
 
-### 16–17. The per-core stack limits (`main.rs`, `core1.rs`) — `PLAT-UNSAFE-006`
+### 18–19. The per-core stack limits (`main.rs`, `core1.rs`) — `PLAT-UNSAFE-006`
 
 ```rust
 unsafe { cortex_m::register::msplim::write(&raw const _stack_end as u32) }; // core0, entering `main`
@@ -177,7 +206,9 @@ runs off into unmapped space and faults with or without this — there is no gap
 here to close. What the write buys is independence from the linker. Drop
 `flip-link` and that floor disappears silently, along with the only thing keeping
 this stack out of `.bss`; `MSPLIM` states the bound in code, where it can be read
-and where removing it is a visible edit.
+and where removing it is a visible edit. It is also where the dead-stack sweep
+(sections 23–24) reads core0's floor: without the write it reads 0 and sweeps
+nothing.
 *Safe alternative:* none. `cortex-m` offers no checked form, and the MPU route is
 both weaker (above) and more `unsafe`, not less.
 *Containment:* one write per core, on the core that owns that stack, before anything has
@@ -189,28 +220,40 @@ the device until it is replugged. That is the trade being made — a wedge a rep
 clears, rather than a silent write into whatever `.bss` the linker put below,
 issued by the routine that is at that moment generating and storing a key.
 
-## RSA assembly FFI (`crates/rsk-rsa/src/lib.rs`)
+## Dead-stack sweep (`firmware/src/sweep.rs`)
 
-### 18–20. The modexp / CRT-sign calls — `PLAT-UNSAFE-007`
+### 20–21. The sweep and its probe — `PLAT-UNSAFE-014`
 
-On-card RSA key generation needs hundreds of modular exponentiations over
-1024–2048-bit candidates. The pure-Rust path was ~7× too slow on the
-Cortex-M33 (minutes per key, CCID timeouts). The crate wraps the vendored
-C+ARM-assembly routines behind three `unsafe` FFI calls — `modexp_priv`
-(keygen), `sign_crt` (the CRT private-key operation) and `modexp_pub` (the
-public-exponent side of blinding and the fault check) — each with fully owned,
-length-checked buffers on both sides.
-*Safe alternative:* tried (num-bigint). Functionally correct, unusably slow.
-*Containment:* both ends fail closed. Key generation is KAT-gated — a power-on
-known-answer self-test must pass or it refuses to run — and every signature is
-Bellcore-fault-checked (`out^e == base`) by the caller, so a miscompiled or
-corrupt routine cannot emit one. Inputs/outputs are fixed-size stack buffers
-zeroized after use. On the host the crate substitutes a pure-Rust fallback, so
-all host tests exercise the same API safely.
+```rust
+unsafe { core::ptr::with_exposed_provenance_mut::<u32>(word).write_volatile(0) }; // the sweep, either core
+unsafe { core::ptr::with_exposed_provenance::<u8>(addr).read_volatile() }         // the probe, `bench` only
+```
+
+What a request's crypto leaves below the stack pointer — a RustCrypto `Copy`
+temporary, the `hmac` crate's padded key block, a SHAKE reader's state — no
+`Drop` or `Secret` can reach, because the frame that held it has returned. So
+core0's dead stack is zeroed after every request, keyboard OTP frame and typed
+ticket (by the worker), every flow the panel runs (through the display's hooks)
+and before a boot whose TRNG seed failed halts, and core1 zeroes its own after
+every prime search: every word from the floor that core's `MSPLIM` holds
+(sections 21–22) up to its stack pointer, both read by the code on that core,
+thirty-two stores a pass. Nothing under the live pointer is a value: the stack grows
+down, and what is below belongs to frames that have returned. An interrupt taken
+mid-sweep pushes its frame below the pointer and returns before the loop runs
+again, so no store lands under a live frame; what a handler leaves in the part
+already swept waits for the next sweep. A measurement build (`--features bench`)
+adds vendor `INS 0x15`, which reads the same region to count a pattern in it and
+can stop the sweep for a positive control; `check.sh` holds it out of the
+default image with the other debug commands.
+*Safe alternative:* none; memory no Rust value owns has no safe handle.
+*Containment:* one function, bounded by two registers of the core it runs on,
+called at three points in the worker, from the display's hooks, in core1's job
+loop and before a failed boot's halt, each after the work's frames have returned;
+the probe only reads.
 
 ## Flash wiper (`rsk-wipe/src/main.rs`)
 
-### 21–22. Raw flash erase/program in a critical section — `PLAT-UNSAFE-008`
+### 22–23. Raw flash erase/program in a critical section — `PLAT-UNSAFE-008`
 
 The wiper's entire job is to erase the flash the firmware lives on, from a
 RAM-resident image. It calls the ROM flash-erase/program routines inside
@@ -223,9 +266,6 @@ never ships inside the firmware.
 
 ## Build-time (not runtime)
 
-- `crates/rsk-rsa/build.rs`: `unsafe { env::set_var(...) }` forces the
-  ARM cross-compiler for the vendored C. Build scripts are single-threaded at
-  that point (the call is host-side, never in the image).
 - `firmware/build.rs`: `unsafe { env::set_var(k, v) }` copies the selected
   board-config file's values (`BOARD=<name>`) back into the env before the
   build reads them. Same single-threaded host-side build-script context; never
@@ -237,14 +277,203 @@ never ships inside the firmware.
   dereferenced as data.
 - Edition-2024 *placements* in `crates/rsk-rsa/src/lib.rs`:
   `#[cfg_attr(target_os = "none", unsafe(link_section = ".data.small_primes"))]`
-  on the small-prime table and the same on `.data.sieve_step` for
-  `IncrementalSieve::step`, so both run out of SRAM rather than through the XIP
-  cache (the 1.36× keygen regression that motivated them). The linker collects
-  `.data.*` into `.data`; a section it does not know leaves the symbol wherever
-  it lands, which costs speed rather than safety.
+  on the small-prime table, and `.data.sieve_step` for `IncrementalSieve::step`.
+  The RSA window loop (`crates/rsk-rsa/src/privexp.rs`) and Montgomery
+  conversion, multiplication, squaring and reduction
+  (`crates/rsk-rsa/src/montgomery.rs`) use `.data.bignum_*` (`PLAT-UNSAFE-011`).
+  The Secure linker collects those code inputs into `.rsk_exec`. The window
+  closure uses executable scratch SRAM so its code leaves room for the main stack.
+
+### SRAM placement for public journal hashing — `PLAT-UNSAFE-011`
+
+`firmware/src/flash_storage/sha256.rs`,
+`firmware/src/flash_storage/stream.rs`, `firmware/src/flash_storage/quad.rs` and
+`firmware/src/core1.rs` place digest, stream, QMI and park routines
+in the existing `.data.ram_func` input section. Startup copies it before use;
+the TrustZone linker includes it in the read-only executable SRAM range. The
+digest reads journal bytes through `SharedFlash::read` and checks aligned tails
+with the same exclusive CPU stream. Its direct erased-tail routine also lives
+in `.data.ram_func`: each FIFO word is checked without a staging copy, with the
+same bounds, status, timeout, final count and final address checks.
+*Safe alternative:* ordinary flash placement is correct but competes with the
+journal stream for XIP cache lines.
+*Containment:* SHA sees public metadata only; the CPU stream serves bulk reads
+under the existing flash bounds and guards. Both have bounded waits, and the
+stream checks progress without raw XIP pointers or a new executable window.
+Quad commands execute before core1 starts; mode changes run then or after its
+interrupt-masked SRAM acknowledgment. Core0 masks interrupts during direct QMI
+access, restores the old mode on a failed public-byte probe, and runs the full
+USB fence in SRAM if QMI cannot quiesce. Continuous reads are primed with one
+word before omitting EBh. A failed probe exits enhanced read before restoring
+QMI, then verifies the original mode; a failed restore probe fences USB.
+Only the allowlisted chip's volatile
+QE bit is written, without WEL; unsupported protection layouts are refused.
 
 ## What is *not* here
 
 No `unsafe` in any parser, applet, crypto wrapper, or the flash filesystem.
 The attacker-facing surface is entirely safe Rust, and `cargo clippy -D
 warnings` plus the fuzz targets ([testing.md](testing.md)) keep it that way.
+
+## TrustZone transport build
+
+These sites implement the mandatory Secure and Non-secure split. They are included in the runtime count above; their platform obligations and measured scope are explicit. See [the TrustZone section](architecture.md#trustzone).
+
+### 24–38. Secure startup and worker ownership — `PLAT-TZ-001`
+
+`firmware/src/trustzone/mod.rs`. Startup owns the core registers until the validated NS reset vector is entered. Secure boot, worker and display share one cooperative IRQ executor; LED and EP0 callbacks have separate owners. The launch sets banked masks and FP policy, then a C entry clears every shared GPR/FP register. The linker-size symbol is read by address only: an empty NS image halts before initialization, so the import-library ELF cannot launch stale NS flash. Dynamic S/NS/NSC bounds come from one build layout. The RP2350 A2 record covers launch and resource isolation; full FPU model fidelity remains separate.
+
+`tests/tz_hardware/nonsecure.rs` adds four diagnostic sites: banked entry reads, its own MPU disable, and the selected LDR/STR. `tests/tz_hardware/secure.rs` adds the banked launch read and two SAU selector writes, restoring the selector afterwards. These templates compile only in a separate test checkout. Architectural snapshots and deliberately denied accesses need assembly or volatile pointers; NS reads outside the public data control are discarded, and the runner excludes OTP stores.
+
+*Safe alternative:* the architecture exposes these launch registers and Embassy requires the interrupt callback; the wrapper supplies the one-owner transfer.
+*Containment:* startup-only writes, a Secure vector and stack, and an owned worker on one Secure executor.
+
+### 39–44. Secure USB controller ownership and packet spans — `PLAT-TZ-002`
+
+`firmware/src/trustzone/usb.rs`, `firmware/src/trustzone/usb/control.rs` and `firmware/src/usb_fence.rs`. The controller mutex owns endpoints and DPRAM; packet copies are at most 64 bytes and the complete NS RAM span passes TT before it becomes a slice. Clearing endpoint availability precedes the volatile DPRAM wipe. The EP0 pipe moves once to SWI_IRQ_2; only its bound handler services that executor. Epoch checks fence input and output at bus lifecycle changes.
+
+*Safe alternative:* DPRAM wiping and CMSE pointer conversion require raw memory access; Embassy requires an IRQ callback and a Send wrapper for the single task transfer.
+*Containment:* Secure-only USB access, bounded packet copies, serialized checks and copies, and one owner for the control pipe.
+
+### 45–46. Worker gateway spans — `PLAT-TZ-003`
+
+`firmware/src/worker.rs`. The C veneer validates each complete span through the Secure TT helpers before calling the exported implementation. The worker copies input into its own exchange, bounds reply length, and wipes its Secure exchange at completion or abandonment. Output export is serialized with lifecycle observation; revocation wipes the temporary NS output before return.
+
+*Safe alternative:* the CMSE C boundary carries raw pointers and integer lengths; Rust slices are created only after that boundary validates them.
+*Containment:* bounded copies, Secure-owned exchange state, generation tickets and USB epoch checks.
+
+### 47–54. Non-secure local interrupts and USB task ownership — `PLAT-TZ-004`
+
+`firmware/trustzone/nonsecure/src/main.rs`, `firmware/trustzone/nonsecure/src/time.rs` and `firmware/trustzone/nonsecure/src/notify.rs`. NS masks and restores only its core0 interrupt state. Its critical-section implementation does not acquire a Secure spinlock. SendUsb moves once to the NS interrupt task; handlers store state in NS-local synchronization. TIMER1 and SWI_IRQ_4 have their installed NS handlers before interrupt enable. SWI_IRQ_4 changes only an NS-local generation and waiter list; Secure pends it after publication and cleanup, without sharing a controller reference.
+
+*Safe alternative:* the critical-section backend, interrupt enable and Embassy task transfer require these unsafe contracts.
+*Containment:* one core, one task owner, NS-local locks, and matching interrupt starters and handlers.
+
+### 55–63. Non-secure calls to bounded Secure gateways — `PLAT-TZ-005`
+
+`firmware/trustzone/nonsecure/src/main.rs`, `firmware/trustzone/nonsecure/src/usb.rs`, `firmware/trustzone/nonsecure/src/session.rs` and `firmware/trustzone/nonsecure/src/keyboard.rs`. Calls use the Cargo-shared numeric ABI. Secure checks selectors, complete NS RAM spans, lengths and epochs, copies packets and retains no NS pointer. Ticket abandonment fences dropped futures. Keyboard calls consume only output already authorized by Secure; a revoked session blocks export. Deliberately invalid startup pointers must be rejected by the gateway without a memory access.
+
+*Safe alternative:* the C CMSE entries expose an unsafe FFI; their Rust callers cannot express the hardware span check in a reference type.
+*Containment:* Secure validation at every entry, integer tickets and epochs, bounded buffers and negative image probes.
+
+The CMSE export attributes and FFI declarations are counted separately from runtime sites. `firmware/src/trustzone/gateway.c` supplies GCC-generated SG veneers and BXNS returns. These software checks do not establish complete silicon isolation or physical disconnect detection.
+
+
+### 64. Secure MPU registers — `PLAT-TZ-006`
+
+`firmware/src/trustzone/mpu.rs` writes only the current core's architectural MPU
+registers during Secure startup or a serialized Secure flash call. The checked
+planner partitions SRAM without overlaps and refuses an invalid linker or stack
+range. The HAL copies trusted boot2 code to the stack; its bounded execution
+window runs with NS interrupts masked and restores the MPU before unmasking.
+*Safe alternative:* the architectural bank aliases are MMIO; the existing PAC
+has no typed bank API covering this setup.
+*Containment:* Secure-only calls, aligned checked regions, bounded stack code and
+an RAII restore on every normal return, including flash errors. Panic/fault
+recovery and hardware timing still require their own validation.
+
+### 65. Hostile NS image probe — `PLAT-TZ-007`
+
+`firmware/trustzone/nonsecure/src/probe.rs` is feature-gated test code that
+disables its own NS MPU, then deliberately reads or writes protected memory/MMIO.
+The Secure policy remains intact. Its exported marker and target contain no
+secret and live in NS RAM; a zero target waits for the emulator's resource selection.
+*Safe alternative:* a deliberate denied access needs raw memory; a named assembly
+instruction lets the runner distinguish a real word load from a word store.
+*Containment:* disposable emulator-only image; exact instruction, marker and fault
+assertions, a completion barrier and relaxed-grant falsifiers; excluded from normal builds.
+
+
+### 66–67. Fatal Secure exception — `PLAT-TZ-008`
+
+`firmware/src/trustzone/fault.rs` never resumes an interrupted worker or borrows
+its state. The fatal latch rejects all gateways; direct S-owned MMIO detaches
+USB and clears pending DPRAM before the terminal loop. The exported stop symbol
+lets the image backend execute that cleanup before declaring the image dead.
+`tests/tz_hardware/secure.rs::read` uses volatile reads of public core/MMIO registers and the bounded USB payload to record the fatal fence. It never exports key memory or borrows interrupted owners. The disposable diagnostic adds a watchdog after the production fence; retained public words use scratch 0, 1 and 3, preserving the PIN-lock and ROM-owned slots. The ordinary fatal path remains terminal.
+
+*Safe alternative:* the exception ABI requires an unsafe handler; normal
+`Worker::reboot` cannot safely borrow an arbitrarily interrupted worker.
+*Containment:* no reboot, flash/OTP write or unsafe RAM alias; terminal admission
+until cold boot. This path fences authorization but does not claim SRAM wiping.
+
+### 68. Uncached page-state byte reads — `PLAT-UNSAFE-015`
+
+`firmware/src/flash_storage/stream.rs::read_uncached` reads one byte through the
+RP2350 translated uncached alias at `0x14000000`, as defined by the
+[pico-sdk 2.2.0 address map](https://github.com/raspberrypi/pico-sdk/blob/2.2.0/src/rp2350/hardware_regs/include/hardware/regs/addressmap.h).
+The host-tested byte and pair helpers check every offset against the configured
+chip before either hardware callback. A compile-time bound keeps the complete chip
+inside the alias window; `SharedFlash` retains its exclusive borrow.
+*Safe alternative:* the existing cached HAL read is correct but fills cache
+lines for small page-state probes. The new path reads the same translated
+address with the existing permissions.
+*Containment:* one volatile u8 load, initialized flash bytes, byte alignment,
+no MMIO stores, no new grants, and unchanged authority, root and payload checks.
+The byte load has no software deadline and a bus fault is not a flash error.
+A fatal Secure exception uses the USB fence before stopping.
+
+### 69–71. Full response-buffer wiping — `PLAT-UNSAFE-016`
+
+*Safe alternative:* byte-wise `Zeroize` clears the same arrays but repeats a
+volatile store and loop step for every byte. Word stores require validated
+alignment, exclusive access and exact byte edges.
+
+*Containment:* `firmware/src/sweep/buffer.rs::wipe_bytes` lends exclusively borrowed SRAM
+to `align_to_mut::<u32>`. Every bit pattern is valid for either element type;
+the disjoint byte edges and aligned middle cover exactly the original slice.
+Volatile stores clear both byte edges, eight words per full pass and all remaining
+words, followed by a sequentially consistent compiler fence. The worker passes
+both complete response arrays after copying the reply; neither the buffer extent
+nor the existing dead-stack sweep and publication ordering changes.
+
+The Secure USB gateway owns its initialized 64-byte packet in `Secret<Packet64>`.
+Once created, its exhaustive `Zeroize` delegates the complete array to this
+primitive on every exit, including empty and refused operations, before releasing
+serialization.
+No filled packet is moved or returned, and no wipe is narrowed to the data length.
+
+The Non-secure exchange gateway uses the same primitive through a borrowed `ReplyGuard`.
+It borrows the complete ABI-sized span from one buffer under the exchange mutex,
+up to 7612 bytes, and clears it on completion, abandonment and future Drop before
+releasing the pending ticket. The host reply-buffer harness covers alignments, byte edges, canaries, errors
+and pending-future destruction. These are three shared source
+sites compiled in both worlds; no new pointer primitive or smaller wipe is added.
+
+The same borrowed guard clears the complete 64-byte packets in Non-secure
+`EndpointIn::write` and `ControlPipe::data_in` on completion, errors and future
+Drop. Their initialized buffers and guard lifetimes, including the existing
+control abandonment and epoch checks, are unchanged.
+
+### 72–76. Scratch SRAM code initialization — `PLAT-TZ-009`
+
+`firmware/src/trustzone/mod.rs::initialize_scratch_code` copies one linker-bounded
+flash section into disjoint SRAM8/9 before the executor, core1 or Non-secure code
+starts. The section includes zero padding through the end of SRAM; no old RAM
+bytes become executable. DSB/ISB precede execution. Both cores subsequently map
+the complete section read-only executable, including during flash operations.
+`tests/tz_hardware/secure.rs` adds four runtime sites: linker-bounded immutable code/load slices, separate controlled Secure LDR/STR operations and an MPU selector helper which restores the selector. Its linker imports and scratch execution placement also require explicit unsafe contracts. Secure probes select only three public scratch addresses. The diagnostic verifies the full copy, actual processor and flash MPU window; it is compiled only in the separate checkout. Assembly and raw linker/register addresses are needed to test these hardware permissions.
+
+*Safe alternative:* the discontiguous linker destination is not owned by a Rust
+value or covered by the ordinary runtime data-copy range.
+*Containment:* one startup call, linker size and overlap assertions, no mutable
+alias after initialization, and no change to shared RAM or existing capacities.
+
+### 77. Core0 flash context — `PLAT-UNSAFE-017`
+
+`firmware/src/flash_storage.rs` implements `Sync` for the private
+`Core0Context`, holding the flash/SHA/QMI/backend references in `Cell<Option<Context>>`.
+The context accessors check `SIO.CPUID == 0` before touching the cell;
+the backend accessor checks through `get` before borrowing the referenced `RefCell`.
+Installation is single-shot, before storage boot and
+USB admission; later operations only copy the installed references to the
+existing static flash, SHA, QMI and backend `RefCell`s. Core1 fails before cell access.
+
+*Safe alternative:* storing the references in every flash handle prevents
+compile-time construction of the large backend. A global lock over the flash
+operations would change interrupt and borrowing behavior. The context holds
+immutable references; the peripherals and backend retain checked borrows.
+*Containment:* the cells and context type are private, no accessor returns a
+reference to its `Option`, and the non-`Send` references and backend borrow cannot be
+transferred between Rust threads. The static backend is bound
+to its runtime key source once; unbound operations fail before flash I/O.

@@ -2,6 +2,67 @@
 // Copyright (C) 2026 RS-Key contributors
 
 use super::*;
+
+#[test]
+#[should_panic(expected = "ctx.len() <= 255")]
+fn expanded_key_refuses_an_oversized_context() {
+    let key = ExpandedKey::<4, 4>::from_seed(&crate::params::ML_DSA_44, &[7; SEED_LEN]);
+    let mut out = [0; crate::params::ML_DSA_44.sig_len];
+    key.sign(
+        &crate::params::ML_DSA_44,
+        b"message",
+        &[0; 256],
+        &[0; 32],
+        &mut out,
+    );
+}
+
+std::thread_local! {
+    static DROP_WIPED: core::cell::Cell<Option<bool>> = const { core::cell::Cell::new(None) };
+}
+
+pub(super) fn observe_drop(rho: &[u8; 32], cap_k: &[u8; 32], tr: &[u8; 64]) {
+    DROP_WIPED.with(|observed| {
+        if observed.get().is_some() {
+            observed.set(Some(*rho == [0; 32] && *cap_k == [0; 32] && *tr == [0; 64]));
+        }
+    });
+}
+
+#[test]
+fn dropping_every_expanded_key_wipes_its_live_byte_fields() {
+    fn check<const K: usize, const L: usize>(params: &crate::params::Params) {
+        let key = ExpandedKey::<K, L>::from_seed(params, &[7; SEED_LEN]);
+        assert!(key.cap_k.iter().any(|&byte| byte != 0));
+        DROP_WIPED.with(|observed| observed.set(Some(false)));
+        drop(key);
+        DROP_WIPED.with(|observed| assert_eq!(observed.replace(None), Some(true)));
+    }
+    check::<4, 4>(&ML_DSA_44);
+    check::<6, 5>(&ML_DSA_65);
+    check::<8, 7>(&ML_DSA_87);
+}
+
+#[test]
+fn every_row_is_reduced_before_inverse_ntt_can_amplify_it() {
+    let values = [-3 * Q, -Q - 1, -Q, -1, 0, 1, Q, Q + 1, 3 * Q];
+    let mut rows = crate::poly::zero_vec::<8>();
+    for (row, polynomial) in rows.iter_mut().enumerate() {
+        for (column, coefficient) in polynomial.0.iter_mut().enumerate() {
+            *coefficient = values[(row + column) % values.len()];
+        }
+    }
+    reduce_vec(&mut rows);
+    for (row, polynomial) in rows.iter().enumerate() {
+        for (column, &coefficient) in polynomial.0.iter().enumerate() {
+            assert!((-Q..Q).contains(&coefficient));
+            assert_eq!(
+                coefficient.rem_euclid(Q),
+                values[(row + column) % values.len()].rem_euclid(Q)
+            );
+        }
+    }
+}
 use crate::params::{ML_DSA_44, ML_DSA_65, ML_DSA_87};
 use crate::testutil::{Rng, unhex};
 use crate::testvectors::{KEYGEN, SIGGEN, SIGVER};
@@ -37,64 +98,123 @@ fn self_verify_and_tamper_rejects() {
 
 #[test]
 fn acvp_keygen_pk_exact() {
-    for kat in KEYGEN {
+    assert_eq!(KEYGEN.len(), 75, "ACVP keyGen cases");
+    for kat in KEYGEN.iter() {
         let mut xi = [0u8; 32];
         xi.copy_from_slice(&unhex(kat.seed));
-        let expected = unhex(kat.pk);
-        match kat.set {
+        let pk = match kat.set {
             44 => {
                 let key = ExpandedKey::<4, 4>::from_seed(&ML_DSA_44, &xi);
                 let mut pk = vec![0u8; 1312];
                 key.write_public_key(&ML_DSA_44, &mut pk);
-                assert_eq!(pk, expected, "ACVP keyGen pk (ML-DSA-44)");
+                pk
             }
             65 => {
                 let key = ExpandedKey::<6, 5>::from_seed(&ML_DSA_65, &xi);
                 let mut pk = vec![0u8; 1952];
                 key.write_public_key(&ML_DSA_65, &mut pk);
-                assert_eq!(pk, expected, "ACVP keyGen pk (ML-DSA-65)");
+                pk
             }
             87 => {
                 let key = ExpandedKey::<8, 7>::from_seed(&ML_DSA_87, &xi);
                 let mut pk = vec![0u8; 2592];
                 key.write_public_key(&ML_DSA_87, &mut pk);
-                assert_eq!(pk, expected, "ACVP keyGen pk (ML-DSA-87)");
+                pk
             }
             s => panic!("unexpected param set {s}"),
-        }
+        };
+        let (tc, set) = (kat.tc_id, kat.set);
+        assert!(
+            pk == unhex(kat.pk),
+            "ACVP keyGen pk, tcId {tc} (ML-DSA-{set})"
+        );
     }
+}
+
+/// keyGen's `sk`, which the `pk` check never reads, and nothing else does: sigGen
+/// signs from the vector's own `sk`, so `K` and the secret vectors the seed
+/// expansion derives went unchecked. The key holds those only as NTT/Montgomery
+/// precomputes, so both keys are compared there, mod q.
+#[test]
+fn acvp_keygen_sk_matches_the_expansion() {
+    assert_eq!(KEYGEN.len(), 75, "ACVP keyGen cases");
+    for kat in KEYGEN.iter() {
+        let mut xi = [0u8; 32];
+        xi.copy_from_slice(&unhex(kat.seed));
+        let sk = unhex(kat.sk);
+        let same = match kat.set {
+            44 => same_secret(
+                &ExpandedKey::<4, 4>::from_seed(&ML_DSA_44, &xi),
+                &ExpandedKey::<4, 4>::from_sk_bytes(&ML_DSA_44, &sk),
+            ),
+            65 => same_secret(
+                &ExpandedKey::<6, 5>::from_seed(&ML_DSA_65, &xi),
+                &ExpandedKey::<6, 5>::from_sk_bytes(&ML_DSA_65, &sk),
+            ),
+            87 => same_secret(
+                &ExpandedKey::<8, 7>::from_seed(&ML_DSA_87, &xi),
+                &ExpandedKey::<8, 7>::from_sk_bytes(&ML_DSA_87, &sk),
+            ),
+            s => panic!("unexpected param set {s}"),
+        };
+        let (tc, set) = (kat.tc_id, kat.set);
+        assert!(same, "ACVP keyGen sk, tcId {tc} (ML-DSA-{set})");
+    }
+}
+
+fn same_secret<const K: usize, const L: usize>(
+    a: &ExpandedKey<K, L>,
+    b: &ExpandedKey<K, L>,
+) -> bool {
+    let mod_q = |v: &[Poly]| {
+        v.iter()
+            .flat_map(|p| p.0)
+            .map(|c| c.rem_euclid(Q))
+            .collect::<Vec<_>>()
+    };
+    a.rho == b.rho
+        && a.cap_k == b.cap_k
+        && a.tr == b.tr
+        && mod_q(&a.s1_hat_mont) == mod_q(&b.s1_hat_mont)
+        && mod_q(&a.s2_hat_mont) == mod_q(&b.s2_hat_mont)
+        && mod_q(&a.t0_hat_mont) == mod_q(&b.t0_hat_mont)
 }
 
 #[test]
 fn acvp_siggen_signature_exact() {
-    for kat in SIGGEN {
+    assert_eq!(SIGGEN.len(), 90, "ACVP sigGen cases");
+    for kat in SIGGEN.iter() {
         let sk = unhex(kat.sk);
         let msg = unhex(kat.msg);
         let ctx = unhex(kat.ctx);
         let mut rnd = [0u8; 32];
         rnd.copy_from_slice(&unhex(kat.rnd));
-        let expected = unhex(kat.sig);
-        match kat.set {
+        let sig = match kat.set {
             44 => {
                 let key = ExpandedKey::<4, 4>::from_sk_bytes(&ML_DSA_44, &sk);
                 let mut sig = vec![0u8; 2420];
                 key.sign(&ML_DSA_44, &msg, &ctx, &rnd, &mut sig);
-                assert_eq!(sig, expected, "ACVP sigGen (ML-DSA-44)");
+                sig
             }
             65 => {
                 let key = ExpandedKey::<6, 5>::from_sk_bytes(&ML_DSA_65, &sk);
                 let mut sig = vec![0u8; 3309];
                 key.sign(&ML_DSA_65, &msg, &ctx, &rnd, &mut sig);
-                assert_eq!(sig, expected, "ACVP sigGen (ML-DSA-65)");
+                sig
             }
             87 => {
                 let key = ExpandedKey::<8, 7>::from_sk_bytes(&ML_DSA_87, &sk);
                 let mut sig = vec![0u8; 4627];
                 key.sign(&ML_DSA_87, &msg, &ctx, &rnd, &mut sig);
-                assert_eq!(sig, expected, "ACVP sigGen (ML-DSA-87)");
+                sig
             }
             s => panic!("unexpected param set {s}"),
-        }
+        };
+        let (tc, set) = (kat.tc_id, kat.set);
+        assert!(
+            sig == unhex(kat.sig),
+            "ACVP sigGen, tcId {tc} (ML-DSA-{set})"
+        );
     }
 }
 
@@ -163,7 +283,8 @@ fn stack_floor_probe() {
 
 #[test]
 fn acvp_sigver_accept_reject() {
-    for kat in SIGVER {
+    assert_eq!(SIGVER.len(), 45, "ACVP sigVer cases");
+    for kat in SIGVER.iter() {
         let pk = unhex(kat.pk);
         let msg = unhex(kat.msg);
         let ctx = unhex(kat.ctx);
@@ -174,10 +295,157 @@ fn acvp_sigver_accept_reject() {
             87 => verify::<8, 7>(&ML_DSA_87, &pk, &msg, &ctx, &sig),
             s => panic!("unexpected param set {s}"),
         };
+        let want = if kat.expected {
+            "should have verified"
+        } else {
+            "should have been refused"
+        };
+        let (tc, set, reason) = (kat.tc_id, kat.set, kat.reason);
         assert_eq!(
             got, kat.expected,
-            "ACVP sigVer set {} ({})",
-            kat.set, kat.reason
+            "ACVP sigVer, tcId {tc} (ML-DSA-{set}, {reason}): {want}"
         );
+    }
+}
+
+#[test]
+fn a_bounded_corrupt_t0_precompute_cannot_reuse_the_first_accepted_challenge() {
+    let p = &ML_DSA_44;
+    let mut key = ExpandedKey::<4, 4>::from_seed(p, &[0x42; SEED_LEN]);
+    key.s1_hat_mont = zero_vec();
+    key.s2_hat_mont = zero_vec();
+    key.t0_hat_mont = zero_vec();
+    let mut baseline = vec![0; p.sig_len];
+    key.sign(p, b"norm-control", &[], &[0; SEED_LEN], &mut baseline);
+    let (challenge, z, _) =
+        sig_decode::<4, 4>(p.gamma1, p.omega, p.lambda_div4, &baseline).unwrap();
+    let c = sample_in_ball(p.tau, &challenge[..p.lambda_div4]);
+    let mut t0 = zero_vec::<4>();
+    let bound = (1 << (D - 1)) - 1;
+    t0[0].0[0] = c.0[0] * bound;
+    for i in 1..crate::params::N {
+        t0[0].0[crate::params::N - i] = -c.0[i] * bound;
+    }
+    let coefficient = c.0[0] * t0[0].0[0]
+        - (1..crate::params::N)
+            .map(|i| c.0[i] * t0[0].0[crate::params::N - i])
+            .sum::<i32>();
+    assert_eq!(coefficient, p.tau * bound);
+    assert!(coefficient >= p.gamma2);
+    key.t0_hat_mont = to_mont_vec(&ntt_vec(&t0));
+    let mut c_hat = c.clone();
+    ntt_inplace(&mut c_hat);
+    let c_t0: [Poly; 4] = core::array::from_fn(|i| {
+        let mut product = pointwise_mont(&c_hat, &key.t0_hat_mont[i]);
+        inv_ntt_inplace(&mut product);
+        product
+    });
+    assert_eq!(center_mod(c_t0[0].0[0]), coefficient);
+    let mut w = matrix_mul_streaming::<4, 4>(&key.rho, &ntt_vec(&z));
+    reduce_vec(&mut w);
+    for row in &mut w {
+        inv_ntt_inplace(row);
+    }
+    let weight: usize = (0..4)
+        .flat_map(|row| (0..crate::params::N).map(move |column| (row, column)))
+        .filter(|&(row, column)| {
+            make_hint(
+                p.gamma2,
+                Q - c_t0[row].0[column],
+                partial_reduce32(w[row].0[column] + c_t0[row].0[column]),
+            )
+        })
+        .count();
+    assert!(
+        weight <= p.omega as usize,
+        "the hint guard must not own this rejection"
+    );
+    let mut refused_challenge = vec![0; p.sig_len];
+    key.sign(
+        p,
+        b"norm-control",
+        &[],
+        &[0; SEED_LEN],
+        &mut refused_challenge,
+    );
+    assert_ne!(
+        &refused_challenge[..p.lambda_div4],
+        &baseline[..p.lambda_div4],
+        "the norm-violating candidate was accepted"
+    );
+}
+
+#[test]
+#[should_panic(expected = "params/dimension mismatch")]
+fn expansion_refuses_mismatched_row_dimensions_before_using_the_seed() {
+    let mut params = ML_DSA_44;
+    params.k += 1;
+    ExpandedKey::<4, 4>::zeroed().expand(&params, &[0; SEED_LEN]);
+}
+
+#[test]
+#[should_panic(expected = "params/dimension mismatch")]
+fn expansion_refuses_mismatched_column_dimensions_before_using_the_seed() {
+    let mut params = ML_DSA_44;
+    params.l += 1;
+    ExpandedKey::<4, 4>::zeroed().expand(&params, &[0; SEED_LEN]);
+}
+
+#[test]
+#[should_panic(expected = "assertion failed: K == p.k && L == p.l")]
+fn verification_refuses_mismatched_row_dimensions_before_decoding() {
+    let mut params = ML_DSA_44;
+    params.k += 1;
+    let _ = verify::<4, 4>(&params, &[], &[], &[], &[]);
+}
+
+#[test]
+#[should_panic(expected = "assertion failed: K == p.k && L == p.l")]
+fn verification_refuses_mismatched_column_dimensions_before_decoding() {
+    let mut params = ML_DSA_44;
+    params.l += 1;
+    let _ = verify::<4, 4>(&params, &[], &[], &[], &[]);
+}
+
+#[test]
+fn the_keygen_probe_byte_matches_the_public_key_hash() {
+    use sha3::digest::{ExtendableOutput, Update, XofReader};
+    let key = ExpandedKey::<4, 4>::from_seed(&ML_DSA_44, &[0x42; SEED_LEN]);
+    let mut public = vec![0; ML_DSA_44.pk_len];
+    key.write_public_key(&ML_DSA_44, &mut public);
+    let mut hash = sha3::Shake256::default();
+    hash.update(&public);
+    let mut expected = [0; 1];
+    hash.finalize_xof().read(&mut expected);
+    assert_eq!(std::hint::black_box(&key).probe_byte(), expected[0]);
+}
+
+#[cfg(debug_assertions)]
+#[test]
+fn expanded_key_refuses_short_encoding_buffers_before_writing() {
+    use std::panic::{AssertUnwindSafe, catch_unwind};
+    let p = &ML_DSA_44;
+    let key = ExpandedKey::<4, 4>::from_seed(p, &[7; SEED_LEN]);
+    for signing in [false, true] {
+        let expected = if signing { p.sig_len } else { p.pk_len };
+        let mut output = vec![0xa5; expected - 1];
+        let panic = catch_unwind(AssertUnwindSafe(|| {
+            if signing {
+                key.sign(p, b"message", &[], &[0; SEED_LEN], &mut output);
+            } else {
+                key.write_public_key(p, &mut output);
+            }
+        }))
+        .expect_err("undersized encoding buffer accepted");
+        let text = panic.downcast_ref::<String>().unwrap();
+        assert!(
+            text.starts_with("assertion `left == right` failed\n"),
+            "{text}"
+        );
+        assert!(
+            text.contains(&format!("left: {}\n right: {expected}", expected - 1)),
+            "{text}"
+        );
+        assert_eq!(output, vec![0xa5; expected - 1]);
     }
 }

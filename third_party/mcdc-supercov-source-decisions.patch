@@ -1,0 +1,662 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 RS-Key contributors
+
+diff --git a/crates/supercov-engine/src/rust_instrumenter.rs b/crates/supercov-engine/src/rust_instrumenter.rs
+--- a/crates/supercov-engine/src/rust_instrumenter.rs
++++ b/crates/supercov-engine/src/rust_instrumenter.rs
+@@ -9,7 +9,7 @@
+ 
+ use ra_ap_syntax::{
+     AstNode, Edition, SourceFile, SyntaxKind, TextRange,
+-    ast::{self, BinaryOp, HasAttrs, HasLoopBody, HasName, LogicOp},
++    ast::{self, BinaryOp, HasArgList, HasAttrs, HasLoopBody, HasName, LogicOp},
+ };
+ use serde_json::json;
+ 
+@@ -255,9 +255,15 @@
+ /// over-declares the unmeasured surface rather than ever under-declaring it.
+ fn in_const_context(node: &ra_ap_syntax::SyntaxNode) -> bool {
+     let start = node.text_range().start();
+-    node.ancestors().any(|ancestor| {
+-        ast::Fn::cast(ancestor.clone()).is_some_and(|function| function.const_token().is_some())
+-            || ast::BlockExpr::cast(ancestor.clone())
++    for ancestor in node.ancestors() {
++        if let Some(function) = ast::Fn::cast(ancestor.clone()) {
++            return function.const_token().is_some();
++        }
++        if ast::ClosureExpr::can_cast(ancestor.kind())
++            || ast::BlockExpr::cast(ancestor.clone()).is_some_and(|block| block.async_token().is_some()) {
++            return false;
++        }
++        if ast::BlockExpr::cast(ancestor.clone())
+                 .is_some_and(|block| block.const_token().is_some())
+             || ast::Const::can_cast(ancestor.kind())
+             || ast::Static::can_cast(ancestor.kind())
+@@ -266,8 +272,11 @@
+                 array
+                     .semicolon_token()
+                     .is_some_and(|semicolon| start >= semicolon.text_range().end())
+-            })
+-    })
++            }) {
++            return true;
++        }
++    }
++    false
+ }
+ 
+ /// Report whether this node sits inside a `GlobalAlloc` implementation.
+@@ -456,7 +465,21 @@
+ 
+ /// Report whether a probe placed at this node could not run correctly.
+ fn cannot_carry_probe(node: &ra_ap_syntax::SyntaxNode) -> bool {
+-    in_const_context(node) || in_global_allocator(node)
++    outside_selection(node.text_range()) || in_const_context(node) || in_global_allocator(node)
++}
++
++fn outside_selection(range: TextRange) -> bool {
++    std::env::var("SUPERCOV_RSK_BYTE_RANGES").ok().is_some_and(|selection| {
++        let start = usize::from(range.start());
++        let end = usize::from(range.end());
++        !selection.split(',').any(|entry| {
++            let (low, high) = entry.split_once(':').expect("laboratory range needs start:end");
++            let low: usize = low.parse().expect("laboratory range start");
++            let high: usize = high.parse().expect("laboratory range end");
++            assert!(low < high, "laboratory range must be nonempty");
++            low <= start && end <= high
++        })
++    })
+ }
+ 
+ fn range_offsets(range: TextRange) -> (usize, usize) {
+@@ -922,6 +945,12 @@
+ 
+     fn decision(&mut self, test: &ast::Expr, kind: &str) {
+         let range = test.syntax().text_range();
++        let mut condition_ranges = Vec::new();
++        Self::atomic_condition_ranges(test, &mut condition_ranges);
++        self.decision_ranges(range, condition_ranges, kind);
++    }
++
++    fn decision_ranges(&mut self, range: TextRange, condition_ranges: Vec<TextRange>, kind: &str) {
+         let id = stable_id(self.file, "decision", range, kind);
+         self.obligation_ranges.push((id.clone(), range));
+         if !self.decision_ids.insert(id.clone()) {
+@@ -930,8 +959,6 @@
+         let Some((line, column, source)) = self.location_source(range) else {
+             return;
+         };
+-        let mut condition_ranges = Vec::new();
+-        Self::atomic_condition_ranges(test, &mut condition_ranges);
+         let conditions = match condition_ranges
+             .into_iter()
+             .map(|condition| self.locations.text(condition))
+@@ -1022,7 +1049,7 @@
+                 ra_ap_syntax::NodeOrToken::Node(node) => Some(node),
+                 ra_ap_syntax::NodeOrToken::Token(token) => token.parent(),
+             };
+-            if node.is_some_and(|node| cannot_carry_probe(&node)) {
++            if outside_selection(*range) || node.is_some_and(|node| in_const_context(&node) || in_global_allocator(&node)) {
+                 declined.insert(id.clone());
+             }
+         }
+@@ -1138,6 +1165,11 @@
+                 self.decision(&condition, "if");
+             }
+         }
++        for statement in root.descendants().filter_map(ast::LetStmt::cast) {
++            if let Some(range) = let_else_range(&statement) {
++                self.decision_ranges(range, vec![range], "let-else");
++            }
++        }
+         for expression in root.descendants().filter_map(ast::WhileExpr::cast) {
+             if let Some(condition) = expression.condition() {
+                 self.decision(&condition, "while");
+@@ -1153,6 +1185,19 @@
+                 self.decision(&condition, "match-guard");
+             }
+         }
++        for condition in matches_guards(root, matches) {
++            self.decision(&condition, "matches-guard");
++        }
++        for (call, _, kind) in comparison_assertions(root, self.locations.source) {
++            let range = call.syntax().text_range();
++            self.decision_ranges(range, vec![range], kind);
++        }
++        for condition in predicate_callbacks(root) {
++            self.decision(&condition, "predicate-callback");
++        }
++        for condition in predicate_functions(root) {
++            self.decision(&condition, "predicate-function");
++        }
+         for arguments in assertions {
+             if let Some(condition) = assertion_condition(root, *arguments) {
+                 self.decision(&condition, "assert");
+@@ -1161,7 +1206,7 @@
+         for expression in standalone_matches(root, matches, assertions) {
+             self.decision(&expression, "matches");
+         }
+-        for expression in value_decisions(root, assertions) {
++        for expression in value_decisions(root, assertions, matches) {
+             self.decision(&expression, "value");
+         }
+ 
+@@ -1239,6 +1284,10 @@
+         let mut first_macro = None;
+         let mut macro_sites = 0;
+         for call in root.descendants().filter_map(ast::MacroCall::cast) {
++            let range = call.syntax().text_range();
++            if in_test_code(&self.tests, range) || in_test_code(&self.compiled_out, range) {
++                continue;
++            }
+             macro_names.insert(
+                 call.path()
+                     .map_or("?".into(), |path| path.syntax().text().to_string()),
+@@ -1292,7 +1341,9 @@
+         };
+         if let Some(node) = root
+             .descendants()
+-            .find(|node| bears_obligation(node) && in_const_context(node))
++            .find(|node| bears_obligation(node) && in_const_context(node)
++                && !in_test_code(&self.tests, node.text_range())
++                && !in_test_code(&self.compiled_out, node.text_range()))
+         {
+             self.site_limitation(
+                 "rust-const-context-not-instrumented",
+@@ -1302,7 +1353,9 @@
+         }
+         if let Some(node) = root
+             .descendants()
+-            .find(|node| bears_obligation(node) && in_global_allocator(node))
++            .find(|node| bears_obligation(node) && in_global_allocator(node)
++                && !in_test_code(&self.tests, node.text_range())
++                && !in_test_code(&self.compiled_out, node.text_range()))
+         {
+             self.site_limitation(
+                 "rust-global-allocator-not-instrumented",
+@@ -1505,10 +1558,7 @@
+         }
+         if name == "pin"
+             && !call.path().is_some_and(|path| {
+-                matches!(
+-                    path.syntax().text().to_string().as_str(),
+-                    "core::pin::pin" | "std::pin::pin"
+-                )
++                matches!(path.syntax().text().to_string().as_str(), "core::pin::pin" | "std::pin::pin")
+             })
+         {
+             continue;
+@@ -1537,7 +1587,11 @@
+             let Some(comma_end) = first_top_level_comma_end(&arguments) else {
+                 continue;
+             };
+-            blank(&mut rewritten[comma_end - start..end - start - 1]);
++            let guard = arguments.syntax().children_with_tokens()
++                .filter_map(|element| element.into_token())
++                .find(|token| token.kind() == SyntaxKind::IF_KW);
++            let pattern_end = guard.map_or(end - 1, |token| usize::from(token.text_range().end()));
++            blank(&mut rewritten[comma_end - start..pattern_end - start]);
+         }
+         // The arguments must read as a call's argument list.
+         let probe = format!(
+@@ -1652,6 +1706,7 @@
+ fn condition_expressions(
+     root: &ra_ap_syntax::SyntaxNode,
+     assertions: &[TextRange],
++    matches: &[TextRange],
+ ) -> Vec<ast::Expr> {
+     let mut conditions = Vec::new();
+     for expression in root.descendants().filter_map(ast::IfExpr::cast) {
+@@ -1666,12 +1721,87 @@
+     for arguments in assertions {
+         conditions.extend(assertion_condition(root, *arguments));
+     }
++    conditions.extend(matches_guards(root, matches));
+     conditions
+ }
+ 
+ fn is_logical(expression: &ast::Expr) -> bool {
+     matches!(expression, ast::Expr::BinExpr(binary)
+         if matches!(binary.op_kind(), Some(BinaryOp::LogicOp(LogicOp::And | LogicOp::Or))))
++}
++
++fn matches_guards(root: &ra_ap_syntax::SyntaxNode, matches: &[TextRange]) -> Vec<ast::Expr> {
++    root.descendants().filter_map(ast::CallExpr::cast)
++        .filter(|call| matches.contains(&call.syntax().text_range()))
++        .filter_map(|call| call.arg_list()?.args().nth(1)).collect()
++}
++
++fn comparison_assertions(root: &ra_ap_syntax::SyntaxNode, source: &str) -> Vec<(ast::CallExpr, ast::Expr, &'static str)> {
++    root.descendants().filter_map(ast::CallExpr::cast).filter_map(|call| {
++        let end = usize::from(call.expr()?.syntax().text_range().end());
++        if source.get(end.checked_sub(1)?..end)? != "!" { return None; }
++        let name = call.expr()?.syntax().text().to_string();
++        let kind = match name.rsplit("::").next()? {
++            "assert_eq_" | "debug_assert_eq_" => "assert-eq",
++            "assert_ne_" | "debug_assert_ne_" => "assert-ne",
++            _ => return None,
++        };
++        let left = call.arg_list()?.args().next()?;
++        Some((call, left, kind))
++    }).collect()
++}
++
++fn predicate_callbacks(root: &ra_ap_syntax::SyntaxNode) -> Vec<ast::Expr> {
++    root.descendants().filter_map(ast::MethodCallExpr::cast).filter_map(|call| {
++        let closure = predicate_argument(&call)?;
++        let ast::Expr::ClosureExpr(closure) = closure else { return None; };
++        let body = closure.body()?;
++        if predicate_has_value_decision(&body) { return None; }
++        Some(body)
++    }).collect()
++}
++
++fn predicate_argument(call: &ast::MethodCallExpr) -> Option<ast::Expr> {
++        let name = call.name_ref()?.text().to_string();
++        if !matches!(name.as_str(), "any" | "all" | "is_some_and" | "is_none_or"
++            | "is_ok_and" | "is_err_and" | "filter" | "find" | "position"
++            | "rposition" | "take_while" | "skip_while" | "retain") { return None; }
++        let args = call.arg_list()?.args().collect::<Vec<_>>();
++        if args.len() != 1 { return None; }
++        args.into_iter().next()
++}
++
++fn predicate_functions(root: &ra_ap_syntax::SyntaxNode) -> Vec<ast::Expr> {
++    root.descendants().filter_map(ast::MethodCallExpr::cast)
++        .filter_map(|call| {
++            let argument = predicate_argument(&call)?;
++            let ast::Expr::PathExpr(path) = &argument else { return None; };
++            // RS-Key's owned index `find(key)` takes data, not a callback.
++            if call.name_ref()?.text() == "find" && path.path()?.qualifier().is_none() {
++                return None;
++            }
++            Some(argument)
++        }).collect()
++}
++
++fn predicate_has_value_decision(body: &ast::Expr) -> bool {
++    match unparenthesized(body) {
++        ast::Expr::PrefixExpr(prefix) if prefix.op_kind() == Some(ast::UnaryOp::Not) =>
++            prefix.expr().is_some_and(|body| predicate_has_value_decision(&body)),
++        ast::Expr::BlockExpr(block) => block.stmt_list().and_then(|list| list.tail_expr())
++            .is_some_and(|body| predicate_has_value_decision(&body))
++            && predicate_return_values(body).is_empty(),
++        body => is_logical(&body),
++    }
++}
++
++fn predicate_return_values(body: &ast::Expr) -> Vec<ast::Expr> {
++    body.syntax().descendants().filter_map(ast::ReturnExpr::cast)
++        .filter(|returned| returned.syntax().ancestors()
++            .take_while(|node| node != body.syntax()).skip(1)
++            .all(|node| !ast::Fn::can_cast(node.kind()) && !ast::ClosureExpr::can_cast(node.kind())
++                && !ast::BlockExpr::cast(node).is_some_and(|block| block.async_token().is_some())))
++        .filter_map(|returned| returned.expr()).collect()
+ }
+ 
+ /// `&&` and `||` used as a value -- `let ok = a && b;`, a returned or passed
+@@ -1679,8 +1809,8 @@
+ /// of every boolean expression of two or more conditions that each be shown
+ /// to decide it. Only the outermost operator of a tree is one, and not when
+ /// the tree is itself a condition, which is a decision already.
+-fn value_decisions(root: &ra_ap_syntax::SyntaxNode, assertions: &[TextRange]) -> Vec<ast::Expr> {
+-    let conditions = condition_expressions(root, assertions)
++fn value_decisions(root: &ra_ap_syntax::SyntaxNode, assertions: &[TextRange], matches: &[TextRange]) -> Vec<ast::Expr> {
++    let conditions = condition_expressions(root, assertions, matches)
+         .iter()
+         .map(|condition| unparenthesized(condition).syntax().text_range())
+         .collect::<Vec<_>>();
+@@ -1721,8 +1851,8 @@
+     assertions: &[TextRange],
+ ) -> Vec<ast::Expr> {
+     let mut atoms = Vec::new();
+-    let mut conditions = condition_expressions(root, assertions);
+-    conditions.extend(value_decisions(root, assertions));
++    let mut conditions = condition_expressions(root, assertions, matches);
++    conditions.extend(value_decisions(root, assertions, matches));
+     for condition in &conditions {
+         RustObligationCollector::atomic_condition_ranges(condition, &mut atoms);
+     }
+@@ -1843,21 +1973,32 @@
+ /// The `#[cfg(..)]` predicates on a node, as one: an item, a statement, a
+ /// match arm, a field -- anything that carries attributes, and the inner
+ /// `#![cfg(..)]` of a file or an inline module, which gates all of it.
++fn cfg_meta_predicate(meta: ast::Meta) -> Option<cargo_platform::CfgExpr> {
++    use cargo_platform::CfgExpr;
++    let predicate = |node: ast::CfgPredicate| node.syntax().descendants_with_tokens()
++        .filter_map(|element| element.into_token()).filter(|token| !token.kind().is_trivia())
++        .map(|token| token.text().to_string()).collect::<String>().parse::<CfgExpr>().ok();
++    match meta {
++        ast::Meta::CfgMeta(meta) => predicate(meta.cfg_predicate()?),
++        ast::Meta::CfgAttrMeta(meta) => {
++            let active = predicate(meta.cfg_predicate()?)?;
++            let mut children = meta.metas().filter_map(cfg_meta_predicate).collect::<Vec<_>>();
++            if children.is_empty() {
++                return None;
++            }
++            let required = if children.len() == 1 { children.pop()? } else { CfgExpr::All(children) };
++            Some(CfgExpr::Any(vec![CfgExpr::Not(Box::new(active)), required]))
++        }
++        _ => None,
++    }
++}
++
+ fn cfg_predicate(node: &ra_ap_syntax::SyntaxNode) -> Option<cargo_platform::CfgExpr> {
+     let attributes = ast::AnyHasAttrs::cast(node.clone())?;
+     let mut predicates = attributes
+         .attrs()
+         .filter_map(|attribute| attribute.meta())
+-        .filter_map(|meta| {
+-            // Spaces inside a value are the value's: `cfg(foo = "a b")`.
+-            let text = meta.syntax().text().to_string();
+-            text.trim()
+-                .strip_prefix("cfg")
+-                .map(str::trim_start)
+-                .and_then(|rest| rest.strip_prefix('('))
+-                .and_then(|inner| inner.strip_suffix(')'))
+-                .and_then(|inner| inner.parse::<cargo_platform::CfgExpr>().ok())
+-        })
++        .filter_map(cfg_meta_predicate)
+         .collect::<Vec<_>>();
+     match predicates.len() {
+         0 => None,
+@@ -2391,11 +2532,86 @@
+                 atomic_range,
+                 atomic_range,
+                 1,
+-                format!("{runtime_path}::condition(("),
++                if kind == "predicate-callback" { format!("{runtime_path}::condition::<bool>((") }
++                    else { format!("{runtime_path}::condition((") },
+                 format!("), &mut {frame_name}, {index})"),
+             );
+         });
+     true
++}
++
++fn let_else_range(statement: &ast::LetStmt) -> Option<TextRange> {
++    statement.let_else()?;
++    Some(TextRange::new(
++        statement.let_token()?.text_range().start(),
++        statement.initializer()?.syntax().text_range().end(),
++    ))
++}
++
++fn instrument_comparison_assertion(
++    insertions: &mut Vec<Insertion>, runtime_path: &str, file: &str,
++    call: &ast::CallExpr, left: &ast::Expr, kind: &str,
++    identifiers: &mut BTreeSet<String>,
++) {
++    if cannot_carry_probe(call.syntax()) { return; }
++    let id = stable_id(file, "decision", call.syntax().text_range(), kind);
++    let ordinal = decision_ordinal(&id);
++    let base = format!("__SupercovComparison{}", id.rsplit(':').next().unwrap().to_ascii_uppercase());
++    let mut helper = base.clone();
++    let mut attempt = 0;
++    while !identifiers.insert(helper.clone()) {
++        attempt += 1;
++        helper = format!("{base}_{attempt}");
++    }
++    let outcome = if kind == "assert-ne" { "!value" } else { "value" };
++    let prefix = format!(r#"{{
++        struct __SupercovComparison<'a, L: ?Sized>(&'a L);
++        impl<L: ?Sized, R: ?Sized> core::cmp::PartialEq<R> for __SupercovComparison<'_, L>
++        where L: core::cmp::PartialEq<R> {{
++            fn eq(&self, other: &R) -> bool {{
++                let value = <L as core::cmp::PartialEq<R>>::eq(self.0, other);
++                let mut frame = {runtime_path}::DecisionFrame::new({ordinal}, 1);
++                let outcome = {runtime_path}::condition({outcome}, &mut frame, 0);
++                {runtime_path}::decision(outcome, &mut frame);
++                value
++            }}
++        }}
++        impl<L: ?Sized + core::fmt::Debug> core::fmt::Debug for __SupercovComparison<'_, L> {{
++            fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {{
++                core::fmt::Debug::fmt(self.0, formatter)
++            }}
++        }}
++        "#);
++    push_wrapper(insertions, call.syntax().text_range(), call.syntax().text_range(), 0,
++        prefix.replace('\n', " ").replace("__SupercovComparison", &helper), " }".into());
++    push_wrapper(insertions, left.syntax().text_range(), left.syntax().text_range(), 1,
++        format!("{helper}(&("), "))".into());
++}
++
++fn instrument_let_else(
++    insertions: &mut Vec<Insertion>,
++    runtime_path: &str,
++    file: &str,
++    statement: &ast::LetStmt,
++) {
++    let Some(range) = let_else_range(statement) else { return };
++    if outside_selection(range) || in_const_context(statement.syntax()) || in_global_allocator(statement.syntax()) {
++        return;
++    }
++    let block = statement.let_else().and_then(|otherwise| otherwise.block_expr())
++        .expect("a parsed let-else has its diverging block");
++    let ordinal = decision_ordinal(&stable_id(file, "decision", range, "let-else"));
++    let probe = |outcome| format!(
++        "{{ let mut __supercov_let_else_frame = {runtime_path}::DecisionFrame::new({ordinal}, 1); \
++         let __supercov_let_else_value = {runtime_path}::condition({outcome}, &mut __supercov_let_else_frame, 0); \
++         {runtime_path}::decision(__supercov_let_else_value, &mut __supercov_let_else_frame); }}"
++    );
++    // Neither the initializer nor its bindings move into another scope.
++    push_direct(insertions, block_entry(&block), probe(false));
++    let gate = cfg_predicate(statement.syntax())
++        .map_or_else(String::new, |predicate| format!("#[cfg({predicate})] "));
++    push_direct(insertions, usize::from(statement.syntax().text_range().end()),
++        format!(" {gate}{}", probe(true)));
+ }
+ 
+ /// Produce a private Rust candidate using only Supercov-owned probe calls.
+@@ -2474,11 +2690,25 @@
+     // re-parsing each round.
+     let parsed = parse_for_instrumentation(source)?;
+     let tests = test_code_ranges(parsed.tree.syntax(), test_file);
+-    let compiled_out = compiled_out_ranges(parsed.tree.syntax(), cfg);
++    let mut compiled_out = compiled_out_ranges(parsed.tree.syntax(), cfg);
++    let debug_predicate: cargo_platform::CfgExpr = "debug_assertions".parse().expect("fixed cfg");
++    let debug_ranges = parsed.tree.syntax().descendants().filter_map(ast::CallExpr::cast)
++        .filter(|call| call.expr().is_some_and(|expression| {
++            let end = usize::from(expression.syntax().text_range().end());
++            source.get(end.saturating_sub(1)..end) == Some("!")
++                && matches!(expression.syntax().text().to_string().rsplit("::").next(),
++                    Some("debug_assert_" | "debug_assert_eq_" | "debug_assert_ne_"))
++        })).map(|call| call.syntax().text_range()).collect::<Vec<_>>();
++    if cfg.and_then(|cfg| cfg.evaluate(&debug_predicate)) == Some(false) {
++        compiled_out.extend(debug_ranges.iter().copied());
++    }
+     // Code behind a predicate only the build can settle: its obligations are
+     // counted unless every build that ran leaves it out (`RustCfgGate`).
+-    let gates = unsettled_cfg_gates(parsed.tree.syntax(), cfg)
+-        .into_iter()
++    let mut pending_gates = unsettled_cfg_gates(parsed.tree.syntax(), cfg);
++    if cfg.and_then(|cfg| cfg.evaluate(&debug_predicate)).is_none() {
++        pending_gates.extend(debug_ranges.into_iter().map(|range| (range, debug_predicate.clone())));
++    }
++    let gates = pending_gates.into_iter()
+         .filter(|(range, _)| !in_test_code(&tests, *range) && !in_test_code(&compiled_out, *range))
+         .collect::<Vec<_>>();
+     let (mut manifest, gated) = RustObligationCollector::new(file, source)
+@@ -2626,13 +2856,15 @@
+             |attribute| attribute.syntax().text_range().end(),
+         );
+         let wrapped = TextRange::new(start, expression.syntax().text_range().end());
++        let let_else = expression.syntax().parent().and_then(ast::LetStmt::cast)
++            .is_some_and(|statement| statement.let_else().is_some());
+         push_wrapper(
+             insertions,
+             wrapped,
+             wrapped,
+             0,
+-            format!(" {{ {runtime_path}::hit({}); (", hit_ordinal(&id)),
+-            ") }".into(),
++            format!(" {}{{ {runtime_path}::hit({}); (", if let_else { "(" } else { "" }, hit_ordinal(&id)),
++            if let_else { ") })".into() } else { ") }".into() },
+         );
+     };
+     for list in root.descendants().filter_map(ast::StmtList::cast) {
+@@ -2978,6 +3210,9 @@
+         );
+     }
+ 
++    for statement in root.descendants().filter_map(ast::LetStmt::cast) {
++        instrument_let_else(&mut insertions, runtime_path, file, &statement);
++    }
+     for expression in root.descendants().filter_map(ast::IfExpr::cast) {
+         let condition = expression
+             .condition()
+@@ -3047,6 +3282,36 @@
+             "match-guard",
+             &frame_name,
+         );
++    }
++    for condition in matches_guards(root, &matches) {
++        let frame_name = allocate_frame_name(file, &condition, "matches-guard", &mut identifiers);
++        instrument_decision(&mut insertions, runtime_path, file, &condition, "matches-guard", &frame_name);
++    }
++    for (call, left, kind) in comparison_assertions(root, source) {
++        instrument_comparison_assertion(&mut insertions, runtime_path, file, &call, &left, kind, &mut identifiers);
++    }
++    for function in predicate_functions(root) {
++        if cannot_carry_probe(function.syntax()) { continue; }
++        let range = function.syntax().text_range();
++        let ordinal = decision_ordinal(&stable_id(file, "decision", range, "predicate-function"));
++        let callback = allocate_identifier(file, range, "callback", &mut identifiers);
++        let argument = allocate_identifier(file, range, "argument", &mut identifiers);
++        let frame = allocate_identifier(file, range, "frame", &mut identifiers);
++        push_wrapper(&mut insertions, range, range, 0,
++            format!("{{ #[allow(unused_mut)] let mut {callback} = ("),
++            format!("); move |{argument}| {{ let mut {frame} = {runtime_path}::DecisionFrame::new({ordinal}, 1); {runtime_path}::decision({runtime_path}::condition::<bool>({callback}({argument}), &mut {frame}, 0), &mut {frame}) }} }}"));
++    }
++    for condition in predicate_callbacks(root) {
++        let frame_name = allocate_frame_name(file, &condition, "predicate-callback", &mut identifiers);
++        instrument_decision(&mut insertions, runtime_path, file, &condition, "predicate-callback", &frame_name);
++        if cannot_carry_probe(condition.syntax()) { continue; }
++        let ordinal = decision_ordinal(&stable_id(file, "decision", condition.syntax().text_range(), "predicate-callback"));
++        for value in predicate_return_values(&condition) {
++            let frame = allocate_frame_name(file, &value, "predicate-return", &mut identifiers);
++            push_wrapper(&mut insertions, value.syntax().text_range(), value.syntax().text_range(), 0,
++                format!("({{ let mut {frame} = {runtime_path}::DecisionFrame::new({ordinal}, 1); {runtime_path}::decision({runtime_path}::condition::<bool>(("),
++                format!("), &mut {frame}, 0), &mut {frame}) }})"));
++        }
+     }
+     // `assert!(cond, ...)`: the condition decides whether the program goes
+     // on, and the macro takes an instrumented expression like any other.
+@@ -3092,7 +3357,7 @@
+             &frame_name,
+         );
+     }
+-    for expression in value_decisions(root, &assertions) {
++    for expression in value_decisions(root, &assertions, &matches) {
+         let frame_name = allocate_frame_name(file, &expression, "value", &mut identifiers);
+         instrument_decision(
+             &mut insertions,
+@@ -4280,7 +4545,7 @@
+                 .iter()
+                 .filter(|decision| decision.line == 9)
+                 .count(),
+-            1
++            2
+         );
+         assert!(
+             transformed
+@@ -6065,7 +6330,9 @@
+         );
+         let instrumented =
+             instrument_rust_source("src/lib.rs", source, "crate::__supercov_runtime_v1").unwrap();
+-        assert_eq!(instrumented.code, source);
++        let delayed = instrumented.code.lines().find(|line| line.starts_with("const C:")).unwrap();
++        assert!(delayed.contains("::hit("));
++        assert_eq!(instrumented.code.replace(delayed, "const C: fn() -> u8 = || 1;"), source);
+         assert!(
+             limitation_kinds(&instrumented.manifest)
+                 .contains("rust-const-context-not-instrumented")
+diff --git a/crates/supercov-engine/src/rust_test_runner.rs b/crates/supercov-engine/src/rust_test_runner.rs
+--- a/crates/supercov-engine/src/rust_test_runner.rs
++++ b/crates/supercov-engine/src/rust_test_runner.rs
+@@ -1982,7 +1982,7 @@
+ 
+ /// `settle_cfg_gates` with what the builds said already gathered: a byte per
+ /// gate, bit 0 left out somewhere, bit 1 built somewhere.
+-pub(crate) fn settle_cfg_gates_with(
++pub fn settle_cfg_gates_with(
+     manifest: &CoverageManifest,
+     probes: &crate::rust_instrumenter::RustProbeLayout,
+     settled: &[u8],
+diff --git a/crates/supercov-engine/tests/source_decisions.rs b/crates/supercov-engine/tests/source_decisions.rs
+new file mode 100644
+--- /dev/null
++++ b/crates/supercov-engine/tests/source_decisions.rs
+@@ -0,0 +1,72 @@
++// SPDX-License-Identifier: AGPL-3.0-only
++// Copyright (C) 2026 RS-Key contributors
++
++use supercov_engine::rust_instrumenter::{instrument_rust_file, instrument_rust_source, TargetCfg};
++
++#[test]
++fn let_else_is_one_explicit_pattern_decision() {
++    let source = "pub fn f(v: Option<u8>) -> u8 { let Some(n) = v else { return 0; }; n }";
++    let result = instrument_rust_source("src/lib.rs", source, "crate::runtime").unwrap();
++    let decision = result.manifest.decisions.iter().find(|d| d.kind == "let-else").unwrap();
++    assert_eq!(decision.source, "let Some(n) = v");
++    assert_eq!(decision.conditions, ["let Some(n) = v"]);
++    assert!(result.code.contains("::condition(false,"));
++    assert!(result.code.contains("::condition(true,"));
++}
++
++#[test]
++fn disabled_first_macro_cannot_hide_a_later_active_site() {
++    let source = "#[cfg(any())] dead!();\npub fn f() { opaque!(if a && b {}); }\n";
++    let cfg = TargetCfg::new(&[]).for_build(false, false, Default::default());
++    let result = instrument_rust_file("src/lib.rs", source, "crate::runtime", false, Some(&cfg)).unwrap();
++    assert!(result.manifest.limitations.iter().any(|row|
++        row["line"] == 2 && row["reason"].as_str().unwrap().contains("opaque")));
++}
++
++#[test]
++fn disabled_first_const_cannot_hide_a_later_compile_time_decision() {
++    let source = "#[cfg(any())] const DEAD: u8 = if true {1} else {0};\nstatic LIVE: u8 = if true {1} else {0};\n";
++    let cfg = TargetCfg::new(&[]).for_build(false, false, Default::default());
++    let result = instrument_rust_file("src/lib.rs", source, "crate::runtime", false, Some(&cfg)).unwrap();
++    assert!(result.manifest.limitations.iter().any(|row| row["line"] == 2));
++    assert_eq!(result.manifest.decisions.len(), 1);
++    assert!(result.manifest.unmeasured.contains(&result.manifest.decisions[0].id));
++}
++
++#[test]
++fn guarded_matches_has_one_aggregate_and_one_guard() {
++    let source = "pub fn f(v:Option<(bool,bool)>)->bool { matches!(v,Some((a,b)) if a && b) }";
++    let result = instrument_rust_source("src/lib.rs", source, "crate::runtime").unwrap();
++    let mut kinds = result.manifest.decisions.iter().map(|d| d.kind.as_str()).collect::<Vec<_>>();
++    kinds.sort();
++    assert_eq!(kinds, ["matches", "matches-guard"]);
++    let guard = result.manifest.decisions.iter().find(|d| d.kind == "matches-guard").unwrap();
++    assert_eq!(guard.conditions, ["a", "b"]);
++}
++
++#[test]
++fn a_static_function_pointer_body_runs_after_initialization() {
++    let source = "pub static F:fn(bool)->u8=|v| if v {1} else {0};";
++    let result = instrument_rust_source("src/lib.rs", source, "crate::runtime").unwrap();
++    assert_eq!(result.manifest.decisions.len(), 1);
++    assert!(!result.manifest.unmeasured.contains(&result.manifest.decisions[0].id));
++    assert!(result.code.contains("::condition((v)"));
++}
++
++#[test]
++fn debug_assertions_follow_the_build_cfg() {
++    let source = "pub fn f(v:u8) { debug_assert_eq!(v,3); debug_assert!(v>0); }";
++    for enabled in [false, true] {
++        let cfg = TargetCfg::new(&[]).for_build(false, enabled, Default::default());
++        let result = instrument_rust_file("src/lib.rs", source, "crate::runtime", false, Some(&cfg)).unwrap();
++        assert_eq!(result.manifest.decisions.len(), if enabled {2} else {0});
++    }
++}
++
++#[test]
++fn an_owned_index_find_takes_data_instead_of_a_predicate() {
++    let source = "pub fn f(index: &Index, key: u16) -> Option<Entry> { index.find(key) }";
++    let result = instrument_rust_source("src/lib.rs", source, "crate::runtime").unwrap();
++    assert!(result.manifest.decisions.is_empty());
++    assert!(result.code.contains("index.find(key)"));
++}

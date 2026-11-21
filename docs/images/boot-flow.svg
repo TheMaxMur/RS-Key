@@ -2,7 +2,7 @@
 <!-- Copyright (C) 2026 RS-Key contributors -->
 <svg viewBox="0 0 780 552" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="ttl dsc" font-family="'Segoe UI', system-ui, -apple-system, sans-serif">
   <title id="ttl">RS-Key boot sequence</title>
-  <desc id="dsc">Boot flows top to bottom in three phases. Bootrom verifies the signed image. Then the firmware provisions and recovers all persistent state — read the MKEK for the seal migrations, mount the KV store, load the phy record, seed the TRNG, run the seal migrations and at-rest scrub — all before the USB pull-up. Only then does build() attach the bus, spawn the transport tasks, and let the worker dispatch applets.</desc>
+  <desc id="dsc">Boot flows top to bottom in three phases. With Secure Boot enforced, bootrom verifies the signed image. Then the firmware provisions and recovers all persistent state — read the MKEK for the seal migrations, mount the KV store, load the phy record, seed the TRNG, run the seal migrations and at-rest scrub — all before the USB pull-up. Only then does build() attach the bus, spawn the transport tasks, and let the worker dispatch applets.</desc>
   <defs>
     <style>
       .h1{font-size:23px;font-weight:700;fill:#2B2723}
@@ -39,10 +39,10 @@
   <!-- PHASE: bootrom -->
   <rect x="40" y="94" width="104" height="20" rx="6" fill="#3E3A36"/>
   <text class="pill" x="52" y="108">BOOTROM</text>
-  <text class="ptag" x="156" y="108">secure boot</text>
+  <text class="ptag" x="156" y="108">secure boot if enforced</text>
   <circle cx="66" cy="132" r="12" fill="#3E3A36"/>
   <text class="num" x="66" y="136" text-anchor="middle">1</text>
-  <text class="step" x="88" y="136">Bootrom verifies the signed <tspan class="mono">IMAGE_DEF</tspan> against the OTP boot key, then executes</text>
+  <text class="step" x="88" y="136">If enforced, verify signed <tspan class="mono">IMAGE_DEF</tspan> against the OTP boot key before execution</text>
 
   <!-- PHASE: provision -->
   <rect x="40" y="152" width="176" height="20" rx="6" fill="#C0562B"/>

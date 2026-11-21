@@ -1,0 +1,14 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 RS-Key contributors
+
+assumption = "PLAT-TZ-001"
+outcome = "pass"
+method = "Build tests/108_trustzone_hardware.py diagnostics, retain their exact ELF/UF2 hashes and patch, and run physical read/write resource matrices with the NS MPU disabled. Observe SAU, ITNS, banked launch controls and FP/AIRCR policy before NS entry, then test all DMA channel locks and ACCESSCTRL locks. Exercise allowed NS RAM read/write controls and retain every watchdog witness. The OTP controller and its data/atomic aliases are read only."
+boot_config = "Disposable combined TrustZone no-touch image with test-hostile-access and test-gateway-probes. Instrumentation adds public observations, a queued CCID marker and a reset timer; normal production security initialization remains in place. Restore the ordinary touch-enabled image after the run."
+expected = "PASS = both physical resource matrices refuse each protected access with the selected fault cause/address, all allowed controls complete, all launch observations match, and DMA/ACCESSCTRL lock writes leave the locked values unchanged. FAIL = a protected access completes, a locked value changes, or a launch observation disagrees. INCONCLUSIVE = the exact image, pending packet, watchdog reset, enumeration or retained witness cannot be established."
+board = "rs-key-0001, RP2350 QFN60, 4 MiB QSPI flash, chipid 0x170d3860ecf780fe, ARM selected, secure boot disabled."
+stepping = "RP2350 A2"
+firmware_sha256 = "9d6ed070cd6aa11c4598cb807302c8ea178aefe602f5a13af395807580bd52b2"
+first_boot_capture = "assurance/board/PLAT-TZ-2026-11-03-capture.json"
+actual = "Measured on 2026-11-03. The complete 184-case read and 179-case write matrices passed on the same exact combined ELF, each including nine allowed controls. Every protected access produced its selected fault cause and address with the NS MPU disabled. All sixteen DMA channel S/P/LOCK settings and the ACCESSCTRL locks resisted attempted relaxation. Secure launch readback was 0x7ff; NS CONTROL/PRIMASK/BASEPRI/FAULTMASK were [4,0,0,0], with valid MSP/MSPLIM. CONTROL.FPCA is shared and is set by the pre-BXNS FPU clearing, unlike the pinned model. No OTP stores were submitted. The capture retains the earlier apparatus-only incomplete runs separately from these passing matrices."
+arm_taken = "PASS. PASS = both physical resource matrices refuse each protected access with the selected fault cause/address, all allowed controls complete, all launch observations match, and DMA/ACCESSCTRL lock writes leave the locked values unchanged. FAIL = a protected access completes, a locked value changes, or a launch observation disagrees. INCONCLUSIVE = the exact image, pending packet, watchdog reset, enumeration or retained witness cannot be established."

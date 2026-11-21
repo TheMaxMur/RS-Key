@@ -172,7 +172,7 @@ fn the_persistent_token_is_not_swept_along() {
         ),
         Err(CtapError::PinInvalid),
     );
-    assert!(spend_token(&mut fs, &mut state, &ppuat).is_ok());
+    assert!(spend_token(&mut fs, &mut state, ppuat.expose()).is_ok());
 }
 
 #[test]

@@ -39,6 +39,10 @@ use rsk_device::presence::{Board, Outcome};
 
 use rsk_device::presence::Arbiter;
 
+#[cfg_attr(
+    all(feature = "no-touch", led_kind = "none", not(feature = "display")),
+    expect(unused_imports, reason = "the USB handler lives in Non-secure")
+)]
 pub(crate) use rsk_device::presence::MIN_TIMEOUT_SECS;
 pub use rsk_device::presence::{SCOPE_CCID, SCOPE_FIDO, SCOPE_NONE, SCOPE_OTP};
 
@@ -118,7 +122,9 @@ enum Button {
 impl Button {
     fn sample(&mut self) -> bool {
         match self {
-            Button::Bootsel(bootsel) => is_bootsel_pressed(bootsel.reborrow()),
+            Button::Bootsel(bootsel) => {
+                crate::trustzone::mpu::with_flash_code(|| is_bootsel_pressed(bootsel.reborrow()))
+            }
             Button::Gpio(button, active_high) => {
                 if *active_high {
                     button.is_high()

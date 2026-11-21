@@ -10,14 +10,14 @@ use embassy_rp::trng::Trng;
 
 use rsk_crypto::HmacDrbg;
 use rsk_fs::Fs;
-use zeroize::Zeroize;
+use rsk_secret::Secret;
 
 use crate::flash_storage::FlashStorage;
 use crate::vendor::VendorPlatform;
 
-/// Raised when the trusted display commits a new clientPIN; consumed by the next
-/// CBOR dispatch to end the RAM session token. The flash-backed `pcmr` grant is not
-/// signalled — `store_local_pin` revokes that where the flash is.
+/// Raised when the trusted display commits a new clientPIN; taken by the next CBOR
+/// command or CCID APDU to end the RAM session token. The flash-backed `pcmr` grant is
+/// not signalled — `store_local_pin` revokes that where the flash is.
 ///
 /// Cross-task because the display holds only `Fs` while `FidoState` lives here in
 /// the worker's handler. Same shape as `worker::MSG_DESELECT`: set on one task,
@@ -61,10 +61,10 @@ impl FidoRng {
     /// 16 B nonce, SP 800-90A 10.1.2.3), drawn through the `Trng` the caller
     /// configured — `sample_count` only; the ROSC settings are the driver's.
     pub fn new(mut trng: Trng<'static, TRNG>) -> Self {
-        let mut seed = [0u8; 48];
-        trng.blocking_fill_bytes(&mut seed);
-        let drbg = HmacDrbg::new(&seed);
-        seed.zeroize();
+        let mut seed = Secret::<[u8; 48]>::zeroed();
+        draw_trng(&mut trng, &mut seed).unwrap_or_else(|_| halt_at_boot());
+        let drbg = HmacDrbg::new(seed.expose());
+        seed.wipe();
         Self {
             trng,
             drbg,
@@ -74,10 +74,16 @@ impl FidoRng {
 
     fn draw(&mut self, buf: &mut [u8]) {
         if self.since_reseed >= RESEED_INTERVAL {
-            let mut e = [0u8; 32];
-            self.trng.blocking_fill_bytes(&mut e);
-            self.drbg.reseed(&e);
-            e.zeroize();
+            let mut e = Secret::<[u8; 32]>::zeroed();
+            if draw_trng(&mut self.trng, &mut e).is_ok() {
+                self.drbg.reseed(e.expose());
+            } else {
+                // Fail closed through the worker's reboot, which scrubs RAM first; its boot
+                // draws the seed afresh. Till then the DRBG serves from checked seeds alone.
+                crate::vendor::request_reboot_unless_pending();
+            }
+            e.wipe();
+            // After a failed draw too: a dead TRNG is not polled again before the reboot.
             self.since_reseed = 0;
         }
         self.drbg.fill(buf);
@@ -87,8 +93,43 @@ impl FidoRng {
     /// Wipe the DRBG state for a secure reboot; it reseeds from the TRNG at the
     /// next boot, so this only destroys the current session's keystream.
     pub fn scrub(&mut self) {
-        self.drbg.scrub();
+        // The TRNG is a peripheral handle and the counter a byte count: only the DRBG
+        // holds key material.
+        let Self {
+            trng: _,
+            drbg,
+            since_reseed: _,
+        } = self;
+        drbg.scrub();
     }
+}
+
+/// The RP2350 TRNG's block, its 192-bit EHR: `blocking_fill_bytes` fills a buffer
+/// with whole ones from its start.
+const TRNG_BLOCK: usize = 24;
+
+/// Fill `out` from the TRNG, never with a draw holding an all-zero block (the part's
+/// failed-check answer, if one ever reached us). A TRNG that answers only those for
+/// [`rsk_crypto::drbg::ENTROPY_TRIES`] draws is a fault, and `out` is wiped.
+fn draw_trng<const N: usize>(
+    trng: &mut Trng<'static, TRNG>,
+    out: &mut Secret<[u8; N]>,
+) -> Result<(), rsk_crypto::drbg::EntropyFault> {
+    let drawn = rsk_crypto::drbg::draw_entropy(out.expose_mut(), TRNG_BLOCK, |b| {
+        trng.blocking_fill_bytes(b)
+    });
+    if drawn.is_err() {
+        out.wipe();
+    }
+    drawn
+}
+
+/// The boot seed's fail-closed stop, before the USB pull-up: no key is minted off a
+/// constant. Nothing `Worker::reboot` scrubs exists yet; the dead stack below is what
+/// holds anything, the failed draws' temporaries and the store scan's, so it is swept.
+fn halt_at_boot() -> ! {
+    crate::sweep::dead_stack();
+    panic!("the TRNG answered only draws with an all-zero block at boot");
 }
 
 // One impl for every applet: the randomness seam is `rsk-sdk`'s, not one

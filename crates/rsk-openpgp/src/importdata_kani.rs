@@ -22,8 +22,10 @@ fn tag_len_total() {
 }
 
 /// Parsing the `4D … CRT` header never panics; a success selects one of the
-/// three key slots.
+/// three key slots. Eight bytes leave the template's body four, so its TLV walk
+/// runs at most twice.
 #[kani::proof]
+#[kani::unwind(4)]
 fn parse_ehl_head_total() {
     const N: usize = 8;
     let data: [u8; N] = kani::any();

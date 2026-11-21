@@ -3,7 +3,7 @@
 
 # metadata — self-published FIDO Metadata Statement
 
-`rs-key.metadata.json` is a [FIDO Metadata Statement v3.1.1](https://fidoalliance.org/specs/mds/fido-metadata-statement-v3.1.1-rd-20251016.html)
+`rs-key.metadata.json` is a [FIDO Metadata Statement v3.1.1](https://fidoalliance.org/specs/mds/fido-metadata-statement-v3.1.1-ps-20260105.html)
 for the RS-Key FIDO2 authenticator, describing the **default build profile**.
 
 It is **self-published**, not a FIDO Alliance MDS listing — getting into the MDS
@@ -11,6 +11,11 @@ BLOB requires FIDO2 certification and membership, which is out of scope. A
 relying party or library that can import a local metadata file can consume this
 directly; see [docs/guides/aaguid-metadata.md](../docs/guides/aaguid-metadata.md)
 for the full rationale and the certification boundary.
+
+All three statements use the standard MDS3 `legalHeader` expected by the
+official conformance tool's Metadata P-36. That text does not make this a
+certified authenticator or an MDS listing; the publication and attestation
+limits below still apply.
 
 - **AAGUID:** `2479c7bf-6b30-5683-9ec8-0e8171a918b7`
   (`uuid5(NAMESPACE_URL, "https://github.com/TheMaxMur/RS-Key")`).

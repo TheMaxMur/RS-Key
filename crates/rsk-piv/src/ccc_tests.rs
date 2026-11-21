@@ -16,8 +16,12 @@ fn is_wellformed_tlv_in_table_order() {
     // Table 8 order, mandatory elements only; unused optional elements absent.
     let mut i = 0;
     for (tag, len) in [(0xF0u8, 0usize), (0xF1, 0), (0xF2, 0), (0xF5, 1)] {
-        assert_eq!(CCC[i], tag, "tag at {i}");
-        assert_eq!(CCC[i + 1] as usize, len, "len at {i}");
+        assert_eq!(CCC.get(i), Some(&tag), "tag at {i}");
+        assert_eq!(
+            CCC.get(i + 1).copied().map(usize::from),
+            Some(len),
+            "len at {i}"
+        );
         i += 2 + len;
     }
     assert_eq!(i, CCC.len(), "TLVs must cover the whole object exactly");

@@ -4,7 +4,7 @@
 use std::vec;
 
 use super::*;
-use crate::tests::{Env, Pad, TestUi, center};
+use crate::tests::{Env, PIN, Pad, TestUi, TimedHolds, center};
 
 // The two asks this one backend answers differently: a CTAP2 ceremony (the
 // registration card, the closing "Approved" pop, a reportable cancel) and a
@@ -37,6 +37,9 @@ fn prompt(env: &Env, pad: Pad, timeout_ms: u32) -> RefCell<TestUi<'_>> {
     ui.hooks.presence_ms = timeout_ms;
     RefCell::new(ui)
 }
+
+#[path = "presence_draw_failure_tests.rs"]
+mod draw_failure;
 
 #[test]
 fn a_deny_tap_is_a_real_decline() {
@@ -98,17 +101,13 @@ fn a_ceremony_drops_a_stale_cancel_and_restores_the_led_it_found() {
 
 #[test]
 fn a_hold_that_is_released_starts_over() {
-    // Two three-quarter holds are not one whole one: lifting the finger resets the
-    // fill, so approval always costs one uninterrupted HOLD_MS.
-    let polls = (HOLD_MS as usize * 3 / 4) / TOUCH_POLL_MS as usize;
-    let mut script = vec![None];
-    script.extend(vec![Some(allow()); polls]);
-    script.push(None);
-    script.extend(vec![Some(allow()); polls]);
     let env = Env::new();
-    let ui = prompt(&env, Pad::script(&script), 1_800);
-    let got = ask_fido(&ui, sign_in());
-    assert_eq!(got, rsk_sdk::Presence::Timeout);
+    let mut view = env.ui(TimedHolds::new(allow(), deny()));
+    view.hooks.presence_ms = 5_000;
+    let ui = RefCell::new(view);
+    let got = rsk_sdk::UserPresence::request_ceremony(&mut TouchPresence::new(&ui), sign_in());
+    assert_eq!(got, rsk_sdk::Presence::Declined);
+    assert_eq!(ui.borrow().touch.completed, 2);
 }
 
 #[test]
@@ -131,6 +130,69 @@ fn a_host_cancel_ends_the_prompt() {
     ui.borrow_mut().hooks.cancel_in.set(Some(2));
     let got = ask_fido(&ui, sign_in());
     assert_eq!(got, rsk_sdk::Presence::Cancelled);
+}
+
+#[test]
+fn power_cancels_both_host_ceremonies_and_locks_a_borrowed_worker() {
+    for confirm in [sign_in(), Confirm::register(b"example.com", b"alex")] {
+        let env = Env::new();
+        env.set_device_pin(PIN);
+        let ui = prompt(&env, Pad::hold(allow()), 4_000);
+        {
+            let mut u = ui.borrow_mut();
+            u.locked = false;
+            u.hooks.led = rsk_led::STATUS_BOOT;
+            u.hooks.press_wake(1);
+        }
+        {
+            let _fs = env.fs.borrow_mut();
+            let _rng = env.rng.borrow_mut();
+            assert_eq!(ask_fido(&ui, confirm), rsk_sdk::Presence::Cancelled);
+        }
+        {
+            let u = ui.borrow();
+            assert!(u.asleep && u.locked);
+            assert_eq!(u.hooks.backlight, 0);
+            assert!(!u.hooks.up_pending && !u.hooks.cancel);
+            assert_eq!(u.hooks.led, rsk_led::STATUS_BOOT);
+            let glass = rsk_ui::Rect {
+                x: 0,
+                y: 0,
+                w: rsk_ui::PANEL_W,
+                h: rsk_ui::PANEL_H,
+            };
+            assert!(
+                u.panel
+                    .area_pixels(glass)
+                    .iter()
+                    .all(|&pixel| pixel == Rgb565::BLACK)
+            );
+        }
+        ui.borrow_mut().touch = Pad::hold(allow());
+        assert_eq!(ask_fido(&ui, sign_in()), rsk_sdk::Presence::Confirmed);
+        assert!(!ui.borrow().asleep);
+    }
+}
+
+#[test]
+fn a_host_cancel_abandons_registration_and_restores_the_presence_state() {
+    let env = Env::new();
+    let ui = prompt(
+        &env,
+        Pad::script(&[None, None, None, None, Some(allow())]),
+        4_000,
+    );
+    ui.borrow_mut().hooks.cancel_in.set(Some(2));
+    ui.borrow_mut().hooks.led = rsk_led::STATUS_BOOT;
+    let _fs = env.fs.borrow_mut();
+    let _rng = env.rng.borrow_mut();
+    assert_eq!(
+        ask_fido(&ui, Confirm::register(b"example.com", b"alex")),
+        rsk_sdk::Presence::Cancelled
+    );
+    let u = ui.borrow();
+    assert!(!u.hooks.up_pending && !u.hooks.cancel);
+    assert_eq!(u.hooks.led, rsk_led::STATUS_BOOT);
 }
 
 #[test]

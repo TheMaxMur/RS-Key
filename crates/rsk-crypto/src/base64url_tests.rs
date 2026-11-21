@@ -52,6 +52,13 @@ fn decode_accepts_padding() {
 }
 
 #[test]
+fn decode_accepts_both_url_alphabet_symbols() {
+    let mut out = [0xA5; 3];
+    assert_eq!(decode(&mut out, b"-_A"), Ok(2));
+    assert_eq!(out, [0xFB, 0xF0, 0xA5]);
+}
+
+#[test]
 fn decode_rejects_bad() {
     let mut d = [0u8; 8];
     assert_eq!(decode(&mut d, b"AAAAA"), Err(Error::Base64)); // len % 4 == 1
@@ -65,4 +72,40 @@ fn decoded_len_matches() {
     assert_eq!(decoded_len(3).unwrap(), 2);
     assert_eq!(decoded_len(4).unwrap(), 3);
     assert_eq!(decoded_len(1), Err(Error::Base64));
+}
+
+#[test]
+fn short_encoding_outputs_are_refused_before_any_write() {
+    for (plain, encoded) in [(b"f".as_slice(), b"Zg".as_slice()), (b"foo", b"Zm9v")] {
+        for capacity in 0..=encoded.len() + 1 {
+            let mut out = [0xA5; 8];
+            let result = encode(&mut out[..capacity], plain);
+            if capacity < encoded.len() {
+                assert_eq!(result, Err(Error::BadLength));
+                assert_eq!(out, [0xA5; 8]);
+            } else {
+                assert_eq!(result, Ok(encoded.len()));
+                assert_eq!(&out[..encoded.len()], encoded);
+                assert!(out[encoded.len()..].iter().all(|&b| b == 0xA5));
+            }
+        }
+    }
+}
+
+#[test]
+fn short_decoding_outputs_are_refused_before_any_write() {
+    for (encoded, plain) in [(b"Zg".as_slice(), b"f".as_slice()), (b"Zm9v", b"foo")] {
+        for capacity in 0..=plain.len() + 1 {
+            let mut out = [0xA5; 8];
+            let result = decode(&mut out[..capacity], encoded);
+            if capacity < plain.len() {
+                assert_eq!(result, Err(Error::BadLength));
+                assert_eq!(out, [0xA5; 8]);
+            } else {
+                assert_eq!(result, Ok(plain.len()));
+                assert_eq!(&out[..plain.len()], plain);
+                assert!(out[plain.len()..].iter().all(|&b| b == 0xA5));
+            }
+        }
+    }
 }

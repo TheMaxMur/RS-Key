@@ -56,7 +56,8 @@ fn format_len_roundtrip() {
     let mut buf = [0u8; 1 + 3 + CAP];
     // 0x5A: the low 5 bits are not 0x1f, so `Tlv::next` reads a 1-byte tag.
     buf[0] = 0x5A;
-    let n = format_len(len, &mut buf[1..]);
+    let head: &mut [u8; 3] = (&mut buf[1..4]).try_into().unwrap();
+    let n = format_len(len, head);
     assert_eq!(n, format_len_size(len));
 
     let mut it = Tlv::new(&buf[..1 + n + len as usize]);
@@ -75,9 +76,9 @@ fn format_len_roundtrip() {
 #[kani::unwind(5)]
 fn format_len_writes_exactly_its_size() {
     let len: u16 = kani::any();
-    // The longest encoding is 3 bytes, so index 3 is a sentinel that must survive;
-    // 4 is also the tail loop's iteration count, hence the unwind bound above.
-    let mut buf = [0xFFu8; 4];
+    // The longest encoding is 3 bytes, the whole of what the signature lets it write,
+    // so what it reports must leave the rest of the three untouched.
+    let mut buf = [0xFFu8; 3];
     let n = format_len(len, &mut buf);
     assert_eq!(n, format_len_size(len));
     let mut i = n;

@@ -124,7 +124,7 @@ no defence"""
 [[clause]]
 id = "TM-ATTACKERS"
 kind = "context"
-where = "## Attackers, strongest defense first"
+where = "## Attacker capabilities"
 why = """
 a container heading that owns no prose of its own — unlike each attacker \
 below it, whose own paragraph states the threat that attacker brings"""
@@ -137,12 +137,12 @@ where = "### 1. A hostile host (malware on the computer)"
 [[clause]]
 id = "TM-HOST-MEMSAFE"
 kind = "defence"
-where = "- **Memory safety.** `no_std` Rust end to end. The parsers and applet"
+where = "- **Memory safety.** The applet parsers and dispatch use safe Rust. The"
 
 [[clause]]
 id = "TM-HOST-FUZZ"
 kind = "defence"
-where = "- **Fuzzing.** Every parser and every applet's full dispatch path has a"
+where = "- **Fuzzing.** Targets exercise parsers, applet dispatch and stateful command"
 
 [[clause]]
 id = "TM-HOST-GATES"
@@ -162,8 +162,8 @@ id = "TM-HOST-POWER-CUT"
 kind = "defence"
 where = "- **A flash write can be interrupted, and a host picks which one is in flight.**"
 rests_on = ["""
-It is registered as `PLAT-FLASH-001` and is discharged by a board measurement, \
-not by code ([platform-assumptions.md](platform-assumptions.md))."""]
+`PLAT-FLASH-001` remains pending a real supply-cut test \
+on hardware. See [Platform assumptions](platform-assumptions.md)."""]
 
 [[clause]]
 id = "TM-HOST-READ-FAULT"
@@ -198,7 +198,7 @@ rests_on = ["""
 *other* slot index, and the RAM half travels with it, because the pair belongs
 to the public id inside the record and not to the slot number that record
 happens to sit at.""", """
-**Six residuals, and the rule above hides none of them.**""", """
+**Three residuals, and the rule above hides none of them.**""", """
 And the move that carries the pair is not atomic: `SWAP` writes the two records
 one after the other and swaps the RAM halves only once both are through, with
 nothing to undo a step that failed. A refused second write answers `6581` with
@@ -221,7 +221,7 @@ where = "- **The FIDO applet answers on two transports, and the second one is ea
 [[clause]]
 id = "TM-HOST-INTENT"
 kind = "defence"
-where = "- **The residual gap is *intent*. The trusted-display flavor closes it.** Because"
+where = "- **User intent.** A button confirms presence. Malware can substitute its own"
 
 [[clause]]
 id = "TM-THIEF"
@@ -231,26 +231,25 @@ where = "### 2. A thief with the powered-off device (at-rest)"
 [[clause]]
 id = "TM-THIEF-SEALED"
 kind = "defence"
-where = "- All key material is sealed in flash: FIDO seed, PIV keys and OATH records"
+where = "- **Secret records.** The FIDO seed, attestation scalar and persistent UV"
 
 [[clause]]
 id = "TM-THIEF-OTP-ROOT"
 kind = "defence"
-where = "- **OTP master key** ([production.md](production.md) stage 1): with the MKEK"
+where = "- **OTP master key.** Before provisioning, `kbase` derives from the public chip"
 rests_on = ["""
-for every record a boot pass can re-root. A PIN-derived one cannot be re-rooted \
-without its secret, so it waits for its own reference to be presented; see \
-[limitations](limitations.md) and `PLAT-THREAT-002`."""]
+A PIN-derived record can stay on the public root until its PIN or resetting \
+code is presented. See `PLAT-THREAT-002` and [Production setup](production.md#stage-1--otp-master-key)."""]
 
 [[clause]]
 id = "TM-THIEF-SEAL-FORGERY"
 kind = "defence"
-where = "- **The seals give confidentiality, not authenticity.** Records written before"
+where = "- **Page-58 latch.** Before the latch, a raw flash writer can plant a record"
 
 [[clause]]
 id = "TM-THIEF-SOFTLOCK"
 kind = "defence"
-where = "- **Soft-lock** ([guides/soft-lock.md](guides/soft-lock.md)): optionally, the"
+where = "- **Soft-lock.** The seed is wrapped with ChaCha20-Poly1305 under a 32-byte"
 
 [[clause]]
 id = "TM-THIEF-REMNANTS"
@@ -270,7 +269,7 @@ where = "  - The **soft-lock** transition leaves the same kind of lingering reco
 [[clause]]
 id = "TM-THIEF-SEED-NOT-PIN-WRAPPED"
 kind = "defence"
-where = "- The FIDO seed is **never PIN-wrapped at rest** (a deliberate design"
+where = "- **FIDO seed and PIN.** The current seed format uses the device root so"
 
 [[clause]]
 id = "TM-FLASHER"
@@ -280,7 +279,7 @@ where = "### 3. An attacker who can flash their own firmware"
 [[clause]]
 id = "TM-FLASHER-SECURE-BOOT"
 kind = "defence"
-where = "- **Secure boot** ([production.md](production.md) stage 2): the bootrom"
+where = "- **Secure Boot.** When enforced, the boot ROM authenticates the complete"
 
 [[clause]]
 id = "TM-FLASHER-ANTI-ROLLBACK"
@@ -330,12 +329,12 @@ where = "## Flash snapshot rollback (the PIN-counter reset)"
 [[clause]]
 id = "TM-ROLLBACK-PARTITION"
 kind = "defence"
-where = "- **Partition table** (always on since `0x0871`). The shipped image embeds an RP2350"
+where = "- **Partition table.** The default build embeds an RP2350"
 
 [[clause]]
 id = "TM-ROLLBACK-VERIFIER"
 kind = "defence"
-where = "- **OTP-seeded PIN verifier** (always on after the OTP burn). The stored verifier is"
+where = "- **OTP-seeded PIN verifier.** A FIDO PIN verifier created or migrated under"
 
 [[clause]]
 id = "TM-ROLLBACK-PIN-ENTROPY"
@@ -392,15 +391,10 @@ where = "## Seed backup (the deliberate exception)"
 id = "TM-ZEROIZATION"
 kind = "defence"
 where = "## Zeroization"
-# Three sentences `assurance/secrets.toml` argues from, pinned because that
-# register is the only reader this clause has ever had and every one of them is
-# BELOW the locked first line. The first is the claim the register answers per
-# source and per exit; the second names three residuals it re-registers against
-# rows rather than re-litigating; the third is a measurement with a stated
-# revalidation trigger, and 47 rows' reboot answer is that measurement. What is
-# NOT pinned, deliberately: the panic exit, because the clause does not mention
-# it. That silence is the register's own finding and `RES-PANIC-HALT` is where
-# it is written down; a sentence added here would be the thing to pin next.
+# Three sentences the zeroization contract rests on, pinned because every one of
+# them is BELOW the locked first line: the claim `rsk_secret::Secret` and the
+# clippy.toml ban now hold by construction, the residuals no type reaches, and a
+# measurement with a stated revalidation trigger that covers the reboot exit.
 #
 # The fourth is owed rather than chosen: the body hands the SRAM half of its
 # claim to `PLAT-MEM-001`, and `check_rests_on` demands a pin on the sentence
@@ -408,21 +402,30 @@ where = "## Zeroization"
 # a defence the firmware implements, which is the one reading the registry row
 # and this pin both refuse.
 rests_on = ["""
-Key-grade material in RAM is wiped (`zeroize`, volatile writes) when its use
-ends: session state and PIN/UV tokens on drop, transient key copies at end of
-scope including error paths, and the transport/exchange buffers as soon as a
-message completes (requests carry PINs and imported keys).""", """
-Accepted residuals: `Copy` temporaries inside RustCrypto curve arithmetic, digest
-internals, and heap limbs inside `num-bigint-dig` (which has no zeroizing `Drop`
-of its own — every value `rsk-rsa` owns rides in a `Zeroizing`, but a temporary
-the library allocates internally does not).""", """
-This is a property of the silicon revision and boot
-configuration, so it is re-measured when either moves; the explicit wipes stay as
-depth in case a future one keeps SRAM.""", """
-It discharges `PLAT-MEM-001` in the platform
-registry ([platform-assumptions.md](platform-assumptions.md)) — read the row for
-the transcript, the picotool version, and what the result does *not* establish,
-which is that the firmware's own scrub works."""]
+Session teardown wipes PIN/UV tokens. Transient copies in `Secret` or under a
+`WipeGuard` are wiped when their scopes end, including error returns. The
+firmware also scrubs transport and exchange buffers at their reuse or
+revocation points.""", """
+Accepted residuals: `Copy` temporaries inside RustCrypto curve arithmetic and
+digest internals, in stack slots until the work that made them is done: core0's
+dead stack is zeroed after each request, keyboard OTP frame, typed ticket and
+panel flow, and core1's after each prime search (`firmware/src/sweep.rs`). The
+few hundred bytes above the shallowest of those callers — the tasks' own poll
+frames, interrupt frames taken while the worker idles — no sweep reaches. The
+working buffers `num-bigint-dig` allocates inside its own
+arithmetic — a division's, a modular inverse's, a modular exponentiation's — it
+frees unwiped; `rsk-rsa` holds a key's values, its blinding values and a private
+operation's result and intermediates in a `Secret` or a key type whose `Drop`
+wipes them, except the primes and `d` of a key `RsaKey::from_p_q` refuses. The
+heap closes both for what it holds: it wipes each block as it frees it
+(`ZeroingHeap` in `firmware/src/main.rs`), so a freed buffer's bytes do not
+outlive the free. A `num-bigint-dig` value of eight limbs or fewer is held inline,
+not on the heap, and a local one stays in its stack slot like those temporaries.""", """
+The result
+applies to the tested silicon and boot policy. It measures the platform's
+clearing behavior.""", """
+See `PLAT-MEM-001` in
+[Platform assumptions](platform-assumptions.md) for the board record."""]
 
 [[clause]]
 id = "TM-SUPPLY-CHAIN"
@@ -432,17 +435,17 @@ where = "## Supply chain & process"
 [[clause]]
 id = "TM-SUPPLY-SCANNERS"
 kind = "defence"
-where = "- `cargo audit` + `cargo deny` (advisories, license allow-list, source"
+where = "- `scripts/check.sh` runs `cargo audit`, `cargo deny` and Gitleaks. The"
 
 [[clause]]
 id = "TM-SUPPLY-PINNED"
 kind = "defence"
-where = "- Dependencies are pinned (`Cargo.lock`). The git dependencies are restricted"
+where = "- Dependencies are pinned in the workspace lockfiles. Firmware Git"
 
 [[clause]]
 id = "TM-SUPPLY-ADVISORIES"
 kind = "defence"
-where = "- **No vulnerability advisory is ignored.** The one that used to be —"
+where = "- **Advisory exceptions.** `deny.toml` lists exceptions for unmaintained or"
 
 [[clause]]
 id = "TM-PQC"
@@ -474,9 +477,9 @@ invariant as INERT on the shipped tree — dropping the ram disjunct leaves the 
 state set identical — so a threat clause would be a threat model stronger than \
 its firmware, the one direction this page may not be wrong in"""
 rests_on = ["""
-Key-grade material in RAM is wiped (`zeroize`, volatile writes) when its use \
-ends: session state and PIN/UV tokens on drop, transient key copies at end of \
-scope including error paths, and the transport/exchange buffers as soon as a \
-message completes""", """
+Session teardown wipes PIN/UV tokens. Transient copies in `Secret` or under a
+`WipeGuard` are wiped when their scopes end, including error returns. The
+firmware also scrubs transport and exchange buffers at their reuse or
+revocation points.""", """
 **Scope: the interrupted
   write.**"""]

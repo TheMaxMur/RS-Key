@@ -550,7 +550,7 @@ fn menu_for(section: Section, snap: &DeviceSnapshot) -> Vec<MenuItem> {
                 "Set / change PIN",
                 "CLI",
                 "FIDO PIN",
-                "Auth-changing writes stay in the CLI:\n  rsk fido set-pin\n  rsk fido change-pin",
+                "Auth-changing writes stay in the CLI:\n  rsk fido set-pin   (sets or changes it)",
             ),
             note(
                 "List resident passkeys",
@@ -562,7 +562,7 @@ fn menu_for(section: Section, snap: &DeviceSnapshot) -> Vec<MenuItem> {
                 "Factory reset FIDO",
                 "CLI · destructive",
                 "FIDO reset",
-                "Destructive — erases the seed, every passkey, and the PIN:\n  rsk fido reset   (touch within 10 s of plug-in)",
+                "Destructive — erases the seed, every passkey, and the PIN:\n  ykman fido reset   (touch within 10 s of plug-in)\nykman sees the key only on the VIDPID=Yubikey5 build; a browser's\n\"reset security key\" works on any build.",
             ),
         ],
         Section::OpenPgp => vec![
@@ -604,7 +604,7 @@ fn menu_for(section: Section, snap: &DeviceSnapshot) -> Vec<MenuItem> {
                 "Yubico-OTP slots",
                 "CLI · write",
                 "OTP slots",
-                "Slot programming is a write — use the CLI:\n  rsk otp …   (or ykman otp)",
+                "Slot programming is a write — use ykman (VIDPID=Yubikey5 build):\n  ykman otp …\n(`rsk otp` burns OTP fuses; it never touches the slots.)",
             ),
         ],
         Section::Backup => {
@@ -686,13 +686,13 @@ fn menu_for(section: Section, snap: &DeviceSnapshot) -> Vec<MenuItem> {
                 "Seed soft-lock",
                 "CLI · PIN · touch",
                 "soft-lock",
-                "Engage / unlock / disengage the seed soft-lock:\n  rsk lock engage | unlock | disengage",
+                "Enable / unlock / disable the seed soft-lock:\n  rsk lock enable | unlock | disable",
             ),
             note(
                 "Org attestation",
                 "CLI · PIN · touch",
                 "attestation",
-                "Import / clear an org attestation key + chain:\n  rsk fido attest import | clear",
+                "Import / clear an org attestation key + chain:\n  rsk fido attestation import | clear",
             ),
             note(
                 "Secure boot / OTP fuses",

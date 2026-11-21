@@ -27,10 +27,22 @@ fn dev() -> Device<'static> {
         serial_hash: &[0xAB; 32],
         serial_id: &[1, 2, 3, 4, 5, 6, 7, 8],
         otp_key: None,
+        latched: false,
     }
 }
 
 const TOKEN: [u8; 32] = [0x99; 32];
+
+#[test]
+fn unknown_nested_largeblob_fields_preserve_an_explicit_zero_read() {
+    let req = parse(&[0xa4, 1, 0, 3, 0, 7, 0x82, 0xa0, 0xf6, 8, 0xf6]).unwrap();
+    assert!(req.get_present);
+    assert_eq!((req.get, req.offset), (0, 0));
+    assert!(matches!(
+        parse(&[0xa1, 7, 0x82, 0xf6]),
+        Err(CtapError::InvalidCbor)
+    ));
+}
 
 fn armed(perms: u8) -> FidoState {
     let mut s = FidoState::new();
@@ -42,6 +54,7 @@ fn armed(perms: u8) -> FidoState {
 
 fn seeded_fs() -> Fs<RamStorage> {
     let mut fs = Fs::new(RamStorage::new());
+    crate::tests::uv_optional(&mut fs);
     fs.put(EF_LARGEBLOB, &LARGEBLOB_INITIAL).unwrap();
     fs
 }
@@ -181,6 +194,38 @@ fn get_offset_beyond_size_rejected() {
 }
 
 #[test]
+fn a_read_at_the_stored_end_returns_an_empty_fragment() {
+    let mut fs = seeded_fs();
+    let mut state = FidoState::new();
+    let mut out = [0; 64];
+    let n = run(&mut fs, &mut state, &get_request(10, 17), &mut out).unwrap();
+    assert_eq!(get_bytes(&out, n), Vec::<u8>::new());
+}
+
+#[test]
+fn an_authenticated_array_at_the_storage_limit_commits_in_fragments() {
+    let mut body = vec![0x81, 0x59, 0x0f, 0xda];
+    body.extend_from_slice(&[0x5a; 4058]);
+    let blob = valid_blob(&body);
+    assert_eq!(blob.len(), 4078);
+    let mut fs = seeded_fs_with_pin();
+    let mut state = armed(PERM_LBW);
+    let mut out = [0; 4096];
+    for (index, fragment) in blob.chunks(1000).enumerate() {
+        let offset = index * 1000;
+        let req = set_request(
+            offset as u64,
+            (offset == 0).then_some(4078),
+            fragment,
+            &TOKEN,
+        );
+        assert_eq!(run(&mut fs, &mut state, &req, &mut out), Ok(0));
+    }
+    let n = run(&mut fs, &mut state, &get_request(4078, 0), &mut out).unwrap();
+    assert_eq!(get_bytes(&out, n), blob);
+}
+
+#[test]
 fn set_single_fragment_roundtrips() {
     let mut fs = seeded_fs();
     let mut state = armed(PERM_LBW);
@@ -213,6 +258,43 @@ fn set_multi_fragment_assembles() {
     let mut stored = [0u8; 256];
     let sn = fs.read(EF_LARGEBLOB, &mut stored).unwrap();
     assert_eq!(&stored[..sn], &blob[..]);
+}
+
+#[test]
+fn refused_continuations_preserve_the_authenticated_transfer() {
+    let mut fs = seeded_fs_with_pin();
+    let mut state = armed(PERM_LBW);
+    let mut out = [0u8; 64];
+    let blob = valid_blob(&[0xCD; 60]);
+    let split = 50;
+    let first = set_request(0, Some(blob.len() as u64), &blob[..split], &TOKEN);
+    assert_eq!(run(&mut fs, &mut state, &first, &mut out), Ok(0));
+
+    let repeated_length = set_request(
+        split as u64,
+        Some(blob.len() as u64),
+        &blob[split..],
+        &TOKEN,
+    );
+    assert_eq!(
+        run(&mut fs, &mut state, &repeated_length, &mut out),
+        Err(CtapError::InvalidParameter)
+    );
+    let mut overrun = blob[split..].to_vec();
+    overrun.push(0xEE);
+    let too_long = set_request(split as u64, None, &overrun, &TOKEN);
+    assert_eq!(
+        run(&mut fs, &mut state, &too_long, &mut out),
+        Err(CtapError::InvalidParameter)
+    );
+    let mut stored = [0u8; 128];
+    let n = fs.read(EF_LARGEBLOB, &mut stored).unwrap();
+    assert_eq!(&stored[..n], &LARGEBLOB_INITIAL);
+
+    let final_fragment = set_request(split as u64, None, &blob[split..], &TOKEN);
+    assert_eq!(run(&mut fs, &mut state, &final_fragment, &mut out), Ok(0));
+    let n = fs.read(EF_LARGEBLOB, &mut stored).unwrap();
+    assert_eq!(&stored[..n], &blob);
 }
 
 #[test]
@@ -359,6 +441,71 @@ fn get_rejects_write_only_parameters() {
         run(&mut fs, &mut state, &with_param, &mut out),
         Err(CtapError::InvalidParameter)
     );
+    let with_proto = {
+        let mut buf = [0u8; 32];
+        let n = {
+            let mut e = Encoder::new(Cursor::new(&mut buf[..]));
+            e.map(3).unwrap();
+            e.u8(0x01).unwrap().u64(10).unwrap();
+            e.u8(0x03).unwrap().u64(0).unwrap();
+            e.u8(0x06).unwrap().u8(2).unwrap();
+            e.writer().position()
+        };
+        buf[..n].to_vec()
+    };
+    assert_eq!(
+        run(&mut fs, &mut state, &with_proto, &mut out),
+        Err(CtapError::InvalidParameter)
+    );
+}
+
+#[test]
+fn a_duplicate_offset_is_refused_without_changing_the_array() {
+    let mut fs = seeded_fs();
+    let mut state = armed(PERM_LBW);
+    let mut out = [0u8; 64];
+    let req = {
+        let mut buf = [0u8; 32];
+        let n = {
+            let mut e = Encoder::new(Cursor::new(&mut buf[..]));
+            e.map(3).unwrap();
+            e.u8(0x01).unwrap().u64(1).unwrap();
+            e.u8(0x03).unwrap().u64(0).unwrap();
+            e.u8(0x03).unwrap().u64(0).unwrap();
+            e.writer().position()
+        };
+        buf[..n].to_vec()
+    };
+    assert_eq!(
+        run(&mut fs, &mut state, &req, &mut out),
+        Err(CtapError::InvalidCbor)
+    );
+    let n = fs.read(EF_LARGEBLOB, &mut out).unwrap();
+    assert_eq!(&out[..n], &LARGEBLOB_INITIAL);
+}
+
+#[test]
+fn an_oversized_set_fragment_is_refused_before_replacing_the_array() {
+    let mut fs = seeded_fs();
+    let mut state = armed(PERM_LBW);
+    let mut out = [0u8; 64];
+    let blob = valid_blob(&std::vec![0x42; MAX_FRAGMENT_LENGTH]);
+    let mut buf = std::vec![0u8; blob.len() + 32];
+    let n = {
+        let mut e = Encoder::new(Cursor::new(&mut buf[..]));
+        e.map(3).unwrap();
+        e.u8(0x02).unwrap().bytes(&blob).unwrap();
+        e.u8(0x03).unwrap().u64(0).unwrap();
+        e.u8(0x04).unwrap().u64(blob.len() as u64).unwrap();
+        e.writer().position()
+    };
+    assert!(n <= crate::consts::MAX_MSG_SIZE as usize);
+    assert_eq!(
+        run(&mut fs, &mut state, &buf[..n], &mut out),
+        Err(CtapError::InvalidLength)
+    );
+    let n = fs.read(EF_LARGEBLOB, &mut out).unwrap();
+    assert_eq!(&out[..n], &LARGEBLOB_INITIAL);
 }
 
 #[test]
@@ -401,6 +548,11 @@ fn set_length_bounds_enforced() {
     let mut fs = seeded_fs();
     let mut state = armed(PERM_LBW);
     let mut out = [0u8; 64];
+    let req = set_request(0, Some(0), &[], &TOKEN);
+    assert_eq!(
+        run(&mut fs, &mut state, &req, &mut out),
+        Err(CtapError::InvalidParameter)
+    );
     // length < 17 → INVALID_PARAMETER.
     let req = set_request(0, Some(10), &[0u8; 10], &TOKEN);
     assert_eq!(
@@ -615,3 +767,62 @@ fn a_faulted_pin_probe_does_not_open_the_large_blob_write_gate() {
         "and the array it would have destroyed is still the one on flash"
     );
 }
+
+/// A two-fragment write, cut at every mutation it makes. The array on flash is the
+/// old one or the new one and never a splice of the two: the fragments accumulate in
+/// RAM and only the last one commits, so a cut can lose the transfer but cannot leave
+/// a serialized array whose trailing SHA-256 no longer covers it — the check every
+/// platform runs before trusting a blob (§6.10.3).
+#[test]
+fn a_torn_large_blob_write_leaves_a_whole_array() {
+    let blob = valid_blob(&[0xCD; 60]);
+    let split = 50;
+    assert!(!rsk_fs::cut::sweep_restarts(
+        || {
+            let (cut, medium) = rsk_fs::storage::faults::Cut::new();
+            let mut fs = Fs::new(cut);
+            fs.put(EF_LARGEBLOB, &LARGEBLOB_INITIAL).unwrap();
+            (fs, medium)
+        },
+        |fs| {
+            let mut state = armed(PERM_LBW);
+            let mut out = [0u8; 64];
+            let first = set_request(0, Some(blob.len() as u64), &blob[..split], &TOKEN);
+            let second = set_request(split as u64, None, &blob[split..], &TOKEN);
+            run(fs, &mut state, &first, &mut out).is_ok()
+                && run(fs, &mut state, &second, &mut out).is_ok()
+        },
+        |_| {},
+        |fs, budget, _second, completed, medium| {
+            let mut stored = [0u8; 256];
+            let n = fs
+                .read(EF_LARGEBLOB, &mut stored)
+                .unwrap_or_else(|| panic!("budget {budget}: the array is gone altogether"));
+            let array = &stored[..n];
+            let (body, tail) = array.split_at(n - 16);
+            assert_eq!(
+                tail,
+                &sha256(body)[..16],
+                "budget {budget}: the array on flash no longer hashes to its own trailer — {:?}",
+                medium.ops()
+            );
+            let whole = array == &blob[..] || array == LARGEBLOB_INITIAL;
+            assert!(
+                whole,
+                "budget {budget}: neither the old array nor the new one — {:?}",
+                medium.ops()
+            );
+            if completed {
+                assert_eq!(
+                    array,
+                    &blob[..],
+                    "budget {budget}: the write reported success and the old array survived"
+                );
+            }
+        },
+    ));
+}
+
+// The read-fault sweep lives in its own file; it needs this module's fixtures.
+#[path = "largeblobs_reads_tests.rs"]
+mod reads;

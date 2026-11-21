@@ -108,6 +108,8 @@ class Tree:
         self.write("docs/protocol.md", "# Protocol\n")
         self.write("CHANGELOG.md", CHANGELOG)
         self.git("init", "-q")
+        self.git("config", "user.name", "t")
+        self.git("config", "user.email", "t@t")
         self.commit("the tree, and 0x0100")
 
     def write(self, rel, text):
@@ -267,6 +269,50 @@ def test_a_cfg_attribute_sharing_a_line_with_code(tree):
     assert only(tree.problems(), "TIMEOUT_MS")
 
 
+@pytest.fixture
+def inline_tree(tree):
+    tree.edit("crates/rsk-a/src/lib.rs", "pub fn judge", "#[inline]\npub fn judge")
+    tree.bump()
+    tree.note()
+    tree.commit("inline the method and bump its build")
+    return tree
+
+
+def test_coverage_only_inline_rewrite_keeps_the_ordinary_attribute(inline_tree):
+    inline_tree.edit("crates/rsk-a/src/lib.rs", "#[inline]",
+                     "#[cfg_attr(not(coverage), inline)]")
+    inline_tree.append("crates/rsk-a/src/lib.rs", "\n// coverage workaround\n")
+    assert inline_tree.problems() == []
+
+
+@pytest.mark.parametrize("replacement", [
+    "#[cfg_attr(not(coverage), inline(always))]",
+    "#[cfg_attr(coverage, inline)]",
+    "#[cfg_attr(not(coverage), inline)] pub const EXTRA: u8 = 1;",
+])
+def test_other_inline_or_coverage_attributes_still_count(inline_tree, replacement):
+    inline_tree.edit("crates/rsk-a/src/lib.rs", "#[inline]", replacement)
+    assert only(inline_tree.problems(), "crates/rsk-a/src/lib.rs")
+
+
+def test_coverage_inline_rewrite_does_not_hide_accompanying_code(inline_tree):
+    inline_tree.edit("crates/rsk-a/src/lib.rs", "#[inline]",
+                     "#[cfg_attr(not(coverage), inline)]")
+    inline_tree.edit("crates/rsk-a/src/lib.rs", "byte < 0x80", "byte < 0x81")
+    assert only(inline_tree.problems(), "byte < 0x80")
+
+
+def test_inline_text_inside_a_raw_string_is_still_a_changed_value(tree):
+    value = 'pub const TEXT: &str = r#"\n#[inline]\n"#;'
+    tree.append("crates/rsk-a/src/lib.rs", "\n" + value + "\n")
+    tree.bump()
+    tree.note()
+    tree.commit("add the text value and bump its build")
+    tree.edit("crates/rsk-a/src/lib.rs", value,
+              value.replace("#[inline]", "#[cfg_attr(not(coverage), inline)]"))
+    assert only(tree.problems(), "#[inline]")
+
+
 def test_un_gating_a_test_module_puts_it_in_the_image(tree):
     tree.edit("crates/rsk-a/src/lib.rs", "#[cfg(test)]\nmod tests;", "pub mod tests;")
     tree.append("crates/rsk-a/src/tests.rs", "\npub const NOW_SHIPPED: u8 = 1;\n")
@@ -350,6 +396,21 @@ def test_a_newly_added_cfg_hook(tree):
         "crates/rsk-a/src/lib.rs",
         '\n#[cfg(test)]\n#[path = "lib_tests.rs"]\nmod more;\n',
     )
+    assert tree.problems() == []
+
+
+def test_a_sibling_gated_above_a_multi_line_attribute(tree):
+    """rustfmt breaks a long `#[allow(…)]` over lines, and the `cfg` above it is
+    what gates the module: a test-only change behind it owes no bump."""
+    tree.append(
+        "crates/rsk-a/src/lib.rs",
+        '\n#[cfg(test)]\n#[allow(\n    clippy::panic,\n    reason = "a fixture"\n)]\n'
+        '#[path = "lib_tests.rs"]\nmod more;\n',
+    )
+    tree.bump()
+    tree.note()
+    tree.commit("hook the sibling in, and 0x0101")
+    tree.append("crates/rsk-a/src/lib_tests.rs", "\n#[test]\nfn more() {}\n")
     assert tree.problems() == []
 
 
@@ -451,6 +512,37 @@ def test_the_counter_may_not_stand_still_across_a_bump_commit(tree):
     tree.append("crates/rsk-a/src/lib.rs", "\npub const EXTRA: u8 = 1;\n")
     tree.edit("firmware/src/main.rs", "0x0101", "0x0100")
     assert only(tree.problems(), "it only goes up")
+
+
+def side_line_merged(tree, merged_value=None):
+    """A side line that bumps to 0x0101, merged into a main line that changed code
+    without a bump; the merge commit then bumps to `merged_value`, or keeps 0x0101."""
+    tree.git("checkout", "-q", "-b", "side")
+    tree.append("crates/rsk-a/src/helper.rs", "\npub fn side() -> u8 { 2 }\n")
+    tree.bump()
+    tree.note()
+    tree.commit("side, and 0x0101")
+    tree.git("checkout", "-q", "-")
+    tree.append("crates/rsk-a/src/lib.rs", "\npub const MAIN_ONLY: u8 = 3;\n")
+    tree.commit("main, unbumped")
+    tree.git("merge", "-q", "--no-ff", "--no-commit", "side")
+    if merged_value:
+        tree.edit("firmware/src/main.rs", "0x0101", merged_value)
+        tree.note(merged_value)
+    tree.commit("merge side")
+
+
+def test_a_merge_that_bumps_is_the_bump(tree):
+    """`git log -G` lists no merge unless asked, and the side line's bump read as the
+    last one: every change the main line brought through the merge was unbumped."""
+    side_line_merged(tree, "0x0102")
+    assert tree.problems() == []
+
+
+def test_a_merge_that_keeps_the_side_lines_number_is_no_bump(tree):
+    """A new image under 0x0101, which the side line's build already carried."""
+    side_line_merged(tree)
+    assert only(tree.problems(), "MAIN_ONLY")
 
 
 def test_the_binding_renamed_away(tree):

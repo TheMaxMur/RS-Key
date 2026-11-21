@@ -12,7 +12,8 @@ fn indices_in_range() {
     // The checksum is symbolic, not SHA-256's: quantifying over every byte covers
     // whatever the hash produces, and keeps SHA-256 out of the solver cone.
     let checksum: u8 = kani::any();
-    let idx = pack_indices(&entropy, checksum);
+    let mut idx = [0u16; WORD_COUNT];
+    pack_indices(&entropy, checksum, &mut idx);
     let mut i = 0;
     while i < WORD_COUNT {
         assert!((idx[i] as usize) < WORDS.len());

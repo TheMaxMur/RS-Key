@@ -4,14 +4,15 @@
 //! PIV file ids, the wire-object map and first-boot defaults. One `Fs` is
 //! shared across all applets, so PIV owns its own disjoint fid ranges:
 //! keys/PINs at `0xD1xx` (low byte = wire slot), data objects at `0xD2xx` (low
-//! byte of the `5FC1xx` object id) — the wire slot is the fid low byte everywhere.
+//! byte of the `5FC1xx` object id), cached points at `0xD4xx`, and the pool of
+//! every other object at `0xD6xx` — the wire slot is the fid low byte everywhere.
 
 use rsk_crypto::Device;
 use rsk_ec::{Curve, PrivKey};
-use rsk_fs::{Fs, KeyFid, Storage};
+use rsk_fs::{Fs, KeyFid, RearmAttempted, Rearmed, Storage};
 use rsk_sdk::Rng;
 use rsk_sdk::Sw;
-use zeroize::Zeroize;
+use rsk_secret::Secret;
 
 use crate::seal;
 use crate::x509;
@@ -49,6 +50,107 @@ pub(crate) fn mgm_key_len(algo: u8) -> Option<usize> {
         ALGO_AES256 => Some(32),
         _ => None,
     }
+}
+
+/// The algorithm a key-only 9B record's length names, when its head is lost or
+/// disagrees with it. 24 bytes is AES-192, the default a 3DES key shares its length
+/// with: a 3DES key is served as AES-192 until its owner changes it.
+fn mgm_algo_for_len(len: usize) -> Option<u8> {
+    match len {
+        16 => Some(ALGO_AES128),
+        24 => Some(ALGO_AES192),
+        32 => Some(ALGO_AES256),
+        _ => None,
+    }
+}
+
+/// The largest sealed 9B record: an AES-256 key behind its algorithm and touch policy.
+const MGM_RECORD_MAX: usize = 2 + 32;
+
+/// The 9B management key as stored. A key changed since 0x0A5D is sealed as `[algo,
+/// touch, key]`, so a change lands whole or not at all and the head caches it; the
+/// factory key and an older build's hold the key alone (16, 24 or 32 bytes).
+pub(crate) struct MgmKey {
+    rec: Secret<[u8; MGM_RECORD_MAX]>,
+    key: core::ops::Range<usize>,
+    /// `(algo, touch)` sealed with the key; `None` for an older build's record.
+    pub(crate) policy: Option<(u8, u8)>,
+}
+
+impl MgmKey {
+    pub(crate) fn key(&self) -> &[u8] {
+        self.rec.expose().get(self.key.clone()).unwrap_or_default()
+    }
+
+    pub(crate) fn wipe(&mut self) {
+        // Where the key sits in the record, and its policy, are not secret.
+        let Self {
+            rec,
+            key: _,
+            policy: _,
+        } = self;
+        rec.wipe();
+    }
+}
+
+/// Unseal the 9B record. `REFERENCE_NOT_FOUND` when absent, `MEMORY_FAILURE` when it
+/// has neither shape.
+pub(crate) fn mgm_read<S: Storage>(dev: &Device, fs: &mut Fs<S>) -> Result<MgmKey, Sw> {
+    let mut rec = Secret::<[u8; MGM_RECORD_MAX]>::zeroed();
+    let n = seal::seal_read(dev, fs, key_fid(SLOT_CARDMGM), &mut rec)?;
+    mgm_key(rec, n)
+}
+
+fn mgm_from_blob(
+    dev: &Device,
+    blob: &mut Secret<[u8; seal::MAX_BLOB]>,
+    n: usize,
+) -> Result<MgmKey, Sw> {
+    let mut rec = Secret::<[u8; MGM_RECORD_MAX]>::zeroed();
+    let n = seal::unseal_blob(dev, blob, n, &mut rec)?;
+    mgm_key(rec, n)
+}
+
+fn mgm_key(rec: Secret<[u8; MGM_RECORD_MAX]>, n: usize) -> Result<MgmKey, Sw> {
+    let policy = match *rec.expose() {
+        _ if mgm_algo_for_len(n).is_some() => None,
+        [algo, touch, ..]
+            if mgm_key_len(algo).map(|k| k + 2) == Some(n)
+                && matches!(touch, TOUCHPOLICY_NEVER | TOUCHPOLICY_ALWAYS) =>
+        {
+            Some((algo, touch))
+        }
+        _ => return Err(Sw::MEMORY_FAILURE),
+    };
+    let at = if policy.is_some() { 2 } else { 0 };
+    Ok(MgmKey {
+        rec,
+        key: at..n,
+        policy,
+    })
+}
+
+/// Seal `key` into 9B with the algorithm and touch policy it is used under, as one
+/// record.
+pub(crate) fn mgm_put<S: Storage>(
+    dev: &Device,
+    fs: &mut Fs<S>,
+    rng: &mut dyn Rng,
+    algo: u8,
+    touch: u8,
+    key: &[u8],
+) -> Result<(), Sw> {
+    let mut rec = Secret::<[u8; MGM_RECORD_MAX]>::zeroed();
+    let n = 2 + key.len();
+    let (head, body) = rec
+        .expose_mut()
+        .get_mut(..n)
+        .ok_or(Sw::WRONG_LENGTH)?
+        .split_at_mut(2);
+    head.copy_from_slice(&[algo, touch]);
+    body.copy_from_slice(key);
+    let sealed = rec.expose().get(..n).ok_or(Sw::WRONG_LENGTH)?;
+    seal::seal_put(dev, fs, rng, key_fid(SLOT_CARDMGM), sealed)
 }
 
 // PIN / touch policies (Yubico metadata values).
@@ -133,7 +235,7 @@ pub fn key_fid(slot: u8) -> KeyFid {
 pub const EF_PIN: u16 = 0xD180;
 pub const EF_PUK: u16 = 0xD181;
 /// Retry state: `[pin_total, pin_left, puk_total, puk_left]`.
-pub const EF_RETRIES: u16 = 0xD1FE;
+pub const EF_RETRIES: u16 = rsk_fs::counter::PIV_RETRIES;
 
 /// The X.509 certificate object that pairs with a key slot:
 /// `5FC105/0A/0B/01` for the active four, `5FC10D…5FC120` for retired 1–20
@@ -227,11 +329,12 @@ pub(crate) fn read_needs_pin(id: u32) -> bool {
 
 pub const DISCOVERY_ID: u32 = 0x7E;
 
-/// The discovery object (returned raw, not wrapped in `53`): the full PIV AID
-/// + PIN-usage policy `40 10`.
+/// The discovery object (returned raw, not wrapped in `53`): the full PIV AID and
+/// the PIN usage policy `40 00`, a YubiKey 5.8.0's to the byte. The second byte
+/// ranks the application PIN against a global PIN, and this card has none.
 pub const DISCOVERY: &[u8] = &[
     0x7E, 0x12, 0x4F, 0x0B, 0xA0, 0x00, 0x00, 0x03, 0x08, 0x00, 0x00, 0x10, 0x00, 0x01, 0x00, 0x5F,
-    0x2F, 0x02, 0x40, 0x10,
+    0x2F, 0x02, 0x40, 0x00,
 ];
 
 /// SP 800-73 padded PIN-block wire length (PIN/PUK padded to 8 with `0xFF`).
@@ -259,19 +362,23 @@ pub const DEFAULT_RETRIES: u8 = 3;
 /// PIN/PUK verifier record length: `[len, fmt=0x01, verifier(32)]`.
 pub(crate) const PIN_REC_LEN: usize = 34;
 
-/// Write a PIN/PUK verifier file: `[len, 0x01, pin_derive_verifier(pin)]`.
+/// Write a PIN/PUK verifier file: `[len, 0x01, pin_derive_verifier(pin)]`, over a
+/// pre-OTP one when `rearmed` says so.
 pub fn put_pin_verifier<S: Storage>(
     dev: &Device,
     fs: &mut Fs<S>,
     fid: u16,
     pin: &[u8],
+    rearmed: Option<&Rearmed>,
 ) -> Result<(), Sw> {
-    let mut rec = [0u8; PIN_REC_LEN];
-    rec[0] = pin.len() as u8;
-    rec[1] = 0x01;
-    rec[2..].copy_from_slice(&dev.pin_derive_verifier(pin));
-    let r = fs.put(fid, &rec).map_err(|_| Sw::MEMORY_FAILURE);
-    rec.zeroize();
+    let mut rec = Secret::<[u8; PIN_REC_LEN]>::zeroed();
+    rec.expose_mut()[0] = u8::try_from(pin.len()).map_err(|_| Sw::WRONG_LENGTH)?;
+    rec.expose_mut()[1] = 0x01;
+    rec.expose_mut()[2..].copy_from_slice(dev.pin_derive_verifier(pin).expose());
+    let r = fs
+        .put_over(fid, rec.expose(), rearmed)
+        .map_err(|_| Sw::MEMORY_FAILURE);
+    rec.wipe();
     r
 }
 
@@ -280,29 +387,37 @@ pub fn put_pin_verifier<S: Storage>(
 /// file it reads absent, so one faulted `EF_PIN` probe replaced the owner's
 /// verifier and `VERIFY 123456` opened the card. `Fs::has_data` collapses the two.
 fn provisioned<S: Storage>(fs: &mut Fs<S>, fid: u16) -> Result<bool, Sw> {
-    fs.try_has_data(fid).map_err(|_| Sw::MEMORY_FAILURE)
+    fs.try_exists(fid).map_err(|_| Sw::MEMORY_FAILURE)
 }
 
 /// Create the PIN/PUK/retry files, the default management key and the F9
 /// attestation key + its self-signed P-384 certificate on first use.
-/// Idempotent — every step is guarded by a has-data check.
-pub fn scan_files<S: Storage>(dev: &Device, fs: &mut Fs<S>, rng: &mut dyn Rng) -> Result<(), Sw> {
+/// Idempotent — every step is guarded by a record-presence check. Answers `false` when the
+/// 9B head could not be written, or the key behind it read: the next SELECT runs
+/// this again, and a RESET reports it.
+pub fn scan_files<S: Storage>(dev: &Device, fs: &mut Fs<S>, rng: &mut dyn Rng) -> Result<bool, Sw> {
     if !provisioned(fs, EF_PIN)? {
-        put_pin_verifier(dev, fs, EF_PIN, &DEFAULT_PIN)?;
+        put_pin_verifier(dev, fs, EF_PIN, &DEFAULT_PIN, None)?;
     }
     if !provisioned(fs, EF_PUK)? {
-        put_pin_verifier(dev, fs, EF_PUK, &DEFAULT_PUK)?;
+        put_pin_verifier(dev, fs, EF_PUK, &DEFAULT_PUK, None)?;
     }
     if !provisioned(fs, EF_RETRIES)? {
         let d = DEFAULT_RETRIES;
         fs.put(EF_RETRIES, &[d, d, d, d])
             .map_err(|_| Sw::MEMORY_FAILURE)?;
     }
-    let minted_mgm = !provisioned(fs, key_fid(SLOT_CARDMGM).get())?;
+    let mut mgm_blob = Secret::<[u8; seal::MAX_BLOB]>::zeroed();
+    let mgm_record = fs
+        .try_read_key(key_fid(SLOT_CARDMGM), mgm_blob.expose_mut())
+        .map_err(|_| Sw::MEMORY_FAILURE)?;
+    let minted_mgm = mgm_record.is_none();
     if minted_mgm {
-        let mut key = DEFAULT_MGM;
-        let r = seal::seal_put(dev, fs, rng, key_fid(SLOT_CARDMGM), &key);
-        key.zeroize();
+        // Key-only, the shape every build reads: a card nobody re-keyed keeps its
+        // management key across a downgrade.
+        let mut key = Secret::new(DEFAULT_MGM);
+        let r = seal::seal_put(dev, fs, rng, key_fid(SLOT_CARDMGM), key.expose());
+        key.wipe();
         r?;
     }
     // The key and its meta head are written as a pair but not deleted as one, so
@@ -315,50 +430,101 @@ pub fn scan_files<S: Storage>(dev: &Device, fs: &mut Fs<S>, rng: &mut dyn Rng) -
     // over a re-minted 24-byte DEFAULT_MGM wedges the slot on the length compare,
     // and RESET runs this very path, so nothing would clear it. The mint arm is
     // therefore an unconditional rewrite — `meta_add` replaces.
-    let have_meta = {
-        let mut meta = [0u8; 8];
-        fs.try_meta_find(key_fid(SLOT_CARDMGM).get(), &mut meta)
-            .map_err(|_| Sw::MEMORY_FAILURE)?
-            .is_some()
-    };
-    if minted_mgm || !have_meta {
-        let head = if minted_mgm {
-            // A card we just provisioned takes the YubiKey 5 defaults: AES-192, touch
-            // OFF (admin provisioning isn't touch-gated), still enforced if a host
-            // raises it via SET MGM KEY.
-            Some((ALGO_AES192, TOUCHPOLICY_NEVER))
-        } else {
+    let mut meta = [0u8; 8];
+    let have_meta = fs
+        .try_meta_find(key_fid(SLOT_CARDMGM).get(), &mut meta)
+        .map_err(|_| Sw::MEMORY_FAILURE)?
+        .is_some_and(|n| n >= 3);
+    let mut landed = true;
+    let head = if let Some(n) = mgm_record {
+        match mgm_from_blob(dev, &mut mgm_blob, n) {
+            // The head caches what the record seals: one a refused or torn head
+            // write left behind takes the record's word.
+            Ok(MgmKey {
+                policy: Some(policy),
+                ..
+            }) => Some(policy),
+            // An older build's key-only record, written before its head: a tear left
+            // a new key under the old algorithm, and its length names the right one.
+            Ok(k) if have_meta => {
+                let len = k.key().len();
+                (mgm_key_len(meta[0]) != Some(len))
+                    .then(|| mgm_algo_for_len(len).map(|algo| (algo, meta[2])))
+                    .flatten()
+            }
             // A surviving key keeps its algorithm — the sealed length gives it, and
             // claiming AES-192 over a 16- or 32-byte one wedges the slot on
             // `meta[0] != algo`. Its touch policy is not recoverable, so it takes the
             // published default like every other record here (E95): inventing ALWAYS
             // gated management behind a touch whose only exit needs that same touch.
-            let mut key = [0u8; 32];
-            let n = seal::seal_read(dev, fs, key_fid(SLOT_CARDMGM), &mut key);
-            key.zeroize();
-            match n {
-                Ok(16) => Some((ALGO_AES128, TOUCHPOLICY_NEVER)),
-                Ok(24) => Some((ALGO_AES192, TOUCHPOLICY_NEVER)),
-                Ok(32) => Some((ALGO_AES256, TOUCHPOLICY_NEVER)),
-                // Unreadable: GENERAL AUTHENTICATE reads the key through the same
-                // seal, so slot 9B is already dead. Leaving the head absent fails
-                // just that slot closed; erroring here fails the whole SELECT
-                // (`PivApplet::select` maps a `scan_files` error to MEMORY_FAILURE),
-                // taking certificate reads, GET DATA and RESET down with it.
-                _ => None,
+            Ok(k) => mgm_algo_for_len(k.key().len()).map(|algo| (algo, TOUCHPOLICY_NEVER)),
+            // A malformed seal leaves only 9B unavailable. Keep SELECT usable
+            // for certificate reads and recovery, and retry its head next time.
+            Err(_) => {
+                landed = false;
+                None
             }
-        };
-        if let Some((algo, touch)) = head {
-            fs.meta_add(key_fid(SLOT_CARDMGM).get(), &[algo, MGM_PIN_POLICY, touch])
-                .map_err(|_| Sw::MEMORY_FAILURE)?;
         }
+    } else {
+        // A newly provisioned key takes the YubiKey 5 defaults.
+        Some((ALGO_AES192, TOUCHPOLICY_NEVER))
+    };
+    mgm_blob.wipe();
+    if let Some((algo, touch)) = head
+        && (minted_mgm || !have_meta || (meta[0], meta[2]) != (algo, touch))
+    {
+        let pin = if have_meta && !minted_mgm {
+            meta[1]
+        } else {
+            MGM_PIN_POLICY
+        };
+        // Never an error, which would fail SELECT and the whole applet with it: a
+        // refused write is owed again on the next SELECT, and a RESET reports it.
+        landed = fs
+            .meta_add(key_fid(SLOT_CARDMGM).get(), &[algo, pin, touch])
+            .is_ok();
     }
-    if !provisioned(fs, key_fid(SLOT_ATTESTATION).get())? {
-        let key = PrivKey::generate(Curve::P384, &mut crate::EcRng(rng)).ok_or(Sw::EXEC_ERROR)?;
+    let existing = seal::try_load_ec_key(dev, fs, key_fid(SLOT_ATTESTATION))?;
+    let have_attestation_key = existing.is_some();
+    let key = if let Some(key) = existing {
+        // A tear after the key write owes only its certificate, never a new key.
+        if key.curve() != Curve::P384 {
+            return Err(Sw::MEMORY_FAILURE);
+        }
+        key
+    } else {
+        PrivKey::generate(Curve::P384, &mut crate::EcRng(rng)).ok_or(Sw::EXEC_ERROR)?
+    };
+    let mut point = [0u8; MAX_EC_POINT];
+    let plen = key.public_point(&mut point).map_err(crate::ec_sw)?;
+    let point = point.get(..plen).ok_or(Sw::EXEC_ERROR)?;
+    let mut obj = [0u8; x509::MAX_CERT + 16];
+    let certificate_matches = have_attestation_key
+        && fs
+            .try_read(EF_ATTESTATION_CERT, &mut obj)
+            .map_err(|_| Sw::MEMORY_FAILURE)?
+            .and_then(|n| obj.get(..n))
+            .and_then(x509::attestation_point)
+            == Some(point);
+    let mut cached = [0u8; MAX_EC_POINT];
+    let cache_matches = fs
+        .try_read(pubkey_fid(SLOT_ATTESTATION), &mut cached)
+        .map_err(|_| Sw::MEMORY_FAILURE)?
+        .is_none_or(|n| cached.get(..n) == Some(point));
+    if certificate_matches && cache_matches {
+        return Ok(landed);
+    }
+    // Older firmware could leave either public record naming a preceding key.
+    crate::keygen::drop_slot_meta(fs, SLOT_ATTESTATION)?;
+    if !certificate_matches {
+        fs.force_delete(EF_ATTESTATION_CERT)
+            .map_err(|_| Sw::MEMORY_FAILURE)?;
+    }
+    if !have_attestation_key {
         seal::store_ec_key(dev, fs, rng, key_fid(SLOT_ATTESTATION), &key)?;
-        let mut point = [0u8; MAX_EC_POINT];
-        let plen = key.public_point(&mut point).map_err(crate::ec_sw)?;
-        let _ = fs.put(pubkey_fid(SLOT_ATTESTATION), &point[..plen]);
+    }
+    let _ = fs.put(pubkey_fid(SLOT_ATTESTATION), point);
+    if !certificate_matches {
         let mut cert = [0u8; x509::MAX_CERT];
         let n = x509::build_cert(
             &x509::CertParams {
@@ -366,28 +532,29 @@ pub fn scan_files<S: Storage>(dev: &Device, fs: &mut Fs<S>, rng: &mut dyn Rng) -
                 algo: ALGO_ECCP384,
                 spki: x509::Spki::Ec {
                     curve: Curve::P384,
-                    point: &point[..plen],
+                    point,
                 },
                 attestation: None,
                 ca_pathlen: Some(1),
             },
-            &x509::Signer::Ec(&key),
+            &key,
             rng,
             &mut cert,
         )?;
-        let mut obj = [0u8; x509::MAX_CERT + 16];
-        let on = crate::wrap_cert_object(&cert[..n], &mut obj);
-        fs.put(EF_ATTESTATION_CERT, &obj[..on])
+        let on = crate::wrap_cert_object(cert.get(..n).ok_or(Sw::EXEC_ERROR)?, &mut obj);
+        fs.put(EF_ATTESTATION_CERT, obj.get(..on).ok_or(Sw::EXEC_ERROR)?)
             .map_err(|_| Sw::MEMORY_FAILURE)?;
     }
-    Ok(())
+    Ok(landed)
 }
 
 /// The fids a PIV factory reset owns: keys/PINs + data objects
-/// (`0xD100..=0xD2FF`) and the per-slot pubkey cache (`0xD4xx`). `0xD3xx` is
-/// FIDO's, so it is deliberately not in the range.
+/// (`0xD100..=0xD2FF`), the per-slot pubkey cache (`0xD4xx`) and the object pool
+/// (`0xD6xx`). `0xD3xx` and `0xD5xx` are FIDO's, so they are deliberately not in it.
 pub(crate) fn is_piv_fid(fid: u16) -> bool {
-    (0xD100..=0xD2FF).contains(&fid) || (0xD400..=0xD4FF).contains(&fid)
+    (0xD100..=0xD2FF).contains(&fid)
+        || (0xD400..=0xD4FF).contains(&fid)
+        || crate::objects::POOL.contains(&fid)
 }
 
 /// The records that *gate* the applet: the PIN and PUK verifiers, their retry
@@ -411,10 +578,10 @@ fn is_piv_secret_fid(fid: u16) -> bool {
 }
 
 /// Progress backstop for one [`sweep`] phase: every batched `force_delete` clears
-/// one *distinct* live fid and [`is_piv_fid`] spans 768 of them, so needing more
+/// one *distinct* live fid and [`is_piv_fid`] spans 1024 of them, so needing more
 /// deletes than that means the backend keeps re-yielding what it removed. Bounds
 /// each phase separately, which is strictly tighter than the old single sweep.
-const RESET_MAX_DELETES: u32 = 768;
+const RESET_MAX_DELETES: u32 = 1024;
 
 /// Fids one [`sweep`] pass collects before deleting them. Named because the wrap
 /// to a second pass is a code path, and the test that crosses it has to size its
@@ -431,7 +598,12 @@ pub fn reset_files<S: Storage>(dev: &Device, fs: &mut Fs<S>, rng: &mut dyn Rng) 
     // below. Safe now that the gate records go last — a failed sweep that never
     // reached them leaves the owner's PIN in place, not a default one.
     let ensured = scan_files(dev, fs, rng);
-    wiped.and(ensured)
+    match wiped.and(ensured) {
+        Ok(true) => Ok(()),
+        // A reset that left 9B without the head its factory key needs did not reset.
+        Ok(false) => Err(Sw::MEMORY_FAILURE),
+        Err(sw) => Err(sw),
+    }
 }
 
 /// Delete every live PIV file and meta record, with the at-rest lap re-armed
@@ -443,17 +615,17 @@ fn wipe_piv<S: Storage>(fs: &mut Fs<S>) -> Result<(), Sw> {
     //
     // The failure does NOT stop the write, unlike the gated sites: "leave the
     // record in force" means, on a wipe, leave the secrets live.
-    let _ = rsk_fs::request_rescrub(fs);
-    let swept = sweep_phases(fs);
+    let attempted = rsk_fs::attempt_rescrub(fs);
+    let swept = sweep_phases(fs, &attempted);
     // Retry, BETWEEN the sweeps and their `?` rather than after their last one: a
     // refused head leaves the marker latched over every tombstone [`sweep_phases`]
     // appended, and a sweep that faults on the way is exactly when that is true and
     // unrecoverable.
     //
-    // A single-shot refusal is the only kind either call recovers from (`rsk_otp`'s
-    // BUMP_TRIES states the same), and where the head landed this costs no append at
-    // all — `Fs::delete` skips a backend it already marked absent.
-    let _ = rsk_fs::request_rescrub(fs);
+    // A single-shot refusal is the only kind either call recovers from, and where
+    // the head landed this costs no append at all — `Fs::delete` skips a backend it
+    // already marked absent.
+    let _retried = rsk_fs::attempt_rescrub(fs);
     swept
 }
 
@@ -468,7 +640,7 @@ fn wipe_piv<S: Storage>(fs: &mut Fs<S>) -> Result<(), Sw> {
 /// Its own function so the at-rest re-arm can stand between it and its caller's
 /// answer: every early return in here is one a re-arm written BELOW them would be
 /// skipped by, which is the case that re-arm exists for.
-fn sweep_phases<S: Storage>(fs: &mut Fs<S>) -> Result<(), Sw> {
+fn sweep_phases<S: Storage>(fs: &mut Fs<S>, _attempted: &RearmAttempted) -> Result<(), Sw> {
     let secrets = sweep(fs, is_piv_secret_fid)?;
     let gates = sweep(fs, is_piv_gate_fid)?;
     if secrets || gates {
@@ -493,8 +665,12 @@ fn sweep<S: Storage>(fs: &mut Fs<S>, pred: fn(u16) -> bool) -> Result<bool, Sw> 
         let mut fids = [0u16; SWEEP_BATCH];
         let mut n = 0;
         let complete = fs.for_each_key(&mut |fid| {
-            if pred(fid) && n < fids.len() && !fids[..n].contains(&fid) {
-                fids[n] = fid;
+            let (seen, free) = fids.split_at_mut(n);
+            if pred(fid)
+                && !seen.contains(&fid)
+                && let Some(slot) = free.first_mut()
+            {
+                *slot = fid;
                 n += 1;
             }
         });
@@ -509,11 +685,12 @@ fn sweep<S: Storage>(fs: &mut Fs<S>, pred: fn(u16) -> bool) -> Result<bool, Sw> 
         }
         // Liveness measured as PROGRESS, not as a pass count: each pass deletes
         // `n` distinct fids, so a converging sweep can never exceed the budget.
-        deleted += n as u32;
+        // `n` is at most `SWEEP_BATCH`, far inside a `u32`.
+        deleted = deleted.saturating_add(u32::try_from(n).unwrap_or(u32::MAX));
         if deleted > RESET_MAX_DELETES {
             return Err(Sw::MEMORY_FAILURE);
         }
-        for &fid in &fids[..n] {
+        for &fid in fids.iter().take(n) {
             // force_delete (unconditional, and it drops the meta record itself):
             // `delete` skips a false-absent file that `for_each_key` keeps
             // yielding, so the sweep would spin instead of converging.
@@ -525,5 +702,13 @@ fn sweep<S: Storage>(fs: &mut Fs<S>, pred: fn(u16) -> bool) -> Result<bool, Sw> 
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::indexing_slicing,
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::cast_possible_truncation,
+    reason = "a test's fixture is its own bound, and a panic is its failure report"
+)]
 #[path = "files_tests.rs"]
 mod tests;

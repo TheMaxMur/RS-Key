@@ -3,33 +3,10 @@
 
 #![no_main]
 
-//! Fuzz the keyboard-interface OTP frame codec (`rsk_otp::hid`). Arbitrary bytes
-//! are fed to [`FrameRx`] as a stream of 8-byte feature reports — the host
-//! SET_REPORT attacker surface — and every completed frame is round-tripped
-//! through [`FrameTx`]. None of the reassembly / framing may panic.
+//! Fuzz OTP RX reports and independent TX load/poll/reload histories.
 
 use libfuzzer_sys::fuzz_target;
-use rsk_otp::hid::{FrameRx, FrameTx, REPORT_SIZE, RxOutcome};
 
-fuzz_target!(|data: &[u8]| {
-    let mut rx = FrameRx::new();
-    let mut tx = FrameTx::new();
-    for chunk in data.chunks(REPORT_SIZE) {
-        let mut report = [0u8; REPORT_SIZE];
-        report[..chunk.len()].copy_from_slice(chunk);
-        match rx.feed(&report) {
-            RxOutcome::Frame { slot: _, payload } => {
-                // A completed frame's payload is a plausible response body; stream
-                // it back out and drain every report.
-                tx.load(&payload);
-                let mut out = [0u8; REPORT_SIZE];
-                let mut guard = 0;
-                while tx.next(&mut out) {
-                    guard += 1;
-                    assert!(guard < 64, "FrameTx must terminate");
-                }
-            }
-            RxOutcome::None | RxOutcome::Reset | RxOutcome::BadCrc => {}
-        }
-    }
-});
+mod otp_hid_oracle;
+
+fuzz_target!(|data: &[u8]| otp_hid_oracle::replay(data));

@@ -4,10 +4,41 @@
 //! The FID → bytes persistence backend. On device this is `sequential-storage`
 //! over embassy-rp flash (implemented in `firmware`); tests use `RamStorage`.
 
-use rsk_sdk::error::Result;
+use rsk_sdk::error::{Error, Result};
+
+/// Only ready authority may answer application reads and confirmed absence.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StorageState {
+    Ready,
+    Recovery,
+}
+
+/// Attended storage administration; an epoch is freshly drawn by the caller.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StorageAction {
+    Initialize,
+    ImportLegacy,
+}
 
 /// A persistent map from 16-bit file id to a byte value.
 pub trait Storage {
+    /// Recover an already constructed backend before exposing its contents.
+    fn mount(&mut self) -> Result<()> {
+        Ok(())
+    }
+    /// Boot may initialize blank media or migrate legacy records with a fresh epoch.
+    fn boot(&mut self, _epoch: [u8; 16]) -> Result<()> {
+        self.mount()
+    }
+    fn state(&self) -> StorageState {
+        StorageState::Ready
+    }
+    fn root_closed(&self) -> bool {
+        true
+    }
+    fn administer(&mut self, _action: StorageAction, _epoch: [u8; 16]) -> Result<()> {
+        Err(Error::Blocked)
+    }
     /// Largest value this backend can store for one FID. A log-structured backend
     /// serialises key+value through one scratch buffer, so the real ceiling is
     /// smaller than the buffer and was previously an unstated property of it —
@@ -21,6 +52,16 @@ pub trait Storage {
     fn write(&mut self, fid: u16, data: &[u8]) -> Result<()>;
     /// Remove `fid` if present.
     fn remove(&mut self, fid: u16) -> Result<()>;
+    /// Read a sealed counter bound to the current incarnation of `fid`.
+    /// Backends without a separate counter journal leave the value in its owner.
+    fn read_bound_counter(&mut self, _fid: u16, _out: &mut [u8]) -> Result<Option<usize>> {
+        Ok(None)
+    }
+    /// Publish a sealed counter before releasing its response. `false` requests
+    /// the caller's ordinary whole-record write; errors must never fall back.
+    fn write_bound_counter(&mut self, _fid: u16, _sealed: &[u8]) -> Result<bool> {
+        Ok(false)
+    }
     /// Length of the value for `fid`, or `None`.
     fn size(&mut self, fid: u16) -> Option<usize>;
     /// Whether `fid` has a stored value.
@@ -559,6 +600,342 @@ pub mod faults {
             self.inner.for_each_key(f)
         }
     }
+    /// A RAM medium whose `write` and `remove` REPORT `Ok` and apply nothing for
+    /// one chosen fid, while every read and every other mutation still works — the
+    /// backend that says it programmed (or tombstoned) the record and did not.
+    ///
+    /// [`Undead`] is the remove-only twin a wipe's delete budget is written
+    /// against; this is the one a command that writes a record and then reads it
+    /// back must catch. The two are different faults: a refusal ([`RemoveStuck`],
+    /// a failed `write`) answers `Err` and the command's `?` stops, while this
+    /// answers `Ok` — so only the command's own read-back can tell it apart from a
+    /// write that landed.
+    ///
+    /// A delete is a mutation too (on a log-structured backend it appends a
+    /// tombstone), so the drop covers `remove` as well: [`crate::request_rescrub`]
+    /// re-reads the marker it removed, and a medium that swallows the tombstone
+    /// leaves it live.
+    pub struct Silent {
+        inner: Rc<RefCell<RamStorage>>,
+        dropped: Rc<Cell<Option<u16>>>,
+        once: Rc<Cell<bool>>,
+        attempts: Rc<Cell<u32>>,
+        read_fault: Rc<Cell<Option<u16>>>,
+        read_once: Rc<Cell<bool>>,
+        read_faults: Rc<Cell<u32>>,
+        read_err: Rc<Cell<bool>>,
+    }
+
+    /// The other end of a [`Silent`]: arms the drop, counts it, and reads the
+    /// medium past [`crate::Fs`]'s present cache — which a `put` marks present
+    /// whether or not the backend applied it, so a cache-level check would pass
+    /// over a write that never landed (the fault [`RemoveMedium::live`] and
+    /// [`Medium::live`] exist for on the remove side).
+    pub struct SilentMedium {
+        inner: Rc<RefCell<RamStorage>>,
+        dropped: Rc<Cell<Option<u16>>>,
+        once: Rc<Cell<bool>>,
+        attempts: Rc<Cell<u32>>,
+        read_fault: Rc<Cell<Option<u16>>>,
+        read_once: Rc<Cell<bool>>,
+        read_faults: Rc<Cell<u32>>,
+    }
+
+    impl Silent {
+        pub fn new() -> (Self, SilentMedium) {
+            let inner = Rc::new(RefCell::new(RamStorage::new()));
+            let dropped = Rc::new(Cell::new(None));
+            let once = Rc::new(Cell::new(false));
+            let attempts = Rc::new(Cell::new(0));
+            let read_fault = Rc::new(Cell::new(None));
+            let read_once = Rc::new(Cell::new(false));
+            let read_faults = Rc::new(Cell::new(0));
+            let read_err = Rc::new(Cell::new(false));
+            (
+                Self {
+                    inner: inner.clone(),
+                    dropped: dropped.clone(),
+                    once: once.clone(),
+                    attempts: attempts.clone(),
+                    read_fault: read_fault.clone(),
+                    read_once: read_once.clone(),
+                    read_faults: read_faults.clone(),
+                    read_err,
+                },
+                SilentMedium {
+                    inner,
+                    dropped,
+                    once,
+                    attempts,
+                    read_fault,
+                    read_once,
+                    read_faults,
+                },
+            )
+        }
+
+        /// Swallow this mutation iff the drop is armed for `fid`, spending a
+        /// one-shot arming as it does.
+        fn swallow(&self, fid: u16) -> bool {
+            if self.dropped.get() != Some(fid) {
+                return false;
+            }
+            if self.once.get() {
+                self.dropped.set(None);
+            }
+            self.attempts.set(self.attempts.get() + 1);
+            true
+        }
+
+        /// Refuse this read iff the read fault is armed for `fid`, spending a
+        /// one-shot arming. The store must surface the failure through
+        /// `last_error`: a `None` alone is "absent", which is the very collapse
+        /// this correlated story exists to separate from a lost record.
+        fn faulty_read(&self, fid: u16) -> bool {
+            if self.read_fault.get() != Some(fid) {
+                self.read_err.set(false);
+                return false;
+            }
+            if self.read_once.get() {
+                self.read_fault.set(None);
+            }
+            self.read_faults.set(self.read_faults.get() + 1);
+            self.read_err.set(true);
+            true
+        }
+    }
+
+    impl SilentMedium {
+        /// Silently lose every `write`/`remove` of `fid` (`None` clears the drop).
+        pub fn arm(&self, fid: Option<u16>) {
+            self.dropped.set(fid);
+            self.once.set(false);
+        }
+        /// Silently lose the NEXT mutation of `fid`, then recover — the one-shot
+        /// twin of [`RemoveMedium::refuse_once`]. A persistent drop is caught by
+        /// whichever write the command makes first, so it cannot tell a retry
+        /// further down the command from a command that never retried: both leave
+        /// the record unwritten. The single-shot one can.
+        pub fn arm_once(&self, fid: u16) {
+            self.dropped.set(Some(fid));
+            self.once.set(true);
+        }
+        /// Mutations the armed drop swallowed. The drop alone cannot tell a command
+        /// that stopped on its read-back from one that never wrote at all: this
+        /// COUNT says the medium was actually asked.
+        pub fn attempts(&self) -> u32 {
+            self.attempts.get()
+        }
+        /// Whether `fid` has a value ON THE MEDIUM.
+        pub fn live(&self, fid: u16) -> bool {
+            self.inner.borrow_mut().exists(fid)
+        }
+        /// The bytes stored for `fid` ON THE MEDIUM, drop or no drop.
+        pub fn value(&self, fid: u16) -> Option<Vec<u8>> {
+            let mut buf = [0u8; crate::MAX_VALUE_BYTES];
+            let n = self.inner.borrow_mut().read(fid, &mut buf)?;
+            Some(buf[..n.min(buf.len())].to_vec())
+        }
+        /// Fail every `read`/`size` of `fid` (`None` clears the fault). With the
+        /// drop armed for the same fid this is the correlated story: the program
+        /// lied and the read-back cannot answer either, so a test can prove both
+        /// halves fired instead of one masking the other.
+        pub fn fault_read(&self, fid: Option<u16>) {
+            self.read_fault.set(fid);
+            self.read_once.set(false);
+        }
+        /// Fail only the NEXT `read`/`size` of `fid`, then recover.
+        pub fn fault_read_once(&self, fid: u16) {
+            self.read_fault.set(Some(fid));
+            self.read_once.set(true);
+        }
+        /// Reads the armed fault refused. A command that never reached its
+        /// read-back leaves this at zero, which is how a test tells the
+        /// combination from a fixture that only injected the write fault.
+        pub fn read_faults(&self) -> u32 {
+            self.read_faults.get()
+        }
+    }
+
+    impl Storage for Silent {
+        fn read(&mut self, fid: u16, buf: &mut [u8]) -> Option<usize> {
+            if self.faulty_read(fid) {
+                return None;
+            }
+            self.inner.borrow_mut().read(fid, buf)
+        }
+        fn write(&mut self, fid: u16, data: &[u8]) -> Result<()> {
+            if self.swallow(fid) {
+                return Ok(()); // reported applied, never applied
+            }
+            self.inner.borrow_mut().write(fid, data)
+        }
+        fn remove(&mut self, fid: u16) -> Result<()> {
+            if self.swallow(fid) {
+                return Ok(());
+            }
+            self.inner.borrow_mut().remove(fid)
+        }
+        fn size(&mut self, fid: u16) -> Option<usize> {
+            if self.faulty_read(fid) {
+                return None;
+            }
+            self.inner.borrow_mut().size(fid)
+        }
+        fn for_each_key(&mut self, f: &mut dyn FnMut(u16)) -> bool {
+            self.inner.borrow_mut().for_each_key(f)
+        }
+        /// The last `read`/`size` refused by the fault. Without this, `None`
+        /// would be indistinguishable from absence and the command would treat a
+        /// failure as an absent record — the collapse the read-back exists for.
+        fn last_error(&self) -> bool {
+            self.read_err.get()
+        }
+    }
+
+    /// The bytes `inner` holds for `fid`, read straight through the backend so a
+    /// caller sees the torn slot and not a cache the writes kept fresh.
+    fn held(inner: &Rc<RefCell<RamStorage>>, fid: u16) -> Option<Vec<u8>> {
+        let mut buf = [0u8; crate::MAX_VALUE_BYTES];
+        let n = inner.borrow_mut().read(fid, &mut buf)?;
+        Some(buf[..n.min(buf.len())].to_vec())
+    }
+
+    /// A RAM medium whose `write` lands only a PREFIX of its bytes and reports
+    /// `Ok`, so a read of that fid answers the TORN value: the new prefix over
+    /// whatever the slot held (`new[..k] ++ old[k..]`), or a plain prefix where it
+    /// held nothing. An interrupted slot program is ONE physical event, so the
+    /// write that lies and the read that exposes it are correlated rather than a
+    /// drop glued to a separate read fault. The torn value is a THIRD one — neither
+    /// the record the write replaced nor the one it claimed to store, and where the
+    /// slot was empty its LENGTH lies too; [`Silent`]'s dropped write answers the
+    /// OLD value, which is a state the caller already knew.
+    pub struct Torn {
+        inner: Rc<RefCell<RamStorage>>,
+        armed: Rc<Cell<Option<(u16, usize)>>>,
+        once: Rc<Cell<bool>>,
+        attempts: Rc<Cell<u32>>,
+    }
+
+    /// The other end of a [`Torn`]: arms the tear at a byte offset, counts the
+    /// writes it reached, and reads the medium past [`crate::Fs`]'s present cache —
+    /// a `put` marks the fid present whether or not the program committed, so a
+    /// cache-level check passes over a torn slot and only the medium shows it.
+    pub struct TornMedium {
+        inner: Rc<RefCell<RamStorage>>,
+        armed: Rc<Cell<Option<(u16, usize)>>>,
+        once: Rc<Cell<bool>>,
+        attempts: Rc<Cell<u32>>,
+    }
+
+    impl Torn {
+        pub fn new() -> (Self, TornMedium) {
+            let inner = Rc::new(RefCell::new(RamStorage::new()));
+            let armed = Rc::new(Cell::new(None));
+            let once = Rc::new(Cell::new(false));
+            let attempts = Rc::new(Cell::new(0));
+            (
+                Self {
+                    inner: inner.clone(),
+                    armed: armed.clone(),
+                    once: once.clone(),
+                    attempts: attempts.clone(),
+                },
+                TornMedium {
+                    inner,
+                    armed,
+                    once,
+                    attempts,
+                },
+            )
+        }
+
+        /// The prefix length this write tears at, spending a one-shot arming, or
+        /// `None` for a write the tear does not reach.
+        fn tear_at(&self, fid: u16) -> Option<usize> {
+            let (armed, prefix) = self.armed.get()?;
+            if armed != fid {
+                return None;
+            }
+            if self.once.get() {
+                self.armed.set(None);
+            }
+            self.attempts.set(self.attempts.get() + 1);
+            Some(prefix)
+        }
+
+        /// Program a prefix of `data` over the slot and leave the rest of the old
+        /// value standing, as a part-way slot program does.
+        fn tear(&self, fid: u16, data: &[u8], prefix: usize) {
+            let prefix = prefix.min(data.len());
+            let mut torn = data[..prefix].to_vec();
+            if let Some(old) = held(&self.inner, fid)
+                && old.len() > prefix
+            {
+                torn.extend_from_slice(&old[prefix..]);
+            }
+            let _ = self.inner.borrow_mut().write(fid, &torn);
+        }
+    }
+
+    impl TornMedium {
+        /// Tear every `write` of `fid` after `prefix` bytes, leaving the rest of
+        /// the slot. A `remove` has no payload to tear and forwards unchanged.
+        pub fn arm(&self, fid: u16, prefix: usize) {
+            self.armed.set(Some((fid, prefix)));
+            self.once.set(false);
+        }
+        /// Tear the NEXT `write` of `fid`, then recover — the one-shot twin of
+        /// [`RemoveMedium::refuse_once`]. A persistent tear is caught only by
+        /// whichever write the command makes first, so it cannot tell a command
+        /// that retried its write from one that stopped at the torn read-back.
+        pub fn arm_once(&self, fid: u16, prefix: usize) {
+            self.armed.set(Some((fid, prefix)));
+            self.once.set(true);
+        }
+        /// Restore a healthy medium.
+        pub fn disarm(&self) {
+            self.armed.set(None);
+            self.once.set(false);
+        }
+        /// Writes the armed tear reached. The torn VALUE alone cannot tell a
+        /// command that re-read the medium from one that never wrote at all: this
+        /// COUNT says the medium was actually asked.
+        pub fn attempts(&self) -> u32 {
+            self.attempts.get()
+        }
+        /// Whether `fid` has a value ON THE MEDIUM, torn or not.
+        pub fn live(&self, fid: u16) -> bool {
+            self.inner.borrow_mut().exists(fid)
+        }
+        /// The bytes stored for `fid` ON THE MEDIUM, torn or not.
+        pub fn value(&self, fid: u16) -> Option<Vec<u8>> {
+            held(&self.inner, fid)
+        }
+    }
+
+    impl Storage for Torn {
+        fn read(&mut self, fid: u16, buf: &mut [u8]) -> Option<usize> {
+            self.inner.borrow_mut().read(fid, buf)
+        }
+        fn write(&mut self, fid: u16, data: &[u8]) -> Result<()> {
+            if let Some(prefix) = self.tear_at(fid) {
+                self.tear(fid, data, prefix);
+                return Ok(()); // reported committed, half-programmed
+            }
+            self.inner.borrow_mut().write(fid, data)
+        }
+        fn remove(&mut self, fid: u16) -> Result<()> {
+            self.inner.borrow_mut().remove(fid)
+        }
+        fn size(&mut self, fid: u16) -> Option<usize> {
+            self.inner.borrow_mut().size(fid)
+        }
+        fn for_each_key(&mut self, f: &mut dyn FnMut(u16)) -> bool {
+            self.inner.borrow_mut().for_each_key(f)
+        }
+    }
+
     /// One mutation a [`Cut`] medium served, in the order it served it.
     #[derive(Clone, PartialEq, Eq)]
     pub enum Op {
@@ -588,6 +965,7 @@ pub mod faults {
         inner: Rc<RefCell<RamStorage>>,
         budget: Rc<Cell<u32>>,
         log: Rc<RefCell<Vec<Op>>>,
+        refused: Rc<Cell<bool>>,
     }
 
     /// The other end of a [`Cut`]: arms the cut, and reads the log and the medium
@@ -597,6 +975,7 @@ pub mod faults {
         inner: Rc<RefCell<RamStorage>>,
         budget: Rc<Cell<u32>>,
         log: Rc<RefCell<Vec<Op>>>,
+        refused: Rc<Cell<bool>>,
     }
 
     impl Cut {
@@ -605,13 +984,20 @@ pub mod faults {
             let inner = Rc::new(RefCell::new(RamStorage::new()));
             let budget = Rc::new(Cell::new(u32::MAX));
             let log = Rc::new(RefCell::new(Vec::new()));
+            let refused = Rc::new(Cell::new(false));
             (
                 Self {
                     inner: inner.clone(),
                     budget: budget.clone(),
                     log: log.clone(),
+                    refused: refused.clone(),
                 },
-                CutMedium { inner, budget, log },
+                CutMedium {
+                    inner,
+                    budget,
+                    log,
+                    refused,
+                },
             )
         }
 
@@ -619,6 +1005,7 @@ pub mod faults {
         fn serve(&self) -> bool {
             let left = self.budget.get();
             if left == 0 {
+                self.refused.set(true);
                 return false;
             }
             self.budget.set(left - 1);
@@ -631,6 +1018,18 @@ pub mod faults {
         /// `u32::MAX` restores a healthy medium.
         pub fn arm(&self, budget: u32) {
             self.budget.set(budget);
+            self.refused.set(false);
+        }
+        /// Whether a mutation actually reached the armed cut.
+        pub fn was_cut(&self) -> bool {
+            self.refused.get()
+        }
+        /// Independent media over the same durable records, without shared caches.
+        pub fn fork(&self) -> (Cut, Self) {
+            let (storage, medium) = Cut::new();
+            *storage.inner.borrow_mut() = self.inner.borrow().clone();
+            *medium.log.borrow_mut() = self.log.borrow().clone();
+            (storage, medium)
         }
         /// The mutations that LANDED, in order.
         pub fn ops(&self) -> Vec<Op> {

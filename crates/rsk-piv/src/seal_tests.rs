@@ -1,0 +1,255 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 RS-Key contributors
+
+use super::*;
+use rsk_fs::storage::faults::RemoveStuck;
+use rsk_fs::storage::ram::RamStorage;
+
+use crate::files::key_fid;
+
+const SERIAL: [u8; 8] = [1, 2, 3, 4, 5, 6, 7, 8];
+const HASH: [u8; 32] = [0x22; 32];
+const OTP: [u8; 32] = [0x44; 32];
+
+struct TestRng(u64);
+impl Rng for TestRng {
+    fn fill(&mut self, b: &mut [u8]) {
+        for x in b.iter_mut() {
+            self.0 = self
+                .0
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            *x = (self.0 >> 33) as u8;
+        }
+    }
+}
+
+fn new_fs() -> Fs<RamStorage> {
+    let mut fs = Fs::new(RamStorage::new());
+    fs.scan();
+    fs
+}
+
+fn dev(otp: Option<&'static [u8; 32]>) -> Device<'static> {
+    Device {
+        serial_hash: &HASH,
+        serial_id: &SERIAL,
+        otp_key: otp,
+        latched: false,
+    }
+}
+
+#[test]
+fn migration_without_an_otp_root_keeps_every_record_and_draws_no_entropy() {
+    let mut fs = new_fs();
+    let fid = key_fid(SLOT_AUTHENTICATION);
+    seal_put(&dev(None), &mut fs, &mut TestRng(7), fid, &[0x11; 33]).unwrap();
+    let generation = fs.write_gen();
+    let mut rng = TestRng(1);
+    assert!(!migrate_kbase(&dev(None), &mut fs, &mut rng));
+    assert_eq!(rng.0, 1);
+    assert_eq!(fs.write_gen(), generation);
+    let mut plain = Secret::<[u8; MAX_PLAIN]>::zeroed();
+    assert_eq!(seal_read(&dev(None), &mut fs, fid, &mut plain), Ok(33));
+    assert_eq!(&plain.expose()[..33], &[0x11; 33]);
+}
+
+/// The cap is checked before the nonce is drawn, so an over-long plaintext costs
+/// no randomness and leaves no half-written record for the next read to find.
+#[test]
+fn a_plaintext_over_the_cap_is_refused_and_writes_nothing() {
+    let mut fs = new_fs();
+    let fid = key_fid(SLOT_AUTHENTICATION);
+    let over = [0x5Au8; MAX_PLAIN + 1];
+    assert_eq!(
+        seal_put(&dev(None), &mut fs, &mut TestRng(1), fid, &over),
+        Err(Sw::WRONG_LENGTH)
+    );
+    assert!(!fs.has_key(fid), "a refused seal left a record behind");
+}
+
+#[test]
+fn the_largest_crt_plaintext_fits_its_seal_and_roundtrips() {
+    let mut fs = new_fs();
+    let fid = key_fid(SLOT_AUTHENTICATION);
+    let mut plain = Secret::<[u8; MAX_PLAIN]>::zeroed();
+    for (i, byte) in plain.expose_mut().iter_mut().enumerate() {
+        *byte = (i % 251) as u8;
+    }
+    seal_put(&dev(None), &mut fs, &mut TestRng(2), fid, plain.expose()).unwrap();
+    let mut sealed = Secret::<[u8; MAX_BLOB]>::zeroed();
+    assert_eq!(
+        fs.read_key(fid, sealed.expose_mut()),
+        Some(NONCE_LEN + MAX_PLAIN + TAG_LEN)
+    );
+    let mut back = Secret::<[u8; MAX_PLAIN]>::zeroed();
+    assert_eq!(
+        seal_read(&dev(None), &mut fs, fid, &mut back),
+        Ok(MAX_PLAIN)
+    );
+    assert_eq!(back.expose(), plain.expose());
+}
+
+/// A record too short to hold its own `nonce ‖ tag` framing cannot be a blob this
+/// applet wrote. It must answer MEMORY_FAILURE rather than underflow `pt_len` —
+/// the at-rest corruption class [`rsk_fs`] exists to fail closed on.
+#[test]
+fn a_record_shorter_than_its_framing_is_memory_failure() {
+    let mut fs = new_fs();
+    let fid = key_fid(SLOT_AUTHENTICATION);
+    for n in [1usize, NONCE_LEN + TAG_LEN - 1] {
+        let junk = vec![0xEEu8; n];
+        fs.put_key(fid, Sealed::wrap(&junk)).unwrap();
+        let mut out = Secret::<[u8; MAX_PLAIN]>::zeroed();
+        assert_eq!(
+            seal_read(&dev(None), &mut fs, fid, &mut out),
+            Err(Sw::MEMORY_FAILURE),
+            "a {n}-byte record was not refused"
+        );
+    }
+}
+
+/// The caller's buffer is measured against the plaintext the record claims, before
+/// anything is decrypted into it.
+#[test]
+fn an_output_buffer_under_the_plaintext_is_refused() {
+    let mut fs = new_fs();
+    let fid = key_fid(SLOT_AUTHENTICATION);
+    let plain = [0x11u8; 40];
+    seal_put(&dev(None), &mut fs, &mut TestRng(2), fid, &plain).unwrap();
+    let mut small = Secret::<[u8; 39]>::zeroed();
+    assert_eq!(
+        seal_read(&dev(None), &mut fs, fid, &mut small),
+        Err(Sw::WRONG_LENGTH)
+    );
+    let mut exact = Secret::<[u8; 40]>::zeroed();
+    assert_eq!(seal_read(&dev(None), &mut fs, fid, &mut exact), Ok(40));
+    assert_eq!(*exact.expose(), plain);
+}
+
+/// A blob that opens under neither generation is corrupt, and the migration pass
+/// leaves it exactly as it found it: re-sealing garbage under the fuse key would
+/// destroy the evidence and make the corruption look like a current record.
+#[test]
+fn a_slot_that_opens_under_neither_generation_is_left_untouched() {
+    let mut fs = new_fs();
+    let fid = key_fid(SLOT_AUTHENTICATION);
+    let junk = [0xEEu8; NONCE_LEN + 8 + TAG_LEN];
+    fs.put_key(fid, Sealed::wrap(&junk)).unwrap();
+    assert!(
+        !migrate_kbase(&dev(Some(&OTP)), &mut fs, &mut TestRng(3)),
+        "a record no arm opens is not counted as left: it would hold the lock off for ever"
+    );
+    let mut back = [0u8; MAX_BLOB];
+    let n = fs
+        .read_key(fid, &mut back)
+        .expect("the record is still there");
+    assert_eq!(
+        &back[..n],
+        &junk[..],
+        "the migration rewrote a corrupt slot"
+    );
+}
+
+/// An EC blob is `curve_id ‖ scalar`, so one byte carries no scalar at all. The
+/// length is checked before `curve_from_id`, which would otherwise answer for a
+/// record that has nothing to decode.
+#[test]
+fn an_ec_blob_without_a_scalar_is_refused() {
+    let mut fs = new_fs();
+    let fid = key_fid(SLOT_AUTHENTICATION);
+    seal_put(&dev(None), &mut fs, &mut TestRng(4), fid, &[3]).unwrap();
+    assert_eq!(
+        load_ec_key(&dev(None), &mut fs, fid).err(),
+        Some(Sw::MEMORY_FAILURE)
+    );
+}
+
+#[test]
+fn a_minimal_ec_scalar_loads_with_its_leading_zeroes() {
+    let mut fs = new_fs();
+    let fid = key_fid(SLOT_AUTHENTICATION);
+    seal_put(
+        &dev(None),
+        &mut fs,
+        &mut TestRng(4),
+        fid,
+        &[Curve::P256.id(), 1],
+    )
+    .unwrap();
+    let key = load_ec_key(&dev(None), &mut fs, fid).unwrap();
+    assert_eq!(key.curve(), Curve::P256);
+    let mut expected = [0; 32];
+    expected[31] = 1;
+    assert_eq!(key.scalar(), &expected);
+}
+
+#[test]
+fn the_ec_writer_seals_a_full_p521_scalar() {
+    let mut fs = new_fs();
+    let fid = key_fid(SLOT_AUTHENTICATION);
+    let key = PrivKey::from_scalar(Curve::P521, &[1]).unwrap();
+    assert_eq!(key.scalar().len(), 66);
+    store_ec_key(&dev(None), &mut fs, &mut TestRng(4), fid, &key).unwrap();
+    let mut plain = Secret::<[u8; 67]>::zeroed();
+    assert_eq!(seal_read(&dev(None), &mut fs, fid, &mut plain), Ok(67));
+    assert_eq!(plain.expose()[0], Curve::P521.id());
+    assert_eq!(&plain.expose()[1..], key.scalar());
+    let generation = fs.write_gen();
+    assert_eq!(
+        load_ec_key(&dev(None), &mut fs, fid).err(),
+        Some(Sw::MEMORY_FAILURE),
+        "the public writer's P521 blob keeps the unsupported-curve refusal"
+    );
+    assert_eq!(fs.write_gen(), generation);
+}
+
+/// The at-rest lap is re-armed BEFORE the re-seal it covers, and the re-seal is
+/// gated on that: a medium that cannot drop `EF_HARDENED` leaves the slot under
+/// the old arm rather than writing a fresh blob behind a stale marker.
+#[test]
+fn a_slot_is_not_re_sealed_while_the_lap_stays_armed_shut() {
+    let (backend, medium) = RemoveStuck::new();
+    let mut fs = Fs::new(backend);
+    fs.scan();
+    fs.put(rsk_fs::EF_HARDENED, &[1]).unwrap();
+    let fid = key_fid(SLOT_AUTHENTICATION);
+    let plain = [0x77u8; 32];
+    seal_put(&dev(None), &mut fs, &mut TestRng(5), fid, &plain).unwrap();
+    medium.refuse(Some(rsk_fs::EF_HARDENED));
+    assert!(
+        migrate_kbase(&dev(Some(&OTP)), &mut fs, &mut TestRng(6)),
+        "the slot the refusal left under the old arm is reported"
+    );
+    let mut out = Secret::<[u8; MAX_PLAIN]>::zeroed();
+    assert_eq!(
+        seal_read(&dev(None), &mut fs, fid, &mut out),
+        Ok(32),
+        "the slot was re-sealed although the lap could not be re-armed"
+    );
+}
+
+/// A read the flash failed is not a slot with nothing left in it: whichever read of
+/// the slot the fault lands on, or every read, the pass moved the pre-OTP key or
+/// reports it.
+#[test]
+fn a_faulted_read_of_a_pre_otp_slot_is_never_reported_clear() {
+    let fid = key_fid(SLOT_AUTHENTICATION);
+    for fault in [None, Some(0), Some(1), Some(2), Some(3)] {
+        let (backend, medium) = rsk_fs::storage::faults::ProbeStuck::new();
+        let mut fs = Fs::new(backend);
+        fs.scan();
+        seal_put(&dev(None), &mut fs, &mut TestRng(5), fid, &[0x77u8; 32]).unwrap();
+        let before = medium.value(fid.get());
+        match fault {
+            None => medium.stick(Some(fid.get())),
+            Some(skip) => medium.stick_after(fid.get(), skip),
+        }
+        let left = migrate_kbase(&dev(Some(&OTP)), &mut fs, &mut TestRng(6));
+        medium.stick(None);
+        assert!(
+            left || medium.value(fid.get()) != before,
+            "fault {fault:?}: reported clear over the pre-OTP key it never moved"
+        );
+    }
+}

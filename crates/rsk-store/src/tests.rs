@@ -15,6 +15,8 @@
 
 extern crate std;
 
+pub(crate) use nor_faults::flash::{Effect, FaultFlash, Io, Rule};
+
 use core::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::vec;
@@ -69,6 +71,10 @@ struct SharedMock {
     /// walk died on — the page's own state probe, or an item inside the page.
     refused_at: Rc<Cell<Option<u32>>>,
     written: Rc<Cell<u64>>,
+    // A single program fails before changing bits; later programs can clean up.
+    fail_write_after: Rc<Cell<Option<usize>>>,
+    programs: Rc<RefCell<Vec<u32>>>,
+    refused_program: Rc<Cell<Option<usize>>>,
 }
 
 impl SharedMock {
@@ -79,6 +85,9 @@ impl SharedMock {
             fail_reads_in: Rc::new(RefCell::new(None)),
             refused_at: Rc::new(Cell::new(None)),
             written: Rc::new(Cell::new(0)),
+            fail_write_after: Rc::new(Cell::new(None)),
+            programs: Rc::new(RefCell::new(Vec::new())),
+            refused_program: Rc::new(Cell::new(None)),
         }
     }
 
@@ -119,6 +128,25 @@ impl SharedMock {
     fn bytes_written(&self) -> u64 {
         self.written.get()
     }
+}
+
+pub(crate) fn flash_for_authenticated_tests() -> impl MultiwriteNorFlash + Clone {
+    let flash = SharedMock::new();
+    flash
+        .bytes
+        .borrow_mut()
+        .resize(MAIN.end as usize + 128 * 1024, 0xFF);
+    flash
+}
+
+pub(crate) fn fault_flash_for_authenticated_tests() -> FaultFlash {
+    let flash = FaultFlash::new();
+    flash
+        .inner
+        .bytes
+        .borrow_mut()
+        .resize(MAIN.end as usize + 128 * 1024, 0xFF);
+    flash
 }
 
 impl ErrorType for SharedMock {
@@ -166,6 +194,16 @@ impl NorFlash for SharedMock {
     }
 
     async fn write(&mut self, offset: u32, data: &[u8]) -> Result2<()> {
+        let program = self.programs.borrow().len();
+        self.programs.borrow_mut().push(offset);
+        if let Some(left) = self.fail_write_after.get() {
+            if left == 0 {
+                self.fail_write_after.set(None);
+                self.refused_program.set(Some(program));
+                return Err(FlashFault);
+            }
+            self.fail_write_after.set(Some(left - 1));
+        }
         if !(offset as usize).is_multiple_of(WORD) || !data.len().is_multiple_of(WORD) {
             return Err(FlashFault);
         }
@@ -182,6 +220,15 @@ impl NorFlash for SharedMock {
         Ok(())
     }
 }
+
+#[path = "compact_cleanup_tests.rs"]
+mod compact_cleanup;
+
+#[path = "nor_fault_tests.rs"]
+mod nor_faults;
+
+#[path = "staged_map_tests.rs"]
+mod staged_map;
 
 impl MultiwriteNorFlash for SharedMock {}
 
@@ -237,24 +284,24 @@ fn keys(store: &mut TestStore) -> (Vec<u16>, bool) {
 
 /// A main-partition FID (a FIDO credential slot) and a counter-routed one.
 const CRED: u16 = 0xCF00;
-const CTR: u16 = 0xC000;
+const CTR: u16 = rsk_fs::counter::EF_COUNTER.get();
 
 // --- the routing table -----------------------------------------------------
 
 #[test]
-fn only_the_four_hot_counters_leave_the_main_partition() {
-    // The split is this crate's whole reason to exist, and the table is a copy of
-    // four other crates' FIDs: `EF_COUNTER` / `EF_CRED_CTR` (rsk-fido 0xC000 /
-    // 0xC001), OpenPGP's signature counter (0x0093) and the vendor test counter
-    // (0xCC01). A missing entry is invisible — the value still stores, it just
-    // stores in the pages holding the credentials. The `power_cut` target's
-    // hand-written mirror was missing 0xC001, rewritten on every getAssertion.
-    for fid in [0xC000, 0xC001, 0x0093, 0xCC01] {
+fn only_the_hot_counters_leave_the_main_partition() {
+    // The split is this crate's whole reason to exist. A missing entry is invisible
+    // — the value still stores, it just stores in the pages holding the credentials.
+    let counters = rsk_fs::counter::COUNTER_FIDS.map(|c| c.get());
+    for fid in counters {
         assert!(is_counter_fid(fid), "{fid:#06x} must be a counter");
     }
     // Their neighbours must NOT be: an off-by-one entry would quietly route a
     // credential into the churn partition, or a counter into the credential pages.
-    for fid in [0xBFFF, 0xC002, 0x0092, 0x0094, 0xCC00, 0xCC02, CRED] {
+    let neighbours = counters
+        .iter()
+        .flat_map(|&f| [f.wrapping_sub(1), f.wrapping_add(1)]);
+    for fid in neighbours.filter(|f| !counters.contains(f)).chain([CRED]) {
         assert!(!is_counter_fid(fid), "{fid:#06x} must stay in main");
     }
     assert!(
@@ -667,5 +714,101 @@ fn remove_clears_a_fid_the_routing_no_longer_points_at() {
         keys(&mut store).0,
         Vec::<u16>::new(),
         "a record the walk keeps yielding after a delete is one no sweep can finish"
+    );
+}
+
+#[test]
+fn a_fault_in_one_partition_does_not_skip_the_other_walk() {
+    for (main_fault, counter_fault) in [(false, false), (true, false), (false, true), (true, true)]
+    {
+        let flash = SharedMock::new();
+        let mut store = mount(&flash);
+        store.write(CRED, b"credential").unwrap();
+        store.write(CTR, b"counter").unwrap();
+        drop(store);
+        *flash.fail_reads_in.borrow_mut() = match (main_fault, counter_fault) {
+            (true, false) => Some(MAIN),
+            (false, true) => Some(COUNTER),
+            _ => None,
+        };
+        flash.fail_reads.set(main_fault && counter_fault);
+        let mut store = mount(&flash);
+        let (found, complete) = keys(&mut store);
+        let mut want = Vec::new();
+        if !main_fault {
+            want.push(CRED);
+        }
+        if !counter_fault {
+            want.push(CTR);
+        }
+        want.sort_unstable();
+        assert_eq!(
+            found, want,
+            "main fault {main_fault}, counter fault {counter_fault}"
+        );
+        assert_eq!(complete, !main_fault && !counter_fault);
+        flash.fail_reads.set(false);
+        *flash.fail_reads_in.borrow_mut() = None;
+        let mut recovered = mount(&flash);
+        assert_eq!(
+            read_vec(&mut recovered, CRED).as_deref(),
+            Some(&b"credential"[..])
+        );
+        assert_eq!(
+            read_vec(&mut recovered, CTR).as_deref(),
+            Some(&b"counter"[..])
+        );
+    }
+}
+
+#[test]
+fn a_failed_scrub_removes_its_filler_and_keeps_live_records() {
+    let mut failed_after_programming = false;
+    for budget in 0..32 {
+        let flash = SharedMock::new();
+        let mut store = mount(&flash);
+        store.write(CRED, b"credential").unwrap();
+        store.write(CTR, b"counter").unwrap();
+        let counter_before = flash.snapshot(COUNTER);
+        let written_before = flash.bytes_written();
+        flash.fail_write_after.set(Some(budget));
+        assert_eq!(
+            store.compact(),
+            Err(Error::MemoryFatal),
+            "write budget {budget}"
+        );
+        assert_eq!(
+            flash.fail_write_after.get(),
+            None,
+            "the program fault did not fire"
+        );
+        failed_after_programming |= flash.bytes_written() > written_before;
+        assert_eq!(flash.snapshot(COUNTER), counter_before);
+        let mut rebooted = mount(&flash);
+        assert_eq!(
+            read_vec(&mut rebooted, CRED).as_deref(),
+            Some(&b"credential"[..])
+        );
+        assert_eq!(
+            read_vec(&mut rebooted, CTR).as_deref(),
+            Some(&b"counter"[..])
+        );
+        assert_eq!(
+            read_vec(&mut rebooted, SCRUB_FILLER_FID),
+            None,
+            "write budget {budget}: the failed lap left a live filler"
+        );
+        let (found, complete) = keys(&mut rebooted);
+        assert!(complete);
+        assert!(!found.contains(&SCRUB_FILLER_FID));
+        rebooted.compact().unwrap();
+        assert_eq!(
+            read_vec(&mut rebooted, CRED).as_deref(),
+            Some(&b"credential"[..])
+        );
+    }
+    assert!(
+        failed_after_programming,
+        "no fault interrupted an already programming lap"
     );
 }

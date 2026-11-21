@@ -4,6 +4,15 @@
 //! Small CBOR-decode helpers shared by the command parsers: map minicbor errors
 //! to `CtapError` and require definite-length maps/arrays (CTAP2 canonical CBOR).
 
+// Host bytes: a panic here is a board that answers nothing until unplugged.
+#![deny(
+    clippy::indexing_slicing,
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::cast_possible_truncation
+)]
+
 use minicbor::Decoder;
 
 use crate::consts::PUBLIC_KEY_TYPE;
@@ -104,7 +113,10 @@ pub fn parse_credential_descriptors<'a>(
             return Err(CtapError::MissingParameter);
         }
         if is_public_key {
-            out[len] = id;
+            let Some(slot) = out.get_mut(len) else {
+                return Err(CtapError::LimitExceeded);
+            };
+            *slot = id;
             len += 1;
         }
     }
@@ -112,5 +124,13 @@ pub fn parse_credential_descriptors<'a>(
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::indexing_slicing,
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::cast_possible_truncation,
+    reason = "a test's fixture is its own bound, and a panic is its failure report"
+)]
 #[path = "cbordec_tests.rs"]
 mod tests;

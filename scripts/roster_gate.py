@@ -4,7 +4,7 @@
 """Assert every whole-tree row still selects the whole tree.
 
 The host rows used to name their crates: one 24-crate `-p` roster written out
-nine times across `scripts/check.sh` (five rows), `docs/testing.md`,
+nine times across `scripts/check.sh` (five rows), `assurance/reports/testing-evidence.md`,
 `.github/workflows/deep-checks.yml` (the nightly `llvm-cov` row and the header
 quoting it) and `nix/checks.nix` (generated from a list, so invisible to a
 `git grep`). Nothing tied any copy to `Cargo.toml`, and three had rotted in
@@ -15,9 +15,9 @@ lines of text, misdiagnosing ordinary edits on the way. That is how a guard
 comes to be deleted.
 
 There is no roster now. Every one of those rows says
-`--workspace --exclude firmware --exclude rsk-wipe`, which is the same set by
-construction: those two are the only `[workspace] members` outside `crates/`,
-and the only two that are thumbv8m-only. Measured equivalent to the roster it
+`--workspace --exclude firmware --exclude firmware-ns --exclude rsk-wipe`, which is the same set by
+construction: those three are the only `[workspace] members` outside `crates/`,
+and the only three that are thumbv8m-only. Measured equivalent to the roster it
 replaces on all four verbs — identical `cargo test` binaries, byte-identical
 `llvm-cov` totals (85.02 % line), rc 0 from clippy, and the same 24 `rsk_*`
 directories out of rustdoc.
@@ -30,7 +30,7 @@ to run less than it says while staying green:
 * a crate under `crates/` is not a member, so `--workspace` cannot see it. The
   same seam as before, and now the only place a crate hides from every row at
   once;
-* an exclude is dropped, a third is added, or its operand is generated so no
+* an exclude is dropped, another is added, or its operand is generated so no
   reader can resolve it. The third exclude is the rotted roster in modern
   spelling: nothing fails, the row just measures less. Held over the whole
   checkout rather than a list of files, because the ninth copy was invisible to
@@ -71,7 +71,7 @@ import gate_lines
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 CHECK = pathlib.Path("scripts/check.sh")
-DOCS = pathlib.Path("docs/testing.md")
+DOCS = pathlib.Path("assurance/reports/testing-evidence.md")
 WORKFLOW = pathlib.Path(".github/workflows/deep-checks.yml")
 FLAKE = pathlib.Path("nix/checks.nix")
 #: Derived, not spelled out, so renaming either file cannot silently disarm the
@@ -79,10 +79,10 @@ FLAKE = pathlib.Path("nix/checks.nix")
 SELF = pathlib.Path(__file__).resolve().relative_to(ROOT)
 TESTS = SELF.with_name(f"test_{SELF.stem}.py")
 
-#: The whole of what a host row may skip, and why it is exactly two: they are
-#: the only `[workspace] members` outside `crates/`, and both are thumbv8m-only.
+#: The whole of what a host row may skip, and why it is exactly three: they are
+#: the only `[workspace] members` outside `crates/`, and all are thumbv8m-only.
 #: Checked against the manifest below, so this cannot be the next stale list.
-EXCLUDED = frozenset({"firmware", "rsk-wipe"})
+EXCLUDED = frozenset({"firmware", "firmware-ns", "rsk-wipe"})
 
 
 def shell(text):
@@ -146,7 +146,7 @@ EXCLUDE_GENERATED = gate_lines.EXCLUDE_GENERATED
 #: oracle — that row selects the proof-carrying subset on purpose — so the verb
 #: is handed over rather than judged here. A hand-over is only worth what the
 #: other guard reads, and for the whole life of this line it read the workflows
-#: and docs/testing.md and not this file: a `cargo kani … -p …` row in
+#: and assurance/reports/testing-evidence.md and not this file: a `cargo kani … -p …` row in
 #: `scripts/check.sh` was skipped here, unseen there, and both printed `ok` over
 #: the one thing both of them exist to forbid. Naming `scripts/check.sh` over
 #: there closed that file and left the same hand-off open on the next one: a

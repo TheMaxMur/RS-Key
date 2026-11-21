@@ -26,8 +26,12 @@ and a red for a stale artifact are the same exit code.
 
 import pathlib
 
+import pytest
+
 import matrix_gate
 from test_matrix_gate import Tree, red, tree  # noqa: F401  (`tree` is the fixture)
+
+pytestmark = pytest.mark.assurance
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 

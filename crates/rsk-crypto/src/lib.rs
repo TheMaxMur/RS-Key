@@ -19,6 +19,7 @@ pub mod kdf;
 pub mod mac;
 pub mod mlkem;
 pub mod pinproto;
+pub mod sha256_blocks;
 
 pub use aes::{
     Mode, aes_decrypt, aes_ecb_decrypt_block, aes_ecb_encrypt_block, aes_encrypt,
@@ -58,3 +59,7 @@ pub enum Error {
 }
 
 pub type Result<T> = core::result::Result<T, Error>;
+
+#[cfg(test)]
+#[path = "wycheproof_tests.rs"]
+mod wycheproof_tests;

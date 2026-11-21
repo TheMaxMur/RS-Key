@@ -1,14 +1,14 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # Copyright (C) 2026 RS-Key contributors
 #
-# What the linked DEFAULT image may contain, for `scripts/elf_gate.py`.
+# What the linked combined Secure/Non-secure image may contain, for `scripts/elf_gate.py`.
 # HAND-WRITTEN FIELDS ONLY: which ELF, which sections may be writable AND
 # executable, which allocator symbols the image is allowed to define, and which
 # section carries the vector table. Where the segments land, whether they fit the
-# `firmware/memory.x` regions, whether any of them overlaps the KV store and what
+# generated Secure/Non-secure regions, whether any of them overlaps the KV store and what
 # the image actually links are DERIVED and printed, never stored.
 #
-# Scope, said here rather than discovered later: the DEFAULT profile only.
+# Scope: the shipping featureless TrustZone image, with separate S and NS audits.
 # `scripts/check.sh` rebuilds this path three more times below the row — 16 MB,
 # display, no-touch — so a second profile needs its own build and its own row,
 # and the four `no-touch` images are the ones that remove the physical consent
@@ -16,23 +16,22 @@
 
 [image]
 profile = "default"
-elf = "target/thumbv8m.main-none-eabihf/release/firmware"
+elf = "target/trustzone/combined.elf"
 
-# `.data` is writable AND executable on purpose: it carries the routines that
-# must not run from XIP flash. Moving only `SMALL_PRIMES` there once made keygen
-# 1.36x SLOWER — `IncrementalSieve::step` has to come with it — and the RSA
-# assembly is in the same position. The rule is therefore "exactly this one", not
-# "none": a second W+X segment is a page whoever can write RAM can also run.
-writable_executable = [".data"]
+# Both SRAM code segments are RX in the ELF. Startup copies them before the
+# Secure MPU applies read-only executable permissions.
+writable_executable = []
 
 # The image HAS a heap. `firmware/src/main.rs` declares
-# `#[global_allocator] static HEAP: embedded_alloc::LlffHeap` over 128 KiB and
-# docs/unsafe.md site 4 is its initialisation. AGENTS.md's "no_std, no alloc" is
+# `#[global_allocator] static HEAP: ZeroingHeap` over 128 KiB — `LlffHeap` behind
+# a wrapper that wipes each block as it is freed — and docs/unsafe.md site 4 is
+# its initialisation, sites 5–9 the wrapper. AGENTS.md's "no_std, no alloc" is
 # a rule about new code, not a description of the tree, and until this row
 # nothing held the surface: a second allocator or a `malloc` arriving through a
-# dependency was invisible. `__rust_dealloc` is deliberately absent from the
-# list because the image does not define it — the allocations this heap serves
-# are never freed, and a `__rust_dealloc` appearing is a change worth reading.
+# dependency was invisible. `__rust_dealloc` is not on the list, and its absence
+# says nothing about frees: the shim is emitted only where the inliner keeps it.
+# The first, byte-wise wrapper kept one; the word-wise wrapper is called from its
+# 148 call sites directly, as the bare `LlffHeap` was before either.
 allocator = ["__rust_alloc", "__rust_realloc", "__rust_alloc_error_handler"]
 
 vector_section = ".vector_table"
@@ -50,7 +49,19 @@ vector_section = ".vector_table"
 # by is a fact worth re-reading, and the pin moving without this moving is the
 # case that would otherwise be silent.
 producers = [
-    "clang LLVM (rustc version 1.96.0 (ac68faa20 2026-05-25))",
+    "clang LLVM (rustc version 1.99.1 (58cf8f9c3 2026-10-13))",
     "clang LLVM (rustc version 1.59.0-nightly (c5ecc1570 2021-12-15))",
 ]
 note = "The partition table fences the KV store from BOOTSEL; nothing fenced it from the linker, which is the overlap rule here."
+
+[nonsecure]
+profile = "nonsecure"
+elf = "target/trustzone/nonsecure/thumbv8m.main-none-eabihf/release/firmware-ns"
+writable_executable = []
+allocator = []
+vector_section = ".vector_table"
+producers = [
+    "clang LLVM (rustc version 1.99.1 (58cf8f9c3 2026-10-13))",
+    "clang LLVM (rustc version 1.59.0-nightly (c5ecc1570 2021-12-15))",
+]
+note = "Independent transport ELF; its raw image must equal the combined ELF's .nonsecure section."

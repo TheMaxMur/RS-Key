@@ -19,6 +19,8 @@ import pytest
 import config_gen_gate
 import gate_lines
 
+pytestmark = pytest.mark.assurance
+
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 
 #: A configuration from a family the measured hole was found on: deleting all
@@ -226,10 +228,10 @@ def test_the_floor_is_a_live_rule_not_a_dead_constant(tree, monkeypatch):
 # --- the wiring, which no mutation above can assert --------------------------
 
 
-def test_check_sh_runs_the_row():
+def test_check_assurance_sh_runs_the_row():
     """`scripts/test_gate_scripts.py` asserts this for every `*_gate.py`; asserted
     here too, because that file finds guards by glob and a rename escapes it."""
-    check = (ROOT / "scripts/check.sh").read_text()
+    check = (ROOT / "scripts/check-assurance.sh").read_text()
     assert gate_lines.runs(check, "scripts/config_gen_gate.py")
 
 
@@ -239,13 +241,13 @@ def test_the_prose_still_counts_the_tree():
     `docs_constants.py` reads `docs/**`, `tests/*.py` and `metadata/*.json`, and
     `run_count_gate.py` reads the published trees; neither reads `scripts/`.
     Measured on this pair: rotting both back to `191 of the 192` leaves every row
-    of `check.sh` at exit 0. Asserted rather than generated because two sentences
+    of the gate at exit 0. Asserted rather than generated because two sentences
     do not earn a generator — but a sentence that can be wrong silently is the
     one defect this row is named for, one directory over.
     """
     present = len(list((ROOT / "formal").glob("*.cfg")))
     said = f"{present - len(config_gen_gate.HAND_WRITTEN)} of the {present} configurations"
-    for rel in ("scripts/config_gen_gate.py", "scripts/check.sh"):
+    for rel in ("scripts/config_gen_gate.py", "scripts/check-assurance.sh"):
         assert said in (ROOT / rel).read_text(), (rel, said)
 
 

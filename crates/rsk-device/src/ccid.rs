@@ -18,39 +18,52 @@ use rsk_openpgp::consts::INS_KEYPAIR_GEN;
 use rsk_otp::OtpApplet;
 use rsk_piv::PivApplet;
 use rsk_rescue::RescueApplet;
+use rsk_sdk::apdu::INS_GET_RESPONSE;
+use rsk_sdk::applet::RESP_BUILD;
 use rsk_sdk::{Apdu, Applet, Dispatcher, ResBuf, Sw};
 
 use rsk_vendor::VendorApplet;
 
 use crate::Hooks;
 
-// A CCID XfrBlock frame carries MAX_CCID_MSG (2048) minus the 10-byte CCID
-// header = 2038 payload bytes. The applet response (body + 2-byte SW) must fit
+// A CCID XfrBlock frame carries MAX_CCID_MSG (3072) minus the 10-byte CCID
+// header = 3062 payload bytes. The applet response (body + 2-byte SW) must fit
 // one frame; sizing this to the full message let a large response (e.g. a long
 // OATH LIST) overrun the frame, and `run_xfr` silently dropped the tail incl. SW.
-const RESP_CAP: usize = 2038;
+const RESP_CAP: usize = 3062;
 const _: () = assert!(RESP_CAP == rsk_usb::ccid::MAX_CCID_MSG - rsk_usb::ccid::HEADER);
+// One frame's body is what the dispatcher cuts a chained answer at and caps an
+// unchained one to. Kani shrinks it with the chain buffer, so a proof sees 16 and
+// this holds the width that ships.
+#[cfg(not(kani))]
+const _: () = assert!(rsk_sdk::applet::FRAME_BODY == RESP_CAP - 2);
+// The largest answer a command can ask back, PIV's object in its `53`, is built
+// whole before the dispatcher cuts it into frames. Kani shrinks the build buffer,
+// so a proof never builds one; this holds it for the width that ships.
+#[cfg(not(kani))]
+const _: () = assert!(rsk_piv::MAX_OBJECT + 4 <= RESP_BUILD);
 
-// The frame is also the largest command APDU that ever reaches an applet, and
-// OpenPGP announces that number to the host in DO 7F66. It announced 2047 and
-// 2048 against a transport carrying 2038, so §7.7 licensed nine byte-lengths the
-// reader answers with an error before any applet sees them. Only this crate sees
-// both constants.
+// The frame is the largest APDU a host can send or be sent. OpenPGP announces it in
+// DO 7F66, which §7.7 lets a host take at its word; it said 2047 and 2048 over a
+// 2038-byte frame once. Only this crate sees both constants.
 const _: () = assert!(rsk_openpgp::files::MAX_APDU_BYTES == RESP_CAP);
+// A command chain reassembles a whole CCID message's worth, as a YubiKey 5.8.0 does,
+// and PIV's largest object is that less the `5C 03 id 53 82 LL LL` header. Kani
+// shrinks the chain buffer, so not there.
+#[cfg(not(kani))]
+const _: () = assert!(rsk_sdk::applet::CHAIN_BUF_SIZE == rsk_usb::ccid::MAX_CCID_MSG);
+#[cfg(not(kani))]
+const _: () = assert!(rsk_piv::MAX_OBJECT + 9 == rsk_sdk::applet::CHAIN_BUF_SIZE);
 
-// OpenPGP announces a maximum DO length in its own crate, which cannot see this
-// one; this is the only place both are visible. A DO longer than the body an
-// applet is handed (`RESP_CAP - 2`, the status bytes being appended after) does
-// not truncate on the way out — `ResBuf::extend` writes nothing at all and its
-// `false` is discarded — so an announcement above this ceiling would make GET
-// DATA answer `9000` with an empty body. E3's class: two owners of one meaning,
-// no compiler between them.
+// OpenPGP announces a maximum DO length in its own crate, which cannot see this one.
+// Every applet is handed at least one frame's body, so a DO of the announced length
+// always fits the buffer GET DATA builds it in (E3's class).
 const _: () = assert!(rsk_openpgp::files::MAX_DO_BYTES <= RESP_CAP - 2);
 // Same cliff, same reason, for the other number DO C0 announces: GET CHALLENGE
-// serves `Le` bytes up to this maximum, and one byte over the body an applet is
-// handed would answer `9000` with nothing in it. Its sibling assertion in
-// `rsk-openpgp` bounds it by the scratch it is drawn into; that one cannot see
-// this ceiling.
+// serves `Le` bytes up to this maximum, straight into the body an applet is
+// handed, and one byte over that body would answer `9000` with nothing in it.
+// Its sibling assertion in `rsk-openpgp` ties it to `FRAME_BODY`, which is as
+// far as that crate can see; this one holds it to the CCID frame itself.
 const _: () = assert!(rsk_openpgp::files::MAX_CHALLENGE_BYTES <= RESP_CAP - 2);
 
 /// Registration-order indices of the applets whose RSA keygen is fast-pathed.
@@ -107,7 +120,7 @@ pub struct CcidApplets<'a, S: Storage, R: rsk_sdk::Rng + 'static, VP: rsk_vendor
     /// write sets the dirty latch. Gates CCID SELECT, the OTP keyboard interface
     /// and (via the worker) the FIDO2/U2F transports.
     enabled_caps: u16,
-    resp: [u8; RESP_CAP],
+    resp: [u8; RESP_BUILD + 2],
 }
 
 /// The records that *gate* each applet, passed to [`rsk_fs::Fs::factory_wipe`] so
@@ -128,15 +141,14 @@ pub struct CcidApplets<'a, S: Storage, R: rsk_sdk::Rng + 'static, VP: rsk_vendor
 /// leaves a factory value beside a key still on the card — and for the KDF that is a
 /// lockout, since the PW verifiers are taken over its output.
 ///
-/// `EF_DEV_CONF` is deliberately **not** here, though its absence also resolves to a
-/// published default ("every supported application enabled"). It gates which applets
-/// are reachable, not whether a surviving secret is protected: for FIDO, PIV, OATH
-/// and OpenPGP the applet's own credential gate is in this set, so re-enabling one
-/// buys nothing. That argument does **not** cover OTP — its slot records are phase 1
-/// with no gate of their own, and a surviving static-password or HOTP slot emits on
-/// touch alone once `CAP_OTP` is back. What decides it is the other half: the record
-/// is host-writable ungated on the default build, so deferring it denies an attacker
-/// nothing they cannot simply write back.
+/// `EF_DEV_CONF` and its configuration lock are here too. They gate which applets are
+/// reachable rather than whether a surviving secret is protected, and for FIDO, PIV,
+/// OATH and OpenPGP the applet's own credential gate is in this set anyway. OTP is
+/// the exception: its slot records are phase 1 with no gate of their own, and a
+/// surviving static-password or HOTP slot emits on touch alone once `CAP_OTP` is
+/// back. While no lock code is set the record is host-writable ungated and deferring
+/// it denies nothing; once one is, a prefix that took the lock first would hand any
+/// host the re-enable the owner locked away.
 ///
 /// **This must stay a plain fold over the applets' own exported predicates.** The one
 /// arm that was ever open-coded here is the one that went missing: OATH's
@@ -144,12 +156,12 @@ pub struct CcidApplets<'a, S: Storage, R: rsk_sdk::Rng + 'static, VP: rsk_vendor
 /// simply left out, and a torn device reset then served every surviving TOTP secret
 /// unauthenticated (audit run-36). A new applet adds its predicate to its own crate
 /// and one line here; `scripts/gate_union.py` fails the gate when it does not.
-#[cfg(any(not(feature = "strict-config"), feature = "display"))]
 pub fn gates_wiped_last(fid: u16) -> bool {
     rsk_fido::is_fido_gate_fid(fid)
         || rsk_piv::files::is_piv_gate_fid(fid)
         || rsk_oath::is_oath_lock_fid(fid)
         || rsk_openpgp::terminate::is_openpgp_gate_fid(fid)
+        || rsk_devconf::is_devconf_gate_fid(fid)
 }
 
 impl<'a, S: Storage, R: rsk_sdk::Rng + 'static, VP: rsk_vendor::Platform>
@@ -221,7 +233,7 @@ impl<'a, S: Storage, R: rsk_sdk::Rng + 'static, VP: rsk_vendor::Platform>
                 mkek_source,
             ),
             enabled_caps: rsk_devconf::read_enabled_caps(&mut fs.borrow_mut()),
-            resp: [0; RESP_CAP],
+            resp: [0; RESP_BUILD + 2],
         }
     }
 
@@ -242,6 +254,9 @@ impl<'a, S: Storage, R: rsk_sdk::Rng + 'static, VP: rsk_vendor::Platform>
     /// The `Dispatcher::set_enabled` index-mask derived from the current cap mask:
     /// bit `i` set → applet `i` (in `APPLET_CAPS` order) is selectable.
     fn applet_enable_mask(&self) -> u32 {
+        if self.fs.borrow().storage_state() == rsk_fs::storage::StorageState::Recovery {
+            return 1 << 6;
+        }
         let mut mask = 0u32;
         for (i, &cap) in APPLET_CAPS.iter().enumerate() {
             if rsk_devconf::cap_enabled(self.enabled_caps, cap) {
@@ -258,6 +273,9 @@ impl<'a, S: Storage, R: rsk_sdk::Rng + 'static, VP: rsk_vendor::Platform>
     /// the FIDO-transport twin of the CCID `INS_READ_CONFIG` / OTP slot 0x13 paths,
     /// so all three report the same caps/serial/version DeviceInfo.
     pub fn ctap_mgmt(&mut self, cmd: u8, _data: &[u8]) -> Option<&[u8]> {
+        if self.fs.borrow().storage_state() == rsk_fs::storage::StorageState::Recovery {
+            return None;
+        }
         match cmd {
             CTAP_READ_CONFIG => {
                 let n = {
@@ -271,8 +289,9 @@ impl<'a, S: Storage, R: rsk_sdk::Rng + 'static, VP: rsk_vendor::Platform>
             // DEFAULT build only: ykman's WRITE CONFIG over FIDO. The payload is
             // the DeviceConfig `get_bytes()` blob — a leading length byte then the
             // TLV — the same store CCID WRITE CONFIG / OTP-HID SET_DEVICE_INFO use,
-            // so it round-trips into every READ CONFIG. Ungated for parity (a
-            // strict build never defines this arm; the write stays gated elsewhere).
+            // so it round-trips into every READ CONFIG. Gated only by the lock, for
+            // parity (a strict build never defines this arm; the write stays gated
+            // elsewhere).
             #[cfg(not(feature = "strict-config"))]
             CTAP_WRITE_CONFIG => {
                 if _data.is_empty() {
@@ -284,7 +303,9 @@ impl<'a, S: Storage, R: rsk_sdk::Rng + 'static, VP: rsk_vendor::Platform>
                 }
                 let ok = {
                     let mut fsb = self.fs.borrow_mut();
-                    rsk_devconf::persist_dev_conf(&mut *fsb, &_data[1..1 + len]).is_ok()
+                    self.management
+                        .persist_config(&mut *fsb, &_data[1..1 + len])
+                        .is_ok()
                 };
                 // An empty body is the ykman-expected acknowledgement.
                 if ok { Some(&self.resp[..0]) } else { None }
@@ -297,26 +318,54 @@ impl<'a, S: Storage, R: rsk_sdk::Rng + 'static, VP: rsk_vendor::Platform>
     /// secrets after a dispatch. Called by the worker after the hand-off.
     pub fn scrub(&mut self) {
         use zeroize::Zeroize;
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "the response buffer outlives every dispatch; the worker wipes it after each hand-off"
+        )]
         self.resp.zeroize();
     }
 
-    /// Device-wide factory reset: wipe all flash but the org attestation, exactly
-    /// like the trusted-display factory-reset flow (`rsk_fido::survives_factory_reset`).
-    /// The next boot re-provisions a fresh seed. Called by the worker after a
-    /// Management RESET's SW_OK, then a reboot. DEFAULT build only.
-    ///
-    /// Returns whether the wipe actually completed: a truncated enumeration or a
-    /// failed remove must not be laundered into a reboot that looks like success.
-    #[cfg(not(feature = "strict-config"))]
-    pub fn factory_wipe(&mut self) -> bool {
-        self.fs
-            .borrow_mut()
-            .factory_wipe(
-                rsk_fido::survives_factory_reset,
-                rsk_fido::is_fido_seed_fid,
-                gates_wiped_last,
-            )
-            .is_ok()
+    /// Lend the complete response buffer to the board's volatile SRAM wipe.
+    pub fn scrub_with(&mut self, wipe: impl FnOnce(&mut [u8])) {
+        wipe(&mut self.resp);
+    }
+
+    /// Every applet and held response can carry authorization across a reset.
+    /// Revoke them all on USB-wide reset or secure reboot, without a later SELECT.
+    pub fn scrub_secrets(&mut self) {
+        use zeroize::Zeroize;
+        // Every field is named, so a new applet or buffer does not compile until its
+        // wipe is decided; each applet is deselected, not only the selected one.
+        let Self {
+            fs,
+            rng: _,
+            hooks: _,
+            disp,
+            vendor,
+            openpgp,
+            management,
+            oath,
+            otp,
+            piv,
+            rescue,
+            fido,
+            enabled_caps: _,
+            resp,
+        } = self;
+        let applets: [&mut dyn Applet<Fs<S>>; 8] =
+            [vendor, openpgp, management, oath, otp, piv, rescue, fido];
+        let mut fsb = fs.borrow_mut();
+        for applet in applets {
+            applet.deselect(&mut *fsb);
+        }
+        disp.clear_selection();
+        disp.clear_pending();
+        disp.clear_chaining();
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "the response buffer outlives dispatches; transport reset or secure reboot wipes it with every session"
+        )]
+        resp.zeroize();
     }
 
     /// Whether the applet that owns PIN reference `p2` is the one currently SELECTED
@@ -369,42 +418,79 @@ impl<'a, S: Storage, R: rsk_sdk::Rng + 'static, VP: rsk_vendor::Platform>
         self.disp.reset_card(&mut applets, &mut *fsb);
     }
 
+    /// USB-wide revocation cannot trust which applet the transport selected.
+    pub fn reset_transport_session(&mut self) {
+        self.scrub_secrets();
+    }
+
+    /// Whether this APDU only continues an answer already produced by an applet.
+    pub fn continues_response(&self, raw: &[u8]) -> bool {
+        Apdu::parse(raw).is_ok_and(|apdu| self.disp.continues_response(&apdu))
+    }
+
     /// Dispatch one CCID APDU synchronously, returning the response APDU (body +
-    /// SW1 SW2). On-card RSA keygen is run to completion inline (see module docs);
-    /// everything else goes straight to the applet dispatcher.
+    /// SW1 SW2), or nothing for a class a YubiKey 5.8.0 does not pass on. On-card
+    /// RSA keygen is run to completion inline (see module docs); everything else
+    /// goes straight to the applet dispatcher.
     pub fn handle_apdu(&mut self, apdu: &[u8], now_ms: u64) -> &[u8] {
+        // A YubiKey 5.8.0 answers such a class with an empty data block before any
+        // application sees it, and nothing changes; a GET RESPONSE for a tail already
+        // begun is still served, as the YubiKey serves one under `0C`.
+        if let Ok(p) = Apdu::parse(apdu)
+            && !p.is_served_over_ccid()
+            && !(p.ins == INS_GET_RESPONSE && self.disp.response_owed())
+        {
+            return &self.resp[..0];
+        }
         // The FIDO applet's context is the filesystem alone, like every other
         // applet's, so the two things it needs and cannot reach — the transport's
         // clock and the enabled-applications mask — are stamped on here, one
         // dispatch before they are read.
         self.fido.stamp(now_ms, self.enabled_caps);
+        // FIDO runs here too, over the `FidoState` the CTAPHID handler shares, so the
+        // panel's one-shot clientPIN signal is taken here as well: the token it ends
+        // must not survive into the next command on either transport.
+        crate::reset_token_on_local_pin_change(self.hooks, self.fido.state, self.rng);
+        // CCID has no CTAPHID channel, so its FIDO commands run on the reserved id 0
+        // (`rsk_usb::ctaphid::CidAllocator` never hands it out): a credMgmt walk, a
+        // getNextAssertion or an MSE key one transport opened is not continuable from it.
+        const CCID_NO_CHANNEL: u32 = 0;
+        self.fido.state.borrow_mut().channel = CCID_NO_CHANNEL;
         // The keygen fast paths bypass `Dispatcher::process`, so the class byte it
         // judges has to be judged ahead of them: a chaining segment is not a command
         // yet, and a secure-messaging class is refused. Falling through is what
         // answers both — measured on a YubiKey 5.7.4, `04 47 00 9A …` is `6E00`
         // where `00 47 …` is `6982`, and `10 47 …` is accumulated, never executed.
-        let dispatchable =
-            Apdu::parse(apdu).is_ok_and(|p| !p.is_chaining() && !p.is_secure_messaging());
-        // They also bypass the drop of a stale GET RESPONSE remainder and the reset
-        // of an interrupted command chain; a GENERATE is neither a 0xC0 nor a chain
-        // segment, so clearing both here matches the ordinary dispatch (applet.rs).
-        if dispatchable && let Some(n) = self.try_rsa_keygen(apdu) {
-            self.disp.clear_pending();
-            self.disp.clear_chaining();
-            return &self.resp[..n];
+        let fast_cap = Apdu::parse(apdu)
+            .ok()
+            .filter(|_| self.fs.borrow().storage_state() == rsk_fs::storage::StorageState::Ready)
+            .filter(|p| !p.is_chaining() && !p.is_secure_messaging())
+            // Nor one while a chain is open: the dispatcher joins it to that chain,
+            // or refuses it `6883` as a YubiKey 5.8.0 does.
+            .filter(|_| !self.disp.chain_open())
+            .map(|p| p.frame_cap());
+        // They also bypass the answer half of dispatch: the stale GET RESPONSE tail it
+        // drops, and the frame cap it cuts the body at, which
+        // `Dispatcher::chain_response` does for them.
+        if let Some(cap) = fast_cap
+            && let Some((sw, n)) = self.try_rsa_keygen(apdu)
+        {
+            let chaining = Applet::<Fs<S>>::response_chaining(&self.openpgp);
+            return self.finish_fast_path(cap, chaining, sw, n);
         }
-        if dispatchable && let Some(n) = self.try_piv_rsa_keygen(apdu) {
-            self.disp.clear_pending();
-            self.disp.clear_chaining();
-            return &self.resp[..n];
+        if let Some(cap) = fast_cap
+            && let Some((sw, n)) = self.try_piv_rsa_keygen(apdu)
+        {
+            let chaining = Applet::<Fs<S>>::response_chaining(&self.piv);
+            return self.finish_fast_path(cap, chaining, sw, n);
         }
-        // A disabled application's applet is invisible: SELECT (and any command to
-        // it) returns FILE_NOT_FOUND, so `ykman config usb --disable X` really
-        // removes X over CCID, not just from the DeviceInfo report.
+        // A disabled application's applet is invisible: a SELECT of it is 6A82 and a
+        // command to it the 6D00 of no selection, so `ykman config usb --disable X`
+        // really removes X over CCID, not just from the DeviceInfo report.
         // Refines `RSKeyAdminSurface!DisabledAppletNeverDispatches` — SEC-ADM-004.
         self.disp.set_enabled(self.applet_enable_mask());
         let (sw, n) = {
-            let mut res = ResBuf::new(&mut self.resp[..RESP_CAP - 2]);
+            let mut res = ResBuf::new(&mut self.resp[..RESP_BUILD]);
             let mut applets: [&mut dyn Applet<Fs<S>>; 8] = [
                 &mut self.vendor,
                 &mut self.openpgp,
@@ -419,7 +505,13 @@ impl<'a, S: Storage, R: rsk_sdk::Rng + 'static, VP: rsk_vendor::Platform>
             let sw = self.disp.process(apdu, &mut applets, &mut *fsb, &mut res);
             (sw, res.len())
         };
+        // The FIDO applet spends clientPIN attempts here too, and the vendor and rescue
+        // applets serve an ungated warm reboot on this same interface.
+        crate::persist_pin_lock(self.hooks, self.fido.state);
         self.resp[n..n + 2].copy_from_slice(&sw.to_bytes());
+        // A vendor (0x41) CBOR command over CCID persists EF_LED_CONF / EF_PHY like it
+        // does over CTAPHID; re-apply the live LED block and any phy reboot the same way.
+        crate::apply_vendor_config(self.hooks, self.fs, self.fido.state);
         &self.resp[..n + 2]
     }
 
@@ -434,6 +526,9 @@ impl<'a, S: Storage, R: rsk_sdk::Rng + 'static, VP: rsk_vendor::Platform>
         slot_id: u8,
         payload: &[u8; 64],
     ) -> ([u8; 64], usize, [u8; 8]) {
+        if self.fs.borrow().storage_state() == rsk_fs::storage::StorageState::Recovery {
+            return ([0; 64], 0, [0; 8]);
+        }
         // OTP disabled: the function slots (program/update/swap/challenge-response)
         // go inert, but the identify/config slots (serial, READ/WRITE CONFIG,
         // status) stay live so the host can still read DeviceInfo and re-enable OTP.
@@ -478,6 +573,9 @@ impl<'a, S: Storage, R: rsk_sdk::Rng + 'static, VP: rsk_vendor::Platform>
         slot: u8,
         ts_secs: u32,
     ) -> Option<([u8; rsk_otp::ticket::MAX_TICKET], usize, bool)> {
+        if self.fs.borrow().storage_state() == rsk_fs::storage::StorageState::Recovery {
+            return None;
+        }
         if !self.caps_enabled(rsk_devconf::CAP_OTP) {
             return None; // OTP disabled — a button press types nothing.
         }
@@ -495,12 +593,12 @@ impl<'a, S: Storage, R: rsk_sdk::Rng + 'static, VP: rsk_vendor::Platform>
     }
 
     /// If `apdu` is an on-card RSA `GENERATE ASYMMETRIC KEY`, run the (slow) prime
-    /// search + key store to completion and return the response length in
-    /// `self.resp`. Returns `None` for everything else (incl. EC generate, which
+    /// search + key store to completion and return the status and the body length
+    /// in `self.resp`. Returns `None` for everything else (incl. EC generate, which
     /// the dispatcher handles inline) so the caller falls through to normal
     /// dispatch. The search is the board's ([`crate::Hooks::rsa_search`]) and
     /// blocks this task; the CCID transport streams time-extensions meanwhile.
-    fn try_rsa_keygen(&mut self, apdu: &[u8]) -> Option<usize> {
+    fn try_rsa_keygen(&mut self, apdu: &[u8]) -> Option<(Sw, usize)> {
         // The cap check closes the contrived window where OpenPGP was selected and
         // then disabled — the fast path bypasses the dispatcher's own gate.
         if self.disp.current() != Some(IDX_OPENPGP) || !self.caps_enabled(rsk_devconf::CAP_OPENPGP)
@@ -530,8 +628,7 @@ impl<'a, S: Storage, R: rsk_sdk::Rng + 'static, VP: rsk_vendor::Platform>
             self.hooks.borrow_mut().rsa_search(nbits, &mut *rng)?
         };
         let Some(key) = key else {
-            self.resp[..2].copy_from_slice(&Sw::EXEC_ERROR.to_bytes());
-            return Some(2);
+            return Some((Sw::EXEC_ERROR, 0));
         };
         let (n, sw) = {
             let mut fsb = self.fs.borrow_mut();
@@ -544,15 +641,14 @@ impl<'a, S: Storage, R: rsk_sdk::Rng + 'static, VP: rsk_vendor::Platform>
                 &mut self.resp[..RESP_CAP - 2],
             )
         };
-        self.resp[n..n + 2].copy_from_slice(&sw.to_bytes());
-        Some(n + 2)
+        Some((sw, n))
     }
 
     /// The PIV twin of [`Self::try_rsa_keygen`]: PIV GENERATE (INS 0x47,
     /// P1 = 0x00) with an RSA algorithm runs its dual-core prime search here so
     /// the CCID transport can stream time-extensions. Validation errors fall
     /// through to normal dispatch for the right status word.
-    fn try_piv_rsa_keygen(&mut self, apdu: &[u8]) -> Option<usize> {
+    fn try_piv_rsa_keygen(&mut self, apdu: &[u8]) -> Option<(Sw, usize)> {
         if self.disp.current() != Some(IDX_PIV) || !self.caps_enabled(rsk_devconf::CAP_PIV) {
             return None;
         }
@@ -572,8 +668,7 @@ impl<'a, S: Storage, R: rsk_sdk::Rng + 'static, VP: rsk_vendor::Platform>
             self.hooks.borrow_mut().rsa_search(nbits, &mut *rng)?
         };
         let Some(key) = key else {
-            self.resp[..2].copy_from_slice(&Sw::EXEC_ERROR.to_bytes());
-            return Some(2);
+            return Some((Sw::EXEC_ERROR, 0));
         };
         let (n, sw) = {
             let mut fsb = self.fs.borrow_mut();
@@ -587,8 +682,18 @@ impl<'a, S: Storage, R: rsk_sdk::Rng + 'static, VP: rsk_vendor::Platform>
                 &mut self.resp[..RESP_CAP - 2],
             )
         };
+        Some((sw, n))
+    }
+
+    /// A fast path's answer of `n` body bytes in `resp`, given the answer half of
+    /// dispatch ([`Dispatcher::chain_response`]); the response APDU.
+    fn finish_fast_path(&mut self, cap: usize, chaining: bool, sw: Sw, n: usize) -> &[u8] {
+        let mut res = ResBuf::new(&mut self.resp[..RESP_CAP - 2]);
+        res.commit(n);
+        let sw = self.disp.chain_response(sw, cap, chaining, &mut res);
+        let n = res.len();
         self.resp[n..n + 2].copy_from_slice(&sw.to_bytes());
-        Some(n + 2)
+        &self.resp[..n + 2]
     }
 }
 

@@ -14,9 +14,24 @@ use crate::reduce::mont_reduce;
 
 /// A ring element: 256 signed coefficients. Zeroizes on drop — secret
 /// polynomials (s1/s2/y/z and the expanded key's NTT halves) pass through here.
-#[derive(Clone, Zeroize, ZeroizeOnDrop)]
+#[derive(Clone)]
 #[repr(align(8))]
 pub struct Poly(pub [i32; N]);
+
+impl Drop for Poly {
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "a Poly's drop is its wipe, as a Secret's is"
+    )]
+    fn drop(&mut self) {
+        let Self(coeffs) = self;
+        coeffs.zeroize();
+        #[cfg(test)]
+        crate::tests::observe_poly_drop(coeffs);
+    }
+}
+
+impl ZeroizeOnDrop for Poly {}
 
 impl Poly {
     /// The zero polynomial.
@@ -32,8 +47,8 @@ impl Default for Poly {
 }
 
 /// A length-`M` vector of ring elements, all zero.
-pub(crate) fn zero_vec<const M: usize>() -> [Poly; M] {
-    core::array::from_fn(|_| Poly::zero())
+pub(crate) const fn zero_vec<const M: usize>() -> [Poly; M] {
+    [const { Poly::zero() }; M]
 }
 
 /// Pointwise Montgomery product: `out[n] = mont_reduce(a[n]·b[n])`. Exactly one

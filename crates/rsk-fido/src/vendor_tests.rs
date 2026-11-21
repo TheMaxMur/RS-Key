@@ -2,6 +2,45 @@
 // Copyright (C) 2026 RS-Key contributors
 
 use super::*;
+
+#[path = "vendor_att_state_tests.rs"]
+mod att_state;
+
+#[test]
+fn unknown_nested_vendor_fields_preserve_the_following_command_and_target() {
+    let mut buffer = [0; 64];
+    let mut e = minicbor::Encoder::new(minicbor::encode::write::Cursor::new(&mut buffer[..]));
+    e.map(3)
+        .unwrap()
+        .u8(99)
+        .unwrap()
+        .array(2)
+        .unwrap()
+        .map(0)
+        .unwrap()
+        .null()
+        .unwrap();
+    e.u8(1)
+        .unwrap()
+        .u64(VENDOR_CONFIG_READ)
+        .unwrap()
+        .u8(2)
+        .unwrap()
+        .map(1)
+        .unwrap()
+        .u8(1)
+        .unwrap()
+        .u8(7)
+        .unwrap();
+    let n = e.writer().position();
+    let req = parse(&buffer[..n]).unwrap();
+    assert_eq!(req.subcommand, VENDOR_CONFIG_READ);
+    assert_eq!(req.target, 7);
+    assert!(matches!(
+        parse(&[0xa1, 0x18, 99, 0x82, 0xf6]),
+        Err(CtapError::InvalidCbor)
+    ));
+}
 use crate::seed::{ensure_seed, load_keydev};
 use crate::{AlwaysConfirm, FidoState, Presence, UserPresence};
 use rsk_crypto::Device;
@@ -45,6 +84,7 @@ fn dev() -> Device<'static> {
         serial_hash: &[0xAB; 32],
         serial_id: &[1, 2, 3, 4, 5, 6, 7, 8],
         otp_key: None,
+        latched: false,
     }
 }
 
@@ -149,7 +189,7 @@ fn handshake<S: Storage>(fs: &mut Fs<S>, rng: &mut SeqRng, state: &mut FidoState
     aad[1..33].copy_from_slice(&dx);
     aad[33..].copy_from_slice(&dy);
     let mut key = [0u8; 32];
-    hkdf_sha256(&[], &z, &aad, &mut key).unwrap();
+    hkdf_sha256(&[], z.expose(), &aad, &mut key).unwrap();
     Host { key, aad }
 }
 
@@ -241,7 +281,7 @@ fn handshake_pq(fs: &mut Fs<RamStorage>, rng: &mut SeqRng, state: &mut FidoState
     aad[33..].copy_from_slice(&dy);
 
     let mut ikm = [0u8; 64];
-    ikm[..32].copy_from_slice(&z);
+    ikm[..32].copy_from_slice(z.expose());
     ikm[32..].copy_from_slice(&ss);
     let mut info = [0u8; 65 + MLKEM768_CT_LEN];
     info[..65].copy_from_slice(&aad);
@@ -287,7 +327,8 @@ fn setup() -> (Fs<RamStorage>, SeqRng, FidoState) {
 #[test]
 fn fips_backup_export_refused() {
     let (mut fs, mut rng, mut st) = setup();
-    st.mse_active = true; // even over a live channel the seed is sealed in
+    // Even over a live channel the seed is sealed in.
+    st.establish_mse_for_test([0x5A; 32], [0x04; 65]);
     let mut req = [0u8; 16];
     let n = one_byte_req(&mut req, VENDOR_BACKUP_EXPORT);
     let mut out = [0u8; 64];
@@ -354,8 +395,8 @@ fn att_import_state_clear_roundtrip() {
 
     // The stored key decrypts back to the imported scalar; STATE says so.
     assert_eq!(
-        crate::seed::load_att_key(&dev(), &mut fs).unwrap(),
-        org_scalar
+        crate::bare(crate::seed::load_att_key(&dev(), &mut fs).unwrap()),
+        crate::bare(&org_scalar)
     );
     let n = one_byte_req(&mut req, VENDOR_ATT_STATE);
     let r = call(
@@ -563,7 +604,7 @@ fn mse_then_export_roundtrips_seed() {
     let mut tag = [0u8; 16];
     tag.copy_from_slice(&blob[44..]);
     chacha20poly1305_decrypt(&host.key, &nonce, &host.aad, &mut buf, &tag).unwrap();
-    assert_eq!(buf, seed);
+    assert_eq!(crate::bare(&buf), crate::bare(&seed));
 }
 
 // Audit run-33: `MSE` and `BACKUP_EXPORT` are separate CTAPHID transactions, so a
@@ -575,16 +616,17 @@ fn mse_then_export_roundtrips_seed() {
 fn export_refused_after_another_channel_rekeys_the_mse() {
     // A CTAPHID channel id is written by the sender into its own frame header, so
     // an interloper forges the victim's CID rather than using its own — binding to
-    // `mse_cid` alone would compare the attacker's bytes against themselves. What
-    // holds is that the channel is one-shot: the re-key is refused and the channel
-    // dropped, so the export can never encrypt under the interloper's key.
+    // the channel's `cid` alone would compare the attacker's bytes against
+    // themselves. What holds is that the channel is one-shot: the re-key is refused
+    // and the channel dropped, so the export can never encrypt under the
+    // interloper's key.
     for interloper_cid in [1u32, 2] {
         let (mut fs, mut rng, mut st) = setup();
 
         // The victim's tool runs its handshake on channel 1.
         st.channel = 1;
         let host = handshake(&mut fs, &mut rng, &mut st);
-        let victim_key = st.mse_key;
+        let victim_key = st.mse_key_for_test().expect("the handshake made a channel");
         assert_eq!(victim_key, host.key);
 
         // The interloper re-keys — on its own CID, or forging the victim's.
@@ -607,8 +649,8 @@ fn export_refused_after_another_channel_rekeys_the_mse() {
             "a live channel must never be re-keyed (interloper cid {interloper_cid})"
         );
         // Refused *and* dropped: neither party can spend it.
-        assert!(!st.mse_active);
-        assert_ne!(st.mse_key, victim_key);
+        assert!(!st.mse_live());
+        assert_ne!(st.mse_key_for_test(), Some(victim_key));
 
         // The victim's export, still on channel 1, now fails closed rather than
         // encrypting the seed to whoever re-keyed.
@@ -638,7 +680,7 @@ fn export_refused_after_another_channel_rekeys_the_mse() {
 fn fips_refuses_the_export_and_still_spends_the_channel() {
     let (mut fs, mut rng, mut st) = setup();
     handshake(&mut fs, &mut rng, &mut st);
-    assert!(st.mse_active);
+    assert!(st.mse_live());
 
     let mut req = [0u8; 32];
     let n = one_byte_req(&mut req, VENDOR_BACKUP_EXPORT);
@@ -656,10 +698,10 @@ fn fips_refuses_the_export_and_still_spends_the_channel() {
         "the profile seals the seed in"
     );
     assert!(
-        !st.mse_active,
+        !st.mse_live(),
         "a refused export must not leave the channel live"
     );
-    assert_eq!(st.mse_key, [0u8; 32]);
+    assert_eq!(st.mse_key_for_test(), None);
 }
 
 #[test]
@@ -674,7 +716,7 @@ fn a_gated_subcommand_spends_the_mse_channel() {
     // actually runs is what makes the case mean the same thing on all of them.
     let (mut fs, mut rng, mut st) = setup();
     handshake(&mut fs, &mut rng, &mut st);
-    assert!(st.mse_active);
+    assert!(st.mse_live());
 
     let mut req = [0u8; 32];
     let n = one_byte_req(&mut req, VENDOR_ATT_CLEAR);
@@ -687,13 +729,13 @@ fn a_gated_subcommand_spends_the_mse_channel() {
         &req[..n],
         &mut out,
     );
-    assert!(!st.mse_active, "the consumer must spend the channel");
-    assert_eq!(st.mse_key, [0u8; 32]);
+    assert!(!st.mse_live(), "the consumer must spend the channel");
+    assert_eq!(st.mse_key_for_test(), None);
 
     // A declined touch spends it too — a failed ceremony must not leave the
     // channel live for the next caller to pick up.
     handshake(&mut fs, &mut rng, &mut st);
-    assert!(st.mse_active);
+    assert!(st.mse_live());
     assert_eq!(
         call(
             &mut fs,
@@ -705,7 +747,38 @@ fn a_gated_subcommand_spends_the_mse_channel() {
         ),
         Err(CtapError::OperationDenied)
     );
-    assert!(!st.mse_active);
+    assert!(!st.mse_live());
+}
+
+/// A consumer on another channel is refused, and spends the channel anyway: its
+/// `cid` cannot tell a second process from the owner forging it, so a refusal that
+/// left the key live would hand the owner's next call to whoever squats it.
+#[test]
+fn a_consumer_on_another_channel_is_refused_and_spends_the_mse() {
+    let (mut fs, mut rng, mut st) = setup();
+    st.channel = 1;
+    handshake(&mut fs, &mut rng, &mut st);
+    assert!(st.mse_live());
+
+    let mut req = [0u8; 32];
+    let n = one_byte_req(&mut req, VENDOR_ATT_CLEAR);
+    let mut out = [0u8; 128];
+    for (channel, what) in [(2, "the other channel"), (1, "the owner, after")] {
+        st.channel = channel;
+        assert_eq!(
+            call(
+                &mut fs,
+                &mut rng,
+                &mut st,
+                &mut AlwaysConfirm,
+                &req[..n],
+                &mut out
+            ),
+            Err(CtapError::NotAllowed),
+            "{what}"
+        );
+        assert!(!st.mse_live(), "{what}");
+    }
 }
 
 // Off the fips profile only: fips refuses export outright (see `fips_backup_export_refused`).
@@ -744,7 +817,7 @@ fn mse_hybrid_then_export_roundtrips_seed() {
     let mut tag = [0u8; 16];
     tag.copy_from_slice(&blob[44..]);
     chacha20poly1305_decrypt(&host.key, &nonce, &host.aad, &mut buf, &tag).unwrap();
-    assert_eq!(buf, seed);
+    assert_eq!(crate::bare(&buf), crate::bare(&seed));
 }
 
 #[test]
@@ -778,7 +851,7 @@ fn mse_rejects_short_mlkem_ek() {
         &mut out,
     );
     assert_eq!(e, Err(CtapError::InvalidParameter));
-    assert!(!st.mse_active);
+    assert!(!st.mse_live());
 }
 
 #[test]
@@ -800,7 +873,7 @@ fn mse_rejects_unreduced_mlkem_ek() {
         &mut out,
     );
     assert_eq!(e, Err(CtapError::InvalidParameter));
-    assert!(!st.mse_active);
+    assert!(!st.mse_live());
 }
 
 #[test]
@@ -832,8 +905,11 @@ fn load_installs_seed_and_rebuilds_attestation() {
     )
     .unwrap();
 
-    assert_ne!(new_seed, old);
-    assert_eq!(load_keydev(&dev(), &mut fs), Some(new_seed));
+    assert_ne!(crate::bare(&new_seed), crate::bare(&old));
+    assert_eq!(
+        crate::bare(load_keydev(&dev(), &mut fs)),
+        Some(crate::bare(&new_seed))
+    );
     assert!(fs.has_data(EF_EE_DEV)); // attestation rebuilt over the new seed
 }
 
@@ -1165,7 +1241,7 @@ fn locked_setup() -> (Fs<RamStorage>, SeqRng, FidoState, Host, [u8; 32]) {
     // AUT_ENABLE spends the channel (it is one-shot), so hand callers a fresh one
     // — every one of them goes on to run another gated subcommand.
     let host = handshake(&mut fs, &mut rng, &mut st);
-    (fs, rng, st, host, seed)
+    (fs, rng, st, host, *seed.expose())
 }
 
 #[test]
@@ -1175,7 +1251,7 @@ fn lock_enable_wraps_seed_and_drops_plain() {
     assert_eq!(fs.size(EF_KEY_DEV_ENC.get()), Some(LOCK_BLOB_LEN));
     // No RAM copy after enable — operations are locked out immediately.
     assert!(st.keydev_dec.is_none());
-    assert_eq!(load_keydev(&dev(), &mut fs), None);
+    assert!((load_keydev(&dev(), &mut fs)).is_none());
     assert_eq!(
         state_flags(&mut fs, &mut rng, &mut st),
         (false, false, true, false, false)
@@ -1186,7 +1262,10 @@ fn lock_enable_wraps_seed_and_drops_plain() {
 fn unlock_restores_operations_for_the_session() {
     let (mut fs, mut rng, mut st, host, seed) = locked_setup();
     run_unlock(&mut fs, &mut rng, &mut st, &LOCK_KEY, &host, 0x22).unwrap();
-    assert_eq!(st.keydev_dec, Some(seed));
+    assert_eq!(
+        crate::bare(st.keydev_dec.as_ref()),
+        Some(crate::bare(&seed))
+    );
     // The op-level loader sees the RAM copy; flash stays wrapped.
     let mut presence = AlwaysConfirm;
     let mut ctx = Ctx {
@@ -1197,7 +1276,7 @@ fn unlock_restores_operations_for_the_session() {
         now_ms: 0,
         presence: &mut presence,
     };
-    assert_eq!(ctx.load_keydev(), Some(seed));
+    assert_eq!(crate::bare(ctx.load_keydev()), Some(crate::bare(&seed)));
     assert!(!fs.has_data(EF_KEY_DEV.get()));
     assert_eq!(
         state_flags(&mut fs, &mut rng, &mut st),
@@ -1230,7 +1309,10 @@ fn disable_restores_plain_seed() {
     run_config(&mut fs, &mut rng, &mut st, &mut AlwaysConfirm, &req[..n]).unwrap();
     assert!(!fs.has_data(EF_KEY_DEV_ENC.get()));
     assert!(st.keydev_dec.is_none()); // no stale RAM copy
-    assert_eq!(load_keydev(&dev(), &mut fs), Some(seed));
+    assert_eq!(
+        crate::bare(load_keydev(&dev(), &mut fs)),
+        Some(crate::bare(&seed))
+    );
     assert_eq!(
         state_flags(&mut fs, &mut rng, &mut st),
         (false, true, false, false, false)
@@ -1360,7 +1442,7 @@ fn reset_clears_the_lock_and_regenerates() {
     crate::reset::reset(&mut ctx).unwrap();
     assert!(!fs.has_data(EF_KEY_DEV_ENC.get()));
     let new_seed = load_keydev(&dev(), &mut fs).unwrap();
-    assert_ne!(new_seed, old_seed); // fresh identity — the recovery path
+    assert_ne!(crate::bare(&new_seed), crate::bare(&old_seed)); // fresh identity — the recovery path
 }
 
 #[test]
@@ -1369,13 +1451,16 @@ fn ensure_seed_does_not_regenerate_under_lock() {
     ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
     assert!(!fs.has_data(EF_KEY_DEV.get())); // boot on a locked device: no regen
     run_unlock(&mut fs, &mut rng, &mut st, &LOCK_KEY, &host, 0x27).unwrap();
-    assert_eq!(st.keydev_dec, Some(seed)); // blob untouched, same seed
+    assert_eq!(
+        crate::bare(st.keydev_dec.as_ref()),
+        Some(crate::bare(&seed))
+    ); // blob untouched, same seed
 }
 
 // ---- CONFIG_WRITE (0x0C): device config over the FIDO vendor channel ----
 
 /// A small, opaque device-config TLV. READ CONFIG echoes it (minus any config-lock
-/// tag) and then appends the unset CONFIG_LOCK, so its bytes appear in the body of
+/// tag) and then appends the CONFIG_LOCK byte, so its bytes appear in the body of
 /// the DeviceInfo TLV — see [`dev_conf_readback`] / [`dev_conf_contains`].
 const DEV_CONF_BLOB: &[u8] = &[0x03, 0x02, 0x02, 0x00];
 
@@ -1435,8 +1520,8 @@ fn dev_conf_readback(fs: &mut Fs<RamStorage>) -> std::vec::Vec<u8> {
 }
 
 /// Whether the READ CONFIG TLV carries `blob` anywhere in its body. The persisted
-/// blob is no longer the TLV suffix — READ CONFIG now always reports CONFIG_LOCK
-/// unset after it (audit run-30) — so match a window, not the tail.
+/// blob is no longer the TLV suffix — READ CONFIG always reports CONFIG_LOCK after
+/// it (audit run-30) — so match a window, not the tail.
 fn dev_conf_contains(fs: &mut Fs<RamStorage>, blob: &[u8]) -> bool {
     dev_conf_readback(fs).windows(blob.len()).any(|w| w == blob)
 }
@@ -1482,6 +1567,34 @@ fn config_write_requires_touch() {
         Err(CtapError::OperationDenied)
     );
     assert!(!dev_conf_contains(&mut fs, DEV_CONF_BLOB)); // declined → nothing persisted
+}
+
+/// Under `strict-config` the write's own touch covers a lock it arms: one ask.
+#[cfg(feature = "strict-config")]
+#[test]
+fn a_strict_lock_write_asks_for_one_touch() {
+    let (mut fs, mut rng, mut st) = setup();
+    let mut set = std::vec![0x0A, 0x10];
+    set.extend_from_slice(&[0xA5; 16]);
+    let mut req = [0u8; 96];
+    let n = config_write_req(CONFIG_TARGET_DEV_CONF, &set, false, &mut req);
+    let mut out = [0u8; 16];
+    let mut presence = CountingPresence { calls: 0 };
+    assert_eq!(
+        call(
+            &mut fs,
+            &mut rng,
+            &mut st,
+            &mut presence,
+            &req[..n],
+            &mut out
+        ),
+        Ok(0)
+    );
+    assert_eq!(
+        presence.calls, 1,
+        "a strict lock write asked for a second touch"
+    );
 }
 
 #[test]
@@ -1567,6 +1680,61 @@ fn config_write_default_ungated_persists_without_touch_or_token() {
         Ok(0)
     );
     assert!(dev_conf_contains(&mut fs, DEV_CONF_BLOB));
+}
+
+/// Over the vendor channel a locked configuration answers `NOT_ALLOWED` without its
+/// code and `OPERATION_DENIED` with another. The idempotent-replay check runs first,
+/// and a write the lock refuses must not pass it as "nothing to do". A lock set
+/// where none is takes a touch, and only that write asks for one.
+#[cfg(not(feature = "strict-config"))]
+#[test]
+fn config_write_honours_the_configuration_lock() {
+    let (mut fs, mut rng, mut st) = setup();
+    let touch = core::cell::Cell::new(false);
+    let mut write = |fs: &mut Fs<RamStorage>, blob: &[u8]| {
+        let mut req = [0u8; 96];
+        let n = config_write_req(CONFIG_TARGET_DEV_CONF, blob, false, &mut req);
+        let mut out = [0u8; 16];
+        let presence: &mut dyn UserPresence = if touch.get() {
+            &mut AlwaysConfirm
+        } else {
+            &mut Decline
+        };
+        call(fs, &mut rng, &mut st, presence, &req[..n], &mut out)
+    };
+    let code = [0xA5; 16];
+    let unlock = |code: &[u8; 16], fields: &[u8]| {
+        let mut blob = std::vec![0x0B, 0x10];
+        blob.extend_from_slice(code);
+        blob.extend_from_slice(fields);
+        blob
+    };
+    assert_eq!(write(&mut fs, DEV_CONF_BLOB), Ok(0));
+    let mut set = std::vec![0x0A, 0x10];
+    set.extend_from_slice(&code);
+    assert_eq!(write(&mut fs, &set), Err(CtapError::OperationDenied));
+    assert!(
+        fs.read(rsk_devconf::raw::EF_DEV_LOCK, &mut [0u8; 64])
+            .is_none(),
+        "a declined touch set the lock"
+    );
+    touch.set(true);
+    assert_eq!(write(&mut fs, &set), Ok(0));
+    touch.set(false);
+
+    // The stored config again: a replay, which only the lock may refuse.
+    assert_eq!(write(&mut fs, DEV_CONF_BLOB), Err(CtapError::NotAllowed));
+    let fido_u2f = [0x03, 0x02, 0x02, 0x02];
+    assert_eq!(
+        write(&mut fs, &unlock(&[0x5A; 16], &fido_u2f)),
+        Err(CtapError::OperationDenied)
+    );
+    assert!(
+        dev_conf_contains(&mut fs, DEV_CONF_BLOB),
+        "a refused write landed"
+    );
+    assert_eq!(write(&mut fs, &unlock(&code, &fido_u2f)), Ok(0));
+    assert!(dev_conf_contains(&mut fs, &fido_u2f));
 }
 
 #[test]
@@ -1706,8 +1874,8 @@ fn config_write_read_led_block_over_fido() {
     )
     .unwrap();
 
-    // Read the block back (ungated). Live-apply of the atomics is a firmware
-    // handler concern (reload after 0x41) — exercised on-device, not here.
+    // Read the block back (ungated). Live-apply of the atomics is the transport's,
+    // after the write that marks it — rsk-device's LED-write tests.
     let mut rreq = [0u8; 32];
     let rn = config_read_req(CONFIG_TARGET_LED, &mut rreq);
     let mut rout = [0u8; 64];
@@ -2084,21 +2252,47 @@ fn undefined_vendor_subcommand_is_invalid_parameter() {
     let (mut fs, mut rng, mut st) = setup();
     let mut req = [0u8; 32];
     let mut out = [0u8; 64];
-    for subcmd in [0x00u64, 0x0F, 0x7F] {
-        let n = one_byte_req(&mut req, subcmd);
-        let e = call(
-            &mut fs,
-            &mut rng,
-            &mut st,
-            &mut AlwaysConfirm,
-            &req[..n],
-            &mut out,
-        );
-        assert_eq!(
-            e,
-            Err(CtapError::InvalidParameter),
-            "vendor subcommand {subcmd:#04x}"
-        );
+    // 0x10 is the first id past the last one served (CONFIG_COMMANDS, 0x0F).
+    for subcmd in [0x00u64, 0x10, 0x7F] {
+        for parameters in [false, true] {
+            let mut enc = Encoder::new(Cursor::new(&mut req[..]));
+            enc.map(1 + u64::from(parameters))
+                .unwrap()
+                .u8(1)
+                .unwrap()
+                .u64(subcmd)
+                .unwrap();
+            if parameters {
+                enc.u8(2)
+                    .unwrap()
+                    .map(1)
+                    .unwrap()
+                    .u8(1)
+                    .unwrap()
+                    .array(2)
+                    .unwrap()
+                    .null()
+                    .unwrap()
+                    .bool(true)
+                    .unwrap();
+            }
+            let n = enc.writer().position();
+            out.fill(0xA5);
+            let e = call(
+                &mut fs,
+                &mut rng,
+                &mut st,
+                &mut AlwaysConfirm,
+                &req[..n],
+                &mut out,
+            );
+            assert_eq!(
+                e,
+                Err(CtapError::InvalidParameter),
+                "vendor subcommand {subcmd:#04x}, parameters={parameters}"
+            );
+            assert_eq!(out, [0xA5; 64]);
+        }
     }
 }
 
@@ -2200,6 +2394,89 @@ fn an_unsupported_protocol_is_judged_before_the_missing_token() {
             "protocol {proto}"
         );
     }
+}
+
+/// Run one vendor request and take the two marks it left for the transport.
+fn marks<S: Storage>(
+    fs: &mut Fs<S>,
+    rng: &mut SeqRng,
+    st: &mut FidoState,
+    req: &[u8],
+) -> (bool, bool, bool) {
+    let mut out = [0u8; 64];
+    let ok = call(fs, rng, st, &mut AlwaysConfirm, req, &mut out).is_ok();
+    (ok, st.take_led_written(), st.take_phy_written())
+}
+
+/// What a CONFIG_WRITE marks for the transport to apply once it is answered: every
+/// LED write, a replay included (applied live, as the CCID SET LED is), and a phy
+/// record it changed. A refused write, the other target and a read mark nothing.
+#[test]
+fn config_write_marks_only_the_live_effects_it_owes() {
+    let (mut fs, medium, mut rng, mut st) = setup_stuck();
+    let led = [0x11u8; rsk_led::CONF_LEN];
+    let phy = |timeout| {
+        let mut blob = [0u8; rsk_phy::PHY_MAX_SIZE];
+        let rec = rsk_phy::PhyData {
+            presence_timeout: Some(timeout),
+            ..Default::default()
+        };
+        let n = rec.serialize(&mut blob).unwrap();
+        blob[..n].to_vec()
+    };
+    let req = |target, blob: &[u8]| {
+        let mut buf = [0u8; 128];
+        let n = config_write_req(target, blob, false, &mut buf);
+        buf[..n].to_vec()
+    };
+    let mut read = [0u8; 32];
+    let rn = config_read_req(CONFIG_TARGET_LED, &mut read);
+    let rows = [
+        (
+            "a DEV_CONF write",
+            req(CONFIG_TARGET_DEV_CONF, DEV_CONF_BLOB),
+            (true, false, false),
+        ),
+        ("a CONFIG_READ", read[..rn].to_vec(), (true, false, false)),
+        (
+            "an LED block one byte short",
+            req(CONFIG_TARGET_LED, &led[..rsk_led::CONF_LEN - 1]),
+            (false, false, false),
+        ),
+        (
+            "an LED write",
+            req(CONFIG_TARGET_LED, &led),
+            (true, true, false),
+        ),
+        (
+            "its replay",
+            req(CONFIG_TARGET_LED, &led),
+            (true, true, false),
+        ),
+        (
+            "a phy write",
+            req(CONFIG_TARGET_PHY, &phy(45)),
+            (true, false, true),
+        ),
+        (
+            "its replay",
+            req(CONFIG_TARGET_PHY, &phy(45)),
+            (true, false, false),
+        ),
+    ];
+    for (name, request, want) in rows {
+        assert_eq!(marks(&mut fs, &mut rng, &mut st, &request), want, "{name}");
+    }
+    // A changed record the store cannot read back is refused before anything lands.
+    medium.stick(Some(rsk_phy::EF_PHY));
+    let refused = marks(
+        &mut fs,
+        &mut rng,
+        &mut st,
+        &req(CONFIG_TARGET_PHY, &phy(50)),
+    );
+    medium.stick(None);
+    assert_eq!(refused, (false, false, false), "a refused phy write");
 }
 
 /// A provisioned card on a medium whose reads of one chosen record can be made to
@@ -2314,7 +2591,9 @@ fn a_faulted_sealed_probe_does_not_reopen_the_export_window() {
 
 /// A presence that offers built-in UV and declines the pad entry — the device-PIN
 /// half of [`pin_gate`] runs only when `uv_available`.
+#[cfg(not(feature = "fips-profile"))]
 struct UvDecline;
+#[cfg(not(feature = "fips-profile"))]
 impl UserPresence for UvDecline {
     fn request(&mut self, _confirm: crate::Confirm<'_>) -> Presence {
         Presence::Confirmed
@@ -2540,7 +2819,7 @@ fn a_faulted_dev_conf_probe_over_fido_neither_acks_nor_replaces() {
 
     for (skip, want) in [(0u32, Ok(0)), (2, Err(CtapError::Other))] {
         let (mut fs, medium, mut rng, mut st) = setup_stuck();
-        rsk_devconf::persist_dev_conf(&mut fs, owner).unwrap();
+        rsk_devconf::persist_touched(&[0; 4], &mut fs, owner).unwrap();
         let before = medium.value(EF_DEV_CONF).expect("record written");
 
         let mut req = [0u8; 96];
@@ -2673,4 +2952,791 @@ fn a_device_pin_no_pad_can_collect_is_not_a_gate_that_may_be_skipped() {
         fs.has_key(EF_ATT_KEY),
         "the attestation key was destroyed behind a gate nobody could answer"
     );
+}
+
+/// ATT_CLEAR erases the attestation key and then its chain, cut at every point. A
+/// key with no chain is the harmful survivor — `u2f::cmd_register` takes the
+/// attested branch on the key and then fails the chain read, so every later U2F
+/// REGISTER answers 6F00 — and the order is what keeps that state unreachable: only
+/// a chain with no key can survive, and that one falls back to self-attestation.
+#[test]
+fn a_torn_att_clear_never_leaves_the_key_without_its_chain() {
+    assert!(!rsk_fs::cut::sweep_restarts(
+        || {
+            let (cut, medium) = rsk_fs::storage::faults::Cut::new();
+            let mut fs = Fs::new(cut);
+            let mut rng = SeqRng(1);
+            let d = dev();
+            ensure_seed(&d, &mut fs, &mut rng).unwrap();
+            crate::seed::store_att_key(&d, &mut fs, &[3u8; 32]).unwrap();
+            fs.put(EF_ATT_CHAIN, &[0xC4; 64]).unwrap();
+            (fs, medium)
+        },
+        |fs| {
+            let mut rng = SeqRng(7);
+            let mut st = FidoState::new();
+            handshake(fs, &mut rng, &mut st);
+            let mut req = [0u8; 64];
+            let n = one_byte_req(&mut req, VENDOR_ATT_CLEAR);
+            let mut out = [0u8; 512];
+            call(
+                fs,
+                &mut rng,
+                &mut st,
+                &mut AlwaysConfirm,
+                &req[..n],
+                &mut out,
+            )
+            .is_ok()
+        },
+        |_| {},
+        |fs, budget, _second, completed, medium| {
+            let (key, chain) = (fs.has_key(EF_ATT_KEY), fs.has_data(EF_ATT_CHAIN));
+            assert!(
+                chain || !key,
+                "budget {budget}: the key survived its chain, so U2F REGISTER answers 6F00 — {:?}",
+                medium.ops()
+            );
+            if completed {
+                assert!(
+                    !key && !chain,
+                    "budget {budget}: ATT_CLEAR reported success and something survived"
+                );
+            }
+        },
+    ));
+}
+
+/// LOAD re-keys every credential on the device, and with no PIN `gate` is one touch,
+/// so the replacement is named first, as ATT_IMPORT's is: declining that prompt alone
+/// refuses the load, and a confirmed load asks twice.
+#[test]
+fn load_without_pin_demands_the_named_confirmation() {
+    let (mut fs, mut rng, mut st) = setup();
+    let old = load_keydev(&dev(), &mut fs).unwrap();
+    let new_seed = [0x33u8; 32];
+    let host = handshake(&mut fs, &mut rng, &mut st);
+    let mut req = [0u8; 128];
+    let n = load_req(&mut req, &wrap32(&host, &new_seed));
+    let mut out = [0u8; 16];
+    assert_eq!(
+        call(
+            &mut fs,
+            &mut rng,
+            &mut st,
+            &mut Decline,
+            &req[..n],
+            &mut out
+        ),
+        Err(CtapError::OperationDenied)
+    );
+    assert_eq!(
+        crate::bare(load_keydev(&dev(), &mut fs)),
+        Some(crate::bare(&old)),
+        "a declined load replaced the seed"
+    );
+
+    // The declined attempt spent the channel, so re-handshake and re-wrap.
+    let host = handshake(&mut fs, &mut rng, &mut st);
+    let n = load_req(&mut req, &wrap32(&host, &new_seed));
+    let mut counting = CountingPresence { calls: 0 };
+    call(
+        &mut fs,
+        &mut rng,
+        &mut st,
+        &mut counting,
+        &req[..n],
+        &mut out,
+    )
+    .unwrap();
+    assert_eq!(
+        counting.calls, 2,
+        "the seed was replaced on gate's generic touch alone"
+    );
+    assert_eq!(
+        crate::bare(load_keydev(&dev(), &mut fs)),
+        Some(crate::bare(&new_seed))
+    );
+}
+
+/// A LOAD blob that is not `nonce ‖ seed ‖ tag` is refused before any prompt, and the
+/// seed in force stays.
+#[test]
+fn load_of_a_short_blob_is_refused() {
+    let (mut fs, mut rng, mut st) = setup();
+    let old = load_keydev(&dev(), &mut fs).unwrap();
+    let host = handshake(&mut fs, &mut rng, &mut st);
+    let blob = wrap32(&host, &[0x33u8; 32]);
+    let mut req = [0u8; 128];
+    let n = load_req(&mut req, &blob[..LOCK_BLOB_LEN - 1]);
+    let mut out = [0u8; 16];
+    assert_eq!(
+        call(
+            &mut fs,
+            &mut rng,
+            &mut st,
+            &mut AlwaysConfirm,
+            &req[..n],
+            &mut out
+        ),
+        Err(CtapError::MissingParameter)
+    );
+    assert_eq!(
+        crate::bare(load_keydev(&dev(), &mut fs)),
+        Some(crate::bare(&old))
+    );
+}
+
+/// A seed that decrypts but is no P-256 scalar (zero here) is refused, and the seed
+/// every credential derives from stays.
+#[test]
+fn load_of_a_seed_that_is_no_scalar_is_refused() {
+    let (mut fs, mut rng, mut st) = setup();
+    let old = load_keydev(&dev(), &mut fs).unwrap();
+    let host = handshake(&mut fs, &mut rng, &mut st);
+    let mut req = [0u8; 128];
+    let n = load_req(&mut req, &wrap32(&host, &[0u8; 32]));
+    let mut out = [0u8; 16];
+    assert_eq!(
+        call(
+            &mut fs,
+            &mut rng,
+            &mut st,
+            &mut AlwaysConfirm,
+            &req[..n],
+            &mut out
+        ),
+        Err(CtapError::InvalidParameter)
+    );
+    assert_eq!(
+        crate::bare(load_keydev(&dev(), &mut fs)),
+        Some(crate::bare(&old))
+    );
+}
+
+/// LOAD drops the old attestation certificate before the new seed commits (audit
+/// run-32), and a medium that will not drop it refuses the load: the seed never moves
+/// out from under the certificate that signs for it.
+#[test]
+fn load_is_refused_when_the_old_certificate_cannot_be_dropped() {
+    use rsk_fs::storage::faults::RemoveStuck;
+
+    let (backend, medium) = RemoveStuck::new();
+    let mut fs = Fs::new(backend);
+    fs.scan();
+    let mut rng = SeqRng(1);
+    let mut st = FidoState::new();
+    ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
+    let old = load_keydev(&dev(), &mut fs).unwrap();
+    assert!(
+        fs.has_data(EF_EE_DEV),
+        "fixture: a certificate stands over the seed"
+    );
+    let host = handshake(&mut fs, &mut rng, &mut st);
+    medium.refuse(Some(EF_EE_DEV));
+    let mut req = [0u8; 128];
+    let n = load_req(&mut req, &wrap32(&host, &[0x33u8; 32]));
+    let mut out = [0u8; 16];
+    assert_eq!(
+        call(
+            &mut fs,
+            &mut rng,
+            &mut st,
+            &mut AlwaysConfirm,
+            &req[..n],
+            &mut out
+        ),
+        Err(CtapError::Other)
+    );
+    assert_eq!(
+        crate::bare(load_keydev(&dev(), &mut fs)),
+        Some(crate::bare(&old)),
+        "the seed moved under a certificate that did not"
+    );
+}
+
+/// FINALIZE closes the seed export for good — only a reset reopens it — so its touch
+/// is the whole consent: declined, nothing is sealed.
+#[test]
+fn finalize_without_touch_seals_nothing() {
+    let (mut fs, mut rng, mut st) = setup();
+    let mut req = [0u8; 16];
+    let n = one_byte_req(&mut req, VENDOR_BACKUP_FINALIZE);
+    let mut out = [0u8; 16];
+    assert_eq!(
+        call(
+            &mut fs,
+            &mut rng,
+            &mut st,
+            &mut Decline,
+            &req[..n],
+            &mut out
+        ),
+        Err(CtapError::OperationDenied)
+    );
+    assert!(
+        !state_flags(&mut fs, &mut rng, &mut st).0,
+        "a declined FINALIZE sealed the backup"
+    );
+}
+
+/// An attestation key that decrypts but is no P-256 scalar is refused before either
+/// record is written, so no chain lands without the key it certifies.
+#[test]
+fn att_import_of_a_key_that_is_no_scalar_writes_nothing() {
+    let (mut fs, mut rng, mut st) = setup();
+    let host = handshake(&mut fs, &mut rng, &mut st);
+    let mut req = [0u8; 256];
+    let n = att_import_req(&mut req, &wrap32(&host, &[0u8; 32]), &[0x30, 0x03, 1, 2, 3]);
+    let mut out = [0u8; 128];
+    assert_eq!(
+        call(
+            &mut fs,
+            &mut rng,
+            &mut st,
+            &mut AlwaysConfirm,
+            &req[..n],
+            &mut out
+        ),
+        Err(CtapError::InvalidParameter)
+    );
+    assert!(crate::seed::load_att_key(&dev(), &mut fs).is_none());
+    assert!(!fs.has_data(EF_ATT_CHAIN), "a chain landed without its key");
+}
+
+/// Turning the audit trail on or off takes a touch even with no PIN, so a silent host
+/// cannot flip it: declined, logging stays off.
+#[test]
+fn audit_config_without_touch_changes_nothing() {
+    let (mut fs, mut rng, mut st) = setup();
+    let mut req = [0u8; 32];
+    let n = audit_config_req(1, &mut req);
+    let mut out = [0u8; 32];
+    assert_eq!(
+        call(
+            &mut fs,
+            &mut rng,
+            &mut st,
+            &mut Decline,
+            &req[..n],
+            &mut out
+        ),
+        Err(CtapError::OperationDenied)
+    );
+    assert!(
+        !crate::journal::is_enabled(&mut fs),
+        "a declined AUDIT_CONFIG turned logging on"
+    );
+}
+
+/// Target 0 turns the trail off, and journals the DISABLE while logging is still on,
+/// so the last live entry marks when it stopped.
+#[test]
+fn audit_config_disable_journals_the_stop_and_turns_logging_off() {
+    let (mut fs, mut rng, mut st) = setup();
+    let mut req = [0u8; 32];
+    let mut out = [0u8; 32];
+    let n = audit_config_req(1, &mut req);
+    call(
+        &mut fs,
+        &mut rng,
+        &mut st,
+        &mut AlwaysConfirm,
+        &req[..n],
+        &mut out,
+    )
+    .unwrap();
+    assert!(
+        crate::journal::is_enabled(&mut fs),
+        "fixture: logging is on"
+    );
+    let (_, before, _) = journal_state(&mut fs);
+
+    let n = audit_config_req(0, &mut req);
+    let r = call(
+        &mut fs,
+        &mut rng,
+        &mut st,
+        &mut AlwaysConfirm,
+        &req[..n],
+        &mut out,
+    )
+    .unwrap();
+    assert_eq!(&out[..r], &[0xA1, 0x01, 0xF4], "the answer is {{1: false}}");
+    assert!(
+        !crate::journal::is_enabled(&mut fs),
+        "a DISABLE left logging on"
+    );
+    let (_, after, _) = journal_state(&mut fs);
+    assert_eq!(
+        after,
+        before + 1,
+        "the DISABLE was not journalled before logging stopped"
+    );
+}
+
+/// A channel-wrapped key is exactly `nonce ‖ key ‖ tag`; a blob of another length is
+/// refused before anything is decrypted.
+#[test]
+fn unlock_with_a_blob_of_the_wrong_length_is_invalid() {
+    let (mut fs, mut rng, mut st) = setup();
+    let _ = handshake(&mut fs, &mut rng, &mut st);
+    let mut req = [0u8; 128];
+    let n = {
+        let mut e = Encoder::new(Cursor::new(&mut req[..]));
+        e.map(2).unwrap();
+        e.u8(1).unwrap().u64(VENDOR_UNLOCK).unwrap();
+        e.u8(2).unwrap().map(1).unwrap().u8(1).unwrap();
+        e.bytes(&[0x5Au8; LOCK_BLOB_LEN - 1]).unwrap();
+        e.writer().position()
+    };
+    let mut out = [0u8; 16];
+    assert_eq!(
+        call(
+            &mut fs,
+            &mut rng,
+            &mut st,
+            &mut AlwaysConfirm,
+            &req[..n],
+            &mut out
+        ),
+        Err(CtapError::InvalidParameter)
+    );
+}
+
+/// UNLOCK carries its key over the MSE channel, so with no channel there is nothing
+/// to open it with.
+#[test]
+fn unlock_without_mse_is_not_allowed() {
+    let (mut fs, mut rng, mut st) = setup();
+    let mut req = [0u8; 128];
+    let n = {
+        let mut e = Encoder::new(Cursor::new(&mut req[..]));
+        e.map(2).unwrap();
+        e.u8(1).unwrap().u64(VENDOR_UNLOCK).unwrap();
+        e.u8(2).unwrap().map(1).unwrap().u8(1).unwrap();
+        e.bytes(&[0x5Au8; LOCK_BLOB_LEN]).unwrap();
+        e.writer().position()
+    };
+    let mut out = [0u8; 16];
+    assert_eq!(
+        call(
+            &mut fs,
+            &mut rng,
+            &mut st,
+            &mut AlwaysConfirm,
+            &req[..n],
+            &mut out
+        ),
+        Err(CtapError::NotAllowed)
+    );
+}
+
+/// An MSE key with a coordinate missing is a missing parameter, and opens no channel.
+#[test]
+fn mse_without_a_coordinate_is_missing_parameter() {
+    let (mut fs, mut rng, mut st) = setup();
+    let (hx, _) = P256Key::from_scalar(&[0x42u8; 32]).unwrap().public_xy();
+    let mut req = [0u8; 200];
+    let n = build_mse_coords(&mut req, &hx, &[]);
+    let mut out = [0u8; 200];
+    assert_eq!(
+        call(
+            &mut fs,
+            &mut rng,
+            &mut st,
+            &mut AlwaysConfirm,
+            &req[..n],
+            &mut out
+        ),
+        Err(CtapError::MissingParameter)
+    );
+    assert!(!st.mse_live(), "a refused MSE left a channel open");
+    let (_, hy) = P256Key::from_scalar(&[0x42u8; 32]).unwrap().public_xy();
+    let n = build_mse_coords(&mut req, &[], &hy);
+    assert_eq!(
+        call(
+            &mut fs,
+            &mut rng,
+            &mut st,
+            &mut AlwaysConfirm,
+            &req[..n],
+            &mut out
+        ),
+        Err(CtapError::MissingParameter)
+    );
+    assert!(!st.mse_live());
+}
+
+/// `{1: subcmd, 3: 2, 4: mac}`: a vendor subcommand with no parameters, carrying a
+/// pinUvAuthParam under `token` over `0xff×32 ‖ 0x41 ‖ subcmd`, as `pin_gate` checks.
+fn authed_one_byte_req(buf: &mut [u8], subcmd: u64, token: &[u8; 32]) -> usize {
+    use rsk_crypto::pinproto;
+
+    let mut vp = [0u8; 34];
+    let vp_len = crate::state::puat_subcommand_msg(&mut vp, CTAP_VENDOR, subcmd as u8, &[]);
+    let mut mac = [0u8; 32];
+    let mlen = pinproto::authenticate(PinProto::Two, token, &vp[..vp_len], &mut mac).unwrap();
+    let mut e = Encoder::new(Cursor::new(buf));
+    e.map(3).unwrap();
+    e.u8(1).unwrap().u64(subcmd).unwrap();
+    e.u8(3).unwrap().u8(2).unwrap();
+    e.u8(4).unwrap().bytes(&mac[..mlen]).unwrap();
+    e.writer().position()
+}
+
+/// With a PIN set, `pin_gate` is the PIN half of the gate on the seed moves, the
+/// attestation identity and the audit chain: it takes a token whose MAC is over this
+/// subcommand AND that carries `acfg`, and then no touch is asked. Before this, the
+/// default build never reached the check, and strict-config only with a good token.
+#[test]
+fn a_gated_read_with_a_pin_takes_only_a_valid_acfg_token() {
+    let (mut fs, mut rng, mut st) = setup();
+    fs.put(EF_PIN, &[8, 4, 1]).unwrap();
+    arm_acfg(&mut st);
+    let mut req = [0u8; 96];
+    let mut out = [0u8; 3072];
+
+    let n = authed_one_byte_req(&mut req, VENDOR_AUDIT_READ, &[0x55; 32]);
+    assert_eq!(
+        call(
+            &mut fs,
+            &mut rng,
+            &mut st,
+            &mut AlwaysConfirm,
+            &req[..n],
+            &mut out
+        ),
+        Err(CtapError::PinAuthInvalid),
+        "a MAC under another key opened the audit journal"
+    );
+
+    let n = authed_one_byte_req(&mut req, VENDOR_AUDIT_READ, &ACFG_TOKEN);
+    st.paut.permissions = crate::state::PERM_GA;
+    assert_eq!(
+        call(
+            &mut fs,
+            &mut rng,
+            &mut st,
+            &mut AlwaysConfirm,
+            &req[..n],
+            &mut out
+        ),
+        Err(CtapError::PinAuthInvalid),
+        "a token without acfg opened the audit journal"
+    );
+
+    arm_acfg(&mut st);
+    assert!(
+        call(
+            &mut fs,
+            &mut rng,
+            &mut st,
+            &mut Decline,
+            &req[..n],
+            &mut out
+        )
+        .is_ok(),
+        "a valid acfg token was refused, or a touch was still asked"
+    );
+}
+
+/// AUDIT_CHECKPOINT signs the chain head with the device key, and takes a touch as
+/// well as the PIN half: declined, nothing is signed. The journal's own tests call
+/// the signer directly, so this gate had never been reached.
+#[test]
+fn audit_checkpoint_without_touch_signs_nothing() {
+    let (mut fs, mut rng, mut st) = setup();
+    fs.put(crate::consts::EF_AUDIT_ENABLED, &[1]).unwrap();
+    st.devk_source = Some(rsk_crypto::FusedKey::open(|out: &mut [u8; 32]| {
+        *out = [7; 32];
+        true
+    }));
+    let mut req = [0u8; 64];
+    let n = {
+        let mut e = Encoder::new(Cursor::new(&mut req[..]));
+        e.map(2).unwrap();
+        e.u8(1).unwrap().u64(VENDOR_AUDIT_CHECKPOINT).unwrap();
+        e.u8(2).unwrap().map(1).unwrap().u8(1).unwrap();
+        e.bytes(&[0x42u8; 32]).unwrap();
+        e.writer().position()
+    };
+    let mut out = [0u8; 512];
+    assert_eq!(
+        call(
+            &mut fs,
+            &mut rng,
+            &mut st,
+            &mut Decline,
+            &req[..n],
+            &mut out
+        ),
+        Err(CtapError::OperationDenied),
+        "a checkpoint was signed without a touch"
+    );
+    assert!(
+        call(
+            &mut fs,
+            &mut rng,
+            &mut st,
+            &mut AlwaysConfirm,
+            &req[..n],
+            &mut out
+        )
+        .is_ok(),
+        "control: a touched checkpoint is signed"
+    );
+}
+
+/// `CONFIG_WRITE`'s three targets, cut at every mutation with the audit journal on:
+/// each writes one record and then counts itself in the journal, so a cut leaves the
+/// old record or the new one, and the journal never counts a config write whose
+/// record did not land. Done means answered `Ok` with the entry in the window.
+#[cfg(not(feature = "strict-config"))]
+#[test]
+fn a_torn_config_write_never_journals_a_record_that_did_not_land() {
+    use crate::tests::journals;
+    use rsk_devconf::raw::EF_DEV_CONF;
+    let phy = rsk_phy::PhyData {
+        presence_timeout: Some(45),
+        ..Default::default()
+    };
+    let mut phy_blob = [0u8; rsk_phy::PHY_MAX_SIZE];
+    let phy_len = phy.serialize(&mut phy_blob).unwrap();
+    let cases: [(&str, u64, u16, &[u8]); 3] = [
+        (
+            "DEV_CONF",
+            CONFIG_TARGET_DEV_CONF,
+            EF_DEV_CONF,
+            DEV_CONF_BLOB,
+        ),
+        (
+            "PHY",
+            CONFIG_TARGET_PHY,
+            rsk_phy::EF_PHY,
+            &phy_blob[..phy_len],
+        ),
+        ("LED", CONFIG_TARGET_LED, EF_LED_CONF, &[0x11; LED_CONF_LEN]),
+    ];
+    let record = |fs: &mut Fs<rsk_fs::storage::faults::Cut>, fid: u16| {
+        let mut buf = [0u8; 256];
+        fs.read(fid, &mut buf).map(|n| buf[..n].to_vec())
+    };
+    for (name, target, fid, blob) in cases {
+        let provision = || {
+            let (cut, medium) = rsk_fs::storage::faults::Cut::new();
+            let mut fs = Fs::new(cut);
+            crate::journal::set_enabled(&mut fs, true).unwrap();
+            (fs, medium)
+        };
+        let write = |fs: &mut Fs<rsk_fs::storage::faults::Cut>| {
+            let mut req = [0u8; 128];
+            let n = config_write_req(target, blob, false, &mut req);
+            let mut out = [0u8; 16];
+            let mut st = FidoState::new();
+            call(
+                fs,
+                &mut SeqRng(1),
+                &mut st,
+                &mut AlwaysConfirm,
+                &req[..n],
+                &mut out,
+            )
+        };
+        let (mut healthy, _) = provision();
+        assert_eq!(write(&mut healthy), Ok(0), "{name}");
+        let after = record(&mut healthy, fid);
+        assert!(after.is_some(), "{name}: the write stored nothing to sweep");
+        assert!(!rsk_fs::cut::sweep_restarts(
+            provision,
+            |fs| write(fs).is_ok() && journals(&dev(), fs, crate::journal::EV_CONFIG_WRITE),
+            |_| {},
+            |fs, budget, _second, completed, medium| {
+                let now = record(fs, fid);
+                assert!(
+                    now.is_none() || now == after,
+                    "{name}, budget {budget}: {now:02x?} is neither record — {:?}",
+                    medium.ops()
+                );
+                if journals(&dev(), fs, crate::journal::EV_CONFIG_WRITE) {
+                    assert_eq!(
+                        now,
+                        after,
+                        "{name}, budget {budget}: journalled a write that did not land — {:?}",
+                        medium.ops()
+                    );
+                }
+                if completed {
+                    assert_eq!(now, after, "{name}, budget {budget}: reported done, is not");
+                }
+            },
+        ));
+    }
+}
+
+/// A loaded seed is a new credential store — the credentials sealed under the old one
+/// no longer open — so `BACKUP_LOAD` moves the store tag too (CTAP 2.3 §6.6).
+#[test]
+fn load_moves_the_credential_store_tag() {
+    let (mut fs, mut rng, mut st) = setup();
+    let before = crate::credential::cred_store_state(&mut fs).unwrap();
+    let host = handshake(&mut fs, &mut rng, &mut st);
+    let nonce = [0x07u8; 12];
+    let mut sealed = [0x33u8; 32];
+    let mac = chacha20poly1305_encrypt(&host.key, &nonce, &host.aad, &mut sealed);
+    let mut blob = [0u8; LOCK_BLOB_LEN];
+    blob[..12].copy_from_slice(&nonce);
+    blob[12..44].copy_from_slice(&sealed);
+    blob[44..].copy_from_slice(&mac);
+    let mut req = [0u8; 128];
+    let n = load_req(&mut req, &blob);
+    let mut out = [0u8; 16];
+    call(
+        &mut fs,
+        &mut rng,
+        &mut st,
+        &mut AlwaysConfirm,
+        &req[..n],
+        &mut out,
+    )
+    .unwrap();
+    assert_ne!(
+        crate::credential::cred_store_state(&mut fs).unwrap(),
+        before,
+        "a loaded seed left the store tag where the old store had it"
+    );
+}
+
+/// CONFIG_WRITE's phy and LED targets under a configuration lock; its own file, it
+/// needs this module's fixtures.
+#[path = "vendor_lock_tests.rs"]
+mod config_lock;
+
+/// The vendor config command list (`0x41`/`0x0F`); its own file, it needs this
+/// module's fixtures.
+#[path = "vendor_caps_tests.rs"]
+mod config_commands;
+
+#[path = "vendor_pad_tests.rs"]
+mod vendor_pad_tests;
+
+#[path = "vendor_recovery_tests.rs"]
+mod recovery;
+
+#[path = "vendor_coverage_tests.rs"]
+mod coverage_boundaries;
+
+#[path = "vendor_restart_tests.rs"]
+mod restarts;
+
+#[test]
+fn a_full_width_off_curve_mse_peer_cannot_publish_a_channel() {
+    let (mut fs, mut rng, mut state) = setup();
+    let mut request = [0; 256];
+    let n = build_mse(&mut request, &[0; 32], &[0; 32]);
+    let generation = fs.write_gen();
+    let mut output = [0xA5; 256];
+    assert_eq!(
+        call(
+            &mut fs,
+            &mut rng,
+            &mut state,
+            &mut AlwaysConfirm,
+            &request[..n],
+            &mut output
+        ),
+        Err(CtapError::InvalidParameter)
+    );
+    assert!(!state.mse_live());
+    assert_eq!(fs.write_gen(), generation);
+    assert_eq!(output, [0xA5; 256]);
+}
+
+#[test]
+fn a_tampered_channel_key_cannot_be_opened_or_grant_the_seed() {
+    let (mut fs, mut rng, mut state) = setup();
+    let host = handshake(&mut fs, &mut rng, &mut state);
+    let mut blob = host_wrap(&host, &[0x55; 32], &[0x11; 12]);
+    let channel = state.take_mse().unwrap();
+    assert_eq!(
+        open_channel_key(&channel, &blob).unwrap().expose(),
+        &[0x55; 32]
+    );
+    blob[LOCK_BLOB_LEN - 1] ^= 1;
+    assert!(matches!(
+        open_channel_key(&channel, &blob),
+        Err(CtapError::InvalidParameter)
+    ));
+    assert!(state.keydev_dec.is_none());
+}
+
+#[test]
+fn repeated_mse_refuses_and_scrubs_the_live_channel_in_every_profile() {
+    let (mut fs, mut rng, mut state) = setup();
+    let host = handshake(&mut fs, &mut rng, &mut state);
+    assert_eq!(state.mse_key_for_test(), Some(host.key));
+    let (x, y) = P256Key::from_scalar(&[0x43; 32]).unwrap().public_xy();
+    let mut request = [0; 200];
+    let n = build_mse(&mut request, &x, &y);
+    let generation = fs.write_gen();
+    let mut out = [0xa5; 200];
+    assert_eq!(
+        call(
+            &mut fs,
+            &mut rng,
+            &mut state,
+            &mut AlwaysConfirm,
+            &request[..n],
+            &mut out
+        ),
+        Err(CtapError::NotAllowed)
+    );
+    assert_eq!(state.mse_key_for_test(), None);
+    assert!(!state.mse_live());
+    assert_eq!(fs.write_gen(), generation);
+    assert_eq!(out, [0xa5; 200]);
+    handshake(&mut fs, &mut rng, &mut state);
+    assert!(state.mse_live());
+}
+
+#[test]
+fn declining_the_shared_load_gate_preserves_the_owner_and_spends_the_channel() {
+    struct DeclineSecond(usize);
+    impl UserPresence for DeclineSecond {
+        fn request(&mut self, _: crate::Confirm<'_>) -> Presence {
+            self.0 += 1;
+            if self.0 == 1 {
+                Presence::Confirmed
+            } else {
+                Presence::Timeout
+            }
+        }
+    }
+    let (mut fs, mut rng, mut state) = setup();
+    let original = load_keydev(&dev(), &mut fs).unwrap();
+    let host = handshake(&mut fs, &mut rng, &mut state);
+    let mut request = [0; 128];
+    let n = load_req(&mut request, &wrap32(&host, &[0x33; 32]));
+    let generation = fs.write_gen();
+    let mut presence = DeclineSecond(0);
+    let mut out = [0xa5; 16];
+    assert_eq!(
+        call(
+            &mut fs,
+            &mut rng,
+            &mut state,
+            &mut presence,
+            &request[..n],
+            &mut out
+        ),
+        Err(CtapError::OperationDenied)
+    );
+    assert_eq!(presence.0, 2);
+    assert!(!state.mse_live());
+    assert_eq!(
+        load_keydev(&dev(), &mut fs).unwrap().expose(),
+        original.expose()
+    );
+    assert_eq!(fs.write_gen(), generation);
+    assert_eq!(out, [0xa5; 16]);
 }

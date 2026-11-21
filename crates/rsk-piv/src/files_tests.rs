@@ -7,6 +7,50 @@
 use super::*;
 use rsk_fs::storage::faults::{RemoveStuck, Undead};
 
+#[test]
+fn a_management_key_with_valid_width_but_invalid_touch_policy_is_refused() {
+    for touch in [0, TOUCHPOLICY_CACHED, 0xFF] {
+        let mut record = Secret::<[u8; MGM_RECORD_MAX]>::zeroed();
+        record.expose_mut()[0] = ALGO_AES256;
+        record.expose_mut()[1] = touch;
+        record.expose_mut()[2..34].fill(0x55);
+        assert_eq!(mgm_key(record, 34).map(|_| ()), Err(Sw::MEMORY_FAILURE));
+    }
+}
+
+#[test]
+fn an_early_management_key_wipe_clears_the_live_record() {
+    struct NonceRng;
+    impl Rng for NonceRng {
+        fn fill(&mut self, bytes: &mut [u8]) {
+            bytes.fill(0x11);
+        }
+    }
+    let dev = Device {
+        serial_hash: &[0x22; 32],
+        serial_id: &[0x33; 8],
+        otp_key: None,
+        latched: false,
+    };
+    let mut fs = Fs::new(rsk_fs::storage::ram::RamStorage::new());
+    fs.scan();
+    mgm_put(
+        &dev,
+        &mut fs,
+        &mut NonceRng,
+        ALGO_AES256,
+        TOUCHPOLICY_ALWAYS,
+        &[0x55; 32],
+    )
+    .unwrap();
+    let mut key = mgm_read(&dev, &mut fs).unwrap();
+    assert_eq!(key.key(), &[0x55; 32]);
+    assert_eq!(key.policy, Some((ALGO_AES256, TOUCHPOLICY_ALWAYS)));
+    key.wipe();
+    assert!(key.rec.expose().iter().all(|byte| *byte == 0));
+    assert_eq!(key.key(), &[0; 32]);
+}
+
 /// `RESET_MAX_DELETES` is the sweep's progress guard, and the applet test that
 /// looks like it drives it does not: `reset_reports_failure_when_the_sweep_cannot_converge`
 /// re-yields ONE file, and 1 divides everything, so `>` → `==` merely trips the
@@ -15,7 +59,7 @@ use rsk_fs::storage::faults::{RemoveStuck, Undead};
 ///
 /// `deleted` rises a whole batch at a time, so `==` lets it step PAST the budget
 /// without ever equalling it and the valve stops guarding. Five undead records
-/// instead — 5 divides none of the four applets' budgets (768 · 257 · 512 · 1039).
+/// instead — 5 divides none of the four applets' budgets (1024 · 257 · 512 · 1039).
 /// The fixture's ceiling is what makes that failure READABLE: without it the
 /// mutation hangs the suite rather than failing it.
 #[test]
@@ -75,4 +119,31 @@ fn a_refused_removal_stops_the_sweep_instead_of_spinning_into_the_valve() {
          refusal and the delete budget, not the `?`, is what stopped it",
         medium.attempts()
     );
+}
+
+#[test]
+fn a_removed_value_with_unremoved_metadata_cannot_complete_either_wipe_phase() {
+    use rsk_fs::storage::faults::MetaStuck;
+    for fid in [data_object_fid(0).unwrap(), EF_PIN] {
+        let (backend, medium) = MetaStuck::new();
+        let mut fs = Fs::new(backend);
+        fs.scan();
+        fs.put(fid, b"value").unwrap();
+        fs.meta_add(fid, b"policy").unwrap();
+        medium.stick(true);
+        assert_eq!(wipe_piv(&mut fs), Err(Sw::MEMORY_FAILURE));
+        assert!(!medium.live(fid));
+        assert!(medium.live(rsk_fs::EF_META));
+        medium.stick(false);
+        let mut retained = [0; 6];
+        assert_eq!(fs.meta_find(fid, &mut retained), Some(6));
+        assert_eq!(&retained, b"policy");
+    }
+}
+
+#[test]
+fn unknown_wire_slots_have_no_certificate_fid() {
+    for slot in [0, 0x81, 0x96, 0xff] {
+        assert_eq!(cert_fid_for_slot(slot), None);
+    }
 }

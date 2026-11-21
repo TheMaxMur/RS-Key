@@ -35,14 +35,14 @@ fn new_fs() -> Fs<RamStorage> {
     fs
 }
 
-fn select(app: &mut OtpApplet, fs: &mut Fs<RamStorage>) -> (Sw, Vec<u8>) {
+fn select<S: Storage>(app: &mut OtpApplet, fs: &mut Fs<S>) -> (Sw, Vec<u8>) {
     let mut out = [0u8; 256];
     let mut res = ResBuf::new(&mut out);
     let sw = Applet::select(app, false, fs, &mut res);
     (sw, res.as_slice().to_vec())
 }
 
-fn run(app: &mut OtpApplet, fs: &mut Fs<RamStorage>, raw: &[u8]) -> (Sw, Vec<u8>) {
+fn run<S: Storage>(app: &mut OtpApplet, fs: &mut Fs<S>, raw: &[u8]) -> (Sw, Vec<u8>) {
     let mut out = [0u8; 1024];
     let mut res = ResBuf::new(&mut out);
     let apdu = Apdu::parse(raw).unwrap();
@@ -85,6 +85,11 @@ fn build_config(
     c
 }
 
+/// A legacy record: `cfg` alone, stored as it was before the counter tail.
+fn record(cfg: &[u8]) -> SlotRecord {
+    SlotRecord::from_bytes(cfg).unwrap()
+}
+
 /// HMAC-SHA1 challenge-response config (the `ykman otp chalresp` layout):
 /// 16 key bytes in the AES field, 4 in the UID head.
 fn chalresp_config(key20: &[u8; 20], acc: &[u8; 6], cfg_extra: u8) -> [u8; CONFIG_SIZE] {
@@ -115,6 +120,7 @@ fn slot_sealed_before_otp_burn_survives_the_burn() {
         serial_hash: &SERIAL_HASH,
         serial_id: &SERIAL,
         otp_key: None,
+        latched: false,
     };
     let otp_key = [0x55u8; 32];
     let otp = Device {
@@ -124,10 +130,16 @@ fn slot_sealed_before_otp_burn_survives_the_burn() {
     // Seal a real config under the pre-OTP (NO-OTP) arm.
     let cfg = chalresp_config(&[0xAB; 20], &[0; 6], 0);
     let fid = KeyFid::new(EF_OTP_SLOT1);
-    assert!(seal::seal_put(&nootp, &mut fs, &mut rng, fid, &cfg));
+    assert!(seal::seal_put(
+        &nootp,
+        &mut fs,
+        &mut rng,
+        fid,
+        &record(&cfg)
+    ));
 
     // The OTP-armed device cannot read it yet (different kbase)…
-    let mut buf = [0u8; SLOT_SIZE];
+    let mut buf = SlotRecord::vacant();
     assert!(
         try_read_slot(&otp, &mut fs, EF_OTP_SLOT1, &mut buf)
             .unwrap()
@@ -141,7 +153,7 @@ fn slot_sealed_before_otp_burn_survives_the_burn() {
             .unwrap()
             .is_some()
     );
-    assert_eq!(&buf[..CONFIG_SIZE], &cfg[..]);
+    assert_eq!(&buf.expose()[..CONFIG_SIZE], &cfg[..]);
 
     // Idempotent: a second pass is a no-op and the slot still reads.
     migrate_seal(&otp, &mut fs, &mut rng);
@@ -162,6 +174,7 @@ fn the_boot_pass_re_arms_the_lap_before_it_supersedes_a_pre_otp_slot() {
         serial_hash: &SERIAL_HASH,
         serial_id: &SERIAL,
         otp_key: None,
+        latched: false,
     };
     let otp_key = [0x55u8; 32];
     let otp = Device {
@@ -171,20 +184,29 @@ fn the_boot_pass_re_arms_the_lap_before_it_supersedes_a_pre_otp_slot() {
     let cfg = chalresp_config(&[0xAB; 20], &[0; 6], 0);
     let fid = KeyFid::new(EF_OTP_SLOT1);
     let mut rng = CountRng(7);
-    let mut buf = [0u8; SLOT_SIZE];
+    let mut buf = SlotRecord::vacant();
 
     // The ORDER, on the one medium that can tell the two orderings apart.
     let (cut, medium) = Cut::new();
     let mut fs = Fs::new(cut);
     fs.scan();
-    assert!(seal::seal_put(&nootp, &mut fs, &mut rng, fid, &cfg));
+    assert!(seal::seal_put(
+        &nootp,
+        &mut fs,
+        &mut rng,
+        fid,
+        &record(&cfg)
+    ));
     fs.put(rsk_fs::EF_HARDENED, &[1]).unwrap();
     assert!(
         fs.has_data(rsk_fs::EF_HARDENED),
         "fixture: an earlier boot latched the marker"
     );
     medium.clear_ops();
-    migrate_seal(&otp, &mut fs, &mut rng);
+    assert!(
+        !migrate_seal(&otp, &mut fs, &mut rng),
+        "the slot it moved is not left"
+    );
     medium.assert_re_armed_before(EF_OTP_SLOT1, |_| false, "migrate_seal's pre-OTP arm");
     assert!(
         !fs.has_data(rsk_fs::EF_HARDENED),
@@ -196,10 +218,19 @@ fn the_boot_pass_re_arms_the_lap_before_it_supersedes_a_pre_otp_slot() {
     let (stuck, medium) = RemoveStuck::new();
     let mut fs = Fs::new(stuck);
     fs.scan();
-    assert!(seal::seal_put(&nootp, &mut fs, &mut rng, fid, &cfg));
+    assert!(seal::seal_put(
+        &nootp,
+        &mut fs,
+        &mut rng,
+        fid,
+        &record(&cfg)
+    ));
     fs.put(rsk_fs::EF_HARDENED, &[1]).unwrap();
     medium.refuse(Some(rsk_fs::EF_HARDENED));
-    migrate_seal(&otp, &mut fs, &mut rng);
+    assert!(
+        migrate_seal(&otp, &mut fs, &mut rng),
+        "a refused re-seal is left"
+    );
     assert!(
         try_read_slot(&otp, &mut fs, EF_OTP_SLOT1, &mut buf)
             .unwrap()
@@ -234,6 +265,7 @@ fn the_boot_pass_re_arms_the_lap_before_it_seals_a_cleartext_slot() {
         serial_hash: &SERIAL_HASH,
         serial_id: &SERIAL,
         otp_key: Some(&otp_key),
+        latched: false,
     };
     let cfg = chalresp_config(&[0x0B; 20], &[0; 6], 0);
     let mut rng = CountRng(1);
@@ -272,9 +304,9 @@ fn the_boot_pass_re_arms_the_lap_before_it_seals_a_cleartext_slot() {
     assert!(!medium.live(rsk_fs::EF_HARDENED));
 }
 
-fn configure(
+fn configure<S: Storage>(
     app: &mut OtpApplet,
-    fs: &mut Fs<RamStorage>,
+    fs: &mut Fs<S>,
     p1: u8,
     p2: u8,
     config: &[u8; CONFIG_SIZE],
@@ -557,7 +589,7 @@ fn calculate_rejections_and_empty_slot() {
     // Unknown INS / CLA.
     let (sw, _) = run(&mut app, &mut fs, &[0x00, 0x02, 0, 0]);
     assert_eq!(sw, Sw::INS_NOT_SUPPORTED);
-    let (sw, _) = run(&mut app, &mut fs, &[0x80, 0x01, 0x10, 0]);
+    let (sw, _) = run(&mut app, &mut fs, &[0x40, 0x01, 0x10, 0]);
     assert_eq!(sw, Sw::CLA_NOT_SUPPORTED);
     // Unknown P1 answers a bare OK.
     let (sw, body) = run(&mut app, &mut fs, &otp_apdu(0x77, 0, &[]));
@@ -639,13 +671,13 @@ fn update_validates_slot_bounds_crc_and_rfu() {
     let (sw, _) = run(
         &mut app,
         &mut fs,
-        &otp_apdu(0x04, SLOT_COUNT as u8, &with_acc(&good)),
+        &otp_apdu(0x04, SLOT_COUNT, &with_acc(&good)),
     );
     assert_eq!(sw, Sw::INCORRECT_P1P2, "one past the last slot");
     let (sw, _) = run(
         &mut app,
         &mut fs,
-        &otp_apdu(0x04, SLOT_COUNT as u8 - 1, &with_acc(&good)),
+        &otp_apdu(0x04, SLOT_COUNT - 1, &with_acc(&good)),
     );
     assert_ne!(sw, Sw::INCORRECT_P1P2, "the last slot is addressable");
 
@@ -675,10 +707,10 @@ fn update_validates_slot_bounds_crc_and_rfu() {
     let upd = build_config(b"public", &[3; 6], &[4; 16], &[0; 6], 0, 0x02, 0);
     let (sw, _) = run(&mut app, &mut fs, &otp_apdu(0x04, 1, &with_acc(&upd)));
     assert_eq!(sw, Sw::OK);
-    let mut stored = [0u8; SLOT_SIZE];
+    let mut stored = SlotRecord::vacant();
     app.read_slot_m(&mut fs, EF_OTP_SLOT1 + 1, &mut stored)
         .expect("the update must land on the slot its P2 names");
-    assert_eq!(stored[OFF_TKT_FLAGS], 0x02);
+    assert_eq!(stored.expose()[OFF_TKT_FLAGS], 0x02);
 }
 
 #[test]
@@ -747,16 +779,17 @@ fn update_replaces_the_whole_ext_flag_byte() {
     let (sw, _) = run(&mut app, &mut fs, &otp_apdu(0x04, 0, &d));
     assert_eq!(sw, Sw::OK);
 
-    let mut stored = [0u8; SLOT_SIZE];
+    let mut stored = SlotRecord::vacant();
     app.read_slot_m(&mut fs, EF_OTP_SLOT1, &mut stored)
         .expect("the slot is configured");
     assert_eq!(
-        stored[OFF_EXT_FLAGS], 0x5A,
+        stored.expose()[OFF_EXT_FLAGS],
+        0x5A,
         "every ext bit is updateable, so the update's byte must stand alone — \
          not ORed with what was there, and not masked to nothing"
     );
     // The neighbours the same merge must NOT have touched.
-    assert_eq!(&stored[..OFF_ACC_CODE.min(6)], b"public");
+    assert_eq!(&stored.expose()[..OFF_ACC_CODE.min(6)], b"public");
 }
 
 #[test]
@@ -773,26 +806,32 @@ fn update_preserves_use_counter_tail() {
         serial_hash: &SERIAL_HASH,
         serial_id: &SERIAL,
         otp_key: None,
+        latched: false,
     };
-    let mut bump_rng = CountRng(9);
 
-    // A plain Yubico-OTP typed slot (tkt = cfg = 0) — the kind power_up_bump advances.
+    // A plain Yubico-OTP typed slot (tkt = cfg = 0) — the kind a boot's first press advances.
     let cfg = build_config(b"public", &[1; 6], &[2; 16], &[0; 6], 0, 0, 0);
     assert_eq!(
         configure(&mut app, &mut fs, 0x01, 0, &cfg, &[0; 6]).0,
         Sw::OK
     );
 
-    // Advance the use counter across three "power cycles".
+    // Advance the use counter across three boots, one press each: a boot is a fresh applet.
     for _ in 0..3 {
-        power_up_bump(&dev, &mut fs, &mut bump_rng);
+        let mut booted = OtpApplet::new(SERIAL, SERIAL_HASH, None, &rng, &presence);
+        let mut out = [0u8; ticket::MAX_TICKET];
+        assert!(
+            booted
+                .button_ticket(1, 0, [0, 0], &mut fs, &mut out)
+                .is_some()
+        );
     }
-    let mut buf = [0u8; SLOT_SIZE];
+    let mut buf = SlotRecord::vacant();
     let n = try_read_slot(&dev, &mut fs, EF_OTP_SLOT1, &mut buf)
         .unwrap()
         .unwrap();
     assert_eq!(n, SLOT_SIZE);
-    let before = u16::from_be_bytes([buf[CONFIG_SIZE], buf[CONFIG_SIZE + 1]]);
+    let before = u16::from_be_bytes([buf.expose()[CONFIG_SIZE], buf.expose()[CONFIG_SIZE + 1]]);
     assert_eq!(before, 3);
 
     // A routine SLOT_UPDATE (e.g. changing pacing bits) must not touch the counter.
@@ -805,7 +844,7 @@ fn update_preserves_use_counter_tail() {
         .unwrap()
         .unwrap();
     assert_eq!(n, SLOT_SIZE, "update truncated the slot record");
-    let after = u16::from_be_bytes([buf[CONFIG_SIZE], buf[CONFIG_SIZE + 1]]);
+    let after = u16::from_be_bytes([buf.expose()[CONFIG_SIZE], buf.expose()[CONFIG_SIZE + 1]]);
     assert_eq!(after, before, "update rolled the use counter back");
 }
 
@@ -967,18 +1006,19 @@ fn hid_frame_device_info_read() {
     let payload = [0u8; hid::PAYLOAD_SIZE];
     let reports = hid::split_frame(&payload, 0x13);
     let mut rx = hid::FrameRx::new();
+    let mut payload = Secret::<[u8; hid::PAYLOAD_SIZE]>::zeroed();
     let mut frame = None;
     for r in &reports {
-        if let hid::RxOutcome::Frame { slot, payload } = rx.feed(r) {
-            frame = Some((slot, payload));
+        if let hid::RxOutcome::Frame { slot } = rx.feed(r, &mut payload) {
+            frame = Some(slot);
         }
     }
-    let (slot, payload) = frame.expect("frame did not reassemble");
+    let slot = frame.expect("frame did not reassemble");
     assert_eq!(slot, 0x13);
 
     let mut out = [0u8; 64];
     let mut res = ResBuf::new(&mut out);
-    let sw = app.process_hid(slot, &payload, &mut fs, &mut res);
+    let sw = app.process_hid(slot, payload.expose(), &mut fs, &mut res);
     assert_eq!(sw, Sw::OK);
     let body = res.as_slice().to_vec();
     assert!(!body.is_empty(), "a read command must stream a body");
@@ -1103,6 +1143,76 @@ fn hid_frame_set_device_info_bumps_program_sequence() {
     );
 }
 
+/// A locked configuration refuses a SET_DEVICE_INFO without its code the way the
+/// keyboard transport can say so: the sequence stays put, which yubikit reads as a
+/// rejected write, and nothing is stored.
+#[cfg(not(feature = "strict-config"))]
+#[test]
+fn hid_frame_set_device_info_honours_the_configuration_lock() {
+    let mut fs = new_fs();
+    let presence = RefCell::new(TestPresence(Presence::Declined));
+    let rng = RefCell::new(CountRng(7));
+    let mut app = OtpApplet::new(SERIAL, SERIAL_HASH, None, &rng, &presence);
+    let code = [0xA5; 16];
+    let frame = |body: &[u8]| {
+        let mut payload = [0u8; hid::PAYLOAD_SIZE];
+        payload[0] = body.len() as u8;
+        payload[1..=body.len()].copy_from_slice(body);
+        payload
+    };
+    let mut out = [0u8; 64];
+    let mut set = vec![0x0A, 0x10];
+    set.extend_from_slice(&code);
+    // A lock set where none is takes the operator's touch; declined, the frame is
+    // refused as any other is, and the sequence stays put.
+    let seq = app.hid_status_frame(&mut fs)[4];
+    let mut res = ResBuf::new(&mut out);
+    assert_eq!(
+        app.process_hid(0x15, &frame(&set), &mut fs, &mut res),
+        Sw::CONDITIONS_NOT_SATISFIED
+    );
+    assert_eq!(app.hid_status_frame(&mut fs)[4], seq);
+    presence.borrow_mut().0 = Presence::Confirmed;
+    let mut res = ResBuf::new(&mut out);
+    assert_eq!(
+        app.process_hid(0x15, &frame(&set), &mut fs, &mut res),
+        Sw::OK
+    );
+    // Every write through the lock carries its code, and asks nothing more.
+    presence.borrow_mut().0 = Presence::Declined;
+
+    let fido_only = [0x03, 0x02, 0x02, 0x00];
+    let seq = app.hid_status_frame(&mut fs)[4];
+    let mut res = ResBuf::new(&mut out);
+    assert_eq!(
+        app.process_hid(0x15, &frame(&fido_only), &mut fs, &mut res),
+        Sw::COMMAND_NOT_ALLOWED
+    );
+    assert_eq!(
+        app.hid_status_frame(&mut fs)[4],
+        seq,
+        "a refused write advanced pgmSeq"
+    );
+    assert_eq!(
+        rsk_devconf::read_enabled_caps(&mut fs),
+        rsk_devconf::SUPPORTED_CAPS
+    );
+
+    let mut opened = vec![0x0B, 0x10];
+    opened.extend_from_slice(&code);
+    opened.extend_from_slice(&fido_only);
+    let mut res = ResBuf::new(&mut out);
+    assert_eq!(
+        app.process_hid(0x15, &frame(&opened), &mut fs, &mut res),
+        Sw::OK
+    );
+    assert_eq!(app.hid_status_frame(&mut fs)[4], seq.wrapping_add(1));
+    assert_eq!(
+        rsk_devconf::read_enabled_caps(&mut fs),
+        rsk_devconf::CAP_FIDO2
+    );
+}
+
 #[cfg(feature = "strict-config")]
 #[test]
 fn hid_frame_set_device_info_ignored_under_strict() {
@@ -1163,6 +1273,90 @@ fn configure_seals_secret_at_rest() {
     );
 }
 
+/// Past the latch a fused key that did not read leaves no arm to open or seal
+/// under: a press types nothing and moves no counter, and CONFIGURE refuses and
+/// writes nothing.
+#[test]
+fn past_the_latch_an_unread_key_types_and_stores_nothing() {
+    fn fused(out: &mut [u8; 32]) -> bool {
+        *out = [0x77; 32];
+        true
+    }
+    fn unread(_: &mut [u8; 32]) -> bool {
+        false
+    }
+    let mut fs = new_fs();
+    let presence = RefCell::new(AlwaysConfirm);
+    let rng = RefCell::new(CountRng(7));
+    let open = Some(rsk_crypto::FusedKey::open(fused));
+    let mut app = OtpApplet::new(SERIAL, SERIAL_HASH, open, &rng, &presence);
+    let cfg = build_config(&[0, 1, 2, 3, 4, 5], &[1; 6], &[2; 16], &[0; 6], 0, 0, 0);
+    assert_eq!(
+        configure(&mut app, &mut fs, 0x01, 0, &cfg, &[0; 6]).0,
+        Sw::OK
+    );
+    let slot = |fs: &mut Fs<RamStorage>| {
+        let mut buf = [0u8; 128];
+        let n = fs.read_key(KeyFid::new(EF_OTP_SLOT1), &mut buf);
+        n.map(|n| buf[..n].to_vec())
+    };
+    let before = slot(&mut fs);
+
+    let shut = Some(rsk_crypto::FusedKey::latched(unread));
+    let mut shut = OtpApplet::new(SERIAL, SERIAL_HASH, shut, &rng, &presence);
+    let mut out = [0u8; ticket::MAX_TICKET];
+    assert!(
+        shut.button_ticket(1, 0, [0, 0], &mut fs, &mut out)
+            .is_none()
+    );
+    let (sw, _) = configure(&mut shut, &mut fs, 0x01, 0, &cfg, &[0; 6]);
+    assert_eq!(sw, Sw::FUSED_KEY_UNREAD);
+    assert_eq!(slot(&mut fs), before, "typed or stored past the latch");
+}
+
+/// Past the fuse latch a slot only the pre-OTP arm or the clear opens was planted:
+/// the boot pass leaves it where it is instead of sealing it onto the fused root.
+#[test]
+fn past_the_latch_no_pre_otp_or_clear_slot_moves() {
+    let nootp = Device {
+        serial_hash: &SERIAL_HASH,
+        serial_id: &SERIAL,
+        otp_key: None,
+        latched: false,
+    };
+    let latched = Device {
+        otp_key: Some(&[0x55; 32]),
+        latched: true,
+        ..nootp
+    };
+    let cfg = chalresp_config(&[0x0B; 20], &[0; 6], 0);
+    let fid = KeyFid::new(EF_OTP_SLOT1);
+    let mut rng = CountRng(1);
+    for shape in ["pre-OTP", "clear"] {
+        let mut fs = new_fs();
+        if shape == "clear" {
+            fs.put(EF_OTP_SLOT1, &cfg).unwrap();
+        } else {
+            assert!(seal::seal_put(
+                &nootp,
+                &mut fs,
+                &mut rng,
+                fid,
+                &record(&cfg)
+            ));
+        }
+        let mut before = [0u8; seal::MAX_BLOB];
+        let n = fs.read_key(fid, &mut before).unwrap();
+        assert!(!migrate_seal(&latched, &mut fs, &mut rng), "{shape}");
+        let mut after = [0u8; seal::MAX_BLOB];
+        assert_eq!(fs.read_key(fid, &mut after), Some(n));
+        assert_eq!(
+            after, before,
+            "{shape}: a planted slot moved past the latch"
+        );
+    }
+}
+
 #[test]
 fn legacy_plaintext_slot_migrates_and_stays_usable() {
     // A pre-seal device stored the 52-byte config in the clear via fs.put.
@@ -1178,6 +1372,7 @@ fn legacy_plaintext_slot_migrates_and_stays_usable() {
         serial_hash: &SERIAL_HASH,
         serial_id: &SERIAL,
         otp_key: None,
+        latched: false,
     };
     let mut mrng = CountRng(1);
     migrate_seal(&dev, &mut fs, &mut mrng);
@@ -1388,7 +1583,7 @@ fn typed_position(otp: &[u8], key: &[u8; 16]) -> ([u8; 6], u16, u8) {
 }
 
 /// Press `slot`, decode what it typed as the record `pid`/`key` names, and fail
-/// if that record has already typed this position in this power cycle.
+/// if that record has already typed this position.
 fn press_once(
     app: &mut OtpApplet,
     fs: &mut Fs<RamStorage>,
@@ -1404,8 +1599,8 @@ fn press_once(
     assert_eq!(&pos.0, pid, "slot {slot} holds the wrong record");
     assert!(
         !seen.contains(&pos),
-        "slot {slot} re-typed the replay position {pos:?}, already emitted this \
-         power cycle: {seen:?}"
+        "slot {slot} re-typed the replay position {pos:?}, already emitted: \
+         {seen:?}"
     );
     seen.push(pos);
 }
@@ -1479,6 +1674,47 @@ fn swap_carries_the_session_counter_with_its_record() {
     );
     press_once(&mut app, &mut fs, 3, pid_a, &key_a, &mut seen);
     press_once(&mut app, &mut fs, 1, pid_c, &key_c, &mut seen);
+}
+
+#[test]
+fn swap_carries_the_boot_advance_with_its_record() {
+    // Whether a record has taken this boot's advance is the record's, like its
+    // session: left with the slot, a swap hands a record not yet pressed this boot
+    // a slot that was, and its first press types the last boot's first position.
+    let mut fs = new_fs();
+    let presence = RefCell::new(AlwaysConfirm);
+    let rng = RefCell::new(CountRng(7));
+    let mut app = OtpApplet::new(SERIAL, SERIAL_HASH, None, &rng, &presence);
+    let (pid_a, pid_b) = (b"aaaaaa", b"bbbbbb");
+    let (key_a, key_b) = ([0xA1u8; 16], [0xB1u8; 16]);
+    let cfg_a = build_config(pid_a, &[0x0A; 6], &key_a, &[0; 6], 0, 0, 0);
+    let cfg_b = build_config(pid_b, &[0x0B; 6], &key_b, &[0; 6], 0, 0, 0);
+    assert_eq!(
+        configure(&mut app, &mut fs, 0x01, 0, &cfg_a, &[0; 6]).0,
+        Sw::OK
+    );
+    assert_eq!(
+        configure(&mut app, &mut fs, 0x03, 0, &cfg_b, &[0; 6]).0,
+        Sw::OK
+    );
+
+    // Boot 1 presses B alone; boot 2 presses A, then swaps B into A's slot.
+    let mut seen = Vec::new();
+    press_once(&mut app, &mut fs, 2, pid_b, &key_b, &mut seen);
+    let mut app = OtpApplet::new(SERIAL, SERIAL_HASH, None, &rng, &presence);
+    press_once(&mut app, &mut fs, 1, pid_a, &key_a, &mut seen);
+    assert_eq!(run(&mut app, &mut fs, &otp_apdu(0x06, 0, &[])).0, Sw::OK);
+    press_once(&mut app, &mut fs, 1, pid_b, &key_b, &mut seen);
+    press_once(&mut app, &mut fs, 2, pid_a, &key_a, &mut seen);
+    assert_eq!(
+        seen,
+        [
+            (*pid_b, 1, 0),
+            (*pid_a, 1, 0),
+            (*pid_b, 2, 0),
+            (*pid_a, 1, 1)
+        ]
+    );
 }
 
 #[test]
@@ -1557,11 +1793,11 @@ fn configure_f<S: Storage>(
 /// observation reads the RECORD and not a status bit: `status()` is recomputed
 /// off the same flash the command could not read.
 fn slot_fixed<S: Storage>(app: &OtpApplet, fs: &mut Fs<S>, fid: u16) -> Option<[u8; 6]> {
-    let mut buf = [0u8; SLOT_SIZE];
+    let mut buf = SlotRecord::vacant();
     let n = app.read_slot_m(fs, fid, &mut buf)?;
     assert!(n >= CONFIG_SIZE);
     let mut pid = [0u8; 6];
-    pid.copy_from_slice(&buf[..6]);
+    pid.copy_from_slice(&buf.expose()[..6]);
     Some(pid)
 }
 
@@ -1739,10 +1975,11 @@ fn update_reports_a_slot_it_could_not_read() {
     let sw = run_f(&mut app, &mut fs, &otp_apdu(0x04, 0, &d));
     medium.stick(None);
 
-    let mut buf = [0u8; SLOT_SIZE];
+    let mut buf = SlotRecord::vacant();
     app.read_slot_m(&mut fs, EF_OTP_SLOT1, &mut buf).unwrap();
     assert_eq!(
-        buf[OFF_TKT_FLAGS], 0,
+        buf.expose()[OFF_TKT_FLAGS],
+        0,
         "the fixture let the update through — this case would test nothing"
     );
     assert_eq!(
@@ -1753,7 +1990,7 @@ fn update_reports_a_slot_it_could_not_read() {
     // The control: over a medium that answers, the same frame updates the flags.
     assert_eq!(run_f(&mut app, &mut fs, &otp_apdu(0x04, 0, &d)), Sw::OK);
     app.read_slot_m(&mut fs, EF_OTP_SLOT1, &mut buf).unwrap();
-    assert_eq!(buf[OFF_TKT_FLAGS], TKT_APPEND_CR);
+    assert_eq!(buf.expose()[OFF_TKT_FLAGS], TKT_APPEND_CR);
 }
 
 #[test]
@@ -1945,22 +2182,19 @@ fn scan_map_refuses_a_slot_it_could_not_read() {
 
 /// The stored use counter of slot 1, read with the fault disarmed.
 fn stored_use_counter(dev: &Device, fs: &mut Fs<ProbeStuck>) -> u16 {
-    let mut buf = [0u8; SLOT_SIZE];
+    let mut buf = SlotRecord::vacant();
     let n = try_read_slot(dev, fs, EF_OTP_SLOT1, &mut buf)
         .unwrap()
         .unwrap();
     assert_eq!(n, SLOT_SIZE, "the slot lost its counter tail");
-    u16::from_be_bytes([buf[CONFIG_SIZE], buf[CONFIG_SIZE + 1]])
+    u16::from_be_bytes([buf.expose()[CONFIG_SIZE], buf.expose()[CONFIG_SIZE + 1]])
 }
 
 #[test]
-fn power_up_bump_retries_a_slot_the_medium_refused() {
-    // The RAM session counter restarts at zero every power cycle, so what keeps
-    // this cycle's pairs out of the last one's is the boot bump of the PERSISTED
-    // half. A refused probe skipped the slot entirely — and a fault that clears
-    // before the first press then leaves the key typing positions it has already
-    // typed. The press path types nothing while the medium is refusing, so the
-    // window belongs to the TRANSIENT fault, which is the one a retry closes.
+fn a_first_press_the_medium_refused_leaves_the_advance_owed() {
+    // The session restarts at zero with every boot, so what keeps this boot's pairs
+    // out of the last one's is the first press advancing the PERSISTED half. A
+    // press whose read the medium refused types nothing and must leave that owed.
     let (mut fs, medium) = faulted_fs();
     let presence = RefCell::new(AlwaysConfirm);
     let rng = RefCell::new(CountRng(7));
@@ -1969,56 +2203,44 @@ fn power_up_bump_retries_a_slot_the_medium_refused() {
         serial_hash: &SERIAL_HASH,
         serial_id: &SERIAL,
         otp_key: None,
+        latched: false,
     };
-    let mut bump_rng = CountRng(9);
-    // A plain typed Yubico-OTP slot — the only kind the bump advances.
-    let cfg = build_config(b"public", &[1; 6], &[2; 16], &[0; 6], 0, 0, 0);
+    let (pid, key) = (b"public", [2u8; 16]);
+    let cfg = build_config(pid, &[1; 6], &key, &[0; 6], 0, 0, 0);
     assert_eq!(
         configure_f(&mut app, &mut fs, 0x01, 0, &cfg, &[0; 6]),
         Sw::OK
     );
     assert_eq!(stored_use_counter(&dev, &mut fs), 0);
 
-    medium.stick_once(EF_OTP_SLOT1);
-    power_up_bump(&dev, &mut fs, &mut bump_rng);
-    medium.stick(None);
-    assert_eq!(
-        stored_use_counter(&dev, &mut fs),
-        1,
-        "the boot bump skipped a slot over one faulted read, so this power cycle \
-         re-types the last one's positions"
-    );
-
-    // And the direction the counter must NOT move: a slot the medium serves is
-    // advanced once per boot, never twice, and never at all for a HOTP slot.
-    power_up_bump(&dev, &mut fs, &mut bump_rng);
-    assert_eq!(stored_use_counter(&dev, &mut fs), 2);
-    let hotp = build_config(b"", &[1; 6], &[2; 16], &[0; 6], 0, TKT_OATH_HOTP, 0);
-    assert_eq!(
-        configure_f(&mut app, &mut fs, 0x03, 0, &hotp, &[0; 6]),
-        Sw::OK
-    );
-    medium.stick_once(EF_OTP_SLOT2);
-    power_up_bump(&dev, &mut fs, &mut bump_rng);
-    medium.stick(None);
-    let mut buf = [0u8; SLOT_SIZE];
-    try_read_slot(&dev, &mut fs, EF_OTP_SLOT2, &mut buf)
-        .unwrap()
-        .unwrap();
-    assert_eq!(
-        u16::from_be_bytes([buf[CONFIG_SIZE], buf[CONFIG_SIZE + 1]]),
-        0,
-        "the retry advanced an OATH-HOTP slot's moving factor"
-    );
+    // Two boots, each opening with a press the medium refused.
+    for (boot, want) in [(1, 1), (2, 2)] {
+        let mut app = OtpApplet::new(SERIAL, SERIAL_HASH, None, &rng, &presence);
+        medium.stick_once(EF_OTP_SLOT1);
+        let refused = press_position(&mut app, &mut fs, 1, &key);
+        medium.stick(None);
+        assert_eq!(refused, None, "boot {boot} typed over a refused read");
+        assert_eq!(stored_use_counter(&dev, &mut fs), want - 1);
+        // The next press takes the advance the refused one owed, and only once.
+        assert_eq!(
+            press_position(&mut app, &mut fs, 1, &key),
+            Some((*pid, want, 0)),
+            "boot {boot}'s first typed position"
+        );
+        assert_eq!(
+            press_position(&mut app, &mut fs, 1, &key),
+            Some((*pid, want, 1))
+        );
+        assert_eq!(stored_use_counter(&dev, &mut fs), want);
+    }
 }
 
 #[test]
-fn a_slot_the_medium_never_serves_is_left_alone() {
-    // The other arm of every guard above: a medium that keeps refusing must not
-    // turn a read into a write. The bump gives up rather than looping, the press
-    // types nothing, and the gates refuse instead of overwriting — so a stuck
-    // slot is inert, which is the residual docs/threat-model.md states.
-    let (mut fs, medium) = faulted_fs();
+fn a_boots_first_press_advances_only_a_yubico_otp_counter() {
+    // The advance is the Yubico-OTP position's: a HOTP slot's tail is its moving
+    // factor, which each press already steps once, and a static or short-ticket
+    // slot types a fixed string and has no counter.
+    let mut fs = new_fs();
     let presence = RefCell::new(AlwaysConfirm);
     let rng = RefCell::new(CountRng(7));
     let mut app = OtpApplet::new(SERIAL, SERIAL_HASH, None, &rng, &presence);
@@ -2026,7 +2248,84 @@ fn a_slot_the_medium_never_serves_is_left_alone() {
         serial_hash: &SERIAL_HASH,
         serial_id: &SERIAL,
         otp_key: None,
+        latched: false,
     };
+    let hotp = build_config(b"", &[1; 6], &[2; 16], &[0; 6], 0, TKT_OATH_HOTP, 0);
+    let fixed = build_config(
+        b"static",
+        &[1; 6],
+        &[2; 16],
+        &[0; 6],
+        0,
+        0,
+        CFG_STATIC_TICKET,
+    );
+    assert_eq!(
+        configure(&mut app, &mut fs, 0x01, 0, &hotp, &[0; 6]).0,
+        Sw::OK
+    );
+    assert_eq!(
+        configure(&mut app, &mut fs, 0x03, 0, &fixed, &[0; 6]).0,
+        Sw::OK
+    );
+    let short = build_config(b"short", &[1; 6], &[2; 16], &[0; 6], 0, 0, CFG_SHORT_TICKET);
+    assert_eq!(
+        configure(&mut app, &mut fs, 0x01, 2, &short, &[0; 6]).0,
+        Sw::OK
+    );
+
+    for _ in 0..2 {
+        let mut booted = OtpApplet::new(SERIAL, SERIAL_HASH, None, &rng, &presence);
+        let mut out = [0u8; ticket::MAX_TICKET];
+        assert!(
+            booted
+                .button_ticket(1, 0, [0, 0], &mut fs, &mut out)
+                .is_some()
+        );
+        assert!(
+            booted
+                .button_ticket(2, 0, [0, 0], &mut fs, &mut out)
+                .is_some()
+        );
+        assert!(
+            booted
+                .button_ticket(3, 0, [0, 0], &mut fs, &mut out)
+                .is_some()
+        );
+    }
+    let tail = |fs: &mut Fs<RamStorage>, fid| {
+        let mut buf = SlotRecord::vacant();
+        try_read_slot(&dev, fs, fid, &mut buf).unwrap().unwrap();
+        u64::from_be_bytes(buf.expose()[CONFIG_SIZE..].try_into().unwrap())
+    };
+    // The programmed factor is the UID's last two bytes, 0x0101; two presses step it twice.
+    assert_eq!(
+        tail(&mut fs, EF_OTP_SLOT1),
+        0x0103,
+        "two presses stepped a HOTP factor other than twice"
+    );
+    assert_eq!(
+        tail(&mut fs, EF_OTP_SLOT2),
+        0,
+        "a press moved a static slot's tail"
+    );
+    assert_eq!(
+        tail(&mut fs, EF_OTP_SLOT1 + 2),
+        0,
+        "a press moved a short-ticket slot's tail"
+    );
+}
+
+#[test]
+fn a_slot_the_medium_never_serves_is_left_alone() {
+    // The other arm of every guard above: a medium that keeps refusing must not
+    // turn a read into a write. The press types nothing and the gates refuse
+    // instead of overwriting, so a stuck slot is inert: the residual
+    // docs/threat-model.md states.
+    let (mut fs, medium) = faulted_fs();
+    let presence = RefCell::new(AlwaysConfirm);
+    let rng = RefCell::new(CountRng(7));
+    let mut app = OtpApplet::new(SERIAL, SERIAL_HASH, None, &rng, &presence);
     let cfg = build_config(b"public", &[1; 6], &[2; 16], &[0; 6], 0, 0, 0);
     assert_eq!(
         configure_f(&mut app, &mut fs, 0x01, 0, &cfg, &[0; 6]),
@@ -2035,7 +2334,6 @@ fn a_slot_the_medium_never_serves_is_left_alone() {
     let sealed = medium.value(EF_OTP_SLOT1).unwrap();
 
     medium.stick(Some(EF_OTP_SLOT1));
-    power_up_bump(&dev, &mut fs, &mut CountRng(9));
     let mut out = [0u8; ticket::MAX_TICKET];
     assert!(app.button_ticket(1, 0, [0, 0], &mut fs, &mut out).is_none());
     medium.stick(None);
@@ -2181,64 +2479,363 @@ fn a_press_types_nothing_when_it_cannot_persist_the_counter() {
 }
 
 #[test]
-fn boot_bump_retries_a_refused_write_and_pins_what_it_cannot_close() {
-    // The boot-bump write. Two arms, and they are different claims.
+fn a_boot_whose_advance_is_refused_types_nothing_until_it_lands() {
+    // A boot's first press owes the stored counter an advance. A store refusing it,
+    // once or for good, must not get a position at or below one already typed:
+    // a validation server orders OTPs by that pair and rejects the rest as replays.
     let (mut fs, fid, budget) = write_stuck_fs();
     let presence = RefCell::new(AlwaysConfirm);
     let rng = RefCell::new(CountRng(7));
     let mut app = OtpApplet::new(SERIAL, SERIAL_HASH, None, &rng, &presence);
-    let dev = Device {
-        serial_hash: &SERIAL_HASH,
-        serial_id: &SERIAL,
-        otp_key: None,
-    };
     let (pid, key) = (b"public", [0xA1u8; 16]);
     let cfg = build_config(pid, &[1; 6], &key, &[0; 6], 0, 0, 0);
     assert_eq!(
         configure_f(&mut app, &mut fs, 0x01, 0, &cfg, &[0; 6]),
         Sw::OK
     );
+    let mut typed = vec![press_position(&mut app, &mut fs, 1, &key).unwrap()];
 
-    // Cycle 1: the bump lands, and one press takes the cycle's first position.
-    let () = power_up_bump(&dev, &mut fs, &mut CountRng(9));
-    let first = press_position(&mut app, &mut fs, 1, &key).unwrap();
-    assert_eq!(first, (*pid, 1, 0));
-
-    // Cycle 2 — a power cycle is a fresh applet, so the RAM session restarts at
-    // zero. ONE refused write, which the retry outlasts: the counter moves and the
-    // press cannot reach cycle 1's position.
-    let mut app = OtpApplet::new(SERIAL, SERIAL_HASH, None, &rng, &presence);
-    fid.set(Some(EF_OTP_SLOT1));
-    budget.set(1);
-    let () = power_up_bump(&dev, &mut fs, &mut CountRng(9));
-    fid.set(None);
-    budget.set(0);
-    let second = press_position(&mut app, &mut fs, 1, &key).unwrap();
-    assert_ne!(
-        second, first,
-        "one refused boot write re-typed the last cycle's position"
+    // Boot 2 — a boot is a fresh applet — refuses the advance once, boot 3 for good.
+    let mut refused = Vec::new();
+    for (boot, refusals, presses) in [(2, 1, 1), (3, u32::MAX, 3)] {
+        let mut app = OtpApplet::new(SERIAL, SERIAL_HASH, None, &rng, &presence);
+        fid.set(Some(EF_OTP_SLOT1));
+        budget.set(refusals);
+        for _ in 0..presses {
+            let pos = press_position(&mut app, &mut fs, 1, &key);
+            typed.extend(pos);
+            refused.push((boot, pos));
+        }
+        fid.set(None);
+        budget.set(0);
+        typed.extend(press_position(&mut app, &mut fs, 1, &key));
+    }
+    assert!(
+        typed
+            .windows(2)
+            .all(|w| (w[0].1, w[0].2) < (w[1].1, w[1].2)),
+        "a press typed a position at or below one already typed: {typed:?}"
     );
-    assert_eq!(second, (*pid, 2, 0));
+    assert!(
+        refused.iter().all(|(_, pos)| pos.is_none()),
+        "a press typed with its advance refused: {refused:?}"
+    );
+    assert_eq!(typed, [(*pid, 1, 0), (*pid, 2, 0), (*pid, 3, 0)]);
+}
 
-    // Cycle 3 — the RESIDUAL, pinned rather than described, and it is a CHOICE
-    // and not a limit: a refusal the retry cannot outlast (a full store answers
-    // `NoMemory` to every attempt) leaves the counter where it was, and the device
-    // goes on typing rather than denying the press. Two closures exist, both real.
-    // Whichever lands, this assertion has to go red — so the `let ()` above is
-    // load-bearing. Measured: with the boot pass returning a stale-slot bitmask and
-    // the applet wired to it, the residual WAS closed and this test stayed green
-    // at 77 passed, because it called the boot pass as a bare statement and never
-    // asked it anything. Binding the unit makes that signature change a compile
-    // error here instead.
+#[test]
+fn a_swap_that_lands_half_owes_both_slots_the_boot_advance() {
+    // The swap writes slot 1 and then slot 2, and moves the RAM halves only once
+    // both land. Refused at the second write, slot 1 holds B under A's RAM half —
+    // the advance A took this boot — so B's next press must still take its own.
+    let (mut fs, fid, budget) = write_stuck_fs();
+    let presence = RefCell::new(AlwaysConfirm);
+    let rng = RefCell::new(CountRng(7));
     let mut app = OtpApplet::new(SERIAL, SERIAL_HASH, None, &rng, &presence);
-    fid.set(Some(EF_OTP_SLOT1));
-    budget.set(u32::MAX);
-    let () = power_up_bump(&dev, &mut fs, &mut CountRng(9));
-    fid.set(None);
-    budget.set(0);
+    let (pid_a, pid_b) = (b"aaaaaa", b"bbbbbb");
+    let (key_a, key_b) = ([0xA1u8; 16], [0xB1u8; 16]);
+    let cfg_a = build_config(pid_a, &[0x0A; 6], &key_a, &[0; 6], 0, 0, 0);
+    let cfg_b = build_config(pid_b, &[0x0B; 6], &key_b, &[0; 6], 0, 0, 0);
     assert_eq!(
-        press_position(&mut app, &mut fs, 1, &key),
-        Some(second),
-        "RESIDUAL CLOSED: update docs/threat-model.md's TM-HOST-OTP-REPLAY"
+        configure_f(&mut app, &mut fs, 0x01, 0, &cfg_a, &[0; 6]),
+        Sw::OK
+    );
+    assert_eq!(
+        configure_f(&mut app, &mut fs, 0x03, 0, &cfg_b, &[0; 6]),
+        Sw::OK
+    );
+    let typed: Vec<_> = (0..3)
+        .map(|_| press_position(&mut app, &mut fs, 2, &key_b).unwrap())
+        .collect();
+
+    let mut app = OtpApplet::new(SERIAL, SERIAL_HASH, None, &rng, &presence);
+    assert_eq!(
+        press_position(&mut app, &mut fs, 1, &key_a),
+        Some((*pid_a, 1, 0))
+    );
+    fid.set(Some(EF_OTP_SLOT2));
+    budget.set(1);
+    assert_eq!(
+        run_f(&mut app, &mut fs, &otp_apdu(0x06, 0, &[])),
+        Sw::MEMORY_FAILURE
+    );
+    let pos = press_position(&mut app, &mut fs, 1, &key_b).unwrap();
+    assert!(
+        !typed.contains(&pos),
+        "slot 1 re-typed {pos:?}, which B typed the boot before: {typed:?}"
+    );
+    assert_eq!(pos, (*pid_b, 2, 1));
+}
+
+/// INS 03 answers what SELECT does, in every CLA-00 shape a YubiKey 5.8.0 answered it;
+/// after the NDEF write, which answers nothing, it is where yubikit sees the
+/// programming sequence move. Its neighbour INS 04 stays `6D00`, as there.
+#[test]
+fn yk2_status_answers_the_select_status() {
+    let mut fs = new_fs();
+    let presence = RefCell::new(AlwaysConfirm);
+    let rng = RefCell::new(CountRng(7));
+    let mut app = OtpApplet::new(SERIAL, SERIAL_HASH, None, &rng, &presence);
+    let (_, selected) = select(&mut app, &mut fs);
+    for raw in [
+        &[0x00, INS_YK2_STATUS, 0x00, 0x00][..],
+        &[0x00, INS_YK2_STATUS, 0x00, 0x00, 0x00],
+        &[0x00, INS_YK2_STATUS, 0x01, 0x00],
+        &[0x00, INS_YK2_STATUS, 0x00, 0x01],
+        &[0x00, INS_YK2_STATUS, 0x00, 0x00, 0x02, 0xAA, 0xBB],
+    ] {
+        assert_eq!(
+            run(&mut app, &mut fs, raw),
+            (Sw::OK, selected.clone()),
+            "{raw:02x?}"
+        );
+    }
+    let (sw, _) = run(&mut app, &mut fs, &[0x00, 0x04, 0x00, 0x00]);
+    assert_eq!(sw, Sw::INS_NOT_SUPPORTED);
+    #[cfg(not(feature = "strict-config"))]
+    {
+        let (sw, body) = run(&mut app, &mut fs, &otp_apdu(P1_NDEF1, 0, &[0x55; 62]));
+        assert_eq!((sw, body.len()), (Sw::OK, 0));
+        let (_, status) = run(&mut app, &mut fs, &[0x00, INS_YK2_STATUS, 0x00, 0x00]);
+        assert_eq!(status[3], selected[3] + 1, "the programming sequence");
+    }
+}
+
+#[test]
+fn a_legacy_hotp_slot_types_a_new_code_on_every_press() {
+    // A 52-byte record is what an UPDATE left before the tail was carried. Its
+    // first press must store the whole record, or the next one reads the old tail
+    // back and types the same code again.
+    let mut fs = new_fs();
+    let dev = Device {
+        serial_hash: &SERIAL_HASH,
+        serial_id: &SERIAL,
+        otp_key: None,
+        latched: false,
+    };
+    let cfg = build_config(&[], &[0; 6], &[0x5C; 16], &[0; 6], 0, TKT_OATH_HOTP, 0);
+    let fid = KeyFid::new(EF_OTP_SLOT1);
+    assert!(seal::seal_put(
+        &dev,
+        &mut fs,
+        &mut CountRng(3),
+        fid,
+        &record(&cfg)
+    ));
+    let presence = RefCell::new(AlwaysConfirm);
+    let rng = RefCell::new(CountRng(7));
+    let mut app = OtpApplet::new(SERIAL, SERIAL_HASH, None, &rng, &presence);
+    let mut press = || {
+        let mut out = [0u8; ticket::MAX_TICKET];
+        let (len, _) = app.button_ticket(1, 0, [0, 0], &mut fs, &mut out).unwrap();
+        out[..len].to_vec()
+    };
+    let (first, second) = (press(), press());
+    assert_ne!(first, second, "the second press re-typed the first code");
+    let mut rec = SlotRecord::vacant();
+    assert_eq!(
+        try_read_slot(&dev, &mut fs, EF_OTP_SLOT1, &mut rec),
+        Ok(Some(SLOT_SIZE))
     );
 }
+
+#[test]
+fn a_legacy_record_keeps_its_length_until_something_moves_it() {
+    // A swap and both boot re-seal arms copy a record verbatim; only a move or an
+    // UPDATE makes a 52-byte record whole, with the zero tail it implied.
+    let nootp = Device {
+        serial_hash: &SERIAL_HASH,
+        serial_id: &SERIAL,
+        otp_key: None,
+        latched: false,
+    };
+    let otp_key = [0x55u8; 32];
+    let otp = Device {
+        otp_key: Some(&otp_key),
+        ..nootp
+    };
+    let cfg = chalresp_config(&[0x0C; 20], &[0; 6], 0);
+    let mut fs = new_fs();
+    let mut rng = CountRng(5);
+    assert!(seal::seal_put(
+        &otp,
+        &mut fs,
+        &mut rng,
+        KeyFid::new(EF_OTP_SLOT1),
+        &record(&cfg)
+    ));
+    fs.put(EF_OTP_SLOT1 + 2, &cfg).unwrap();
+    assert!(seal::seal_put(
+        &nootp,
+        &mut fs,
+        &mut rng,
+        KeyFid::new(EF_OTP_SLOT1 + 3),
+        &record(&cfg)
+    ));
+    migrate_seal(&otp, &mut fs, &mut rng);
+    fn fused(key: &mut [u8; 32]) -> bool {
+        *key = [0x55; 32];
+        true
+    }
+    let presence = RefCell::new(AlwaysConfirm);
+    let app_rng = RefCell::new(CountRng(7));
+    let mut app = OtpApplet::new(
+        SERIAL,
+        SERIAL_HASH,
+        Some(rsk_crypto::FusedKey::open(fused)),
+        &app_rng,
+        &presence,
+    );
+    assert_eq!(run(&mut app, &mut fs, &otp_apdu(0x06, 0, &[])).0, Sw::OK);
+    let mut rec = SlotRecord::vacant();
+    for (slot, n) in [(1, CONFIG_SIZE), (2, CONFIG_SIZE), (3, CONFIG_SIZE)] {
+        let read = try_read_slot(&otp, &mut fs, EF_OTP_SLOT1 + slot, &mut rec);
+        assert_eq!(read, Ok(Some(n)), "slot {}", slot + 1);
+    }
+    assert_eq!(
+        run(
+            &mut app,
+            &mut fs,
+            &otp_apdu(0x05, 0, &[cfg.as_slice(), &[0; 6]].concat())
+        )
+        .0,
+        Sw::OK
+    );
+    assert_eq!(
+        try_read_slot(&otp, &mut fs, EF_OTP_SLOT1 + 1, &mut rec),
+        Ok(Some(SLOT_SIZE))
+    );
+    assert_eq!(rec.expose()[CONFIG_SIZE..], [0; SLOT_SIZE - CONFIG_SIZE]);
+}
+
+/// A read the flash failed is not a slot with nothing left in it: whichever read of
+/// the slot the fault lands on, or every read, the pass moved the pre-OTP slot or
+/// reports it, and a probe it could not complete writes nothing.
+#[test]
+fn a_faulted_read_of_a_pre_otp_slot_is_never_reported_clear() {
+    let nootp = Device {
+        serial_hash: &SERIAL_HASH,
+        serial_id: &SERIAL,
+        otp_key: None,
+        latched: false,
+    };
+    let otp_key = [0x55u8; 32];
+    let otp = Device {
+        otp_key: Some(&otp_key),
+        ..nootp
+    };
+    let cfg = chalresp_config(&[0xAB; 20], &[0; 6], 0);
+    let fid = KeyFid::new(EF_OTP_SLOT1);
+    for fault in [None, Some(0), Some(1), Some(2)] {
+        let (backend, medium) = rsk_fs::storage::faults::ProbeStuck::new();
+        let mut fs = Fs::new(backend);
+        fs.scan();
+        let mut rng = CountRng(7);
+        assert!(seal::seal_put(
+            &nootp,
+            &mut fs,
+            &mut rng,
+            fid,
+            &record(&cfg)
+        ));
+        let before = medium.value(fid.get());
+        match fault {
+            None => medium.stick(Some(fid.get())),
+            Some(skip) => medium.stick_after(fid.get(), skip),
+        }
+        let left = migrate_seal(&otp, &mut fs, &mut rng);
+        medium.stick(None);
+        assert!(
+            left || medium.value(fid.get()) != before,
+            "fault {fault:?}: reported clear over the pre-OTP slot it never moved"
+        );
+    }
+}
+
+// The read-fault sweep lives in its own file; it needs this module's fixtures.
+#[path = "reads_tests.rs"]
+mod reads;
+
+#[path = "command_bounds_tests.rs"]
+mod command_bounds_tests;
+
+#[path = "decisions_tests.rs"]
+mod decisions;
+
+#[test]
+fn the_packed_config_layout_matches_the_specs_offsets() {
+    // The packed Yubico layout and the 8-byte counter tail are external wire
+    // facts: 16 fixed + 6 uid + 16 key + 6 acc + size + ext + tkt + cfg + rfu2
+    // + crc2 = 52. A shifted internal offset must show up here.
+    assert_eq!((CONFIG_SIZE, SLOT_SIZE), (52, 60));
+    assert_eq!(
+        (
+            OFF_UID,
+            OFF_AES_KEY,
+            OFF_ACC_CODE,
+            OFF_FIXED_SIZE,
+            OFF_EXT_FLAGS,
+            OFF_TKT_FLAGS,
+            OFF_CFG_FLAGS,
+            OFF_RFU
+        ),
+        (16, 22, 38, 44, 45, 46, 47, 48)
+    );
+}
+
+#[test]
+fn a_challenge_response_slot_needs_both_the_ticket_bit_and_a_challenge_mode() {
+    assert!(is_chal_resp_slot(TKT_CHAL_RESP, CFG_CHAL_YUBICO));
+    // The ticket bit alone is an OATH-HOTP typing slot…
+    assert!(!is_chal_resp_slot(0, CFG_CHAL_YUBICO));
+    // …and a mode without the bit is not a challenge-response record either.
+    assert!(!is_chal_resp_slot(TKT_CHAL_RESP, 0));
+    assert!(!is_chal_resp_slot(TKT_CHAL_RESP, CFG_OATH_HOTP8));
+}
+
+#[test]
+fn an_unrelated_slot_id_is_not_a_function_slot() {
+    assert!(!is_function_slot(0x00));
+    assert!(!is_function_slot(0x55));
+}
+
+#[test]
+fn an_update_keeps_the_stored_cfg_bits_it_may_not_change() {
+    // An UPDATE merges only `CFGFLAG_UPDATE_MASK` bits from the new config; the
+    // stored record's other cfg bits (here the short-ticket mode) must survive.
+    // Deleting the `!` keeps the stored pacing bits instead and zeroes them.
+    let mut fs = new_fs();
+    let presence = RefCell::new(AlwaysConfirm);
+    let rng = RefCell::new(CountRng(7));
+    let mut app = OtpApplet::new(SERIAL, SERIAL_HASH, None, &rng, &presence);
+    let base = build_config(
+        b"public",
+        &[3; 6],
+        &[4; 16],
+        &[0; 6],
+        0,
+        0,
+        CFG_SHORT_TICKET,
+    );
+    let (sw, _) = configure(&mut app, &mut fs, 0x01, 0, &base, &[0; 6]);
+    assert_eq!(sw, Sw::OK);
+    let upd = build_config(b"public", &[3; 6], &[4; 16], &[0; 6], 0, 0, 0x04);
+    let mut d = upd.to_vec();
+    d.extend_from_slice(&[0; 6]);
+    let (sw, _) = run(&mut app, &mut fs, &otp_apdu(0x04, 0, &d));
+    assert_eq!(sw, Sw::OK);
+    let mut stored = SlotRecord::vacant();
+    app.read_slot_m(&mut fs, EF_OTP_SLOT1, &mut stored)
+        .expect("the update must land on slot 1");
+    assert_eq!(
+        stored.expose()[OFF_CFG_FLAGS],
+        CFG_SHORT_TICKET | 0x04,
+        "the stored non-updateable cfg bits must survive an update"
+    );
+}
+
+#[path = "recovery_tests.rs"]
+mod recovery;
+
+#[path = "restart_tests.rs"]
+mod restarts;

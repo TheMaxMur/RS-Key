@@ -17,13 +17,14 @@ parameter validation, `setMinPINLength` overflow, the rpId-scoped
    3. makeCredential options   -> uv:true alongside a pinUvAuthParam is accepted,
                                   not CTAP2_ERR_INVALID_OPTION (§6.1.2 step 5)
    4. pubKeyCredParams         -> the platform's FIRST supported algorithm wins,
-                                  even with ML-DSA listed after it (§6.1.2 step 4)
+                                  even with ML-DSA listed after it (§6.1.2 step 3)
    5. credBlob                 -> a blob of exactly maxCredBlobLength is accepted
    6. makeCredUvNotRqd         -> a NON-discoverable credential is created on
                                   presence alone with a PIN set, uv clear, and it
                                   asserts and excludes like any other; rk:true still
                                   needs a token (§6.1.2 steps 7/10, issue #51)
-   7. setPIN (already set)     -> CTAP2_ERR_PIN_AUTH_INVALID (§6.5.5.5)
+   7. setPIN (already set)     -> CTAP2_ERR_NOT_ALLOWED, as a YubiKey 5.8.0
+                                  answers it (§6.5.5.5 names PIN_AUTH_INVALID)
    8. largeBlobs get           -> `length` / pinUvAuthParam / over-long reads are
                                   refused; the 17-byte array is hash-checked (§6.10.2)
    9. setMinPINLength          -> more RP ids than fit is CTAP2_ERR_KEY_STORE_FULL,
@@ -34,7 +35,8 @@ parameter validation, `setMinPINLength` overflow, the rpId-scoped
   11. alwaysUv                -> it overrides makeCredUvNotRqd in BOTH the
                                   advertisement and the enforcement (§6.1.2 step 6,
                                   §6.4), and U2F drops U2F_V2 and answers
-                                  SW_COMMAND_NOT_ALLOWED 6986 (§7.2.4)
+                                  SW_COMMAND_NOT_ALLOWED 6986 (§7.2.4), VERSION
+                                  included, as a YubiKey 5.8.0 does
 
 Non-destructive: no reset and no replug. `alwaysUv` is toggled on for step 11 and
 restored in a `finally`; the one resident credential step 10 creates is removed by
@@ -259,7 +261,7 @@ def set_pin_already_set(dev, cid):
     npe = proto.encrypt(b"87654321" + b"\x00" * 56)
     sp = client_pin(dev, cid, ordered(
         {1: 2, 2: 3, 3: proto.cose(), 4: proto.authenticate(npe), 5: npe}))
-    check("setPIN answers PIN_AUTH_INVALID (was NOT_ALLOWED)", sp[0] == 0x33,
+    check("setPIN answers NOT_ALLOWED, as a YubiKey 5.8.0 does", sp[0] == 0x30,
           f"status {sp[0]:#04x}")
 
 
@@ -339,6 +341,9 @@ def under_always_uv(dev, cid, pin, base):
         apdu = bytes([0, 1, 0, 0, 0, 0, 0x40]) + os.urandom(64) + b"\x00\x00"
         _, p = raw(dev, cid, CTAPHID_MSG, apdu)
         check("REGISTER answers SW_COMMAND_NOT_ALLOWED 6986 (was 6985)",
+              p[-2:] == b"\x69\x86", f"sw {p[-2:].hex()}")
+        _, p = raw(dev, cid, CTAPHID_MSG, bytes([0, 3, 0, 0]))
+        check("…and VERSION 6986 too, as on a YubiKey 5.8.0 (was U2F_V2)",
               p[-2:] == b"\x69\x86", f"sw {p[-2:].hex()}")
     finally:
         _, token = token_for(dev, cid, pin, PERM_ACFG)

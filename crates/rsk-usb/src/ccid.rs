@@ -17,10 +17,20 @@
 //! answers on bulk IN, routing APDUs to an [`ApduHandler`]. A single command is
 //! handled per transfer (PC/SC waits for each response).
 
+// Host bytes: a panic here is a board that answers nothing until unplugged.
+#![deny(
+    clippy::indexing_slicing,
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::cast_possible_truncation
+)]
+
 use embassy_futures::select::{Either, select};
 use embassy_time::Timer;
 use embassy_usb::Builder;
 use embassy_usb::driver::{Driver, Endpoint, EndpointError, EndpointIn, EndpointOut};
+use rsk_secret::WipeGuard;
 
 // CCID bulk-OUT message types (Bulk-OUT, PC → reader). The message vocabulary
 // and the framing helpers below are public for the same reason CTAPHID's are:
@@ -29,6 +39,10 @@ use embassy_usb::driver::{Driver, Endpoint, EndpointError, EndpointIn, EndpointO
 const CCID_SET_PARAMS: u8 = 0x61;
 pub const CCID_POWER_ON: u8 = 0x62;
 pub const CCID_POWER_OFF: u8 = 0x63;
+pub const CCID_ABORT: u8 = 0x72;
+pub const ABORT_REQUEST: u8 = 0x01;
+pub const CMD_ABORTED: u8 = 0xff;
+pub const ERR_BAD_SEQUENCE: u8 = 6;
 const CCID_SLOT_STATUS: u8 = 0x65;
 const CCID_GET_PARAMS: u8 = 0x6C;
 const CCID_RESET_PARAMS: u8 = 0x6D;
@@ -53,9 +67,16 @@ pub const STATUS_TIMEEXT: u8 = 0x80;
 /// (even a wrong-PIN status word is a *successful* command — the card answered).
 /// The transport substitutes the live slot status for this value.
 pub const SECURE_STATUS_OK: u8 = STATUS_ACTIVE;
+/// `bStatus` with `bmCommandStatus = failed`, ICC active; the slot's ICC status goes
+/// in the low bits beside it.
+pub const STATUS_FAILED: u8 = 0x40;
 /// `bStatus` with `bmCommandStatus = failed` (ICC active): the secure-PIN entry
 /// did not produce a card response (the user cancelled or it timed out).
-pub const SECURE_STATUS_FAILED: u8 = 0x40;
+pub const SECURE_STATUS_FAILED: u8 = STATUS_FAILED;
+/// CCID `bError` for a field the reader rejects is that field's offset: `dwLength`'s.
+pub const ERR_BAD_DWLENGTH: u8 = 0x01;
+/// The shortest APDU there is: `CLA INS P1 P2`.
+const APDU_HEADER: usize = 4;
 /// CCID `bError`: the user cancelled PIN entry on the pad → `SCARD_W_CANCELLED_BY_USER`.
 pub const SECURE_ERR_CANCELLED: u8 = 0xEF;
 /// CCID `bError`: PIN entry on the pad timed out → `SCARD_E_TIMEOUT`.
@@ -76,12 +97,13 @@ use crate::TX_TIMEOUT_MS;
 const RX_TIMEOUT_MS: u64 = 500;
 
 pub const HEADER: usize = 10;
-/// `dwMaxCCIDMessageLength` from the class descriptor.
-pub const MAX_CCID_MSG: usize = 2048;
+/// `dwMaxCCIDMessageLength` from the class descriptor: a YubiKey 5.8.0's 3072, so a
+/// host sends one extended APDU of up to 3062 bytes, as it does to one.
+pub const MAX_CCID_MSG: usize = 3072;
 /// `wMaxPacketSize` of the three CCID endpoints (full-speed USB). A bulk-IN
 /// transfer whose length is an exact multiple needs a terminating ZLP — keep
 /// the `is_multiple_of` modulus and the endpoint allocations in lockstep.
-const EP_PACKET_SIZE: usize = 64;
+const EP_PACKET_SIZE: u16 = 64;
 
 /// ATR presented on the Yubico-identity build (effective VID == Yubico): a real
 /// YubiKey 5's answer-to-reset, byte-for-byte, so `ykman`/`ykmd` and the Windows
@@ -110,7 +132,7 @@ const T1_PARAMS: [u8; 7] = [0x11, 0x10, 0xFE, 0x95, 0x03, 0xFE, 0x00];
 
 /// CCID functional (class) descriptor, type `0x21`, body only — embassy prepends
 /// the `bLength`/`bDescriptorType` bytes. 5 V, T=0/T=1, auto params, single slot,
-/// `dwMaxCCIDMessageLength = 2048`.
+/// `dwMaxCCIDMessageLength = 3072`.
 const CCID_FUNCTIONAL_DESC: &[u8] = &[
     0x10, 0x01, // bcdCCID 1.10
     0x00, // bMaxSlotIndex (one slot)
@@ -125,14 +147,19 @@ const CCID_FUNCTIONAL_DESC: &[u8] = &[
     0xFE, 0x00, 0x00, 0x00, // dwMaxIFSD 254
     0x00, 0x00, 0x00, 0x00, // dwSynchProtocols
     0x00, 0x00, 0x00, 0x00, // dwMechanical
-    0x40, 0x08, 0x04, 0x00, // dwFeatures (auto params/clock, short APDU exchange)
-    0x00, 0x08, 0x00, 0x00, // dwMaxCCIDMessageLength 2048
+    0x40, 0x08, 0x04, 0x00, // dwFeatures (auto params/clock, extended APDU level)
+    0x00, 0x0C, 0x00, 0x00, // dwMaxCCIDMessageLength 3072
     0xFF, // bClassGetResponse (echo)
     0xFF, // bClassEnvelope (echo)
     0x00, 0x00, // wLcdLayout (none)
     0x00, // bPINSupport (none)
     0x01, // bMaxCCIDBusySlots
 ];
+// `dwMaxCCIDMessageLength` is bytes 42..46 of the class descriptor.
+const _: () = assert!(matches!(
+    CCID_FUNCTIONAL_DESC.split_at(42).1.first_chunk::<4>(),
+    Some(len) if u32::from_le_bytes(*len) as usize == MAX_CCID_MSG
+));
 const CCID_DESC_TYPE: u8 = 0x21;
 
 /// USB class for smart-card / CCID devices.
@@ -148,6 +175,20 @@ const SLOT_CHANGE_PRESENT: &[u8] = &[0x50, 0x03];
 /// and streams CCID time-extensions while a slow op (RSA keygen, flash GC) runs.
 #[allow(async_fn_in_trait)] // crate-internal, single-threaded executor — no Send bound needed
 pub trait ApduHandler {
+    fn session_epoch() -> u32 {
+        0
+    }
+    /// Bind all packets of the response to the request epoch.
+    fn bind_response_epoch(_epoch: u32) {}
+    fn abort_requested(_sequence: u8) -> bool {
+        false
+    }
+    fn abort_pending() -> bool {
+        false
+    }
+    fn acknowledge_abort(_sequence: u8) -> Option<bool> {
+        None
+    }
     /// Process a command APDU, writing the response APDU (body + SW1 SW2) into
     /// `out`; returns its length.
     async fn handle_apdu(&mut self, apdu: &[u8], out: &mut [u8]) -> usize;
@@ -192,53 +233,87 @@ pub struct SecureResult {
 
 /// If `msg` is an `XfrBlock`, the `(start, end)` byte range of its APDU payload.
 pub fn xfr_apdu(msg: &[u8]) -> Option<(usize, usize)> {
-    if msg.len() < HEADER || msg[0] != CCID_XFR_BLOCK {
+    let [CCID_XFR_BLOCK, l0, l1, l2, l3, ..] = *msg.first_chunk::<HEADER>()? else {
+        return None;
+    };
+    let dw = u32::from_le_bytes([l0, l1, l2, l3]) as usize;
+    Some((HEADER, HEADER + dw.min(msg.len() - HEADER)))
+}
+
+/// An `XfrBlock` too short to hold an APDU header is refused by the reader, as a
+/// YubiKey 5.8.0 refuses one: a failed `RDR_to_PC_SlotStatus` naming `dwLength`, and
+/// no APDU run. Its length in `out`, or `None` for any other message.
+pub fn refuse_short_xfr(msg: &[u8], status: u8, out: &mut [u8]) -> Option<usize> {
+    let (a, b) = xfr_apdu(msg)?;
+    let head = msg.first_chunk::<HEADER>()?;
+    let reply = out.first_chunk_mut::<HEADER>()?;
+    if b - a >= APDU_HEADER {
         return None;
     }
-    let dw = u32::from_le_bytes([msg[1], msg[2], msg[3], msg[4]]) as usize;
-    Some((HEADER, HEADER + dw.min(msg.len() - HEADER)))
+    put_header(
+        reply,
+        CCID_SLOT_STATUS_RET,
+        0,
+        head[6],
+        STATUS_FAILED | status,
+    );
+    reply[8] = ERR_BAD_DWLENGTH;
+    Some(HEADER)
 }
 
 /// If `msg` is a `PC_to_RDR_Secure`, the `(start, end)` byte range of its
 /// `abPINDataStructure` payload (the CCID pinpad VERIFY request).
 pub fn secure_apdu(msg: &[u8]) -> Option<(usize, usize)> {
-    if msg.len() < HEADER || msg[0] != CCID_SECURE {
+    let [CCID_SECURE, l0, l1, l2, l3, ..] = *msg.first_chunk::<HEADER>()? else {
         return None;
-    }
-    let dw = u32::from_le_bytes([msg[1], msg[2], msg[3], msg[4]]) as usize;
+    };
+    let dw = u32::from_le_bytes([l0, l1, l2, l3]) as usize;
     Some((HEADER, HEADER + dw.min(msg.len() - HEADER)))
 }
 
 /// Write the 10-byte CCID response header.
 pub fn put_header(out: &mut [u8], msg_type: u8, length: u32, seq: u8, status: u8) {
-    out[0] = msg_type;
-    out[1..5].copy_from_slice(&length.to_le_bytes());
-    out[5] = 0; // bSlot
-    out[6] = seq; // bSeq (echoed)
-    out[7] = status; // bStatus
-    out[8] = 0; // bError
-    out[9] = 0; // bChainParameter
+    let [l0, l1, l2, l3] = length.to_le_bytes();
+    if let Some(header) = out.first_chunk_mut::<HEADER>() {
+        // bSlot 0, bSeq echoed, bStatus, then bError and bChainParameter 0.
+        *header = [msg_type, l0, l1, l2, l3, 0, seq, status, 0, 0];
+    }
+}
+
+/// `n` as the header's `dwLength`: every buffer here is far below `u32::MAX`.
+fn dw_length(n: usize) -> u32 {
+    u32::try_from(n).unwrap_or(u32::MAX)
+}
+
+/// Copy `body` in after the header, as much of it as `out` holds; the count copied.
+fn put_body(out: &mut [u8], body: &[u8]) -> usize {
+    let room = out.get_mut(HEADER..).unwrap_or_default();
+    let n = body.len().min(room.len());
+    for (dst, src) in room.iter_mut().zip(body) {
+        *dst = *src;
+    }
+    n
 }
 
 /// Handle one complete CCID message (header + payload) and write the response
 /// into `out`, returning its length. `status` is the slot's `bStatus`, updated
 /// by power on/off. Returns 0 (no response) for an unknown message type.
 pub fn process_message(msg: &[u8], atr: &[u8], status: &mut u8, out: &mut [u8]) -> usize {
-    if msg.len() < HEADER || out.len() < HEADER {
+    let Some(&[kind, _, _, _, _, _, seq, ..]) = msg.first_chunk::<HEADER>() else {
+        return 0;
+    };
+    if out.len() < HEADER {
         return 0;
     }
-    let seq = msg[6];
-    let cap = out.len() - HEADER;
 
-    match msg[0] {
+    match kind {
         CCID_SLOT_STATUS => {
             put_header(out, CCID_SLOT_STATUS_RET, 0, seq, *status);
             HEADER
         }
         CCID_POWER_ON => {
-            let n = atr.len().min(cap);
-            put_header(out, CCID_DATA_BLOCK_RET, n as u32, seq, STATUS_ACTIVE);
-            out[HEADER..HEADER + n].copy_from_slice(&atr[..n]);
+            let n = put_body(out, atr);
+            put_header(out, CCID_DATA_BLOCK_RET, dw_length(n), seq, STATUS_ACTIVE);
             *status = STATUS_ACTIVE;
             HEADER + n
         }
@@ -248,15 +323,17 @@ pub fn process_message(msg: &[u8], atr: &[u8], status: &mut u8, out: &mut [u8]) 
             HEADER
         }
         CCID_SET_PARAMS | CCID_GET_PARAMS | CCID_RESET_PARAMS => {
-            put_header(out, CCID_PARAMS_RET, T1_PARAMS.len() as u32, seq, *status);
-            out[9] = 0x01; // bProtocolNum = T=1
-            out[HEADER..HEADER + T1_PARAMS.len()].copy_from_slice(&T1_PARAMS);
-            HEADER + T1_PARAMS.len()
+            let n = put_body(out, &T1_PARAMS);
+            put_header(out, CCID_PARAMS_RET, dw_length(n), seq, *status);
+            if let Some(protocol) = out.get_mut(9) {
+                *protocol = 0x01; // bProtocolNum = T=1
+            }
+            HEADER + n
         }
         CCID_SET_RATE => {
-            put_header(out, CCID_SET_RATE_RET, 8, seq, *status);
-            out[HEADER..HEADER + 8].fill(0);
-            HEADER + 8
+            let n = put_body(out, &[0; 8]);
+            put_header(out, CCID_SET_RATE_RET, dw_length(n), seq, *status);
+            HEADER + n
         }
         // XfrBlock needs the worker, so `Ccid::run` handles it asynchronously
         // (`run_xfr` frames the response with `put_header`); it never reaches here.
@@ -264,17 +341,40 @@ pub fn process_message(msg: &[u8], atr: &[u8], status: &mut u8, out: &mut [u8]) 
     }
 }
 
+/// Message storage kept in its final owner before constructing the transport.
+pub struct Buffers {
+    rx: [u8; MAX_CCID_MSG],
+    tx: [u8; MAX_CCID_MSG],
+}
+
+impl Buffers {
+    pub const fn new() -> Self {
+        Self {
+            rx: [0; MAX_CCID_MSG],
+            tx: [0; MAX_CCID_MSG],
+        }
+    }
+}
+
+impl Default for Buffers {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// CCID transport bound to a bulk OUT/IN pair plus an interrupt IN endpoint,
 /// dispatching `XfrBlock` APDUs to `H`.
 pub struct Ccid<'d, D: Driver<'d>, H: ApduHandler> {
+    interface: u8,
+    session_epoch: u32,
     read_ep: D::EndpointOut,
     write_ep: D::EndpointIn,
     int_ep: D::EndpointIn,
     handler: H,
     status: u8,
     atr: &'static [u8],
-    rx: [u8; MAX_CCID_MSG],
-    tx: [u8; MAX_CCID_MSG],
+    rx: &'d mut [u8; MAX_CCID_MSG],
+    tx: &'d mut [u8; MAX_CCID_MSG],
 }
 
 impl<'d, D: Driver<'d>, H: ApduHandler> Ccid<'d, D, H> {
@@ -290,9 +390,14 @@ impl<'d, D: Driver<'d>, H: ApduHandler> Ccid<'d, D, H> {
         handler: H,
         atr: &'static [u8],
         pin_support: u8,
+        buffers: &'d mut Buffers,
     ) -> Self {
+        let Buffers { rx, tx } = buffers;
+        rx.fill(0);
+        tx.fill(0);
         let mut func = builder.function(USB_CLASS_SMART_CARD, 0, 0);
         let mut iface = func.interface();
+        let interface = u8::from(iface.interface_number());
         let mut alt = iface.alt_setting(USB_CLASS_SMART_CARD, 0, 0, None);
         // `bPINSupport` is body byte 50 (full descriptor byte 52, the offset every
         // host CCID driver reads). Patch a stack copy — embassy copies the bytes
@@ -301,21 +406,27 @@ impl<'d, D: Driver<'d>, H: ApduHandler> Ccid<'d, D, H> {
         desc.copy_from_slice(CCID_FUNCTIONAL_DESC);
         desc[50] = pin_support;
         alt.descriptor(CCID_DESC_TYPE, &desc);
-        let read_ep = alt.endpoint_bulk_out(None, EP_PACKET_SIZE as u16);
-        let write_ep = alt.endpoint_bulk_in(None, EP_PACKET_SIZE as u16);
-        let int_ep = alt.endpoint_interrupt_in(None, EP_PACKET_SIZE as u16, 10);
+        let read_ep = alt.endpoint_bulk_out(None, EP_PACKET_SIZE);
+        let write_ep = alt.endpoint_bulk_in(None, EP_PACKET_SIZE);
+        let int_ep = alt.endpoint_interrupt_in(None, EP_PACKET_SIZE, 10);
         drop(func);
 
         Self {
+            interface,
+            session_epoch: H::session_epoch(),
             read_ep,
             write_ep,
             int_ep,
             handler,
             status: STATUS_INACTIVE,
             atr,
-            rx: [0; MAX_CCID_MSG],
-            tx: [0; MAX_CCID_MSG],
+            rx,
+            tx,
         }
+    }
+
+    pub fn interface_number(&self) -> u8 {
+        self.interface
     }
 
     /// Read messages forever, answer each one. Announces the card as present on
@@ -325,20 +436,65 @@ impl<'d, D: Driver<'d>, H: ApduHandler> Ccid<'d, D, H> {
     /// card via Slot Status regardless.
     pub async fn run(&mut self) -> ! {
         self.read_ep.wait_enabled().await;
+        H::bind_response_epoch(H::session_epoch());
         let _ = select(
             self.int_ep.write(SLOT_CHANGE_PRESENT),
             Timer::after_millis(50),
         )
         .await;
         loop {
-            match self.read_message().await {
+            let read_epoch = H::session_epoch();
+            let message = self.read_message().await;
+            H::bind_response_epoch(self.session_epoch);
+            match message {
                 Some(total) => {
-                    // An XfrBlock APDU goes to the worker (async) with a streamed
-                    // CCID time-extension; the protocol messages (power/params/…)
-                    // are pure and answered inline.
-                    if let Some((a, b)) = xfr_apdu(&self.rx[..total]) {
+                    // An XfrBlock too short for an APDU is refused inline, any other
+                    // goes to the worker (async) with a streamed CCID time-extension;
+                    // the protocol messages (power/params/…) are answered inline.
+                    let msg = self.rx.get(..total).unwrap_or_default();
+                    let seq = self.rx[6];
+                    if let Some(seq) = abort_sequence(msg)
+                        && let Some(accepted) = H::acknowledge_abort(seq)
+                    {
+                        put_header(
+                            self.tx.as_mut_slice(),
+                            CCID_SLOT_STATUS_RET,
+                            0,
+                            seq,
+                            self.status | if accepted { 0 } else { STATUS_FAILED },
+                        );
+                        self.tx[8] = if accepted { 0 } else { ERR_BAD_SEQUENCE };
+                        let _ = select(
+                            self.write_ep.write_transfer(&self.tx[..HEADER], false),
+                            Timer::after_millis(TX_TIMEOUT_MS),
+                        )
+                        .await;
+                    } else if H::abort_pending() {
+                        put_header(
+                            self.tx.as_mut_slice(),
+                            CCID_DATA_BLOCK_RET,
+                            0,
+                            seq,
+                            self.status | STATUS_FAILED,
+                        );
+                        self.tx[8] = CMD_ABORTED;
+                        let _ = select(
+                            self.write_ep.write_transfer(&self.tx[..HEADER], false),
+                            Timer::after_millis(TX_TIMEOUT_MS),
+                        )
+                        .await;
+                    } else if let Some(n) =
+                        refuse_short_xfr(msg, self.status, self.tx.as_mut_slice())
+                    {
+                        let _ = select(
+                            self.write_ep
+                                .write_transfer(self.tx.get(..n).unwrap_or_default(), false),
+                            Timer::after_millis(TX_TIMEOUT_MS),
+                        )
+                        .await;
+                    } else if let Some((a, b)) = xfr_apdu(msg) {
                         self.run_xfr(a, b).await;
-                    } else if let Some((a, b)) = secure_apdu(&self.rx[..total]) {
+                    } else if let Some((a, b)) = secure_apdu(msg) {
                         self.run_secure(a, b).await;
                     } else {
                         // A power transition is the host asking for a clean card;
@@ -348,23 +504,25 @@ impl<'d, D: Driver<'d>, H: ApduHandler> Ccid<'d, D, H> {
                             self.handler.reset_card().await;
                         }
                         let n = process_message(
-                            &self.rx[..total],
+                            self.rx.get(..total).unwrap_or_default(),
                             self.atr,
                             &mut self.status,
-                            &mut self.tx,
+                            self.tx.as_mut_slice(),
                         );
                         if n > 0 {
                             // A short packet (or ZLP on an exact multiple) ends the
                             // bulk IN transfer for the host.
-                            let zlp = n.is_multiple_of(EP_PACKET_SIZE);
+                            let zlp = n.is_multiple_of(usize::from(EP_PACKET_SIZE));
                             let _ = select(
-                                self.write_ep.write_transfer(&self.tx[..n], zlp),
+                                self.write_ep
+                                    .write_transfer(self.tx.get(..n).unwrap_or_default(), zlp),
                                 Timer::after_millis(TX_TIMEOUT_MS),
                             )
                             .await;
                         }
                     }
                 }
+                None if read_epoch != H::session_epoch() => {}
                 None => {
                     // Bad framing: reply "6F 00" (wrong length) and resync. Echo the
                     // sequence we are answering — every `read_message` bail-out has
@@ -373,7 +531,13 @@ impl<'d, D: Driver<'d>, H: ApduHandler> Ccid<'d, D, H> {
                     // does, on the power/status/params responses) discarded the one
                     // reply whose whole job is to resynchronise (audit run-36).
                     let seq = self.rx[6];
-                    put_header(&mut self.tx, CCID_DATA_BLOCK_RET, 2, seq, self.status);
+                    put_header(
+                        self.tx.as_mut_slice(),
+                        CCID_DATA_BLOCK_RET,
+                        2,
+                        seq,
+                        self.status,
+                    );
                     self.tx[HEADER] = 0x6F;
                     self.tx[HEADER + 1] = 0x00;
                     let _ = select(
@@ -393,6 +557,9 @@ impl<'d, D: Driver<'d>, H: ApduHandler> Ccid<'d, D, H> {
     /// `write_ep` — disjoint fields, so the time-extensions keep flowing while the
     /// worker blocks on the slow op (on-card RSA keygen, flash GC).
     async fn run_xfr(&mut self, a: usize, b: usize) {
+        let epoch = self.session_epoch;
+        H::bind_response_epoch(epoch);
+        let mut aborted = false;
         let Self {
             handler,
             write_ep,
@@ -401,13 +568,21 @@ impl<'d, D: Driver<'d>, H: ApduHandler> Ccid<'d, D, H> {
             status,
             ..
         } = self;
+        let tx = &mut **tx;
         let seq = rx[6];
         let n = {
-            let mut fut = core::pin::pin!(handler.handle_apdu(&rx[a..b], &mut tx[HEADER..]));
+            // The APDU can carry an imported private key: wiped once the handler is
+            // done with it, before the reply goes out.
+            let req = WipeGuard::new(rx.get_mut(a..b).unwrap_or_default());
+            let mut fut = core::pin::pin!(handler.handle_apdu(&req, &mut tx[HEADER..]));
             loop {
+                aborted |= H::abort_requested(seq);
                 match select(fut.as_mut(), Timer::after_millis(WTX_INTERVAL_MS)).await {
                     Either::First(n) => break n,
                     Either::Second(_) => {
+                        if epoch != H::session_epoch() {
+                            continue;
+                        }
                         let mut wtx = [0u8; HEADER];
                         put_header(&mut wtx, CCID_DATA_BLOCK_RET, 0, seq, STATUS_TIMEEXT);
                         let _ = select(
@@ -419,21 +594,37 @@ impl<'d, D: Driver<'d>, H: ApduHandler> Ccid<'d, D, H> {
                 }
             }
         };
+        aborted |= H::abort_requested(seq);
+        if epoch != H::session_epoch() {
+            let _response = WipeGuard::new(tx);
+            *status = STATUS_INACTIVE;
+            return;
+        }
+        if aborted {
+            {
+                let _response = WipeGuard::new(tx);
+            }
+            put_header(tx, CCID_DATA_BLOCK_RET, 0, seq, *status | STATUS_FAILED);
+            tx[8] = CMD_ABORTED;
+            let _ = select(
+                write_ep.write_transfer(&tx[..HEADER], false),
+                Timer::after_millis(TX_TIMEOUT_MS),
+            )
+            .await;
+            return;
+        }
         // handle_apdu wrote the body into tx[HEADER..]; frame the response header.
         let n = n.min(tx.len() - HEADER);
-        put_header(tx, CCID_DATA_BLOCK_RET, n as u32, seq, *status);
+        put_header(tx, CCID_DATA_BLOCK_RET, dw_length(n), seq, *status);
         let total = HEADER + n;
-        let zlp = total.is_multiple_of(EP_PACKET_SIZE);
+        let zlp = total.is_multiple_of(usize::from(EP_PACKET_SIZE));
+        // The reply (a deciphered session key, a card status) is wiped once sent.
+        let resp = WipeGuard::new(tx.get_mut(..total).unwrap_or_default());
         let _ = select(
-            write_ep.write_transfer(&tx[..total], zlp),
+            write_ep.write_transfer(&resp, zlp),
             Timer::after_millis(TX_TIMEOUT_MS),
         )
         .await;
-        // The APDU can carry an imported private key; the response a deciphered
-        // session key. Wipe both once the transfer is on the wire.
-        use zeroize::Zeroize;
-        rx[a..b].zeroize();
-        tx[..total].zeroize();
     }
 
     /// Run a `PC_to_RDR_Secure` (`self.rx[a..b]` = the `abPINDataStructure`) via the
@@ -444,6 +635,9 @@ impl<'d, D: Driver<'d>, H: ApduHandler> Ccid<'d, D, H> {
     /// frames a normal DataBlock with the live slot status; a pad cancel/timeout
     /// frames a failed DataBlock with the matching `bError`.
     async fn run_secure(&mut self, a: usize, b: usize) {
+        let epoch = self.session_epoch;
+        H::bind_response_epoch(epoch);
+        let mut aborted = false;
         let Self {
             handler,
             write_ep,
@@ -452,13 +646,20 @@ impl<'d, D: Driver<'d>, H: ApduHandler> Ccid<'d, D, H> {
             status,
             ..
         } = self;
+        let tx = &mut **tx;
         let seq = rx[6];
         let result = {
-            let mut fut = core::pin::pin!(handler.handle_secure(&rx[a..b], &mut tx[HEADER..]));
+            // No PIN in here (the pad collects it on-device); wiped as `run_xfr`'s is.
+            let req = WipeGuard::new(rx.get_mut(a..b).unwrap_or_default());
+            let mut fut = core::pin::pin!(handler.handle_secure(&req, &mut tx[HEADER..]));
             loop {
+                aborted |= H::abort_requested(seq);
                 match select(fut.as_mut(), Timer::after_millis(WTX_INTERVAL_MS)).await {
                     Either::First(r) => break r,
                     Either::Second(_) => {
+                        if epoch != H::session_epoch() {
+                            continue;
+                        }
                         let mut wtx = [0u8; HEADER];
                         put_header(&mut wtx, CCID_DATA_BLOCK_RET, 0, seq, STATUS_TIMEEXT);
                         let _ = select(
@@ -470,6 +671,25 @@ impl<'d, D: Driver<'d>, H: ApduHandler> Ccid<'d, D, H> {
                 }
             }
         };
+        aborted |= H::abort_requested(seq);
+        if epoch != H::session_epoch() {
+            let _response = WipeGuard::new(tx);
+            *status = STATUS_INACTIVE;
+            return;
+        }
+        if aborted {
+            {
+                let _response = WipeGuard::new(tx);
+            }
+            put_header(tx, CCID_DATA_BLOCK_RET, 0, seq, *status | STATUS_FAILED);
+            tx[8] = CMD_ABORTED;
+            let _ = select(
+                write_ep.write_transfer(&tx[..HEADER], false),
+                Timer::after_millis(TX_TIMEOUT_MS),
+            )
+            .await;
+            return;
+        }
         let n = result.len.min(tx.len() - HEADER);
         // A card result reports SECURE_STATUS_OK → use the live slot status; a pad
         // cancel/timeout carries its own failed status and bError.
@@ -478,20 +698,17 @@ impl<'d, D: Driver<'d>, H: ApduHandler> Ccid<'d, D, H> {
         } else {
             result.status
         };
-        put_header(tx, CCID_DATA_BLOCK_RET, n as u32, seq, hdr_status);
+        put_header(tx, CCID_DATA_BLOCK_RET, dw_length(n), seq, hdr_status);
         tx[8] = result.error; // bError (put_header clears it; set the pad cancel/timeout code)
         let total = HEADER + n;
-        let zlp = total.is_multiple_of(EP_PACKET_SIZE);
+        let zlp = total.is_multiple_of(usize::from(EP_PACKET_SIZE));
+        // The reply (a deciphered session key, a card status) is wiped once sent.
+        let resp = WipeGuard::new(tx.get_mut(..total).unwrap_or_default());
         let _ = select(
-            write_ep.write_transfer(&tx[..total], zlp),
+            write_ep.write_transfer(&resp, zlp),
             Timer::after_millis(TX_TIMEOUT_MS),
         )
         .await;
-        // The request carries no PIN (collected on-device), but the response holds
-        // the card status; wipe both buffers once the reply is on the wire.
-        use zeroize::Zeroize;
-        rx[a..b].zeroize();
-        tx[..total].zeroize();
     }
 
     /// Accumulate bulk OUT packets into `self.rx` until a full CCID message is
@@ -499,11 +716,16 @@ impl<'d, D: Driver<'d>, H: ApduHandler> Ccid<'d, D, H> {
     /// buffer (the caller answers with an error block).
     async fn read_message(&mut self) -> Option<usize> {
         let mut w = 0usize;
+        let mut epoch = H::session_epoch();
         loop {
+            if epoch != self.session_epoch {
+                self.status = STATUS_INACTIVE;
+                self.session_epoch = epoch;
+            }
             // An in-progress message is bounded; an idle transport is not. Without
             // the bound, an interrupted multi-packet write (a bus reset inside a key
             // or certificate import — this class advertises extended APDUs and a
-            // 2048-byte message, so those are up to 32 packets) left its prefix here
+            // 3072-byte message, so those are up to 48 packets) left its prefix here
             // forever, and the next host's first packet was appended to it and
             // misparsed: one stale `0x6F` in front of an `IccPowerOn` makes the
             // transport wait for 98 bytes nobody will send while the host waits for
@@ -515,7 +737,7 @@ impl<'d, D: Driver<'d>, H: ApduHandler> Ccid<'d, D, H> {
                 self.read_ep.read(&mut self.rx[..]).await
             } else {
                 match select(
-                    self.read_ep.read(&mut self.rx[w..]),
+                    self.read_ep.read(self.rx.get_mut(w..).unwrap_or_default()),
                     Timer::after_millis(RX_TIMEOUT_MS),
                 )
                 .await
@@ -540,6 +762,15 @@ impl<'d, D: Driver<'d>, H: ApduHandler> Ccid<'d, D, H> {
                     continue;
                 }
             };
+            let next_epoch = H::session_epoch();
+            if next_epoch != epoch {
+                self.rx.copy_within(w..w + n, 0);
+                let _old = WipeGuard::new(self.rx.get_mut(n..).unwrap_or_default());
+                w = 0;
+                epoch = next_epoch;
+                self.status = STATUS_INACTIVE;
+                self.session_epoch = epoch;
+            }
             w += n;
             if w >= HEADER {
                 let dw =
@@ -558,6 +789,13 @@ impl<'d, D: Driver<'d>, H: ApduHandler> Ccid<'d, D, H> {
     }
 }
 
+fn abort_sequence(message: &[u8]) -> Option<u8> {
+    match message {
+        [CCID_ABORT, 0, 0, 0, 0, 0, sequence, 0, 0, 0] => Some(*sequence),
+        _ => None,
+    }
+}
+
 /// Kani proof harnesses (`cargo kani -p rsk-usb`): exhaustive over every input
 /// up to the stated bound, where the unit tests only sample.
 #[cfg(kani)]
@@ -565,5 +803,17 @@ impl<'d, D: Driver<'d>, H: ApduHandler> Ccid<'d, D, H> {
 mod proofs;
 
 #[cfg(test)]
+#[allow(
+    clippy::indexing_slicing,
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::cast_possible_truncation,
+    reason = "a test's fixture is its own bound, and a panic is its failure report"
+)]
 #[path = "ccid_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "ccid_transport_tests.rs"]
+mod transport_tests;

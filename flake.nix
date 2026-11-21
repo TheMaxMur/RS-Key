@@ -36,7 +36,12 @@
     flake-utils.lib.eachDefaultSystem (
       system:
       let
-        pkgs = import nixpkgs { inherit system; };
+        pkgs = import nixpkgs {
+          inherit system;
+          overlays = [
+            (_final: prev: { picotool = import ./nix/picotool.nix { pkgs = prev; }; })
+          ];
+        };
         sdl2 = (import nixpkgs-sdl2 { inherit system; }).SDL2;
         fx = fenix.packages.${system};
 
@@ -71,7 +76,7 @@
           # `vhci_hcd`, and there is no such thing to own elsewhere.
           // nixpkgs.lib.optionalAttrs (nixpkgs.lib.hasSuffix "-linux" system) {
             usbip-vm = import ./nix/usbip-vm.nix {
-              inherit nixpkgs system;
+              inherit nixpkgs system sdl2;
               inherit (hostTools) rskPython;
               ccidOverlay = self.overlays.ccid-rs-key;
             };

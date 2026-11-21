@@ -25,7 +25,6 @@ use minicbor::encode::{Error, Write};
 use minicbor::{Decoder, Encoder};
 use rsk_crypto::{chacha20poly1305_decrypt, chacha20poly1305_encrypt};
 use rsk_fs::{Fs, Storage};
-use zeroize::Zeroize;
 
 use crate::cbordec::def_map;
 use crate::consts::{EF_CRED_BLOB, MAX_LARGE_BLOB_SIZE};
@@ -213,8 +212,13 @@ pub fn write<S: Storage, R: Rng>(
     scratch[IV_LEN..IV_LEN + SIZE_LEN].copy_from_slice(&original_size.to_le_bytes());
     scratch[IV_LEN + SIZE_LEN..IV_LEN + body].copy_from_slice(blob);
     let mut key = derive_chacha_key(seed, BLOB_PROTO);
-    let tag = chacha20poly1305_encrypt(&key, &iv, cred_id, &mut scratch[IV_LEN..IV_LEN + body]);
-    key.zeroize();
+    let tag = chacha20poly1305_encrypt(
+        key.expose(),
+        &iv,
+        cred_id,
+        &mut scratch[IV_LEN..IV_LEN + body],
+    );
+    key.wipe();
     scratch[IV_LEN + body..IV_LEN + body + TAG_LEN].copy_from_slice(&tag);
     let stored = ctx
         .fs
@@ -249,25 +253,16 @@ pub fn read<S: Storage, R: Rng>(
     if n < BOX_OVERHEAD {
         return None;
     }
-    let mut iv = [0u8; IV_LEN];
-    iv.copy_from_slice(&scratch[..IV_LEN]);
-    let mut tag = [0u8; TAG_LEN];
-    tag.copy_from_slice(&scratch[n - TAG_LEN..n]);
-    let body = IV_LEN..n - TAG_LEN;
+    let (iv, rest) = scratch.get_mut(..n)?.split_first_chunk_mut::<IV_LEN>()?;
+    let (body, tag) = rest.split_last_chunk_mut::<TAG_LEN>()?;
     let mut key = derive_chacha_key(seed, BLOB_PROTO);
-    let ok = chacha20poly1305_decrypt(&key, &iv, cred_id, &mut scratch[body.clone()], &tag).is_ok();
-    key.zeroize();
+    let ok = chacha20poly1305_decrypt(key.expose(), iv, cred_id, body, tag).is_ok();
+    key.wipe();
     if !ok {
         return None;
     }
-    let size_at = body.start;
-    let original_size = u32::from_le_bytes([
-        scratch[size_at],
-        scratch[size_at + 1],
-        scratch[size_at + 2],
-        scratch[size_at + 3],
-    ]);
-    Some((size_at + SIZE_LEN..body.end, original_size))
+    let original_size = u32::from_le_bytes(*body.first_chunk()?);
+    Some((IV_LEN + SIZE_LEN..n - TAG_LEN, original_size))
 }
 
 /// Drop a credential's blob. Called wherever the credential itself goes, and on
@@ -298,10 +293,19 @@ impl GaOutput {
 }
 
 /// Write the whole `unsignedExtensionOutputs` map (makeCredential response field
-/// `0x06`): `{"largeBlob": {"supported": true}}`. One entry, because this is the
-/// only extension on this device with an unsigned output.
+/// `0x06`): `{"largeBlob": {"supported": true}}`. One entry: the only other unsigned
+/// output, previewSign's, is a `preview-sign` build's, which writes the map itself.
 pub fn write_mc_output<W: Write>(enc: &mut Encoder<W>) -> Result<(), Error<W::Error>> {
     enc.map(1)?.str("largeBlob")?.map(1)?;
+    enc.str("supported")?.bool(true)?;
+    Ok(())
+}
+
+/// That map's `"largeBlob": {"supported": true}` entry, for the `preview-sign`
+/// build's map, which has previewSign's entry too.
+#[cfg(feature = "preview-sign")]
+pub fn write_mc_entry<W: Write>(enc: &mut Encoder<W>) -> Result<(), Error<W::Error>> {
+    enc.str("largeBlob")?.map(1)?;
     enc.str("supported")?.bool(true)?;
     Ok(())
 }

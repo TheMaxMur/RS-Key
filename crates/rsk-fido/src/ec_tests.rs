@@ -5,6 +5,64 @@ use super::*;
 use p256::Sec1Point;
 use p256::ecdsa::{Signature, VerifyingKey, signature::Verifier};
 
+std::thread_local! {
+    static DROP_WIPED: core::cell::Cell<Option<bool>> = const { core::cell::Cell::new(None) };
+}
+
+pub(super) fn observe_drop(key: &CredKey) {
+    DROP_WIPED.with(|observed| {
+        if observed.get().is_none() {
+            return;
+        }
+        // NonZeroScalar::zeroize finishes at ONE to preserve its type invariant.
+        let wiped = match key {
+            CredKey::P256(s) => **s == p256::Scalar::ONE,
+            CredKey::P384(s) => **s == p384::Scalar::ONE,
+            CredKey::P521(s) => **s == p521::Scalar::ONE,
+            CredKey::K256(s) => **s == k256::Scalar::ONE,
+            CredKey::Ed25519(_)
+            | CredKey::MlDsa44(_)
+            | CredKey::MlDsa65(_)
+            | CredKey::MlDsa87(_) => {
+                return;
+            }
+        };
+        observed.set(Some(wiped));
+    });
+}
+
+#[test]
+fn dropping_each_weierstrass_credential_key_clears_its_live_scalar() {
+    for curve in [1, 2, 3, 8] {
+        {
+            let key = CredKey::from_raw(curve, &[0x5a; 66]).unwrap();
+            DROP_WIPED.with(|observed| observed.set(Some(false)));
+            observe_drop(&key);
+            DROP_WIPED.with(|observed| assert_eq!(observed.get(), Some(false)));
+        }
+        DROP_WIPED.with(|observed| {
+            assert_eq!(
+                observed.replace(None),
+                Some(true),
+                "curve {curve} survived Drop"
+            );
+        });
+    }
+}
+
+#[test]
+fn an_ed25519_credential_keeps_the_existing_seed_mask() {
+    let mut raw = [0x11; 32];
+    raw[0] = 0x80;
+    let key = CredKey::from_raw(6, &raw).unwrap();
+    let mut expected = [0x11; 32];
+    expected[0] = 0x40;
+    let expected = ed25519_dalek::SigningKey::from_bytes(&expected);
+    let mut point = [0; 32];
+    assert_eq!(key.public_point(&mut point), Some(32));
+    assert_eq!(point, expected.verifying_key().to_bytes());
+}
+
 #[test]
 fn sign_is_deterministic_and_verifies() {
     let scalar = [0x11u8; 32];
@@ -27,11 +85,42 @@ fn sign_is_deterministic_and_verifies() {
 
 #[test]
 fn out_of_range_scalar_rejected() {
+    use p256::elliptic_curve::PrimeField;
+    let mut order: [u8; 32] = (-p256::Scalar::ONE).to_repr().into();
+    for byte in order.iter_mut().rev() {
+        let (next, carry) = byte.overflowing_add(1);
+        *byte = next;
+        if !carry {
+            break;
+        }
+    }
+    assert!(P256Key::from_scalar(&order).is_none());
     // n < this < 2^256: the group order's high bytes are 0xFFFF…, so all-FF
     // is above n and must be rejected.
     assert!(P256Key::from_scalar(&[0xFFu8; 32]).is_none());
     // Zero is not a valid private scalar either.
     assert!(P256Key::from_scalar(&[0u8; 32]).is_none());
+}
+
+#[test]
+fn p256_lazy_public_and_signature_match_upstream() {
+    use p256::ecdsa::signature::Signer;
+    use p256::elliptic_curve::PrimeField;
+    let order_minus_one: [u8; 32] = (-p256::Scalar::ONE).to_repr().into();
+    let one: [u8; 32] = p256::Scalar::ONE.to_repr().into();
+    for scalar in [one, [1; 32], [0x7f; 32], order_minus_one] {
+        let expected = p256::ecdsa::SigningKey::from_bytes(&scalar.into()).unwrap();
+        let key = P256Key::from_scalar(&scalar).unwrap();
+        let message = b"lazy P-256 signing and public-point derivation";
+        let signature: Signature = expected.sign(message);
+        let mut actual = [0; MAX_DER_SIG];
+        let length = key.sign_der(message, &mut actual);
+        assert_eq!(&actual[..length], signature.to_der().as_bytes());
+        let point = expected.verifying_key().to_sec1_point(false);
+        let (x, y) = key.public_xy();
+        assert_eq!(&x, point.x().unwrap().as_slice());
+        assert_eq!(&y, point.y().unwrap().as_slice());
+    }
 }
 
 #[test]
@@ -51,13 +140,30 @@ use minicbor::{Decoder, Encoder};
 const MSG: &[u8] = b"authData||clientDataHash";
 
 #[test]
+fn an_akp_public_key_uses_the_negative_public_bytes_label() {
+    let mut out = [0; 32];
+    let mut encoder = Encoder::new(Cursor::new(&mut out[..]));
+    crate::cose::cose_key_akp(&mut encoder, -48, b"public").unwrap();
+    let n = encoder.writer().position();
+    let mut decoder = Decoder::new(&out[..n]);
+    assert_eq!(decoder.map().unwrap(), Some(3));
+    assert_eq!(decoder.i8().unwrap(), 1);
+    assert_eq!(decoder.u8().unwrap(), 7);
+    assert_eq!(decoder.i8().unwrap(), 3);
+    assert_eq!(decoder.i64().unwrap(), -48);
+    assert_eq!(decoder.i8().unwrap(), -1);
+    assert_eq!(decoder.bytes().unwrap(), b"public");
+    assert_eq!(decoder.position(), n);
+}
+
+#[test]
 fn p521_comb_matches_mul_by_generator() {
     use p521::Scalar;
     use p521::elliptic_curve::PrimeField;
     use p521::elliptic_curve::group::Group;
     use p521::elliptic_curve::sec1::ToSec1Point;
 
-    // Scalars exercising each 131-bit comb block, its boundaries, and a spread.
+    // Keep the original sparse regression scalars alongside a dense scalar.
     let mut reprs: std::vec::Vec<[u8; 66]> = std::vec::Vec::new();
     reprs.push([0u8; 66]); // 0 → identity
     let mut one = [0u8; 66];
@@ -66,7 +172,7 @@ fn p521_comb_matches_mul_by_generator() {
     for bitpos in [131usize, 262, 393, 520] {
         let mut r = [0u8; 66];
         r[65 - bitpos / 8] = 1 << (bitpos % 8);
-        reprs.push(r); // 2^bitpos → a comb base point / block boundary
+        reprs.push(r);
     }
     let mut spread = [0u8; 66];
     for (b, byte) in spread.iter_mut().enumerate() {
@@ -475,7 +581,49 @@ fn cached_point_encodes_identically_to_derived() {
     }
 
     // The lattice schemes are not cached (their public keys exceed the record).
-    let mldsa = CredKey::from_raw(CURVE_MLDSA44 as i64, &raw).unwrap();
-    assert!(mldsa.public_point(&mut [0u8; CRED_PUBKEY_MAX]).is_none());
-    assert_eq!(cached_point_len(CURVE_MLDSA44 as i64), None);
+    for (curve, alg) in [
+        (CURVE_MLDSA44, ALG_MLDSA44),
+        (CURVE_MLDSA65, ALG_MLDSA65),
+        (CURVE_MLDSA87, ALG_MLDSA87),
+    ] {
+        let mldsa = CredKey::from_raw(i64::from(curve), &raw).unwrap();
+        assert_eq!(mldsa.alg(), alg);
+        assert!(mldsa.public_point(&mut [0u8; CRED_PUBKEY_MAX]).is_none());
+        assert_eq!(cached_point_len(i64::from(curve)), None);
+    }
+}
+
+#[test]
+fn unknown_and_wrong_width_cached_points_do_not_emit_cose_bytes() {
+    for (curve, point) in [
+        (CURVE_ED25519 as i64, &[][..]),
+        (CURVE_ED25519 as i64, &[0; 31][..]),
+        (CURVE_ED25519 as i64, &[0; 33][..]),
+        (i64::MAX, &[0; 32][..]),
+    ] {
+        let mut output = [0xa5; 128];
+        let mut encoder = Encoder::new(&mut output[..]);
+        assert!(cose_public_from_point(curve, ALG_EDDSA, point, &mut encoder).is_err());
+        assert_eq!(output, [0xa5; 128]);
+    }
+    assert!(CredKey::from_raw(i64::MAX, &[1; 32]).is_none());
+}
+
+#[test]
+fn a_cached_ec_point_with_a_valid_prefix_still_requires_both_coordinates() {
+    for length in [64, 66] {
+        let mut point = [0; 66];
+        point[0] = 0x04;
+        let mut output = [0xa5; 128];
+        let mut encoder = Encoder::new(&mut output[..]);
+        let error = cose_public_from_point(
+            i64::from(CURVE_P256),
+            ALG_ES256,
+            &point[..length],
+            &mut encoder,
+        )
+        .unwrap_err();
+        assert_eq!(error.to_string(), "bad cached point");
+        assert_eq!(output, [0xa5; 128]);
+    }
 }

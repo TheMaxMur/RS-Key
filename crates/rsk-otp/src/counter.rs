@@ -2,8 +2,9 @@
 // Copyright (C) 2026 RS-Key contributors
 
 //! The Yubico-OTP use-counter rule, in one place, so the 15-bit ceiling is not
-//! enforced two different ways. Only some writers of the counter step through
-//! here; `assurance/otp_counter_writers.toml` is the derived roster of which.
+//! enforced two different ways. Only [`SlotRecord`](crate::SlotRecord)'s methods write a
+//! record's counter; its press (after promoting an unused one) and a power cycle's
+//! first press step here.
 
 use crate::USE_COUNTER_MAX;
 
@@ -17,7 +18,7 @@ pub(crate) fn next_use_counter(counter: u16, session: u8) -> (u16, u8, bool) {
     let new_session = session.wrapping_add(1);
     // Guard the value about to be stored, not the one already stored: at the
     // ceiling `counter + 1` is 0x8000, which sets the reserved high bit and
-    // which `boot_use_counter` would then refuse to advance ever again.
+    // which `cycle_use_counter` would then refuse to advance ever again.
     if new_session == 0 && counter < USE_COUNTER_MAX {
         (counter + 1, new_session, true)
     } else {
@@ -25,16 +26,25 @@ pub(crate) fn next_use_counter(counter: u16, session: u8) -> (u16, u8, bool) {
     }
 }
 
-/// The step a power-up owes a stored counter, so a counter never repeats across
-/// reboots — the RAM session restarts at 0. `None` means leave the stored value
-/// alone: at the ceiling there is no next value, and a counter is never lowered,
-/// because going backwards is the replay it exists to prevent.
-pub(crate) fn boot_use_counter(stored: u16) -> Option<u16> {
-    let next = stored.wrapping_add(1);
-    (next <= USE_COUNTER_MAX).then_some(next)
+/// The step a power cycle's first press owes a stored counter, so a counter never
+/// repeats across reboots — the RAM session restarts at 0. `None` means leave the
+/// stored value alone: at the ceiling there is no next value, and a counter is never
+/// lowered, because going backwards is the replay it exists to prevent.
+pub(crate) fn cycle_use_counter(stored: u16) -> Option<u16> {
+    stored
+        .checked_add(1)
+        .filter(|&next| next <= USE_COUNTER_MAX)
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::indexing_slicing,
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::cast_possible_truncation,
+    reason = "a test's fixture is its own bound, and a panic is its failure report"
+)]
 #[path = "counter_tests.rs"]
 mod tests;
 

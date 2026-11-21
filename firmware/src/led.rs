@@ -22,8 +22,8 @@ use embassy_time::{Duration, Instant, Timer};
 #[cfg(not(led_kind = "none"))]
 use smart_leds::RGB8;
 
-// Every non-`none` build compiles all three hardware backends — the driver and
-// pin are chosen at runtime from the phy record (see `main`). The embassy color
+// The generic backends are selected from the phy record in `main`; Romu fixes
+// its discrete RGB backend at build time. The embassy color
 // order is fixed at `Rgb` (raw passthrough); the WS2812 wire byte order is instead
 // a runtime software r/g swap (`LED_RG_SWAP`), so a board whose red/green come out
 // swapped (standard WS2812B = GRB, e.g. the TenStar RP2350-USB; the Waveshare
@@ -728,6 +728,36 @@ pub async fn pimoroni_task(mut rg: Pwm<'static>, mut b: Pwm<'static>) {
     }
 }
 
+/// Romu's common-anode RGB uses active-low GPIOs without PWM.
+#[cfg(led_kind = "rgb_gpio")]
+#[embassy_executor::task]
+pub async fn rgb_gpio_task(
+    mut red: Output<'static>,
+    mut green: Output<'static>,
+    mut blue: Output<'static>,
+) {
+    let mut blinker = Blinker::new();
+    loop {
+        let c = blinker.tick();
+        if c.r > 0 {
+            red.set_low();
+        } else {
+            red.set_high();
+        }
+        if c.g > 0 {
+            green.set_low();
+        } else {
+            green.set_high();
+        }
+        if c.b > 0 {
+            blue.set_low();
+        } else {
+            blue.set_high();
+        }
+        Timer::after_millis(5).await;
+    }
+}
+
 /// Base PWM config for the Pimoroni common-anode RGB: an 8-bit `top`, both
 /// channels inverted (the LED lights when the pin is driven low / sinks current).
 /// Shared by the task and `main`'s `Pwm` construction so the polarity matches.
@@ -741,16 +771,12 @@ pub fn pimoroni_cfg() -> PwmConfig {
     cfg
 }
 
-/// USB device-event handler: flip the boot status to idle the moment the host
-/// *configures* the device, so the LED shows "enumerated & ready" (green) rather
-/// than staying on the red boot status until the first application command. On a
-/// host with no PC/SC daemon (and nothing else probing the key) that first
-/// command may never arrive even though the key is healthy and enumerated, which
-/// looked like a hang. The worker still drives processing/idle per command.
-pub struct StatusHandler;
-
-impl embassy_usb::Handler for StatusHandler {
-    fn configured(&mut self, configured: bool) {
-        set_status(if configured { STATUS_IDLE } else { STATUS_BOOT });
-    }
+pub fn usb_configured() {
+    // Reconfiguration can happen during a local prompt.
+    let _ = LED_STATUS.compare_exchange(
+        STATUS_BOOT,
+        STATUS_IDLE,
+        Ordering::Relaxed,
+        Ordering::Relaxed,
+    );
 }

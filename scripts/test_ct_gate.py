@@ -19,7 +19,7 @@ re-ran them. These do, every session. Neither half touches the working tree.
 
 Which image the second half reads is whichever `target/` holds — after
 `check.sh`'s later rows that is the no-touch build, and after
-`cargo build --release -p firmware` it is the default one. No case here reads a
+`bash scripts/build.sh` it is the default one. No case here reads a
 count off it, so both drive these arms; pinning the default image is the row's
 job, not this file's.
 
@@ -740,6 +740,70 @@ def test_the_shipped_floors_are_parameters_and_not_globals():
         ct_gate.REASONED_FLOOR,
     ) == (30, 20, 20)
 
+# These linkage names are from the Rust 1.99.1 release ELF, including a generic
+# caller: v0's type arguments must remain distinct in the surface inventory.
+V0_CT_EQ = "_RNvNtCs10aTsSbtMDO_10rsk_crypto3mac5ct_eq"
+V0_CHECK_PIN = (
+    "_RINvNtCsc2sANF8lsBO_11rsk_openpgp3pin9check_pinINtNtNtCsk5waN0OSTRl_9rsk_st"
+    "ore13authenticated7managed7ManagedNtNtCs8dDKasuzl7Y_8firmware13flash_storage"
+    "11SharedFlashINtNtCs9QvSXyS3s5K_18sequential_storage5cache5CacheINtNtB2F_11p"
+    "age_states15ArrayPageStatesKj160_EINtNtB2F_13page_pointers17ArrayPagePointer"
+    "sKB45_EINtNtB2F_12key_pointers16ArrayKeyPointerstKj507_EtEEEB1N_"
+)
+V0_PIN_NAME = (
+    "rsk_openpgp::pin::check_pin::<rsk_store::authenticated::managed::Managed<fir"
+    "mware::flash_storage::SharedFlash, sequential_storage::cache::Cache<sequenti"
+    "al_storage::cache::page_states::ArrayPageStates<352>, "
+    "sequential_storage::cache::page_pointers::ArrayPagePointers<352>, "
+    "sequential_storage::cache::key_pointers::ArrayKeyPointers<u16, 1287>, u16>>>"
+)
+V0_VERIFY = "_RNvNtCs10aTsSbtMDO_10rsk_crypto8pinproto6verify"
+V0_METHOD = "_RNvMCs7xlDB4uee5x_8rsk_oathNtB2_10OathApplet15otp_pin_matches"
+
+
+def v0_chain(text):
+    return text.replace(
+        "_ZN10rsk_crypto3mac5ct_eq17h0000000000000000E", V0_CT_EQ
+    ).replace("_ZN11rsk_openpgp3pin9check_pin17h0000000000000001E", V0_CHECK_PIN)
+
+
+@pytest.mark.parametrize("fixture,leaks", [(CLEAN, False), (LEAKY, True)])
+def test_v0_frames_keep_the_comparator_taint_and_exact_caller(fixture, leaks):
+    violations, _, _, callers, _ = observed(v0_chain(fixture))
+    assert bool(violations) == leaks
+    assert callers == {V0_PIN_NAME}
+
+
+def test_v0_inherent_method_is_a_first_party_frame():
+    chain = v0_chain(CLEAN).replace(V0_CHECK_PIN, V0_METHOD)
+    assert observed(chain)[3] == {"<rsk_oath::OathApplet>::otp_pin_matches"}
+    assert not ct_gate.FIRST_PARTY.match(
+        "<core::option::Option<rsk_oath::OathApplet>>::is_some"
+    )
+
+
+def test_v0_frame_batch_keeps_plain_and_legacy_names():
+    lines = [
+        f"{V0_CT_EQ}():", f"{V0_VERIFY}():", "Reset():",
+        "_ZN10rsk_crypto3mac5ct_eq17h0000000000000000E():",
+    ]
+    names = ct_gate.frame_names(lines)
+    assert names[V0_CT_EQ] == "rsk_crypto::mac::ct_eq"
+    assert names[V0_VERIFY] == "rsk_crypto::pinproto::verify"
+    assert names["Reset"] == "Reset"
+    assert names["_ZN10rsk_crypto3mac5ct_eq17h0000000000000000E"] == names[V0_CT_EQ]
+
+
+@pytest.mark.parametrize("output", ["", "_Rinvalid\n", "decoded\nextra\n"])
+def test_v0_demangling_failure_reddens_audit(monkeypatch, output):
+    monkeypatch.setattr(
+        ct_gate.subprocess, "run",
+        lambda *args, **kwargs: subprocess.CompletedProcess(args, 0, output, ""),
+    )
+    findings, _ = ct_gate.audit(ROOT, lines=[f"{V0_CT_EQ}():"], **NO_FLOORS)
+    assert len(findings) == 1
+    assert "Rust v0 frame demangling failed" in findings[0]
+
 
 def test_an_unregistered_inliner_is_a_finding():
     """The caller set is held BOTH ways; this is the direction that catches a new
@@ -751,15 +815,26 @@ def test_an_unregistered_inliner_is_a_finding():
     assert any("says which protocol surface" in f for f in findings), findings
 
 
+def test_an_unregistered_v0_generic_inliner_is_a_finding():
+    stranger = v0_chain(CLEAN).replace("3pin9check_pin", "3pin9check_pix")
+    findings, _ = ct_gate.audit(ROOT, lines=stranger.splitlines(), **NO_FLOORS)
+    assert any("says which protocol surface" in f for f in findings), findings
+
+
 def test_a_surface_that_stopped_routing_through_it_is_a_finding():
     """The direction that catches the defect `docs/ct-audit.md` records twice: a
     compare that BYPASSED the comparator. The registry entry survives; the ELF
     stops naming it. Keyed on the OUTERMOST frame this could not see a bypass
     added beside a surviving call in the same function — the review drove that on
     `cmd_update` and the row stayed green."""
-    findings, _ = ct_gate.audit(ROOT, lines=CLEAN.splitlines(), **NO_FLOORS)
+    # This non-generic caller keeps the same identity in both mangling schemes.
+    present = CLEAN.replace(
+        "_ZN11rsk_openpgp3pin9check_pin17h0000000000000001E", V0_VERIFY
+    )
+    findings, _ = ct_gate.audit(ROOT, lines=present.splitlines(), **NO_FLOORS)
     stale = [f for f in findings if "inlines no site in the image" in f]
-    assert len(stale) == 27, stale
+    _, callers = ct_gate.registry(ROOT, [])
+    assert len(stale) == len(callers) - 1, stale
 
 
 #: The scope clause as it read before `a4b53c2` refuted it, and the clause that
@@ -803,7 +878,7 @@ SCOPE_BYPASSES = {
     "line break": lambda page: refuted_page("key\ngen"),
     "moved into a bullet": lambda page: page.replace(
         SHIPPED_SCOPE + " — the modexp on\nboth of its callers, the prime search"
-        " and the `rsa_private_exp_crt` that PIV\nGENERAL AUTHENTICATE and"
+        " and the `sign_crt` that PIV\nGENERAL AUTHENTICATE and"
         " OpenPGP PSO:CDS / INTERNAL AUTHENTICATE / DECIPHER\nreach over USB"
         " against a long-lived key.",
         "the primitives listed below.\n\n- the hand-written `rsk-rsa` keygen"
@@ -812,7 +887,7 @@ SCOPE_BYPASSES = {
     ),
     "decoy anchor": lambda page: refuted_page().replace(
         "# Constant-time / timing side-channel audit",
-        "<!-- The hand-written `rsk-rsa` modexp and `rsa_private_exp_crt` are"
+        "<!-- The hand-written `rsk-rsa` modexp and `sign_crt` are"
         " described below. -->\n\n# Constant-time / timing side-channel audit",
         1,
     ),
@@ -824,7 +899,7 @@ SCOPE_BYPASSES = {
     ),
     "CRT caller dropped": lambda page: page.replace(
         " — the modexp on\nboth of its callers, the prime search and the"
-        " `rsa_private_exp_crt` that PIV\nGENERAL AUTHENTICATE and OpenPGP"
+        " `sign_crt` that PIV\nGENERAL AUTHENTICATE and OpenPGP"
         " PSO:CDS / INTERNAL AUTHENTICATE / DECIPHER\nreach over USB against a"
         " long-lived key.",
         " — the modexp as the prime search reaches it.",
@@ -832,7 +907,7 @@ SCOPE_BYPASSES = {
     ),
     "scoped by omission": lambda page: page.replace(
         SHIPPED_SCOPE + " — the modexp on\nboth of its callers, the prime search"
-        " and the `rsa_private_exp_crt` that PIV\nGENERAL AUTHENTICATE and"
+        " and the `sign_crt` that PIV\nGENERAL AUTHENTICATE and"
         " OpenPGP PSO:CDS / INTERNAL AUTHENTICATE / DECIPHER\nreach over USB"
         " against a long-lived key.",
         "hand-written `rsk-rsa` primitives that run while a key is being made.",
@@ -866,7 +941,7 @@ def test_the_scope_rule_is_not_walked_past(name):
     it is about, and refused `\\bkeygen\\b`. Anchoring on the CLAUSE is what
     answers the two structural ones: a re-wrap or a move into a bullet carries
     the anchor along with the words, so the rule follows instead of falling off.
-    Requiring the paragraph to NAME `modexp` and `rsa_private_exp_crt` is what
+    Requiring the paragraph to NAME `modexp` and `sign_crt` is what
     answers "scoped by omission", where the word never appears at all.
 
     Driven per clause — each falls on its own row of this table, in the
@@ -1021,11 +1096,6 @@ def test_the_image_arms_were_driven_by_hand():
 #: function, and cutting at those would cut a run in half.
 FUNCTION = re.compile(r"^[0-9a-f]{8} <")
 
-#: `ct_eq` as the disassembly SPELLS it, hash suffix excluded. `ct_gate.demangle`
-#: is what turns this into `SYMBOL`; deciding which functions survive the cut is
-#: a grep over the text, before any parse has happened.
-MANGLED = "_ZN10rsk_crypto3mac5ct_eq"
-
 SYMBOL = SITE["CT-CMP-001"]["symbol"]
 
 #: The half of a finding that says THE DEFECT. A row that goes red on a floor, on
@@ -1062,12 +1132,12 @@ def whole_image():
     """
     elf = ROOT / ct_gate.ELF
     assert elf.is_file(), (
-        f"{ct_gate.ELF} is not there — `cargo build --release -p firmware`"
+        f"{ct_gate.ELF} is not there — `bash scripts/build.sh`"
         " first. The arms below prove a machine-code defect reddens the row, and"
         " they have no image to put a defect into."
     )
     done = subprocess.run(
-        [ct_gate.OBJDUMP, "-d", "-l", "--inlines", "--section=.text", str(elf)],
+        [ct_gate.OBJDUMP, "-d", "-l", "--inlines", str(elf)],
         capture_output=True,
         text=True,
         check=True,
@@ -1102,12 +1172,22 @@ def inlining_functions(whole_image):
         else:
             prologue.append(line)
     blocks.append(current)
-    kept = [b for b in blocks if b and any(MANGLED in line for line in b)]
+    names = ct_gate.frame_names(whole_image)
+    spellings = {name for name, plain in names.items() if plain == SYMBOL}
+    assert spellings, "no linkage spelling resolved to the comparator"
+    markers = tuple(
+        marker for name in spellings for marker in (f"({name})", f"{name}():")
+    )
+
+    def attributed(line):
+        return line.endswith(markers)
+
+    kept = [b for b in blocks if b and any(attributed(line) for line in b)]
     cut = prologue + [line for block in kept for line in block]
     # Whole blocks are kept, so an attributed line falling outside the cut is the
     # one way it could lose a run before any case has looked at it.
-    assert sum(MANGLED in line for line in cut) == sum(
-        MANGLED in line for line in whole_image
+    assert sum(attributed(line) for line in cut) == sum(
+        attributed(line) for line in whole_image
     ), "the cut dropped a line the site is attributed to"
     return cut
 
@@ -1144,8 +1224,13 @@ def row(work, dump, script=None):
     # than as a green row over a stream nothing produced.
     spelled = argv.read_text(encoding="utf-8")
     assert str(script.parents[1] / ct_gate.ELF) in spelled, spelled
-    assert "--inlines" in spelled and "--section=.text" in spelled, spelled
+    assert "--inlines" in spelled and "--section=" not in spelled, spelled
     return done
+
+
+REGISTER_NUMBER = {f"r{number}": number for number in range(16)} | {
+    "sl": 10, "fp": 11, "ip": 12, "sp": 13, "lr": 14, "pc": 15,
+}
 
 
 def cmp_zero(register, halfwords):
@@ -1155,7 +1240,7 @@ def cmp_zero(register, halfwords):
     defect the parser REJECTS is a syntactic corruption, and a row that goes red
     on one has not read a defect at all.
     """
-    number = int(register[1:])
+    number = REGISTER_NUMBER[register]
     if halfwords == 1:
         return f"{0x2800 | number << 8:04x}      "
     return f"f1b{number:x} 0f00 "
@@ -1195,7 +1280,7 @@ def early_exit(lines):
         halfwords = len(line.split("\t")[1].split()) if code else 0
         # A high register has no narrow `cmp #0`, so that copy is left alone
         # rather than widened: the mutant may not move an address.
-        if register and not (halfwords == 1 and int(register[1:]) > 7):
+        if register and not (halfwords == 1 and REGISTER_NUMBER[register] > 7):
             address = int(code.group(1), 16)
             out.append(
                 f"{code.group(1)}:\t{cmp_zero(register, halfwords)}\tcmp\t{register}, #0"
@@ -1206,6 +1291,27 @@ def early_exit(lines):
     return out, injected
 
 
+@pytest.mark.parametrize(
+    ("register", "wide_encoding"),
+    [("r3", "f1b3 0f00 "), ("sl", "f1ba 0f00 "), ("fp", "f1bb 0f00 "),
+     ("ip", "f1bc 0f00 "), ("lr", "f1be 0f00 ")],
+)
+@pytest.mark.parametrize("halfwords", [1, 2])
+def test_binary_injection_handles_register_aliases_without_widening(
+    register, wide_encoding, halfwords
+):
+    lines = re.sub(r"\br3\b", register, CLEAN).splitlines()
+    if halfwords == 1:
+        lines = [line.replace("f1b1 0f20 \tcmp.w", "2920      \tcmp") for line in lines]
+    mutated, injected = early_exit(lines)
+    if halfwords == 1 and register != "r3":
+        assert mutated == lines and not injected
+    else:
+        assert injected == {0x1000000A: register}
+        encoding = wide_encoding if halfwords == 2 else "2b00      "
+        assert f"1000000a:\t{encoding}\tcmp\t{register}, #0" in mutated
+
+
 @pytest.fixture(scope="session")
 def defective_image(inlining_functions):
     """The image with the early exit in it, built ONCE for the four arms below."""
@@ -1214,9 +1320,12 @@ def defective_image(inlining_functions):
     # failure, not a green row somewhere downstream reading as a clean image.
     assert injected, "no copy of the site took the early exit"
     assert mutated != inlining_functions
-    assert sum(
-        1 for line in mutated if re.search(r"\tcmp\tr\d+, #0$", line)
-    ) >= len(injected), "the mutated stream does not carry what was injected"
+    encoded = {(address, mnemonic, operands)
+               for address, mnemonic, operands, _ in ct_gate.instructions(mutated)}
+    assert all((address, "cmp", f"{register}, #0") in encoded
+               for address, register in injected.items()), (
+        "the mutated stream does not carry what was injected"
+    )
     return mutated, injected
 
 

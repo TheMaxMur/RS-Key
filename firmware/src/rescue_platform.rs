@@ -10,9 +10,32 @@
 
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
+use rsk_rescue::seal::Status;
 use rsk_rescue::{Platform, SecureBootStatus};
 
+static AUTO_SEAL: embassy_sync::blocking_mutex::Mutex<
+    embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex,
+    core::cell::Cell<Status>,
+> = embassy_sync::blocking_mutex::Mutex::new(core::cell::Cell::new(Status::Unchecked));
+
+pub fn record_auto_seal(status: Status) {
+    AUTO_SEAL.lock(|state| state.set(status));
+}
+
 static TIME_SET: AtomicBool = AtomicBool::new(false);
+/// What this boot's seal passes left under the pre-burn key; above `u16::MAX` until
+/// a boot with the fused key has recorded it ([`record_pre_otp_left`]).
+static PRE_OTP_LEFT: AtomicU32 = AtomicU32::new(PRE_OTP_UNRECORDED);
+const PRE_OTP_UNRECORDED: u32 = u32::MAX;
+
+/// Record what the boot's seal passes left under the pre-burn key, `None` for a boot
+/// that ran them without the fused key; `lock_page58` reads it through the platform.
+pub fn record_pre_otp_left(left: Option<u16>) {
+    PRE_OTP_LEFT.store(
+        left.map_or(PRE_OTP_UNRECORDED, u32::from),
+        Ordering::Relaxed,
+    );
+}
 static EPOCH_AT_SET: AtomicU32 = AtomicU32::new(0);
 static UPTIME_AT_SET: AtomicU32 = AtomicU32::new(0);
 
@@ -23,45 +46,9 @@ fn uptime_secs() -> u32 {
 pub struct RescuePlatform;
 
 impl Platform for RescuePlatform {
-    /// The BOOT_FLAGS1 valid-key flags are authoritative for "enabled" (the
-    /// bootrom ignores a KEY_VALID bit without a real key). "Locked" additionally
-    /// requires every other boot key invalidated, debug disabled, and the glitch
-    /// detectors enabled at full sensitivity.
+    /// Read physical reliability copies before claiming completed hardening.
     fn secure_boot_status(&self) -> SecureBootStatus {
-        use rp_pac::otp_data_raw::regs::{BootFlags1, Crit1};
-        use rsk_rescue::rollback::majority;
-        // Read the two gating OTP rows three times and 2-of-3 majority-vote each
-        // bit. `locked`/`enabled` gate the irreversible fuse burns (page-58 lock,
-        // ROLLBACK_REQUIRED), yet were decided from a single read of crit1 +
-        // boot_flags1; a transient read fault on debug_disable / glitch_detector_*
-        // could flip the verdict. Voting brings this read up to the RBIT-3 standard
-        // the anti-rollback path already trusts (`rsk_rescue::rollback::majority`).
-        let crit1 = Crit1(majority([
-            rp_pac::OTP_DATA_RAW.crit1().read().0,
-            rp_pac::OTP_DATA_RAW.crit1().read().0,
-            rp_pac::OTP_DATA_RAW.crit1().read().0,
-        ]));
-        let flags1 = BootFlags1(majority([
-            rp_pac::OTP_DATA_RAW.boot_flags1().read().0,
-            rp_pac::OTP_DATA_RAW.boot_flags1().read().0,
-            rp_pac::OTP_DATA_RAW.boot_flags1().read().0,
-        ]));
-        let valid = flags1.key_valid() & 0x0F;
-        let bootkey = (0..4u8).find(|i| valid & (1 << i) != 0);
-        let enabled = crit1.secure_boot_enable() && bootkey.is_some();
-        let locked = enabled && {
-            let bk = bootkey.unwrap();
-            let others = 0x0F & !(1 << bk);
-            (flags1.key_invalid() & others) == others
-                && crit1.debug_disable()
-                && crit1.glitch_detector_enable()
-                && crit1.glitch_detector_sens() == 3
-        };
-        SecureBootStatus {
-            enabled,
-            locked,
-            bootkey: bootkey.unwrap_or(0xFF),
-        }
+        rsk_rescue::boot_status::read_status(|row| embassy_rp::otp::read_raw_word(row).ok())
     }
 
     fn now(&self) -> Option<u32> {
@@ -85,6 +72,14 @@ impl Platform for RescuePlatform {
 
     fn read_page58_lock_raw(&self) -> Option<u32> {
         crate::otp_keys::read_page58_lock()
+    }
+
+    fn pre_otp_left(&self) -> Option<u16> {
+        u16::try_from(PRE_OTP_LEFT.load(Ordering::Relaxed)).ok()
+    }
+
+    fn auto_seal_status(&self) -> Status {
+        AUTO_SEAL.lock(core::cell::Cell::get)
     }
 
     fn lock_page58(&mut self) -> bool {

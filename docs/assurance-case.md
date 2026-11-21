@@ -110,10 +110,11 @@ Saltzer and Schroeder's list, against what the tree actually does. The point of
 the exercise is the mismatches it would expose, so a principle that is only
 partly honoured says so.
 
-**Economy of mechanism.** `no_std`, no allocator, no mutexes; one worker owning
-flash and TRNG; the async executor supplying the concurrency an earlier design
-needed a second core and hand-rolled queues for. Less machinery is fewer states
-to get wrong, and the heap that does not exist cannot fragment or leak.
+**Economy of mechanism.** `no_std`, no mutexes; one worker owning flash and
+TRNG; the async executor supplying the concurrency an earlier design needed a
+second core and hand-rolled queues for. Less machinery is fewer states to get
+wrong. Partly honoured: there is one heap, which RSA's big integers and FIDO's
+boxed ML-DSA keys need and nothing else uses, and it wipes each block it frees.
 
 **Fail-safe defaults.** `alwaysUv` ships on. The harder rule is the one learned
 from a defect: a flash read that *fails* must never be laundered into an

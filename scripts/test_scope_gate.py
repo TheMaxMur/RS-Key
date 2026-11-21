@@ -19,6 +19,8 @@ import pytest
 
 import scope_gate
 
+pytestmark = pytest.mark.assurance
+
 BASE = """---- MODULE Base ----
 EXTENDS Naturals
 

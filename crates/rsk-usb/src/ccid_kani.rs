@@ -3,6 +3,31 @@
 
 use super::*;
 
+#[kani::proof]
+fn header_encoding_preserves_every_byte_outside_a_complete_header() {
+    let mut out: [u8; HEADER + 2] = kani::any();
+    let before = out;
+    let len: usize = kani::any();
+    kani::assume(len <= out.len());
+    let kind: u8 = kani::any();
+    let length: u32 = kani::any();
+    let seq: u8 = kani::any();
+    let status: u8 = kani::any();
+    put_header(&mut out[..len], kind, length, seq, status);
+    if len < HEADER {
+        assert!(out == before);
+    } else {
+        assert!(out[0] == kind);
+        assert!(u32::from_le_bytes([out[1], out[2], out[3], out[4]]) == length);
+        assert!(out[5] == 0 && out[6] == seq && out[7] == status);
+        assert!(out[8] == 0 && out[9] == 0);
+        assert!(out[HEADER..] == before[HEADER..]);
+    }
+    kani::cover!(len < HEADER, "short header refused");
+    kani::cover!(len == HEADER, "exact header encoded");
+    kani::cover!(len > HEADER, "body preserved");
+}
+
 /// `xfr_apdu` / `secure_apdu` never panic on any host message; they recognize
 /// exactly their own message type, never both; and the range they return is
 /// `HEADER..HEADER + min(dwLength, available)` — so the caller can slice

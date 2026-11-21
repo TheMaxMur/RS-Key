@@ -122,12 +122,12 @@ body = '''
 - **A registration with a PIN set and no token — CLOSED, and what is left of it
   is one conjunct.** CTAP 2.1 §6.1.2 steps 7/10 serve a NON-discoverable
   credential on presence alone even where a PIN is set
-  (`makecredential.rs:589-591`), and `Next` carries it now:
+  (`makecredential.rs:635-637`), and `Next` carries it now:
   `RegisterNdStart` / `RegisterNdTouched` / `RegisterNdRefused`, guarded by
   `McTokenlessGuard(FALSE)`. It writes nothing, because
-  `makecredential.rs:823-824` stores only under `req.rk`, so it carries no `rp`
+  `makecredential.rs:918-919` stores only under `req.rk`, so it carries no `rp`
   either. What stays narrow is the `~tok.live` conjunct in that guard: above
-  `state.rs:530` the same touch SPENDS a live token without binding it, and tier
+  `state.rs:651` the same touch SPENDS a live token without binding it, and tier
   A has no word for that edge — its `UseMc` admits an authorized event only
   under `~pinSet \/ (live /\ permissionMc)` and its `Consumed` requires the rpId
   binding this path never makes. So the model takes the states where B and the
@@ -155,7 +155,7 @@ row says which of the two kinds of not-closed each one is.
 body = '''
 - **`largeBlobs`, `getNextAssertion`, the MSE seed-backup channel and built-in
   UV are absent.** They carry their own channel-ownership rules
-  (`state.rs:33-51`, `:326-333`) that this model does not check — the most
+  (`state.rs:33-54`, `:387-396`) that this model does not check — the most
   obvious place to extend it. The trusted-display ceremony is NOT on that list
   and used to be: `RSKeyTrustedDisplay` models the panel's Approve/Deny with
   its own configurations in the safety tier. What stays absent is its meeting
@@ -194,7 +194,7 @@ body = '''
   `oathCode` exemption fires exactly when `~oathCodeSet` — the very state the
   removal produces. The repair is therefore a recorder at the STEP, not a change
   to the exemption: `OathRemoveCode` carries the gate
-  (`crates/rsk-oath/src/lib.rs:330-332`) as a Guard/Policy pair and
+  (`crates/rsk-oath/src/lib.rs:370-372`) as a Guard/Policy pair and
   `AccessCodeRemovalNeedsTheCode` is its own invariant. Measured exactly as the
   diagnosis predicted: the action adds no new kind of state, while
   `BugRemoveCodeUnvalidated` falls RED in 71 — a violation no state
@@ -315,9 +315,11 @@ mutant of the roster fires at the recorded minimum of each, so the arithmetic
 is checked at a domain the firmware's own is far wider than. What no scope of
 this model reaches is bounded at source instead:
 use_counter_climbs_and_stops_at_the_ceiling quantifies over every session byte
-and both stepped writers across the whole 0x7FFF domain, and which writers it
-does NOT reach is the derived roster of assurance/otp_counter_writers.toml
-rather than a sentence anywhere.
+and both stepped writers across the whole 0x7FFF domain. Only SlotRecord's
+methods write the counter, since its tail is private: a CONFIGURE zeroes it,
+a boot's first press steps it through one of those two rules, and a press through the
+other, after promoting an unused counter to 1. A raw write to a slot FID is
+below the type, and outside this bound.
 '''
 body = '''
 - **The OTP use counter runs to a handful of steps** (`CounterMax`) where the
@@ -326,9 +328,9 @@ body = '''
   no state to appear in now do — a session beside the counter, and a second
   slot (`Slots`) to move a record to — and a mutant falls on each. The third
   does not: `OtpUse` types and steps in one action, so a press whose advance
-  the store REFUSES has no failing arm here, and neither has the warm reset,
-  which restarts the session over an unchanged counter and is a real repeat
-  the source page carries as a residual. Nor does the top of the range: a
+  the store REFUSES has no failing arm here. A warm reboot needs none: it is
+  `OtpPowerCycle`, as a cold one is, since both restart the session and owe each
+  record the step its first press takes. Nor does the top of the range: a
   defect needing the real ceiling, or more sessions than one wrap, still has
   nowhere here to appear.
 '''
@@ -338,16 +340,22 @@ id = "NAR-RETRY-LATTICE"
 disposition = "bounded-elsewhere"
 cites = ["scopes:RSKeyRetryLattice/Max"]
 why = '''
-RSKeyRetryLattice/Max is the counter ceiling every mutant of that module fires
-at, and the secret is abstracted to matched or not-matched, so the model is
-the arithmetic around a comparison's answer.
+RSKeyRetryLattice/Max is the ceiling every counter and every stored maximum of
+that module runs under, and the one every mutant of it fires at; the secret is
+abstracted to matched or not-matched, so the model is the arithmetic around a
+comparison's answer.
 '''
 body = '''
-- **The PIN comparison is a nondeterministic boolean** (`correct`), the
-  counters run to a single step (`Max`), and OpenPGP's admin path from PW3 to
-  PW1 is deliberately outside the recovery graph because it gates on a live
-  PW3 session. The cryptography, the PIN bytes and the wire framing are
-  elsewhere; a defect in the comparison itself cannot be seen from here.
+- **The PIN comparison is a nondeterministic boolean** (`correct`), and the
+  counters and their stored maxima run to two (`Max`) where the card's are a
+  byte. Administrative doors include OpenPGP F2, RESET RETRY P1=02, D3, KDF
+  reseeding and PIV FA. Status lifetime is coarse; PW1's other mode may stay
+  held after a wrong attempt, and resetting-code presence is tracked separately.
+  KDF key presence is an input rather than a model of key lifetime. Commands are
+  completed and fault-free: a torn F2 increase can leave its new count above the
+  old stored maximum, so CountWithinMaximum is not an all-path firmware claim.
+  Cryptography, PIN bytes, wire framing and interrupted record writes remain
+  outside the abstraction.
 '''
 
 [[abstraction]]

@@ -58,11 +58,127 @@ fn cert_without_key_counts_as_populated() {
 }
 
 #[test]
+fn card_authentication_and_attestation_report_their_certificate_objects() {
+    for (slot, object) in [(SLOT_CARDAUTH, 0x5fc101), (SLOT_ATTESTATION, 0x5fff01)] {
+        let mut fs = fs();
+        assert!(!read_slot(&mut fs, slot).cert);
+        fs.put(object_fid(object).unwrap(), &[0x30, 0]).unwrap();
+        let info = read_slot(&mut fs, slot);
+        assert!(info.cert);
+        assert!(!info.present);
+        assert_eq!(info.slot, slot);
+    }
+}
+
+#[test]
 fn retries_come_from_ef_retries() {
     let mut fs = fs();
     fs.put(EF_RETRIES, &[3, 2, 3, 0]).unwrap();
     let info = read_info(&mut fs);
     assert_eq!((info.pin_retries, info.puk_retries), (2, 0));
+}
+
+#[test]
+fn legacy_and_incomplete_metadata_never_invent_an_origin_or_policy() {
+    let mut fs = fs();
+    let fid = key_fid(SLOT_SIGNATURE).get();
+    fs.put(fid, &[0xAB; 64]).unwrap();
+    for meta in [
+        &[ALGO_ECCP384, PINPOLICY_ONCE, TOUCHPOLICY_ALWAYS][..],
+        &[ALGO_ECCP384, PINPOLICY_ONCE][..],
+    ] {
+        fs.meta_add(fid, meta).unwrap();
+        let slot = read_slot(&mut fs, SLOT_SIGNATURE);
+        assert!(slot.present);
+        assert_eq!(slot.origin, 0);
+        if meta.len() == 3 {
+            assert_eq!(
+                (slot.algo, slot.pin_policy, slot.touch_policy),
+                (ALGO_ECCP384, PINPOLICY_ONCE, TOUCHPOLICY_ALWAYS)
+            );
+        } else {
+            assert_eq!((slot.algo, slot.pin_policy, slot.touch_policy), (0, 0, 0));
+        }
+    }
+    fs.put(EF_RETRIES, &[3, 0, 3]).unwrap();
+    let info = read_info(&mut fs);
+    assert_eq!(
+        (info.pin_retries, info.puk_retries),
+        (DEFAULT_RETRIES, DEFAULT_RETRIES)
+    );
+}
+
+#[test]
+fn extra_slot_enumeration_respects_every_output_capacity() {
+    let mut fs = fs();
+    for slot in [SLOT_ATTESTATION, SLOT_RETIRED_FIRST, SLOT_RETIRED_LAST] {
+        fs.put(key_fid(slot).get(), &[0xAA; 64]).unwrap();
+    }
+    for size in 0..=MAX_EXTRA_SLOTS {
+        let mut out = vec![PivSlot::default(); size];
+        let n = read_extra(&mut fs, &mut out);
+        assert_eq!(n, size.min(3));
+        assert_eq!(
+            out[..n].iter().map(|s| s.slot).collect::<Vec<_>>(),
+            [SLOT_ATTESTATION, SLOT_RETIRED_FIRST, SLOT_RETIRED_LAST][..n]
+        );
+        assert!(out[n..].iter().all(|s| *s == PivSlot::default()));
+    }
+}
+
+#[test]
+fn display_labels_distinguish_supported_keys_and_public_policies() {
+    for (slot, label) in [
+        (SLOT_AUTHENTICATION, "Authentication"),
+        (SLOT_SIGNATURE, "Signature"),
+        (SLOT_KEYMGM, "Key Management"),
+        (SLOT_CARDAUTH, "Card Auth"),
+        (SLOT_CARDMGM, "Management"),
+        (SLOT_ATTESTATION, "Attestation"),
+        (SLOT_RETIRED_FIRST, "Retired"),
+    ] {
+        assert_eq!(slot_name(slot), label);
+    }
+    for (algo, label) in [
+        (ALGO_RSA1024, "RSA 1024"),
+        (ALGO_RSA2048, "RSA 2048"),
+        (ALGO_RSA3072, "RSA 3072"),
+        (ALGO_RSA4096, "RSA 4096"),
+        (ALGO_ECCP256, "NIST P-256"),
+        (ALGO_ECCP384, "NIST P-384"),
+        (ALGO_ED25519, "Ed25519"),
+        (ALGO_X25519, "X25519"),
+        (ALGO_3DES, "3DES"),
+        (ALGO_AES128, "AES-128"),
+        (ALGO_AES192, "AES-192"),
+        (ALGO_AES256, "AES-256"),
+        (0xFF, "—"),
+    ] {
+        assert_eq!(algo_name(algo), label);
+    }
+    for (value, label) in [
+        (PINPOLICY_NEVER, "Never"),
+        (PINPOLICY_ONCE, "Once"),
+        (PINPOLICY_ALWAYS, "Always"),
+        (0xFF, "Default"),
+    ] {
+        assert_eq!(pin_policy_name(value), label);
+    }
+    for (value, label) in [
+        (TOUCHPOLICY_NEVER, "Never"),
+        (TOUCHPOLICY_ALWAYS, "Always"),
+        (TOUCHPOLICY_CACHED, "Cached"),
+        (0xFF, "Default"),
+    ] {
+        assert_eq!(touch_policy_name(value), label);
+    }
+    for (value, label) in [
+        (ORIGIN_GENERATED, "Generated"),
+        (ORIGIN_IMPORTED, "Imported"),
+        (0xFF, "—"),
+    ] {
+        assert_eq!(origin_name(value), label);
+    }
 }
 
 #[test]
@@ -98,8 +214,8 @@ fn next_free_retired_skips_taken_slots() {
 }
 
 /// A slot holding only a certificate is populated to [`read_extra`], so the picker must
-/// skip it too — offering it would have the generate overwrite that certificate under a
-/// screen promising it adds to an empty slot.
+/// skip it too — offering it would put a new key beside someone's certificate under a
+/// screen promising an empty slot.
 #[test]
 fn next_free_retired_skips_a_cert_without_a_key() {
     let mut fs = fs();
@@ -133,6 +249,7 @@ fn on_device_generate_fills_an_empty_retired_slot() {
         serial_hash: &[0x22; 32],
         serial_id: &[1, 2, 3, 4, 5, 6, 7, 8],
         otp_key: None,
+        latched: false,
     };
     let mut rng = TestRng(0xC0FFEE);
     assert!(generate_slot_key(&dev, &mut fs, &mut rng, 0x82, ALGO_ECCP256).is_ok());
@@ -140,7 +257,7 @@ fn on_device_generate_fills_an_empty_retired_slot() {
     assert!(s.present);
     assert_eq!(algo_name(s.algo), "NIST P-256");
     assert_eq!(origin_name(s.origin), "Generated");
-    assert!(s.cert, "a self-signed cert is stored alongside the key");
+    assert!(!s.cert, "no certificate, as from a host GENERATE");
 
     // Refuses to overwrite a populated slot, a non-retired slot, and RSA on-device.
     assert!(generate_slot_key(&dev, &mut fs, &mut rng, 0x82, ALGO_ECCP256).is_err());
@@ -148,20 +265,60 @@ fn on_device_generate_fills_an_empty_retired_slot() {
     assert!(generate_slot_key(&dev, &mut fs, &mut rng, 0x83, ALGO_RSA2048).is_err());
 }
 
+/// The panel's generate drops the slot's metadata head before it writes the key, as the
+/// host GENERATE does: a head it cannot read refuses with no key written, where a stale
+/// head a failed MOVE left would otherwise govern the new key.
+#[test]
+fn a_faulted_head_refuses_the_panel_generate_before_it_writes() {
+    let dev = Device {
+        serial_hash: &[0x22; 32],
+        serial_id: &[1, 2, 3, 4, 5, 6, 7, 8],
+        otp_key: None,
+        latched: false,
+    };
+    let rsa = rsk_rsa::generate_rsa(&mut crate::RsaRng(&mut TestRng(99)), 1024).unwrap();
+    for via_rsa in [false, true] {
+        let (backend, medium) = rsk_fs::storage::faults::ProbeStuck::new();
+        let mut fs = Fs::new(backend);
+        fs.scan();
+        let stale = [
+            ALGO_ECCP256,
+            PINPOLICY_NEVER,
+            TOUCHPOLICY_NEVER,
+            ORIGIN_GENERATED,
+        ];
+        fs.meta_add(key_fid(0x82).get(), &stale).unwrap();
+        medium.stick(Some(rsk_fs::EF_META));
+        let got = if via_rsa {
+            store_retired_rsa(&dev, &mut fs, &mut TestRng(5), 0x82, &rsa)
+        } else {
+            generate_slot_key(&dev, &mut fs, &mut TestRng(5), 0x82, ALGO_ECCP256)
+        };
+        medium.stick(None);
+        assert_eq!(got, Err(Sw::MEMORY_FAILURE), "RSA {via_rsa}");
+        assert_eq!(
+            medium.value(key_fid(0x82).get()),
+            None,
+            "RSA {via_rsa}: a key was written"
+        );
+    }
+}
+
 /// The panel's generate is fenced by presence alone — no management key — so
 /// `retired_slot_is_free` is the whole authorisation for overwriting nothing. Both its
 /// probes collapsed a failed read into "absent", so one faulted probe reported an
-/// OCCUPIED retired slot free and the generate wrote over the sealed key and the
-/// certificate the screen promises it never erases. One row per probe, each aimed at
-/// its OWN fid: a fault on the key shadows the cert probe behind it.
+/// OCCUPIED retired slot free and the generate wrote over the sealed key, or put a key
+/// beside a certificate that is someone else's. One row per probe, each aimed at its OWN
+/// fid: a fault on the key shadows the cert probe behind it.
 #[test]
 fn a_faulted_retired_probe_does_not_overwrite_a_populated_slot() {
     let dev = Device {
         serial_hash: &[0x22; 32],
         serial_id: &[1, 2, 3, 4, 5, 6, 7, 8],
         otp_key: None,
+        latched: false,
     };
-    // (slot, the fid to fault, the fid whose bytes must survive, what it holds)
+    // (slot, the fid to fault, the fid whose contents must not change, what it holds)
     for (slot, faulted, guarded, what) in [
         (
             0x82u8,
@@ -172,8 +329,8 @@ fn a_faulted_retired_probe_does_not_overwrite_a_populated_slot() {
         (
             0x83,
             cert_fid_for_slot(0x83).unwrap(),
-            cert_fid_for_slot(0x83).unwrap(),
-            "the certificate of a slot holding a certificate and no key",
+            key_fid(0x83).get(),
+            "the absent key of a slot holding only a certificate",
         ),
     ] {
         let (backend, medium) = rsk_fs::storage::faults::ProbeStuck::new();
@@ -185,8 +342,12 @@ fn a_faulted_retired_probe_does_not_overwrite_a_populated_slot() {
             &[0x30, 0x03, 0x01, 0x02, 0x03],
         )
         .unwrap();
+        let populated = (
+            medium.value(key_fid(0x82).get()).is_some(),
+            medium.value(cert_fid_for_slot(0x83).unwrap()).is_some(),
+        );
+        assert_eq!(populated, (true, true), "control: both slots populated");
         let before = medium.value(guarded);
-        assert!(before.is_some(), "{what} is present before the fault");
 
         medium.stick(Some(faulted));
         // The picker must not offer a slot it could not confirm empty.
@@ -197,7 +358,7 @@ fn a_faulted_retired_probe_does_not_overwrite_a_populated_slot() {
         assert_eq!(
             medium.value(guarded),
             before,
-            "a faulted probe let the panel generate destroy {what}"
+            "a faulted probe let the panel generate change {what}"
         );
         assert_ne!(
             offered,

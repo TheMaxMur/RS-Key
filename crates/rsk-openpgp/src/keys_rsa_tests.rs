@@ -70,7 +70,7 @@ fn decipher_recovers_an_openssl_session_key() {
     assert_eq!(&out[..n], msg.as_slice());
 
     // The legacy fallback must return the same plaintext, or a key that took it
-    // would silently decrypt to something else than the asm path.
+    // would silently decrypt to something else than the crt_result path.
     let mut slow = [0u8; MAX_RSA_BYTES];
     let sn = rsa_decipher_legacy(&key, &mut SeqRng(9), &data, &mut slow).unwrap();
     assert_eq!(&slow[..sn], &out[..n]);
@@ -78,31 +78,177 @@ fn decipher_recovers_an_openssl_session_key() {
 
 #[test]
 fn decipher_refuses_a_ciphertext_that_is_not_a_padded_block() {
-    // The private op's Bellcore check passes — this really is cᵈ — so the refusal
-    // has to come from the unpad, whose status word is deliberately not the one
-    // its own error names.
+    // The private op's Bellcore check passes -- this really is c^d -- so the refusal
+    // comes from the unpad. Both arms answer 6581, as a YubiKey 5.8.0 answers every
+    // cryptogram it cannot decrypt.
     let key = test_key();
     let crt = crt_of(&key);
     let mut data = vec![0x00u8];
     data.extend(core::iter::repeat_n(0x5Au8, crt.modulus_len()));
     let mut out = [0u8; MAX_RSA_BYTES];
-    // Same status word the `rsa` crate's failure produced, so a host that keyed
-    // off it before sees no change.
     let new = rsa_decipher(&crt, &mut SeqRng(12), &data, &mut out);
     let old = rsa_decipher_legacy(&key, &mut SeqRng(12), &data, &mut out);
-    assert_eq!(new, Err(Sw::EXEC_ERROR));
+    assert_eq!(new, Err(Sw::MEMORY_FAILURE));
     assert_eq!(new, old);
 }
 
 #[test]
-fn decipher_refuses_a_short_command_field() {
+fn decipher_answers_what_a_yubikey_answers_to_a_refused_cryptogram() {
+    // Measured on a YubiKey 5.8.0 with an RSA-2048 DEC key, two rounds: 6581 to each
+    // of these, and 6A80 only to a command with no data at all.
     let key = test_key();
     let crt = crt_of(&key);
+    let n = key.n_be();
+    let width = n.len();
+    let mut n_less_one = n.clone();
+    *n_less_one.last_mut().unwrap() -= 1; // n is odd
+    let ct = hex(ENCRYPT[2].1);
+    // A valid cryptogram plus n that still fits the width: c itself decrypts, so only
+    // a range check -- the fault check against the unreduced input -- refuses it.
+    let (msg1, c1) = (hex(ENCRYPT[1].0), hex(ENCRYPT[1].1));
     let mut out = [0u8; MAX_RSA_BYTES];
-    // One byte short of the indicator plus a full modulus-width cryptogram.
-    let data = vec![0x00u8; crt.modulus_len()];
-    assert_eq!(
-        rsa_decipher(&crt, &mut SeqRng(13), &data, &mut out),
-        Err(Sw::WRONG_DATA)
+    let n1 = rsa_decipher(
+        &crt,
+        &mut SeqRng(18),
+        &[vec![0x00], c1.clone()].concat(),
+        &mut out,
     );
+    assert_eq!(n1.map(|k| out[..k].to_vec()), Ok(msg1), "c alone decrypts");
+    let cases: [(&str, Vec<u8>, Sw); 8] = [
+        (
+            "c = 0",
+            [vec![0x00], vec![0; width]].concat(),
+            Sw::MEMORY_FAILURE,
+        ),
+        (
+            "c = n",
+            [vec![0x00], n.clone()].concat(),
+            Sw::MEMORY_FAILURE,
+        ),
+        (
+            "c = n - 1",
+            [vec![0x00], n_less_one].concat(),
+            Sw::MEMORY_FAILURE,
+        ),
+        (
+            "c + n, one width",
+            [vec![0x00], add_be(&c1, &n)].concat(),
+            Sw::MEMORY_FAILURE,
+        ),
+        (
+            "00 00 prepended",
+            [vec![0x00, 0x00, 0x00], ct.clone()].concat(),
+            Sw::MEMORY_FAILURE,
+        ),
+        (
+            "one byte short",
+            [vec![0x00], ct[1..].to_vec()].concat(),
+            Sw::MEMORY_FAILURE,
+        ),
+        ("the indicator alone", vec![0x00], Sw::MEMORY_FAILURE),
+        ("no data at all", vec![], Sw::WRONG_DATA),
+    ];
+    for (what, data, sw) in cases {
+        let crt_result = rsa_decipher(&crt, &mut SeqRng(16), &data, &mut out);
+        assert_eq!(crt_result, Err(sw), "{what}: the fixed-width CRT arm");
+        let legacy = rsa_decipher_legacy(&key, &mut SeqRng(17), &data, &mut out);
+        assert_eq!(legacy, Err(sw), "{what}: the legacy arm");
+    }
+}
+
+/// `a + b`, big-endian at one width, for a sum that does not carry out of it.
+fn add_be(a: &[u8], b: &[u8]) -> Vec<u8> {
+    let mut out = vec![0u8; a.len()];
+    let mut carry = 0u16;
+    for i in (0..a.len()).rev() {
+        let s = u16::from(a[i]) + u16::from(b[i]) + carry;
+        out[i] = s as u8;
+        carry = s >> 8;
+    }
+    assert_eq!(carry, 0, "the sum must stay one modulus wide");
+    out
+}
+
+#[test]
+fn decipher_does_not_check_the_padding_indicator_either() {
+    // A YubiKey 5.8.0 decrypts behind 00, 01 and FF alike (02 is RS-Key's AES PSO,
+    // routed before this); a stricter check here would diverge with nothing red.
+    let key = test_key();
+    let crt = crt_of(&key);
+    let (msg, ct) = (hex(ENCRYPT[2].0), hex(ENCRYPT[2].1));
+    let mut out = [0u8; MAX_RSA_BYTES];
+    for indicator in [0x00u8, 0x01, 0xFF] {
+        let data = [vec![indicator], ct.clone()].concat();
+        let n = rsa_decipher(&crt, &mut SeqRng(19), &data, &mut out);
+        assert_eq!(
+            n.map(|k| out[..k].to_vec()),
+            Ok(msg.clone()),
+            "{indicator:02X}: fixed-width CRT"
+        );
+        let n = rsa_decipher_legacy(&key, &mut SeqRng(20), &data, &mut out);
+        assert_eq!(
+            n.map(|k| out[..k].to_vec()),
+            Ok(msg.clone()),
+            "{indicator:02X}: legacy"
+        );
+    }
+}
+
+#[test]
+fn decipher_refuses_a_cryptogram_with_bytes_appended() {
+    // Wycheproof's `appended bytes to ciphertext`: reading the first modulus-width
+    // bytes after the indicator decrypted it and dropped the tail. A YubiKey 5.8.0
+    // answers 6581, one byte appended or two.
+    let key = test_key();
+    let crt = crt_of(&key);
+    let (_, ct) = ENCRYPT[2];
+    let mut out = [0u8; MAX_RSA_BYTES];
+    for tail in [&[0x00u8][..], &[0x00, 0x00]] {
+        let mut data = vec![0x00u8];
+        data.extend(hex(ct));
+        data.extend_from_slice(tail);
+        let n = tail.len();
+        assert_eq!(
+            rsa_decipher(&crt, &mut SeqRng(14), &data, &mut out),
+            Err(Sw::MEMORY_FAILURE),
+            "the fixed-width CRT arm, {n} byte(s) appended"
+        );
+        assert_eq!(
+            rsa_decipher_legacy(&key, &mut SeqRng(15), &data, &mut out),
+            Err(Sw::MEMORY_FAILURE),
+            "the legacy arm, {n} byte(s) appended"
+        );
+    }
+}
+
+/// Every Wycheproof decryption case through both DECIPHER arms, behind the padding
+/// indicator a host sends: the fixed-width CRT arm over the five-field blob a sealed key
+/// holds, and the legacy one. A valid case gives its message back; an invalid one
+/// is refused with 6581, the one answer a YubiKey 5.8.0 gives every such shape.
+#[test]
+fn wycheproof_decipher_reads_the_valid_and_refuses_the_rest() {
+    use rsk_rsa::wycheproof::{Outcome, decrypt};
+    let cases = decrypt();
+    assert_eq!(cases.len(), 201, "Wycheproof RSA decryption cases");
+    for case in &cases {
+        let (bits, tc, comment) = (case.bits, case.tc_id, case.comment);
+        let at = format!("RSA-{bits} tcId {tc} ({comment})");
+        let blob: Vec<u8> = case.crt.iter().flat_map(|f| hex(f)).collect();
+        let crt = crt_from_plain(&blob).unwrap_or_else(|e| panic!("{at}: CRT blob {e:?}"));
+        let key = rsa_from_pqe(&[0x01, 0x00, 0x01], &hex(case.crt[0]), &hex(case.crt[1]))
+            .unwrap_or_else(|| panic!("{at}: the key"));
+        let data = [vec![0x00], hex(case.ct)].concat();
+        let mut out = [0u8; MAX_RSA_BYTES];
+        let crt_result =
+            rsa_decipher(&crt, &mut SeqRng(21), &data, &mut out).map(|n| out[..n].to_vec());
+        let legacy =
+            rsa_decipher_legacy(&key, &mut SeqRng(22), &data, &mut out).map(|n| out[..n].to_vec());
+        let want = match case.result {
+            Outcome::Valid => Ok(hex(case.msg)),
+            Outcome::Invalid => Err(Sw::MEMORY_FAILURE),
+            Outcome::Acceptable => panic!("{at}: no decryption case is merely acceptable"),
+        };
+        assert_eq!(crt_result, want, "{at}: the fixed-width CRT arm");
+        assert_eq!(legacy, want, "{at}: the legacy arm");
+    }
 }

@@ -12,17 +12,16 @@ them looks at where the sections LAND or at what the image links.
 Three facts this measured that the tree's prose does not carry:
 
 * **The image has a heap.** `firmware/src/main.rs` declares
-  `#[global_allocator] static HEAP: embedded_alloc::LlffHeap` over 128 KiB, and
-  the linked image defines `__rust_alloc`, `__rust_realloc` and
+  `#[global_allocator] static HEAP: ZeroingHeap`, an `embedded_alloc::LlffHeap`
+  over 128 KiB that wipes each block it frees, and the linked image defines
+  `__rust_alloc`, `__rust_realloc` and
   `__rust_alloc_error_handler`. AGENTS.md's "no_std, no alloc" is a rule about
   new code, not a description of the tree — `docs/unsafe.md` site 4 is the heap
   init and says so. Nothing held that surface, so a SECOND allocator, or a
   `malloc` arriving through a dependency, was invisible.
-* **One segment is writable AND executable, and that is deliberate.** `.data`
-  carries the routines that must not run from XIP flash — the RSA assembly and
-  the keygen sieve step, whose absence from `.data` was measured as a 1.36x
-  regression. A blanket "no W+X" rule would be red on a correct image, which is
-  why the rule here is "exactly the registered one".
+* **Executable SRAM code has separate RX load segments.** Startup copies
+  `.rsk_exec` and `.rsk_scratch_exec` before setting the Secure MPU permissions.
+  The registry requires zero writable-executable segments in both images.
 * **Two compilers built it.** The image's own DWARF names 165 compile units:
   164 from the pinned rustc and one from a 2021 nightly, the prebuilt `cortex-m`
   `asm/lib.rs` blob that ships as an object and is never recompiled.
@@ -30,10 +29,10 @@ Three facts this measured that the tree's prose does not carry:
   held the whole set while this file had no producer code at all, so a THIRD
   compiler arriving through a dependency was invisible to both.
 
-The scope is the DEFAULT image and it says so: `check.sh` rebuilds this path
-three more times below this row (16 MB, display, no-touch), so a row placed with
-the other Python gates would audit the no-touch binary. The other profiles are a
-named gap in `assurance/image.toml`, not a silent one.
+The combined ELF supplies Secure DWARF and embeds NS as a raw payload. The
+independent NS ELF is audited separately against its generated memory map;
+its loadable bytes must match the embedded payload. Feature variants retain
+separate evidence scope.
 """
 
 from __future__ import annotations
@@ -43,13 +42,15 @@ import pathlib
 import re
 import subprocess
 import sys
+import tempfile
 import tomllib
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 
 REGISTRY = pathlib.Path("assurance/image.toml")
-ELF = pathlib.Path("target/thumbv8m.main-none-eabihf/release/firmware")
-LINKER = pathlib.Path("firmware/memory.x")
+ELF = pathlib.Path("target/trustzone/combined.elf")
+LINKER = pathlib.Path("target/trustzone/secure-memory.x")
+NS_LINKER = pathlib.Path("target/trustzone/nonsecure-memory.x")
 READELF = "arm-none-eabi-readelf"
 NM = "arm-none-eabi-nm"
 
@@ -102,7 +103,7 @@ FIRST_PARTY_RUST = ("crates", "firmware")
 PRODUCER = re.compile(r"DW_AT_producer\s*:\s*(?:\(indirect string.*?\):\s*)?(.+)$", re.M)
 
 
-def registry(root: pathlib.Path, findings: list[str], text: str | None = None) -> dict:
+def registry(root: pathlib.Path, findings: list[str], text: str | None = None, *, world="image") -> dict:
     """The hand-written half: which ELF, and what it may contain.
 
     `text` is the registry, handed in so a case can mutate it without writing to
@@ -113,9 +114,9 @@ def registry(root: pathlib.Path, findings: list[str], text: str | None = None) -
     doc = tomllib.loads(
         (root / REGISTRY).read_text(encoding="utf-8") if text is None else text
     )
-    for key in sorted(set(doc) - {"image"}):
+    for key in sorted(set(doc) - {"image", "nonsecure"}):
         findings.append(f"{REGISTRY}: top-level `{key}` — the file holds `[image]`")
-    image = doc.get("image", {})
+    image = doc.get(world, {})
     for key in sorted(set(image) - HAND_FIELDS):
         findings.append(f"{REGISTRY}: `{key}` is not a field this registry reads")
     for key in sorted(HAND_FIELDS - set(image)):
@@ -209,7 +210,7 @@ def audit(root: pathlib.Path, image=None, linker=None, raw=None):
         return findings, ""
     elf = pathlib.Path(image["elf"])
     if raw is None and not (root / elf).is_file():
-        return [f"{elf} — build it first: cargo build --release -p firmware"], ""
+        return [f"{elf} — build it first: bash scripts/build.sh"], ""
 
     try:
         where = regions(root, linker)
@@ -249,7 +250,7 @@ def audit(root: pathlib.Path, image=None, linker=None, raw=None):
                     " erased by its own store"
                 )
 
-    # W+X: exactly the registered one, by the sections it carries.
+    # W+X: exactly the registered set, by the sections each segment carries.
     wx = [
         names.get(index, "?")
         for index, row in enumerate(rows)
@@ -326,7 +327,7 @@ def audit(root: pathlib.Path, image=None, linker=None, raw=None):
 
     summary = (
         f"elf-gate: ok — {len(loads)} LOAD segment(s) inside {len(where)}"
-        f" {LINKER} region(s), {len(wx)} writable-executable as registered,"
+        f" declared memory region(s), {len(wx)} writable-executable as registered,"
         f" {len(allocator)} allocator symbol(s) from"
         f" {len(declared)} declaration, 0 undefined,"
         f" {sum(compiled.values())} compile unit(s) from"
@@ -335,12 +336,72 @@ def audit(root: pathlib.Path, image=None, linker=None, raw=None):
     return findings, summary
 
 
+def composition(root, secure_image, ns_image):
+    """Bind both audited binaries to the disjoint runtime memory maps."""
+    secure = regions(root)
+    nonsecure = regions(root, (root / NS_LINKER).read_text())
+    ns_elf = root / ns_image["elf"]
+    with tempfile.TemporaryDirectory(prefix="rsk-elf-") as scratch:
+        payload_path, embedded_path = (pathlib.Path(scratch) / name for name in ("ns.bin", "embedded.bin"))
+        subprocess.run(["arm-none-eabi-objcopy", "-O", "binary", str(ns_elf), str(payload_path)], check=True)
+        subprocess.run([
+            "arm-none-eabi-objcopy", "-O", "binary", "--only-section=.nonsecure",
+            str(root / secure_image["elf"]), str(embedded_path),
+        ], check=True)
+        payload, embedded = payload_path.read_bytes(), embedded_path.read_bytes()
+    headers, names, _entry = segments(read(root, pathlib.Path(secure_image["elf"]))["phdr"])
+    return composition_findings(secure, nonsecure, headers, names, payload, embedded)
+
+
+def composition_findings(secure, nonsecure, headers, names, payload, embedded):
+    findings = []
+    if secure.get("NSFLASH") != nonsecure.get("FLASH"):
+        findings.append("Secure NSFLASH and Non-secure FLASH disagree")
+    for name, (lo, hi) in nonsecure.items():
+        for s_name, (s_lo, s_hi) in secure.items():
+            if s_name != "NSFLASH" and lo < s_hi and s_lo < hi:
+                findings.append(f"Non-secure {name} overlaps Secure {s_name}")
+    if len(payload) < 8 or embedded != payload:
+        findings.append("combined ELF does not embed the independently audited Non-secure image")
+    ns_start, ns_end = nonsecure.get("FLASH", (0, 0))
+    copies = [r for i, r in enumerate(headers) if ".nonsecure" in names.get(i, "").split()]
+    if len(copies) != 1 or not (
+        copies[0][0] == "LOAD" and copies[0][1] == copies[0][2] == ns_start
+        and copies[0][3] == copies[0][4] == len(payload)
+        and ns_start + len(payload) <= ns_end
+    ):
+        findings.append("embedded Non-secure LOAD address or extent differs from the NS image")
+    gateways = [r for i, r in enumerate(headers) if ".gnu.sgstubs" in names.get(i, "").split()]
+    if len(gateways) != 1 or not (
+        gateways[0][0] == "LOAD" and gateways[0][5] == "RE"
+        and ns_start - 4096 <= gateways[0][1] < gateways[0][1] + gateways[0][4] <= ns_start
+        and gateways[0][1] == gateways[0][2]
+    ):
+        findings.append("Secure gateway veneers are missing or outside the RX NSC page")
+    return findings
+
+
 def main(argv=None) -> int:
     argv = sys.argv[1:] if argv is None else argv
     if argv:
         print("usage: elf_gate.py", file=sys.stderr)
         return 2
-    findings, summary = audit(ROOT)
+    findings = []
+    secure_image = registry(ROOT, findings)
+    ns_image = registry(ROOT, findings, world="nonsecure")
+    if findings:
+        print("elf-gate: " + "; ".join(findings), file=sys.stderr)
+        return 1
+    findings, summary = audit(ROOT, image=secure_image)
+    try:
+        ns_findings, ns_summary = audit(
+            ROOT, image=ns_image, linker=(ROOT / NS_LINKER).read_text(),
+        )
+        findings.extend(ns_findings)
+        findings.extend(composition(ROOT, secure_image, ns_image))
+        summary += "\n" + ns_summary
+    except (OSError, subprocess.CalledProcessError, ValueError) as error:
+        findings.append(f"TrustZone composition: {error}")
     if findings:
         print("elf-gate:", file=sys.stderr)
         for finding in findings:

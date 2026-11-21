@@ -21,6 +21,9 @@ use rsk_sdk::{Apdu, Applet, ResBuf, Sw};
 mod apdu_frame;
 use apdu_frame::{Frame, next_frame};
 
+#[path = "oath_apdu/flows.rs"]
+mod flows;
+
 struct CountRng(u8);
 impl Rng for CountRng {
     fn fill(&mut self, b: &mut [u8]) {
@@ -42,6 +45,9 @@ fn run(app: &mut OathApplet, fs: &mut Fs<RamStorage>, raw: &[u8]) -> Sw {
 }
 
 fuzz_target!(|data: &[u8]| {
+    if data.last().is_some_and(|b| b & 1 != 0) {
+        flows::check(data);
+    }
     let mut fs = Fs::new(RamStorage::new());
     fs.scan();
     let rng = RefCell::new(CountRng(0));

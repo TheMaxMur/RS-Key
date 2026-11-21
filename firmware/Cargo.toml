@@ -5,6 +5,9 @@ license = "AGPL-3.0-only"
 edition = "2024"
 publish = false
 
+[lints]
+workspace = true
+
 [dependencies]
 # `executor-interrupt`: the high-priority InterruptExecutor that runs USB + the
 # transports so they stay responsive (streaming keepalives) while the worker on
@@ -21,6 +24,7 @@ embassy-sync = { workspace = true }
 static_cell = "2"
 rsk-usb = { workspace = true }
 rsk-sdk = { workspace = true }
+rsk-secret = { workspace = true }
 rsk-fs = { workspace = true }
 rsk-fido = { workspace = true }
 rsk-openpgp = { workspace = true }
@@ -63,20 +67,19 @@ rsk-rsa = { workspace = true }
 # Robust summary stats for the `bench` latency-harness vendor command. Optional —
 # pulled in only by `--features bench`, never the shipped image.
 rsk-bench = { workspace = true, optional = true }
-# Zeroize the transient TRNG seed/reseed buffers in `FidoRng` (workspace dep, already
-# pulled by rsk-crypto — no new version).
+# The two bare wipes left, each under an `#[expect]`: the transport request after
+# dispatch and the keyboard queue at reboot (workspace dep, already pulled by rsk-secret).
 zeroize = { workspace = true }
 
 cortex-m-rt = "0.7"
 # SCB::sys_reset for the warm-reboot path of the secure-reboot vendor command
 # (already in the tree via embassy-rp; the BOOTSEL path uses embassy-rp rom_data).
 cortex-m = "0.7"
-panic-halt = "1"
 smart-leds = "0.4"
 
-# Heap for the OpenPGP RSA path: `rsk-rsa`'s big-integer arithmetic (num-bigint-dig,
-# the only allocating dependency left) needs an allocator. FIDO and the rest of the
-# device stay no-alloc — only RSA touches it.
+# Heap for `rsk-rsa`'s big-integer arithmetic (num-bigint-dig, the only allocating
+# dependency left) and for FIDO's boxed ML-DSA keys; nothing else allocates. The
+# `ZeroingHeap` in main.rs wipes each block as it is freed.
 embedded-alloc = "0.6"
 
 # Flash key/value backend for rsk-fs::Storage. sequential-storage is async-first;
@@ -100,10 +103,10 @@ no-touch = []
 # Advertise ML-DSA-44 in getInfo `algorithms` — OFF by default because shipped
 # Firefoxes reject the whole getInfo on an unknown COSE id (see rsk-fido). The
 # PQC capability works either way; this only changes the advertisement:
-# `cargo build --release -p firmware --features advertise-pqc`.
+# `bash scripts/build.sh --features advertise-pqc`.
 advertise-pqc = ["rsk-fido/advertise-pqc"]
 # FIPS-style policy profile, OFF by default (the default image is unchanged).
-# Opt-in: `cargo build --release -p firmware --features fips-profile` bakes the
+# Opt-in: `bash scripts/build.sh --features fips-profile` bakes the
 # locked algorithm policy into the image — and secure boot seals it there.
 # What it locks: docs/guides/fips.md. A profile, not a FIPS validation.
 fips-profile = ["rsk-fido/fips-profile", "rsk-piv/fips-profile", "rsk-display?/fips-profile"]
@@ -123,7 +126,8 @@ core1-stats = []
 # hot paths. Times a primitive over many iterations via the RP2350 timer and
 # returns a robust median/MAD + a cold-cache sample (see `rsk bench`), so EC
 # latency A/B survives the XIP-cache/code-layout noise. Pulls in `rsk-bench` for
-# the (gated, Kani-proved) on-device summary.
+# the (gated, Kani-proved) on-device summary. Also carries the dead-stack probe
+# (INS 0x15, `tests/55_stack_residue.py`), which reads what the sweep removes.
 bench = ["dep:rsk-bench", "rsk-fido/bench"]
 # FIDO Conformance Tool build profile (see rsk-fido's feature docs): suppresses
 # the EdDSA (-8) advertisement so the tool can verify every advertised algorithm.
@@ -155,7 +159,7 @@ largeblob-ext = ["rsk-fido/largeblob-ext"]
 # Restore today's strict admin-write authorization. The DEFAULT build is now the
 # permissive, full-YubiKey/ykman-compatible admin surface: device-config writes
 # (CCID Management WRITE CONFIG, FIDO vendor CONFIG_WRITE, the CTAPHID/OTP-HID
-# transport writes) are UNGATED, and Management RESET + the OTP-HID
+# transport writes) are UNGATED, and the OTP-HID
 # SET_DEVICE_INFO/DEVICE_CONFIG/SCAN_MAP/NDEF slots are served. `--features
 # strict-config` re-imposes the presence/PIN gates and refuses the ungated
 # transport writes (= the historical shipped behaviour). This deliberately
@@ -169,10 +173,14 @@ strict-config = ["rsk-mgmt/strict-config", "rsk-fido/strict-config", "rsk-otp/st
 # settings. OFF by default and entirely `dep:`-gated, so a standard key without a
 # screen compiles NONE of it — the shipped image is byte-identical (the gate
 # asserts `rsk-ui` is absent from the default firmware dependency tree). Build the
-# display flavor with `LED_KIND=none FLASH_SIZE=16M cargo build --release -p
-# firmware --features display` (the panel is the status indicator, so there is no
+# display flavor with `LED_KIND=none FLASH_SIZE=16M bash
+# scripts/build.sh --features display` (the panel is the status indicator, so there is no
 # addressable LED, which also frees GPIO16 for the backlight).
 display = ["rsk-device/display", "dep:rsk-display", "dep:rsk-ui", "dep:rsk-bip39", "dep:rsk-slip39", "dep:mipidsi", "dep:embedded-graphics"]
+# Serve Yubico's experimental `previewSign` WebAuthn extension (see rsk-fido's
+# feature docs). OFF by default: the default image carries none of it. Build
+# `--features preview-sign`.
+preview-sign = ["rsk-fido/preview-sign"]
 
 [[bin]]
 name = "firmware"

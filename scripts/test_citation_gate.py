@@ -18,6 +18,8 @@ import pytest
 import citation_gate
 import gate_lines
 
+pytestmark = pytest.mark.assurance
+
 CODE = """// SPDX-License-Identifier: AGPL-3.0-only
 pub const RETRIES: u8 = 8;
 
@@ -121,6 +123,12 @@ run "comutants lint"           python scripts/comutate.py --lint
 run_tests "test (host)"        cargo test --workspace
 """
 
+#: The second runner, keyed the same way: a row that moved out of `check.sh`
+#: is cited by name in the file that runs it now.
+ASSURANCE = """#!/usr/bin/env bash
+run "seam trace map"           python scripts/trace_map.py
+"""
+
 #: An evidence bundle: it cites code by line and the verdict table by ROW, which
 #: is the pair the six repaired citations are about. In the corpus because the
 #: directory holds it, not because a tuple names it. The second block writes the
@@ -162,6 +170,7 @@ EXEMPT_PAGE = "scripts/citation_gate.py"
 BUNDLE_PAGE = "assurance/bundle/SEC-T-001.toml"
 FLOORS_PAGE = "formal/floors.txt"
 CHECK_PAGE = "scripts/check.sh"
+ASSURANCE_PAGE = "scripts/check-assurance.sh"
 
 #: The derived page every registry-half case drives, and the registry that cites
 #: NOTHING — the control that separates this half's rule from the bundles'.
@@ -185,6 +194,7 @@ class Tree:
         self.write(EXEMPT_PAGE, SCRIPT)
         self.write(FLOORS_PAGE, FLOORS)
         self.write(CHECK_PAGE, CHECK)
+        self.write(ASSURANCE_PAGE, ASSURANCE)
         self.write(BUNDLE_PAGE, BUNDLE)
         self.write(REGISTRY_PAGE, REGISTRY)
         self.write("crates/rsk-device/src/ctap.rs", UNTAGGED_CODE)
@@ -481,8 +491,8 @@ def test_a_per_page_floor_is_honoured_and_is_lower_than_the_default():
 # --- the guard's own wiring ---------------------------------------------------
 
 
-def test_check_sh_still_runs_the_guard():
-    check = (citation_gate.ROOT / "scripts/check.sh").read_text()
+def test_check_assurance_sh_still_runs_the_guard():
+    check = (citation_gate.ROOT / "scripts/check-assurance.sh").read_text()
     assert gate_lines.runs(check, "scripts/citation_gate.py")
 
 
@@ -712,8 +722,8 @@ def test_the_bundle_roster_is_the_directory(tree):
 
 
 def test_a_bundle_citation_past_the_end_of_the_file(tree):
-    """The whole class, before the widening: 517 citations over eleven bundles and
-    not one of them reachable from any gate."""
+    """The whole class, before the widening: 517 citations over the eleven bundles
+    of that day, and not one of them reachable from any gate."""
     tree.edit(BUNDLE_PAGE, "clientpin.rs:4-6", "clientpin.rs:4-600")
     assert only(tree.problems(), "which has 8 lines")
 
@@ -910,6 +920,17 @@ def test_a_check_row_citation_that_names_no_row(tree, monkeypatch):
     assert tree.run(monkeypatch) == 1
 
 
+def test_a_row_of_the_second_runner_resolves_by_its_name(tree, monkeypatch):
+    """A row that moved to `check-assurance.sh` is cited there by the same key,
+    and a key that file has no row for is red — with the file out of [`KEYED`],
+    that citation would be checked against nothing and read green."""
+    tree.edit(BUNDLE_PAGE, 'check.sh:\\"comutants lint\\"', 'check-assurance.sh:\\"seam trace map\\"')
+    assert tree.problems() == []
+    tree.edit(BUNDLE_PAGE, 'check-assurance.sh:\\"seam trace map\\"', 'check-assurance.sh:\\"seam trace mop\\"')
+    assert only(tree.problems(), "names no row of scripts/check-assurance.sh")
+    assert tree.run(monkeypatch) == 1
+
+
 def test_two_rows_answering_to_the_same_name(tree, monkeypatch):
     """The second rule, and it is asked of the TABLE rather than of the citations:
     a key two rows answer to anchors nothing, the way a basename in two SEARCH
@@ -973,7 +994,7 @@ def test_deleting_the_entry_takes_both_of_its_findings_with_it(tree, monkeypatch
 
 def test_a_shell_citation_is_read(tree):
     """`.sh` beside `.rs`: the bundles cite the RUNNER as finely as the firmware,
-    and `formal/run-tlc.sh:231-234` is the derivation a reason-comparison argument
+    and `formal/run-tlc.sh:234-237` is the derivation a reason-comparison argument
     rests on. The `.rs`-only group saw none of them."""
     tree.write("formal/run-tlc.sh", "#!/usr/bin/env bash\nderived_inv() { :; }\n")
     tree.edit(BUNDLE_PAGE, "clientpin.rs:4-6", "formal/run-tlc.sh:2")
@@ -1021,7 +1042,7 @@ def test_the_derivation_reads_a_citing_script_and_only_a_citing_one(tree):
 
 
 def test_a_rotted_citation_in_a_script_is_found(tree):
-    """The measured hole: `security_trace.py` named `reset.rs:187` for a predicate
+    """The measured hole: `security_trace.py` named `reset.rs:191` for a predicate
     on `:211`, twice, while this row printed `ok`."""
     tree.edit(SCRIPT_PAGE, "clientpin.rs:4-6", "clientpin.rs:3-6")
     assert only(tree.problems(), "cited line is blank")

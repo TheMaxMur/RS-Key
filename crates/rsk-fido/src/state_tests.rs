@@ -25,7 +25,62 @@ fn dev() -> Device<'static> {
         serial_hash: &[0xAB; 32],
         serial_id: &[1, 2, 3, 4, 5, 6, 7, 8],
         otp_key: None,
+        latched: false,
     }
+}
+
+#[test]
+fn credential_walk_requires_its_owner_and_an_unspent_cursor() {
+    let mut state = FidoState::new();
+    state.cm.channel = 7;
+    state.cm.cred_total = 2;
+    state.cm.cred_counter = 2;
+    assert!(state.cm.may_walk_creds(7));
+    assert!(!state.cm.may_walk_creds(8));
+    assert!(state.cm.walking());
+    state.cm.cred_counter = 3;
+    assert!(!state.cm.may_walk_creds(7));
+    assert!(!state.cm.walking());
+    state.cm.rp_total = 1;
+    assert!(state.cm.walking());
+}
+
+#[test]
+fn token_presence_flag_requires_a_live_token() {
+    let mut state = FidoState::new();
+    for (live, present, expected) in [
+        (false, true, false),
+        (true, false, false),
+        (true, true, true),
+    ] {
+        state.paut.in_use = live;
+        state.paut.user_present = present;
+        assert_eq!(state.user_present(), expected);
+    }
+    state.stop_using_token();
+    assert!(!state.user_present());
+}
+
+#[test]
+fn ephemeral_generation_retries_invalid_scalars_and_caches_the_accepted_point() {
+    struct RejectFirst(usize);
+    impl Rng for RejectFirst {
+        fn fill(&mut self, out: &mut [u8]) {
+            out.fill(match self.0 {
+                0 => 0,
+                1 => 0xff,
+                _ => 1,
+            });
+            self.0 += 1;
+            assert!(self.0 <= 3);
+        }
+    }
+    let mut state = FidoState::new();
+    let mut rng = RejectFirst(0);
+    state.regenerate(&mut rng);
+    assert_eq!(rng.0, 3);
+    assert_eq!(state.ephemeral_scalar(), &[1; 32]);
+    assert_eq!(state.ephemeral_public(), public_xy(&[1; 32]));
 }
 
 #[test]
@@ -141,12 +196,16 @@ fn warm_boot_survives_reset_but_session_state_does_not() {
     // Power-cycle facts.
     st.warm_boot = true;
     st.audit_boot_logged = true;
-    st.devk_source = Some(|| Some([0x7C; 32]));
+    st.devk_source = Some(rsk_crypto::FusedKey::open(|out: &mut [u8; 32]| {
+        *out = [0x7C; 32];
+        true
+    }));
     // Session state.
     st.paut.permissions = PERM_ACFG;
     st.begin_using_token(true, 0);
-    st.mse_active = true;
-    st.mse_key = [0x11; 32];
+    st.establish_mse_for_test([0x11; 32], [0x04; 65]);
+    assert!(st.mse_live());
+    assert_eq!(st.mse_key_for_test(), Some([0x11; 32]));
     st.cm.rp_total = 4;
     st.gna.active = true;
     st.restore_pin_lock(LOCKED);
@@ -158,12 +217,12 @@ fn warm_boot_survives_reset_but_session_state_does_not() {
         "the reset window keys on how the cycle started"
     );
     assert!(st.audit_boot_logged);
-    assert_eq!(st.devk_source.and_then(|read| read()), Some([0x7C; 32]));
+    let devk = rsk_crypto::read_fused(st.devk_source);
+    assert_eq!(devk.key(), Some(&[0x7C; 32]), "the source survives");
     assert!(!st.paut.in_use);
     assert_eq!(st.paut.permissions, 0);
     assert!(!st.user_verified());
-    assert!(!st.mse_active);
-    assert_eq!(st.mse_key, [0; 32]);
+    assert!(!st.mse_live());
     assert_eq!(st.cm.rp_total, 0);
     assert!(!st.gna.active);
     // An authenticatorReset wipes EF_PIN, so the soft lock has nothing left to hold.
@@ -262,3 +321,64 @@ fn an_idle_cursor_expires_on_its_own_timer() {
     st.expire_stale_sequences(1_000 + STATEFUL_WALK_IDLE_MS);
     assert_eq!(next_rp(&mut st), Err(CtapError::NotAllowed));
 }
+
+#[test]
+fn a_direct_large_blob_transfer_expires_in_every_compiled_profile() {
+    let mut state = FidoState::new();
+    state.lba.expected_length = 32;
+    state.lba.expected_next_offset = 16;
+    state.lba.last_fragment_ms = 1_000;
+    state.lba.temp.fill(0xA5);
+    state.expire_stale_sequences(1_000 + STATEFUL_WALK_IDLE_MS - 1);
+    assert_eq!(state.lba.expected_length, 32);
+    assert_eq!(state.lba.expected_next_offset, 16);
+    state.expire_stale_sequences(1_000 + STATEFUL_WALK_IDLE_MS);
+    assert_eq!(state.lba.expected_length, 0);
+    assert_eq!(state.lba.expected_next_offset, 0);
+    assert!(state.lba.temp.iter().all(|&byte| byte == 0xA5));
+}
+
+#[test]
+fn the_generated_relation_refuses_an_out_of_domain_pre_state() {
+    let pre = AState {
+        permission_mc: true,
+        ..AState::default()
+    };
+    assert!(!crate::generated_token_edges::allowed_event(
+        pre,
+        crate::AbstractOp::RevokeToken,
+        crate::AbstractOutcome::Silent,
+        AState::default(),
+    ));
+}
+
+std::thread_local! {
+    static DROP_WIPED: std::cell::Cell<Option<bool>> = const { std::cell::Cell::new(None) };
+}
+
+pub(super) fn observe_drop(ephemeral: &[u8; 32], token: &[u8; 32]) {
+    DROP_WIPED.with(|observed| {
+        if observed.get().is_some() {
+            observed.set(Some(*ephemeral == [0; 32] && *token == [0; 32]));
+        }
+    });
+}
+
+#[test]
+fn dropping_fido_state_wipes_both_session_secrets_before_their_lifetimes_end() {
+    let mut state = FidoState::new();
+    state.ephemeral.fill(0x5a);
+    state.paut.token.fill(0xa5);
+    DROP_WIPED.with(|observed| observed.set(Some(false)));
+    drop(state);
+    DROP_WIPED.with(|observed| {
+        assert_eq!(
+            observed.replace(None),
+            Some(true),
+            "session secrets survived Drop"
+        );
+    });
+}
+
+#[path = "state_projection_tests.rs"]
+mod projection;

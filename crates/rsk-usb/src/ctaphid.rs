@@ -10,12 +10,22 @@
 //! commands (INIT, PING, WINK, LOCK, VERSION, UUID, CANCEL) are answered in the
 //! transport; MSG (U2F APDU) and CBOR (CTAP2) route to a [`MsgHandler`].
 
+// Host bytes: a panic here is a board that answers nothing until unplugged.
+#![deny(
+    clippy::indexing_slicing,
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::cast_possible_truncation
+)]
+
 use core::future::Future;
 
 use embassy_futures::select::{Either, Either3, select, select3};
 use embassy_time::{Instant, Timer};
 use embassy_usb::class::hid::{HidReader, HidWriter};
-use embassy_usb::driver::Driver;
+use embassy_usb::driver::{Driver, EndpointError};
+use rsk_secret::{Secret, WipeGuard};
 
 pub const HID_RPT_SIZE: usize = 64;
 const INIT_DATA: usize = HID_RPT_SIZE - 7; // 57
@@ -59,6 +69,8 @@ pub const STATUS_UPNEEDED: u8 = 0x02;
 // Stream a KEEPALIVE this often while the worker runs a long synchronous op
 // (slow P-521, flash GC) — well under any host CTAP timeout.
 pub const KEEPALIVE_MS: u64 = 100;
+/// CTAP 2.1 §11.2.9.1.5: cancellation answers the original CBOR request.
+pub const CTAP_KEEPALIVE_CANCEL: u8 = 0x2d;
 
 /// Which keepalive status to stream while a request is in flight, or `None` to
 /// stay silent. U2F (MSG) is fast apart from the touch wait, and U2FHID hosts —
@@ -104,7 +116,7 @@ use crate::TX_TIMEOUT_MS;
 
 pub const CTAPHID_IF_VERSION: u8 = 2;
 pub const CAPFLAG_WINK: u8 = 0x01;
-pub const CAPFLAG_LOCK: u8 = 0x02;
+pub const CAPFLAG_LOCK: u8 = 0x02; // pre-standard U2FHID; CTAP reserves it, INIT leaves it clear
 pub const CAPFLAG_CBOR: u8 = 0x04;
 
 // Device version reported in CTAPHID_INIT / CTAPHID_VERSION — the shared firmware
@@ -250,6 +262,16 @@ pub const FIDO_REPORT_DESCRIPTOR: &[u8] = &[
 /// task stays responsive and streams keepalives while slow crypto/flash runs.
 #[allow(async_fn_in_trait)] // crate-internal, single-threaded executor — no Send bound needed
 pub trait MsgHandler {
+    /// A new epoch invalidates in-flight replies when the USB session changes.
+    fn session_epoch() -> u32 {
+        0
+    }
+    /// Bind endpoint writes to the response epoch, including every continuation.
+    fn bind_response_epoch(_epoch: u32) {}
+    /// The handler can discard a copied compute request before its reply is sent.
+    fn cancel_processing() -> bool {
+        false
+    }
     /// Handle a U2F (ISO-7816) command APDU, writing the response APDU (body +
     /// SW1 SW2) into `out`; returns its length. `cid` is the channel it arrived on:
     /// the MSG applet selection is cross-message state, and U2F has no SELECT of
@@ -266,11 +288,19 @@ pub trait MsgHandler {
 
     /// Handle a vendor-specific CTAPHID command — `cmd` is the *logical* command
     /// number (the `TYPE_INIT` bit already stripped). Used for the YubiKey
-    /// Management DeviceInfo read that `ykman` / Yubico Authenticator issue over
-    /// the FIDO interface. Write the response body into `out` and return its
-    /// length, or `None` to reject with `CTAPHID_ERROR(ERR_INVALID_CMD)`. The
-    /// default rejects every vendor command.
-    async fn handle_vendor(&mut self, _cmd: u8, _data: &[u8], _out: &mut [u8]) -> Option<usize> {
+    /// Management DeviceInfo read and write that `ykman` / Yubico Authenticator
+    /// issue over the FIDO interface. `cid` is the channel it arrived on: arming the
+    /// config lock waits for a touch, which only that channel's CANCEL may end.
+    /// Write the response body into `out` and return its length, or `None` to
+    /// reject with `CTAPHID_ERROR(ERR_INVALID_CMD)`. The default rejects every
+    /// vendor command.
+    async fn handle_vendor(
+        &mut self,
+        _cid: u32,
+        _cmd: u8,
+        _data: &[u8],
+        _out: &mut [u8],
+    ) -> Option<usize> {
         None
     }
 
@@ -300,12 +330,12 @@ pub trait MsgHandler {
 /// has an indicator to flash: an invisible wink is worse than an unset bit,
 /// because the host offers the command precisely to tell two identical-looking
 /// keys apart, and a silent success tells the user the wrong key is the right one.
-/// LOCK is unconditional — [`ChannelLock`] implements the command, and a host
-/// reads this bit to decide whether to attempt it at all, so leaving it clear
-/// does not make the device safer, it hides a working command.
+/// [`ChannelLock`] implements CTAPHID_LOCK, but no bit may say so: CTAP 2.3
+/// §11.2.9.1.3 defines none and has every unused one "set to zero", and 0x02 is a
+/// pre-standard U2FHID header's, which a YubiKey 5.8.0 leaves clear too.
 /// `NMSG` stays clear — CTAPHID_MSG (U2F) is implemented.
 pub fn init_capabilities(can_wink: bool) -> u8 {
-    CAPFLAG_CBOR | CAPFLAG_LOCK | if can_wink { CAPFLAG_WINK } else { 0 }
+    CAPFLAG_CBOR | if can_wink { CAPFLAG_WINK } else { 0 }
 }
 
 /// Run the identification burst where there is something to run it on, and report
@@ -370,7 +400,7 @@ impl Reassembler {
     /// Payload of the most recently completed message (`msg[..bcnt]`). Valid
     /// until the next [`feed`](Self::feed).
     pub fn message(&self) -> &[u8] {
-        &self.msg[..self.bcnt]
+        self.msg.get(..self.bcnt).unwrap_or_default()
     }
 
     /// Whether a multi-frame message is mid-reassembly (awaiting continuations).
@@ -392,8 +422,26 @@ impl Reassembler {
     /// material, and the buffer otherwise holds them until the next message.
     pub fn scrub(&mut self) {
         use zeroize::Zeroize;
-        self.msg[..self.bcnt].zeroize();
-        self.bcnt = 0;
+        // Every field is named, so a new buffer cannot miss this wipe; the rest is the
+        // channel's framing.
+        let Self {
+            msg,
+            cid: _,
+            cmd: _,
+            bcnt,
+            cur: _,
+            seq: _,
+            in_tx: _,
+        } = self;
+        if let Some(held) = msg.get_mut(..*bcnt) {
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "the reassembly buffer lives as long as the transport: `scrub` \
+                          is its wipe point, after each MSG/CBOR/vendor dispatch"
+            )]
+            held.zeroize();
+        }
+        *bcnt = 0;
     }
 
     // Refines `RSKeyTransport!NoCrossChannelSplice` — SEC-TRANS-001.
@@ -436,12 +484,15 @@ impl Reassembler {
             if bcnt > CTAP_MAX_MESSAGE {
                 return Outcome::Error(cid, ERR_INVALID_LEN);
             }
+            let n = bcnt.min(INIT_DATA);
+            let (Some(dst), Some(src)) = (self.msg.get_mut(..n), f.get(7..7 + n)) else {
+                return Outcome::Error(cid, ERR_INVALID_LEN);
+            };
+            dst.copy_from_slice(src);
             self.cid = cid;
             self.cmd = cmd;
             self.bcnt = bcnt;
             self.seq = 0;
-            let n = bcnt.min(INIT_DATA);
-            self.msg[..n].copy_from_slice(&f[7..7 + n]);
             self.cur = n;
             self.in_tx = bcnt > INIT_DATA;
         } else {
@@ -461,7 +512,12 @@ impl Reassembler {
             // saturating subtraction makes the no-underflow self-evident across
             // refactors (a wrapped count here would index past the message).
             let n = CONT_DATA.min(self.bcnt.saturating_sub(self.cur));
-            self.msg[self.cur..self.cur + n].copy_from_slice(&f[5..5 + n]);
+            let held = self.msg.get_mut(self.cur..self.cur + n);
+            let (Some(dst), Some(src)) = (held, f.get(5..5 + n)) else {
+                self.in_tx = false;
+                return Outcome::Error(cid, ERR_INVALID_LEN);
+            };
+            dst.copy_from_slice(src);
             self.cur += n;
             self.seq = self.seq.wrapping_add(1);
         }
@@ -510,11 +566,18 @@ impl Iterator for TxFrames<'_> {
 
         if !self.started {
             self.started = true;
+            let Ok(bcnt) = u16::try_from(total) else {
+                return None;
+            };
+            let [hi, lo] = bcnt.to_be_bytes();
             frame[4] = self.cmd; // already carries the TYPE_INIT bit
-            frame[5] = (total >> 8) as u8;
-            frame[6] = (total & 0xff) as u8;
+            frame[5] = hi;
+            frame[6] = lo;
             let n = total.min(INIT_DATA);
-            frame[7..7 + n].copy_from_slice(&self.data[..n]);
+            let (Some(dst), Some(src)) = (frame.get_mut(7..7 + n), self.data.get(..n)) else {
+                return None;
+            };
+            dst.copy_from_slice(src);
             self.off = n;
             return Some(frame);
         }
@@ -525,10 +588,35 @@ impl Iterator for TxFrames<'_> {
 
         frame[4] = self.seq & !TYPE_INIT;
         let n = CONT_DATA.min(total - self.off);
-        frame[5..5 + n].copy_from_slice(&self.data[self.off..self.off + n]);
+        let src = self.data.get(self.off..self.off + n);
+        let (Some(dst), Some(src)) = (frame.get_mut(5..5 + n), src) else {
+            return None;
+        };
+        dst.copy_from_slice(src);
         self.off += n;
         self.seq = self.seq.wrapping_add(1);
         Some(frame)
+    }
+}
+
+/// Large message buffers can be initialized statically without stack copies.
+pub struct Buffers {
+    asm: Reassembler,
+    scratch: [u8; CTAP_MAX_MESSAGE],
+}
+
+impl Buffers {
+    pub const fn new() -> Self {
+        Self {
+            asm: Reassembler::new(),
+            scratch: [0; CTAP_MAX_MESSAGE],
+        }
+    }
+}
+
+impl Default for Buffers {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -537,10 +625,10 @@ pub struct CtapHid<'d, D: Driver<'d>, H: MsgHandler> {
     reader: HidReader<'d, D, HID_RPT_SIZE>,
     writer: HidWriter<'d, D, HID_RPT_SIZE>,
     handler: H,
-    asm: Reassembler,
+    asm: &'d mut Reassembler,
     /// Response scratch the handler writes into (then framed onto the wire). A full
     /// CTAPHID message worth, so even a max-size response fits.
-    scratch: [u8; CTAP_MAX_MESSAGE],
+    scratch: &'d mut [u8; CTAP_MAX_MESSAGE],
     /// Whether the worker is currently blocked waiting for a user-presence touch —
     /// selects the `KEEPALIVE` status byte (`UPNEEDED` vs `PROCESSING`). The firmware
     /// reads its worker flag; a `|| false` stand-in keeps the status at `PROCESSING`.
@@ -554,6 +642,9 @@ pub struct CtapHid<'d, D: Driver<'d>, H: MsgHandler> {
     cids: CidAllocator,
     /// The current `CTAPHID_LOCK` holder, if any.
     lock: ChannelLock,
+    pending_frame: Option<u32>,
+    pending_bytes: Secret<[u8; HID_RPT_SIZE]>,
+    session_epoch: u32,
 }
 
 impl<'d, D: Driver<'d>, H: MsgHandler> CtapHid<'d, D, H> {
@@ -563,13 +654,21 @@ impl<'d, D: Driver<'d>, H: MsgHandler> CtapHid<'d, D, H> {
         handler: H,
         up_pending: fn() -> bool,
         request_cancel: fn(),
+        buffers: &'d mut Buffers,
     ) -> Self {
+        let Buffers { asm, scratch } = buffers;
+        asm.abort();
+        asm.scrub();
+        scratch.fill(0);
         Self {
             reader,
             writer,
             handler,
-            asm: Reassembler::new(),
-            scratch: [0; CTAP_MAX_MESSAGE],
+            asm,
+            scratch,
+            pending_frame: None,
+            pending_bytes: Secret::zeroed(),
+            session_epoch: H::session_epoch(),
             up_pending,
             request_cancel,
             cids: CidAllocator::new(),
@@ -584,6 +683,18 @@ impl<'d, D: Driver<'d>, H: MsgHandler> CtapHid<'d, D, H> {
     pub async fn run(&mut self) -> ! {
         let mut frame = [0u8; HID_RPT_SIZE];
         loop {
+            self.reset_if_new_session();
+            if let Some(epoch) = self.pending_frame.take() {
+                let mut pending = Secret::<[u8; HID_RPT_SIZE]>::zeroed();
+                pending
+                    .expose_mut()
+                    .copy_from_slice(self.pending_bytes.expose());
+                self.pending_bytes.wipe();
+                if epoch == H::session_epoch() {
+                    self.on_frame(pending.expose()).await;
+                }
+                continue;
+            }
             if self.asm.in_progress() {
                 match select(
                     self.reader.read(&mut frame),
@@ -594,10 +705,19 @@ impl<'d, D: Driver<'d>, H: MsgHandler> CtapHid<'d, D, H> {
                     Either::First(Ok(n)) if n == HID_RPT_SIZE => self.on_frame(&frame).await,
                     Either::First(_) => {}
                     Either::Second(_) => {
+                        if self.session_epoch != H::session_epoch() {
+                            continue;
+                        }
                         let cid = self.asm.current_cid();
                         self.asm.abort();
-                        write_message(&mut self.writer, cid, CTAPHID_ERROR, &[ERR_MSG_TIMEOUT])
-                            .await;
+                        write_message::<D, H>(
+                            &mut self.writer,
+                            cid,
+                            CTAPHID_ERROR,
+                            &[ERR_MSG_TIMEOUT],
+                            self.session_epoch,
+                        )
+                        .await;
                     }
                 }
             } else {
@@ -612,6 +732,20 @@ impl<'d, D: Driver<'d>, H: MsgHandler> CtapHid<'d, D, H> {
         }
     }
 
+    fn reset_if_new_session(&mut self) {
+        let epoch = H::session_epoch();
+        if epoch != self.session_epoch {
+            self.asm.abort();
+            self.asm.scrub();
+            self.lock = ChannelLock::default();
+            if self.pending_frame != Some(epoch) {
+                self.pending_frame = None;
+                self.pending_bytes.wipe();
+            }
+            self.session_epoch = epoch;
+        }
+    }
+
     // Refines `RSKeyTransport!NoCrossChannelSplice` — SEC-TRANS-001.
     // Refines `RSKeyTransport!NoSequenceGap` — SEC-TRANS-002.
     // Refines `RSKeyTransport!NoBufferOverrun` — SEC-TRANS-003.
@@ -619,15 +753,30 @@ impl<'d, D: Driver<'d>, H: MsgHandler> CtapHid<'d, D, H> {
     // nowhere else IN THE IMAGE. The emulator has its own, `serve`
     // (`tools/emu/src/hid.rs:52-87`), and it is what `tests/*.py` run against.
     async fn on_frame(&mut self, f: &[u8; HID_RPT_SIZE]) {
+        self.reset_if_new_session();
         match self.asm.feed(f) {
             Outcome::None => {}
             Outcome::Error(cid, code) => {
-                write_message(&mut self.writer, cid, CTAPHID_ERROR, &[code]).await;
+                write_message::<D, H>(
+                    &mut self.writer,
+                    cid,
+                    CTAPHID_ERROR,
+                    &[code],
+                    self.session_epoch,
+                )
+                .await;
             }
             Outcome::Message(cid, cmd)
                 if self.lock.refuses(cid, cmd, Instant::now().as_millis()) =>
             {
-                write_message(&mut self.writer, cid, CTAPHID_ERROR, &[ERR_CHANNEL_BUSY]).await;
+                write_message::<D, H>(
+                    &mut self.writer,
+                    cid,
+                    CTAPHID_ERROR,
+                    &[ERR_CHANNEL_BUSY],
+                    self.session_epoch,
+                )
+                .await;
             }
             Outcome::Message(cid, cmd) => self.dispatch(cid, cmd).await,
         }
@@ -638,19 +787,17 @@ impl<'d, D: Driver<'d>, H: MsgHandler> CtapHid<'d, D, H> {
     // Every arm below reads `self.asm.message()`, whose provenance is exactly
     // what the two ghosts assert: one channel's frames, in the order it sent them.
     async fn dispatch(&mut self, cid: u32, cmd: u8) {
-        match cmd {
+        let mut resp = [0u8; 17];
+        let action = match cmd {
             CTAPHID_INIT => {
-                // A fresh session: drop any applet selected over this transport so
-                // U2F (which has no SELECT) can't inherit a prior vendor selection.
+                // U2F has no SELECT and must not inherit another channel's selection.
                 self.handler.reset_app_selection();
-                // resp: nonce(8) | newcid(4) | iface(1) | major | minor | build | caps
                 let nonce = self.asm.message();
-                let mut resp = [0u8; 17];
                 let k = nonce.len().min(8);
-                resp[..k].copy_from_slice(&nonce[..k]);
-                // §11.2.9.1.3: on the broadcast CID this allocates a fresh channel;
-                // on an already-allocated one it only resynchronises that channel,
-                // and the response names the CID it arrived on.
+                if let (Some(dst), Some(src)) = (resp.get_mut(..k), nonce.get(..k)) {
+                    dst.copy_from_slice(src);
+                }
+                // CTAP §11.2.9.1.3: a non-broadcast INIT resynchronizes its own CID.
                 let assigned = if cid == CID_BROADCAST {
                     self.cids.allocate()
                 } else {
@@ -662,79 +809,56 @@ impl<'d, D: Driver<'d>, H: MsgHandler> CtapHid<'d, D, H> {
                 resp[14] = VERSION_MINOR;
                 resp[15] = VERSION_BUILD;
                 resp[16] = init_capabilities(self.handler.can_wink());
-                write_message(&mut self.writer, cid, CTAPHID_INIT, &resp).await;
+                Dispatch::Reply(CTAPHID_INIT, &resp)
             }
-            CTAPHID_PING | CTAPHID_SYNC => {
-                write_message(&mut self.writer, cid, cmd, self.asm.message()).await;
-            }
+            CTAPHID_PING | CTAPHID_SYNC => Dispatch::Reply(cmd, self.asm.message()),
             CTAPHID_WINK => {
-                let (rsp, body) = perform_wink(&mut self.handler);
-                write_message(&mut self.writer, cid, rsp, body).await;
+                let (cmd, body) = perform_wink(&mut self.handler);
+                Dispatch::Reply(cmd, body)
             }
-            CTAPHID_LOCK => {
-                // §11.2.9.2.2: BCNT 1, a lock time of 0..10 seconds, 0 releasing it.
-                match self.asm.message() {
-                    [secs] if *secs <= LOCK_MAX_SECONDS => {
-                        self.lock.arm(cid, *secs, Instant::now().as_millis());
-                        write_message(&mut self.writer, cid, CTAPHID_LOCK, &[]).await;
-                    }
-                    [_] => {
-                        write_message(&mut self.writer, cid, CTAPHID_ERROR, &[ERR_INVALID_PAR])
-                            .await;
-                    }
-                    _ => {
-                        write_message(&mut self.writer, cid, CTAPHID_ERROR, &[ERR_INVALID_LEN])
-                            .await;
-                    }
+            CTAPHID_LOCK => match self.asm.message() {
+                // CTAP §11.2.9.2.2: BCNT 1, lock 0..10 seconds, 0 releases it.
+                [secs] if *secs <= LOCK_MAX_SECONDS => {
+                    self.lock.arm(cid, *secs, Instant::now().as_millis());
+                    Dispatch::Reply(CTAPHID_LOCK, &[])
                 }
+                [_] => Dispatch::Reply(CTAPHID_ERROR, &[ERR_INVALID_PAR]),
+                _ => Dispatch::Reply(CTAPHID_ERROR, &[ERR_INVALID_LEN]),
+            },
+            CTAPHID_VERSION => Dispatch::Reply(
+                CTAPHID_VERSION,
+                &[VERSION_MAJOR, VERSION_MINOR, VERSION_BUILD, 0],
+            ),
+            CTAPHID_UUID => Dispatch::Reply(CTAPHID_UUID, &DEVICE_UUID),
+            // An idle CANCEL is silent; run_with_keepalive observes an active one.
+            CTAPHID_CANCEL => Dispatch::Ignore,
+            CTAPHID_MSG => Dispatch::Call(Call::Msg),
+            CTAPHID_CBOR if self.asm.message().is_empty() => {
+                Dispatch::Reply(CTAPHID_ERROR, &[ERR_INVALID_LEN])
             }
-            CTAPHID_VERSION => {
-                write_message(
-                    &mut self.writer,
-                    cid,
-                    CTAPHID_VERSION,
-                    &[VERSION_MAJOR, VERSION_MINOR, VERSION_BUILD, 0],
-                )
-                .await;
+            CTAPHID_CBOR => Dispatch::Call(Call::Cbor),
+            cmd if cmd >= CTAPHID_VENDOR_FIRST => Dispatch::Call(Call::Vendor(cmd)),
+            _ => Dispatch::Reply(CTAPHID_ERROR, &[ERR_INVALID_CMD]),
+        };
+        // Share the await sites so unoptimized poll frames do not duplicate futures.
+        match action {
+            Dispatch::Reply(cmd, body) => {
+                write_message::<D, H>(&mut self.writer, cid, cmd, body, self.session_epoch).await;
             }
-            CTAPHID_UUID => {
-                write_message(&mut self.writer, cid, CTAPHID_UUID, &DEVICE_UUID).await;
-            }
-            CTAPHID_CANCEL => {
-                // A CANCEL is never acknowledged (CTAPHID spec). With no
-                // transaction in flight it is simply ignored; one that arrives
-                // mid-transaction is observed inside `run_with_keepalive`, which
-                // aborts the worker's touch wait so the in-flight CBOR/MSG
-                // command answers CTAP2_ERR_KEEPALIVE_CANCEL itself.
-            }
-            CTAPHID_MSG => {
-                self.run_with_keepalive(cid, false).await;
-            }
-            CTAPHID_CBOR => {
-                // A CBOR message must carry at least the command byte.
-                if self.asm.message().is_empty() {
-                    write_message(&mut self.writer, cid, CTAPHID_ERROR, &[ERR_INVALID_LEN]).await;
-                } else {
-                    self.run_with_keepalive(cid, true).await;
-                }
-            }
-            cmd if cmd >= CTAPHID_VENDOR_FIRST => {
-                self.run_vendor(cid, cmd).await;
-            }
-            _ => {
-                write_message(&mut self.writer, cid, CTAPHID_ERROR, &[ERR_INVALID_CMD]).await;
-            }
+            Dispatch::Call(call) => self.run_with_keepalive(cid, call).await,
+            Dispatch::Ignore => {}
         }
     }
 
     /// Hand the reassembled message to the (async) handler — which forwards it to
     /// the compute worker on a lower-priority executor — streaming a
     /// `CTAPHID_KEEPALIVE` every [`KEEPALIVE_MS`] while it runs, then frame the
-    /// response. `is_cbor` selects CBOR vs MSG (U2F). The handler future borrows
-    /// `handler`/`asm`/`scratch`; the keepalive uses `writer` — disjoint fields, so
-    /// `select` drives both concurrently and the keepalive keeps flowing while the
-    /// worker blocks on slow crypto / flash GC.
-    async fn run_with_keepalive(&mut self, cid: u32, is_cbor: bool) {
+    /// response. `call` selects CBOR, MSG (U2F) or a vendor command; a vendor
+    /// command the handler rejects answers `CTAPHID_ERROR(ERR_INVALID_CMD)`. The
+    /// handler future borrows `handler`/`asm`/`scratch`; the keepalive uses
+    /// `writer` — disjoint fields, so `select` drives both concurrently and the
+    /// keepalive keeps flowing while the worker blocks on slow crypto / flash GC.
+    async fn run_with_keepalive(&mut self, cid: u32, call: Call) {
         let Self {
             reader,
             handler,
@@ -743,52 +867,74 @@ impl<'d, D: Driver<'d>, H: MsgHandler> CtapHid<'d, D, H> {
             scratch,
             up_pending,
             request_cancel,
+            pending_frame,
+            pending_bytes,
             ..
         } = self;
+        let scratch = &mut **scratch;
         let up_pending = *up_pending;
         let request_cancel = *request_cancel;
         let data = asm.message();
         // Frames read while the worker runs are inspected only for CTAPHID_CANCEL,
         // never reassembled (the message buffer is in use), so a scratch buffer
         // disjoint from `asm` is enough.
-        let mut watch = [0u8; HID_RPT_SIZE];
+        let mut watch = Secret::<[u8; HID_RPT_SIZE]>::zeroed();
+        let is_cbor = matches!(call, Call::Cbor);
+        let epoch = H::session_epoch();
+        let monitor = is_cbor && H::cancel_processing();
+        let mut cancelled = false;
         let n = {
             let mut fut = core::pin::pin!(async {
-                if is_cbor {
-                    handler.handle_cbor(cid, data, scratch).await
-                } else {
-                    handler.handle_msg(cid, data, scratch).await
+                match call {
+                    Call::Cbor => Some(handler.handle_cbor(cid, data, scratch).await),
+                    Call::Msg => Some(handler.handle_msg(cid, data, scratch).await),
+                    Call::Vendor(cmd) => {
+                        handler
+                            .handle_vendor(cid, cmd & !TYPE_INIT, data, scratch)
+                            .await
+                    }
                 }
             });
             loop {
-                // Only watch the reader for CTAPHID_CANCEL while a touch is
-                // pending. That is the only window the platform sends CANCEL, and
-                // the only time it is not pipelining the next request. Reading
-                // frames during fast/crypto processing would consume — and then
-                // drop — a pipelined next command (e.g. the rapid getPinToken loop
-                // in conformance ClientPin-GetRetries), wedging the transport. So
-                // off the touch wait we race only the worker and the keepalive,
-                // exactly like before the CANCEL support was added.
-                if up_pending() {
-                    match select3(
-                        fut.as_mut(),
-                        Timer::after_millis(KEEPALIVE_MS),
-                        reader.read(&mut watch),
-                    )
+                // One deferred frame preserves pipelining while compute cancellation watches OUT.
+                if pending_frame.is_none()
+                    && epoch == H::session_epoch()
+                    && (up_pending() || monitor)
+                {
+                    match select3(fut.as_mut(), Timer::after_millis(KEEPALIVE_MS), async {
+                        reader.ready().await;
+                        reader.read(watch.expose_mut()).await
+                    })
                     .await
                     {
                         Either3::First(n) => break n,
                         Either3::Second(_) => {
-                            if let Some(status) = keepalive_status(is_cbor, up_pending()) {
-                                write_message(writer, cid, CTAPHID_KEEPALIVE, &[status]).await;
+                            if epoch == H::session_epoch()
+                                && let Some(status) = keepalive_status(is_cbor, up_pending())
+                            {
+                                write_message::<D, H>(
+                                    writer,
+                                    cid,
+                                    CTAPHID_KEEPALIVE,
+                                    &[status],
+                                    epoch,
+                                )
+                                .await;
                             }
                         }
                         // A CTAPHID_CANCEL on the active channel aborts the worker's
                         // touch wait; the command then returns KEEPALIVE_CANCEL
                         // itself. Any other mid-flight frame is ignored.
                         Either3::Third(read) => {
-                            if matches!(read, Ok(k) if is_cancel_frame(&watch, k, cid)) {
+                            if matches!(read, Ok(k) if is_cancel_frame(watch.expose(), k, cid)) {
                                 request_cancel();
+                                cancelled |= monitor;
+                            } else if matches!(read, Ok(k) if k == HID_RPT_SIZE)
+                                && watch.expose()[4] != CTAPHID_CANCEL
+                                && monitor
+                            {
+                                pending_bytes.expose_mut().copy_from_slice(watch.expose());
+                                *pending_frame = Some(H::session_epoch());
                             }
                         }
                     }
@@ -796,50 +942,67 @@ impl<'d, D: Driver<'d>, H: MsgHandler> CtapHid<'d, D, H> {
                     match select(fut.as_mut(), Timer::after_millis(KEEPALIVE_MS)).await {
                         Either::First(n) => break n,
                         Either::Second(_) => {
-                            if let Some(status) = keepalive_status(is_cbor, up_pending()) {
-                                write_message(writer, cid, CTAPHID_KEEPALIVE, &[status]).await;
+                            if epoch == H::session_epoch()
+                                && let Some(status) = keepalive_status(is_cbor, up_pending())
+                            {
+                                write_message::<D, H>(
+                                    writer,
+                                    cid,
+                                    CTAPHID_KEEPALIVE,
+                                    &[status],
+                                    epoch,
+                                )
+                                .await;
                             }
                         }
                     }
                 }
             }
         };
-        let cmd = if is_cbor { CTAPHID_CBOR } else { CTAPHID_MSG };
-        write_message(writer, cid, cmd, &scratch[..n]).await;
-        // Request and response both carried secrets (PINs, tokens, key blobs).
-        use zeroize::Zeroize;
-        scratch[..n].zeroize();
-        asm.scrub();
-    }
-
-    /// Serve a vendor CTAPHID command through the handler (the worker, which owns
-    /// flash). Mirrors [`Self::run_with_keepalive`]'s field split; vendor commands
-    /// are quick flash reads and none of them is presence-gated, so no keepalive is
-    /// streamed — one that ever gains a touch gate belongs in `run_with_keepalive`,
-    /// which is also where CTAPHID_CANCEL is observed. The handler sees the logical
-    /// command number (`TYPE_INIT` stripped); on success we reply with the original
-    /// command byte, otherwise `CTAPHID_ERROR(ERR_INVALID_CMD)`.
-    async fn run_vendor(&mut self, cid: u32, cmd: u8) {
-        let Self {
-            handler,
-            writer,
-            asm,
-            scratch,
-            ..
-        } = self;
-        let data = asm.message();
-        match handler.handle_vendor(cmd & !TYPE_INIT, data, scratch).await {
-            Some(n) => {
-                write_message(writer, cid, cmd, &scratch[..n]).await;
-                // Same discipline as `run_with_keepalive`: neither the request nor
-                // the response stays resident past the frame that carried it.
-                use zeroize::Zeroize;
-                scratch[..n].zeroize();
+        if epoch != H::session_epoch() {
+            let _response = WipeGuard::new(scratch);
+            asm.scrub();
+            return;
+        }
+        let cmd = match call {
+            Call::Cbor => CTAPHID_CBOR,
+            Call::Msg => CTAPHID_MSG,
+            Call::Vendor(cmd) => cmd,
+        };
+        match n {
+            _ if cancelled => {
+                let _response = WipeGuard::new(scratch);
+                write_message::<D, H>(writer, cid, CTAPHID_CBOR, &[CTAP_KEEPALIVE_CANCEL], epoch)
+                    .await;
             }
-            None => write_message(writer, cid, CTAPHID_ERROR, &[ERR_INVALID_CMD]).await,
+            Some(n) => {
+                // Request and response both carried secrets (PINs, tokens, key blobs).
+                let resp = WipeGuard::new(scratch.get_mut(..n).unwrap_or_default());
+                write_message::<D, H>(writer, cid, cmd, &resp, epoch).await;
+            }
+            None => {
+                write_message::<D, H>(writer, cid, CTAPHID_ERROR, &[ERR_INVALID_CMD], epoch).await
+            }
         }
         asm.scrub();
     }
+}
+
+/// What the handler is asked to do with a reassembled message. A vendor command
+/// shares the CBOR/MSG loop because one can wait for a touch — arming the config
+/// lock over `0x43` does — and only that loop streams UPNEEDED and hears a CANCEL.
+#[derive(Clone, Copy)]
+enum Call {
+    Cbor,
+    Msg,
+    /// A vendor command, by its wire byte (`TYPE_INIT` still set).
+    Vendor(u8),
+}
+
+enum Dispatch<'a> {
+    Reply(u8, &'a [u8]),
+    Call(Call),
+    Ignore,
 }
 
 /// One outgoing 64-byte HID report. The future completes only once the host
@@ -849,14 +1012,14 @@ impl<'d, D: Driver<'d>, H: MsgHandler> CtapHid<'d, D, H> {
 /// write instead of blocking the transport task forever.
 #[allow(async_fn_in_trait)] // crate-internal, single-threaded executor — no Send bound needed
 trait FrameSink {
-    async fn write_frame(&mut self, frame: &[u8; HID_RPT_SIZE]);
+    async fn write_frame(&mut self, frame: &[u8; HID_RPT_SIZE]) -> Result<(), EndpointError>;
 }
 
 impl<'d, D: Driver<'d>> FrameSink for HidWriter<'d, D, HID_RPT_SIZE> {
-    async fn write_frame(&mut self, frame: &[u8; HID_RPT_SIZE]) {
+    async fn write_frame(&mut self, frame: &[u8; HID_RPT_SIZE]) -> Result<(), EndpointError> {
         // A write error (endpoint disabled / reset) ends the response the same as
         // a timeout: there is nothing more to send for this transaction.
-        let _ = self.write(frame).await;
+        self.write(frame).await
     }
 }
 
@@ -880,20 +1043,22 @@ where
 {
     for frame in TxFrames::new(cid, cmd, data) {
         match select(sink.write_frame(&frame), timeout()).await {
-            Either::First(_) => {}
-            Either::Second(_) => return, // host stopped draining IN — abandon response
+            Either::First(Ok(())) => {}
+            Either::First(Err(_)) | Either::Second(_) => return, // host stopped draining IN — abandon response
         }
     }
 }
 
 /// [`write_frames`] with the production timeout: bound every frame to
 /// [`TX_TIMEOUT_MS`] of host-drain time.
-async fn write_message<'d, D: Driver<'d>>(
+async fn write_message<'d, D: Driver<'d>, H: MsgHandler>(
     writer: &mut HidWriter<'d, D, HID_RPT_SIZE>,
     cid: u32,
     cmd: u8,
     data: &[u8],
+    epoch: u32,
 ) {
+    H::bind_response_epoch(epoch);
     write_frames(writer, cid, cmd, data, || {
         Timer::after_millis(TX_TIMEOUT_MS)
     })
@@ -901,6 +1066,14 @@ async fn write_message<'d, D: Driver<'d>>(
 }
 
 #[cfg(any(kani, test))]
+#[allow(
+    clippy::indexing_slicing,
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::cast_possible_truncation,
+    reason = "verification-only: the harness sets its bounds, a failed assertion is its report"
+)]
 #[path = "transport_assurance.rs"]
 pub mod transport_assurance;
 
@@ -909,5 +1082,17 @@ pub mod transport_assurance;
 mod transport_refinement_proofs;
 
 #[cfg(test)]
+#[allow(
+    clippy::indexing_slicing,
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::cast_possible_truncation,
+    reason = "a test's fixture is its own bound, and a panic is its failure report"
+)]
 #[path = "ctaphid_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "ctaphid_transport_tests.rs"]
+mod transport_tests;

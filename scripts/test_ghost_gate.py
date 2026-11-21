@@ -26,6 +26,8 @@ import pytest
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import ghost_gate  # noqa: E402
 
+pytestmark = pytest.mark.assurance
+
 ROOT = ghost_gate.ROOT
 DERIVED = ghost_gate.derive(ROOT)
 ACTIONS = sorted(DERIVED)

@@ -2,7 +2,28 @@
 // Copyright (C) 2026 RS-Key contributors
 
 use super::*;
-use crate::consts::{ALG_ED25519, ALG_ESP256, ALG_ESP384, ALG_ESP512, EF_ALWAYS_UV};
+
+#[path = "makecredential_mutation_tests.rs"]
+mod mutation;
+
+#[cfg(feature = "preview-sign")]
+#[path = "makecredential_preview_budget_tests.rs"]
+mod preview_budget;
+
+#[test]
+fn an_enterprise_attestation_wipes_its_live_org_key_early() {
+    let mut attestation = OrgAtt::Chain {
+        key: Secret::new([0x5a; 32]),
+        len: 7,
+    };
+    attestation.wipe();
+    let OrgAtt::Chain { key, len } = &attestation else {
+        panic!("the chain was lost while wiping its key");
+    };
+    assert_eq!(key.expose(), &[0; 32]);
+    assert_eq!(*len, 7);
+}
+use crate::consts::{ALG_ED25519, ALG_ESP256, ALG_ESP384, ALG_ESP512, EF_ALWAYS_UV, FLAG_UP};
 use crate::seed::ensure_seed;
 use crate::test_pins::PIN;
 use minicbor::Decoder;
@@ -25,6 +46,195 @@ impl Rng for SeqRng {
 
 // Every makeCredential ships packed basic attestation with the device x5c.
 const ATT_FMT: &str = "packed";
+
+#[test]
+fn cose_algorithm_numbers_keep_their_registered_curves_and_echoed_identity() {
+    for (alg, curve) in [
+        (-7, 1),
+        (-9, 1),
+        (-35, 2),
+        (-51, 2),
+        (-36, 3),
+        (-52, 3),
+        (-8, 6),
+        (-19, 6),
+        (-48, 0x2c),
+        (-49, 0x2d),
+        (-50, 0x2e),
+    ] {
+        assert_eq!(alg_to_curve(alg), Some((alg, curve)), "COSE alg {alg}");
+    }
+    assert_eq!(
+        alg_to_curve(-47),
+        if cfg!(feature = "fips-profile") {
+            None
+        } else {
+            Some((-47, 8))
+        }
+    );
+}
+
+#[test]
+fn unknown_nested_creation_fields_preserve_each_following_known_field() {
+    let mut buffer = [0; 512];
+    let mut e = Encoder::new(Cursor::new(&mut buffer[..]));
+    e.map(5).unwrap().u8(1).unwrap().bytes(&[0xCD; 32]).unwrap();
+    e.u8(2)
+        .unwrap()
+        .map(2)
+        .unwrap()
+        .str("future")
+        .unwrap()
+        .array(2)
+        .unwrap()
+        .map(0)
+        .unwrap()
+        .null()
+        .unwrap();
+    e.str("id").unwrap().str("example.com").unwrap();
+    e.u8(3)
+        .unwrap()
+        .map(2)
+        .unwrap()
+        .str("future")
+        .unwrap()
+        .array(2)
+        .unwrap()
+        .map(0)
+        .unwrap()
+        .null()
+        .unwrap();
+    e.str("id").unwrap().bytes(b"user").unwrap();
+    e.u8(4)
+        .unwrap()
+        .array(1)
+        .unwrap()
+        .map(3)
+        .unwrap()
+        .str("future")
+        .unwrap()
+        .array(2)
+        .unwrap()
+        .map(0)
+        .unwrap()
+        .null()
+        .unwrap();
+    e.str("type")
+        .unwrap()
+        .str("public-key")
+        .unwrap()
+        .str("alg")
+        .unwrap()
+        .i64(ALG_ES256)
+        .unwrap();
+    e.u8(6)
+        .unwrap()
+        .map(2)
+        .unwrap()
+        .str("future")
+        .unwrap()
+        .array(2)
+        .unwrap()
+        .map(0)
+        .unwrap()
+        .null()
+        .unwrap();
+    e.str("credProtect").unwrap().u8(3).unwrap();
+    let n = e.writer().position();
+    let req = parse(&buffer[..n]).unwrap();
+    assert_eq!(req.client_data_hash, &[0xCD; 32]);
+    assert!(req.rp_id_present && req.user_id_present);
+    assert_eq!(req.rp_id, "example.com");
+    assert_eq!(req.user_id, b"user");
+    assert_eq!(
+        (req.sel_alg, req.sel_curve),
+        (ALG_ES256, i64::from(CURVE_P256))
+    );
+    assert_eq!(req.ext_cred_protect, Some(3));
+
+    let baseline = build_request(false);
+    for field in [2, 3, 4, 6] {
+        let mut req = parse(&baseline).unwrap();
+        let truncated = if field == 4 {
+            &[0x81, 0xa1, 0x61, b'x', 0x82, 0xf6][..]
+        } else {
+            &[0xa1, 0x61, b'x', 0x82, 0xf6][..]
+        };
+        let mut d = Decoder::new(truncated);
+        let result = match field {
+            2 => parse_rp_entity(&mut d, &mut req),
+            3 => parse_user_entity(&mut d, &mut req),
+            4 => parse_pubkey_params(&mut d, &mut req),
+            6 => parse_extensions(&mut d, &mut req),
+            _ => unreachable!(),
+        };
+        assert_eq!(result, Err(CtapError::InvalidCbor));
+    }
+}
+
+#[test]
+fn all_extension_outputs_fit_the_makecredential_buffer() {
+    let bytes = build_request(false);
+    let mut req = parse(&bytes).unwrap();
+    req.ext_uvm = true;
+    req.ext_cred_blob = &[0xaa];
+    req.ext_cred_protect = Some(3);
+    req.ext_hmac_secret = true;
+    req.ext_min_pin_length = true;
+    req.ext_pin_complexity = true;
+    let rp_hash = sha256(req.rp_id.as_bytes());
+    let mut fs = Fs::new(RamStorage::new());
+    let mut policy = vec![crate::consts::MIN_PIN_LENGTH, crate::pinpolicy::COMPLEXITY];
+    policy.extend_from_slice(&rp_hash);
+    fs.put(EF_MINPINLEN, &policy).unwrap();
+    #[cfg(feature = "preview-sign")]
+    let preview = {
+        let mut enc = Encoder::new(Cursor::new([0u8; 32]));
+        enc.map(1)
+            .unwrap()
+            .u8(3)
+            .unwrap()
+            .array(1)
+            .unwrap()
+            .i64(crate::consts::ALG_ESP256_SPLIT_ARKG)
+            .unwrap();
+        let n = enc.writer().position();
+        let bytes = enc.into_writer().into_inner();
+        let input = &bytes[..n];
+        let input = previewsign::parse_mc(&mut Decoder::new(input)).unwrap();
+        let key = previewsign::negotiate(&input, i64::from(crate::consts::CURVE_P256))
+            .unwrap()
+            .unwrap();
+        previewsign::generate(&[0x42; 32], b"credential", &rp_hash, key, &mut SeqRng(1)).unwrap()
+    };
+    #[cfg(feature = "preview-sign")]
+    previewsign::write_mc_ext(
+        &mut Encoder::new(Cursor::new([0u8; previewsign::MC_EXT_MAX])),
+        &preview,
+    )
+    .unwrap();
+    let mut out = [0u8; MC_EXT_MAX];
+    let n = encode_mc_extensions(
+        &mut fs,
+        &req,
+        &rp_hash,
+        &[0xaa; SALT_ENC_MAX],
+        crate::uvm::Method::PasscodeExternal,
+        true,
+        #[cfg(feature = "preview-sign")]
+        Some(&preview),
+        &mut out,
+    )
+    .unwrap();
+    let mut d = Decoder::new(&out[..n]);
+    let entries = d.map().unwrap().unwrap();
+    assert_eq!(entries, 7 + u64::from(cfg!(feature = "preview-sign")));
+    for _ in 0..entries {
+        d.str().unwrap();
+        d.skip().unwrap();
+    }
+    assert_eq!(d.position(), n);
+}
 
 fn build_request(rk: bool) -> std::vec::Vec<u8> {
     let mut buf = [0u8; 512];
@@ -63,10 +273,12 @@ fn build_request(rk: bool) -> std::vec::Vec<u8> {
 
 fn run(req: &[u8]) -> (std::vec::Vec<u8>, Fs<RamStorage>) {
     let mut fs = Fs::new(RamStorage::new());
+    crate::tests::uv_optional(&mut fs);
     let dev = Device {
         serial_hash: &[0xAB; 32],
         serial_id: &[1, 2, 3, 4, 5, 6, 7, 8],
         otp_key: None,
+        latched: false,
     };
     let mut rng = SeqRng(1);
     ensure_seed(&dev, &mut fs, &mut rng).unwrap();
@@ -89,10 +301,12 @@ fn run(req: &[u8]) -> (std::vec::Vec<u8>, Fs<RamStorage>) {
 
 fn run_err(req: &[u8]) -> CtapError {
     let mut fs = Fs::new(RamStorage::new());
+    crate::tests::uv_optional(&mut fs);
     let dev = Device {
         serial_hash: &[0xAB; 32],
         serial_id: &[1, 2, 3, 4, 5, 6, 7, 8],
         otp_key: None,
+        latched: false,
     };
     let mut rng = SeqRng(1);
     ensure_seed(&dev, &mut fs, &mut rng).unwrap();
@@ -121,10 +335,12 @@ impl crate::UserPresence for Decline {
 // `run_err` with a declining button, to prove an operation is touch-gated.
 fn run_err_no_touch(req: &[u8]) -> CtapError {
     let mut fs = Fs::new(RamStorage::new());
+    crate::tests::uv_optional(&mut fs);
     let dev = Device {
         serial_hash: &[0xAB; 32],
         serial_id: &[1, 2, 3, 4, 5, 6, 7, 8],
         otp_key: None,
+        latched: false,
     };
     let mut rng = SeqRng(1);
     ensure_seed(&dev, &mut fs, &mut rng).unwrap();
@@ -279,10 +495,12 @@ fn makecred_cancel_maps_keepalive_cancel() {
     }
     let req = mc_build(4, good_params);
     let mut fs = Fs::new(RamStorage::new());
+    crate::tests::uv_optional(&mut fs);
     let dev = Device {
         serial_hash: &[0xAB; 32],
         serial_id: &[1, 2, 3, 4, 5, 6, 7, 8],
         otp_key: None,
+        latched: false,
     };
     let mut rng = SeqRng(1);
     ensure_seed(&dev, &mut fs, &mut rng).unwrap();
@@ -427,10 +645,12 @@ fn unsupported_alg_rejected() {
         e.writer().position()
     };
     let mut fs = Fs::new(RamStorage::new());
+    crate::tests::uv_optional(&mut fs);
     let dev = Device {
         serial_hash: &[0xAB; 32],
         serial_id: &[1, 2, 3, 4, 5, 6, 7, 8],
         otp_key: None,
+        latched: false,
     };
     let mut rng = SeqRng(1);
     ensure_seed(&dev, &mut fs, &mut rng).unwrap();
@@ -520,10 +740,12 @@ fn enterprise_attestation_uses_org_chain_when_provisioned() {
     use p256::ecdsa::{Signature, VerifyingKey, signature::Verifier};
 
     let mut fs = Fs::new(RamStorage::new());
+    crate::tests::uv_optional(&mut fs);
     let dev = Device {
         serial_hash: &[0xAB; 32],
         serial_id: &[1, 2, 3, 4, 5, 6, 7, 8],
         otp_key: None,
+        latched: false,
     };
     let mut rng = SeqRng(1);
     ensure_seed(&dev, &mut fs, &mut rng).unwrap();
@@ -635,10 +857,12 @@ fn missing_mandatory_param_rejected() {
         e.writer().position()
     };
     let mut fs = Fs::new(RamStorage::new());
+    crate::tests::uv_optional(&mut fs);
     let dev = Device {
         serial_hash: &[0xAB; 32],
         serial_id: &[1, 2, 3, 4, 5, 6, 7, 8],
         otp_key: None,
+        latched: false,
     };
     let mut rng = SeqRng(1);
     let mut out = [0u8; 64];
@@ -755,6 +979,7 @@ fn dev() -> Device<'static> {
         serial_hash: &[0xAB; 32],
         serial_id: &[1, 2, 3, 4, 5, 6, 7, 8],
         otp_key: None,
+        latched: false,
     }
 }
 
@@ -762,7 +987,7 @@ fn dev() -> Device<'static> {
 /// EF_PIN present (the seed stays plain — PIN ops never wrap it), a live
 /// token with MC|GA permissions. Returns the token so the test can compute
 /// a valid pinUvAuthParam.
-fn arm_pin(fs: &mut Fs<RamStorage>, state: &mut crate::FidoState) -> [u8; 32] {
+fn arm_pin<S: rsk_fs::Storage>(fs: &mut Fs<S>, state: &mut crate::FidoState) -> [u8; 32] {
     let mut pin_file = [0u8; 35];
     pin_file[0] = 8; // retries
     pin_file[1] = 4; // length
@@ -877,7 +1102,7 @@ fn make_credential_extensions_stored_and_emitted() {
     let seed = crate::seed::load_keydev(&dev(), &mut fs).unwrap();
     let mut scratch = [0u8; 1024];
     let c = crate::credential::credential_load(
-        &seed,
+        seed.expose(),
         crate::credential::cred_record_box(&rec[..n]),
         &sha256(b"example.com"),
         &mut scratch,
@@ -946,6 +1171,7 @@ enum McHmacShape {
     Boolean,
     /// Some fields, salts missing.
     PartialMap,
+    EncOnly,
 }
 
 /// A makeCredential whose `hmac-secret-mc` takes `shape`, with the `hmac-secret`
@@ -980,6 +1206,11 @@ fn mc_request_hmac_mc(shape: &McHmacShape, flag: bool) -> std::vec::Vec<u8> {
                 e.map(1).unwrap();
                 e.u8(4).unwrap().u8(2).unwrap();
             }
+            McHmacShape::EncOnly => {
+                e.map(2).unwrap();
+                e.u8(2).unwrap().bytes(&[0; 32]).unwrap();
+                e.u8(4).unwrap().u8(2).unwrap();
+            }
         }
         e.u8(7).unwrap().map(1).unwrap();
         e.str("rk").unwrap().bool(true).unwrap();
@@ -998,6 +1229,10 @@ fn mc_request_hmac_mc(shape: &McHmacShape, flag: bool) -> std::vec::Vec<u8> {
 /// reference does not do.
 #[test]
 fn hmac_secret_mc_with_no_subfields_is_absent_a_partial_one_is_not() {
+    assert_eq!(
+        run_err(&mc_request_hmac_mc(&McHmacShape::EncOnly, true)),
+        CtapError::MissingParameter
+    );
     assert!(
         !run(&mc_request_hmac_mc(&McHmacShape::EmptyMap, true))
             .0
@@ -1022,9 +1257,33 @@ fn hmac_secret_mc_with_no_subfields_is_absent_a_partial_one_is_not() {
     );
 }
 
+#[cfg(not(feature = "largeblob-ext"))]
+#[test]
+fn a_nonresident_request_cannot_opt_in_or_opt_out_of_large_blob_key() {
+    for enabled in [false, true] {
+        let mut request = build_request(false);
+        assert_eq!(Decoder::new(&request).map().unwrap(), Some(4));
+        request[0] += 1;
+        let mut field = [0; 32];
+        let mut e = Encoder::new(Cursor::new(&mut field[..]));
+        e.u8(6)
+            .unwrap()
+            .map(1)
+            .unwrap()
+            .str("largeBlobKey")
+            .unwrap()
+            .bool(enabled)
+            .unwrap();
+        let n = e.writer().position();
+        request.extend_from_slice(&field[..n]);
+        assert_eq!(run_err(&request), CtapError::InvalidOption);
+    }
+}
+
 #[test]
 fn min_pin_length_extension_for_listed_rp() {
     let mut fs = Fs::new(RamStorage::new());
+    crate::tests::uv_optional(&mut fs);
     let mut rng = SeqRng(1);
     ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
     // EF_MINPINLEN = [minLen=6, force=0, sha256("example.com")].
@@ -1156,13 +1415,14 @@ fn large_blob_key_in_make_credential() {
     // v2 resident: largeBlobKey keys off the stable resident id (rec[32..74]),
     // not the box.
     let resident_id = &rec[32..crate::credential::RECORD_PREFIX];
-    let expected = crate::credential::derive_large_blob_key(&seed, resident_id);
+    let expected = crate::credential::derive_large_blob_key(seed.expose(), resident_id);
     assert_eq!(lbk.as_deref(), Some(&expected[..]));
 }
 
 #[test]
 fn make_credential_with_pin_sets_uv_flag() {
     let mut fs = Fs::new(RamStorage::new());
+    crate::tests::uv_optional(&mut fs);
     let mut rng = SeqRng(1);
     ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
     let mut state = crate::FidoState::new();
@@ -1216,6 +1476,7 @@ fn config_toggle_always_uv_req(token: &[u8; 32]) -> std::vec::Vec<u8> {
 #[test]
 fn make_credential_spends_token_permissions_except_lbw() {
     let mut fs = Fs::new(RamStorage::new());
+    crate::tests::uv_optional(&mut fs);
     let mut rng = SeqRng(1);
     ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
     let mut state = crate::FidoState::new();
@@ -1276,6 +1537,7 @@ fn register_and_get_cred_id(
     rng: &mut SeqRng,
     state: &mut crate::FidoState,
 ) -> std::vec::Vec<u8> {
+    crate::tests::uv_optional(fs);
     let mut out = [0u8; 1024];
     let mut presence = crate::AlwaysConfirm;
     let mut ctx = Ctx {
@@ -1299,6 +1561,7 @@ fn register_and_get_cred_id(
 #[test]
 fn excluded_makecredential_requires_touch_before_disclosing() {
     let mut fs = Fs::new(RamStorage::new());
+    crate::tests::uv_optional(&mut fs);
     let mut rng = SeqRng(1);
     ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
     let mut state = crate::FidoState::new();
@@ -1331,6 +1594,7 @@ fn excluded_makecredential_requires_touch_before_disclosing() {
 #[test]
 fn excluded_makecredential_confirms_then_spends_token() {
     let mut fs = Fs::new(RamStorage::new());
+    crate::tests::uv_optional(&mut fs);
     let mut rng = SeqRng(1);
     ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
     let mut state = crate::FidoState::new();
@@ -1369,9 +1633,109 @@ fn excluded_makecredential_confirms_then_spends_token() {
     );
 }
 
+/// A presence source that answers what it was built with.
+struct Answer(crate::Presence);
+impl crate::UserPresence for Answer {
+    fn request(&mut self, _confirm: crate::Confirm<'_>) -> crate::Presence {
+        self.0
+    }
+}
+
+/// The three ways a user-presence test fails, and the status each answers.
+const REFUSALS: [(crate::Presence, CtapError); 3] = [
+    (crate::Presence::Declined, CtapError::OperationDenied),
+    (crate::Presence::Timeout, CtapError::OperationDenied),
+    (crate::Presence::Cancelled, CtapError::KeepAliveCancel),
+];
+
+// CTAP 2.1 §6.5.5.7 spends the token once the user-presence test SUCCEEDS, so a
+// refused touch -- declined, timed out or cancelled -- spends nothing, on the
+// registration path and on the excludeList hit: the same token can retry.
+#[test]
+fn a_refused_touch_leaves_the_token_unspent() {
+    for (answer, status) in REFUSALS {
+        for excluded in [false, true] {
+            let mut fs = Fs::new(RamStorage::new());
+            crate::tests::uv_optional(&mut fs);
+            let mut rng = SeqRng(1);
+            ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
+            let mut state = crate::FidoState::new();
+            let cred_id = register_and_get_cred_id(&mut fs, &mut rng, &mut state);
+            let token = arm_pin(&mut fs, &mut state);
+            let armed = PERM_MC | crate::state::PERM_ACFG | crate::state::PERM_LBW;
+            state.paut.permissions = armed;
+            let cdh = [0xCDu8; 32];
+            let mut param = [0u8; 32];
+            let plen = rsk_crypto::pinproto::authenticate(PinProto::Two, &token, &cdh, &mut param)
+                .unwrap();
+            let req = if excluded {
+                mc_build(7, |e| {
+                    good_params(e);
+                    e.u8(5).unwrap().array(1).unwrap().map(2).unwrap();
+                    e.str("id").unwrap().bytes(&cred_id).unwrap();
+                    e.str("type").unwrap().str("public-key").unwrap();
+                    e.u8(8).unwrap().bytes(&param[..plen]).unwrap();
+                    e.u8(9).unwrap().u64(2).unwrap();
+                })
+            } else {
+                build_request_pin(&param[..plen], 2)
+            };
+            let mut out = [0u8; 1024];
+            let got = {
+                let mut presence = Answer(answer);
+                let mut ctx = Ctx {
+                    presence: &mut presence,
+                    dev: dev(),
+                    fs: &mut fs,
+                    rng: &mut rng,
+                    state: &mut state,
+                    now_ms: 1000,
+                };
+                make_credential(&mut ctx, &req, &mut out)
+            };
+            let case = if excluded { "excluded" } else { "registration" };
+            assert_eq!(got, Err(status), "{answer:?}, {case}");
+            assert_eq!(state.paut.permissions, armed, "{answer:?}, {case}");
+            assert!(state.user_verified(), "{answer:?}, {case}");
+        }
+    }
+}
+
+// The zero-length pinUvAuthParam probe takes a touch of its own (§6.1.2 step 1)
+// and is not a user-presence test in §6.5.5.7's sense: a live token survives it.
+#[test]
+fn the_selection_probe_touch_leaves_the_token_unspent() {
+    let mut fs = Fs::new(RamStorage::new());
+    crate::tests::uv_optional(&mut fs);
+    let mut rng = SeqRng(1);
+    ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
+    let mut state = crate::FidoState::new();
+    let _token = arm_pin(&mut fs, &mut state);
+    let armed = PERM_MC | crate::state::PERM_ACFG | crate::state::PERM_LBW;
+    state.paut.permissions = armed;
+    let req = build_request_pin(&[], 2);
+    let mut out = [0u8; 1024];
+    let mut presence = crate::AlwaysConfirm;
+    let mut ctx = Ctx {
+        presence: &mut presence,
+        dev: dev(),
+        fs: &mut fs,
+        rng: &mut rng,
+        state: &mut state,
+        now_ms: 1000,
+    };
+    assert_eq!(
+        make_credential(&mut ctx, &req, &mut out),
+        Err(CtapError::PinInvalid)
+    );
+    assert_eq!(state.paut.permissions, armed);
+    assert!(state.user_verified());
+}
+
 #[test]
 fn make_credential_requires_pin_for_a_discoverable_credential() {
     let mut fs = Fs::new(RamStorage::new());
+    crate::tests::uv_optional(&mut fs);
     let mut rng = SeqRng(1);
     ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
     let mut state = crate::FidoState::new();
@@ -1401,6 +1765,7 @@ fn make_credential_requires_pin_for_a_discoverable_credential() {
 #[test]
 fn make_cred_uv_not_rqd_creates_non_discoverable_on_presence_alone() {
     let mut fs = Fs::new(RamStorage::new());
+    crate::tests::uv_optional(&mut fs);
     let mut rng = SeqRng(1);
     ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
     let mut state = crate::FidoState::new();
@@ -1527,6 +1892,7 @@ fn build_request_uv(rk: bool, param: Option<(&[u8], u64)>) -> std::vec::Vec<u8> 
 #[test]
 fn uv_option_with_pin_uv_auth_param_is_not_an_error() {
     let mut fs = Fs::new(RamStorage::new());
+    crate::tests::uv_optional(&mut fs);
     let mut rng = SeqRng(1);
     ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
     let mut state = crate::FidoState::new();
@@ -1557,6 +1923,7 @@ fn uv_option_with_pin_uv_auth_param_is_not_an_error() {
 #[test]
 fn uv_option_without_builtin_uv_is_invalid_option() {
     let mut fs = Fs::new(RamStorage::new());
+    crate::tests::uv_optional(&mut fs);
     let mut rng = SeqRng(1);
     ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
     let mut state = crate::FidoState::new();
@@ -1582,6 +1949,7 @@ fn uv_option_without_builtin_uv_is_invalid_option() {
 #[test]
 fn uv_option_runs_builtin_uv_and_supplies_user_presence() {
     let mut fs = Fs::new(RamStorage::new());
+    crate::tests::uv_optional(&mut fs);
     let mut rng = SeqRng(1);
     ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
     crate::clientpin::store_local_pin(&dev(), &mut fs, PIN).unwrap();
@@ -1611,9 +1979,50 @@ fn uv_option_runs_builtin_uv_and_supplies_user_presence() {
     );
 }
 
+// Built-in UV supplies the user-presence gesture itself (§6.1.2 step 13), so the test
+// polls nothing and must still spend a live token: a pad-verified registration that
+// hits its excludeList leaves no acfg token usable without a touch either.
+#[test]
+fn a_builtin_uv_presence_test_spends_a_live_token_without_polling() {
+    let mut fs = Fs::new(RamStorage::new());
+    crate::tests::uv_optional(&mut fs);
+    let mut rng = SeqRng(1);
+    ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
+    let mut state = crate::FidoState::new();
+    let cred_id = register_and_get_cred_id(&mut fs, &mut rng, &mut state);
+    crate::clientpin::store_local_pin(&dev(), &mut fs, PIN).unwrap();
+    state.paut.permissions = PERM_MC | crate::state::PERM_ACFG | crate::state::PERM_LBW;
+    state.begin_using_token(false, 0);
+    let req = mc_build(6, |e| {
+        good_params(e);
+        e.u8(5).unwrap().array(1).unwrap().map(2).unwrap();
+        e.str("id").unwrap().bytes(&cred_id).unwrap();
+        e.str("type").unwrap().str("public-key").unwrap();
+        e.u8(7).unwrap().map(1).unwrap();
+        e.str("uv").unwrap().bool(true).unwrap();
+    });
+    let mut out = [0u8; 1024];
+    let mut pad = UvPad::typing();
+    let got = {
+        let mut ctx = Ctx {
+            presence: &mut pad,
+            dev: dev(),
+            fs: &mut fs,
+            rng: &mut rng,
+            state: &mut state,
+            now_ms: 1000,
+        };
+        make_credential(&mut ctx, &req, &mut out)
+    };
+    assert_eq!(got, Err(CtapError::CredentialExcluded));
+    assert_eq!(pad.touches, 0, "the pad was the gesture");
+    assert_eq!(state.paut.permissions, crate::state::PERM_LBW);
+}
+
 #[test]
 fn builtin_uv_decline_is_operation_denied() {
     let mut fs = Fs::new(RamStorage::new());
+    crate::tests::uv_optional(&mut fs);
     let mut rng = SeqRng(1);
     ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
     crate::clientpin::store_local_pin(&dev(), &mut fs, PIN).unwrap();
@@ -1696,6 +2105,7 @@ fn always_uv_requires_user_verification_without_pin() {
 #[test]
 fn make_credential_bad_pin_auth_rejected() {
     let mut fs = Fs::new(RamStorage::new());
+    crate::tests::uv_optional(&mut fs);
     let mut rng = SeqRng(1);
     ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
     let mut state = crate::FidoState::new();
@@ -1743,10 +2153,12 @@ fn selected_alg(algs: &[i64]) -> Result<i64, CtapError> {
     };
 
     let mut fs = Fs::new(RamStorage::new());
+    crate::tests::uv_optional(&mut fs);
     let dev = Device {
         serial_hash: &[0xAB; 32],
         serial_id: &[1, 2, 3, 4, 5, 6, 7, 8],
         otp_key: None,
+        latched: false,
     };
     let mut rng = SeqRng(1);
     ensure_seed(&dev, &mut fs, &mut rng).unwrap();
@@ -1790,7 +2202,7 @@ fn selected_alg(algs: &[i64]) -> Result<i64, CtapError> {
 #[test]
 fn first_supported_alg_wins() {
     use crate::consts::{ALG_MLDSA44, ALG_MLDSA65, ALG_MLDSA87};
-    // §6.1.2 step 4: the chosen algorithm is the FIRST supported element of
+    // §6.1.2 step 3: the chosen algorithm is the FIRST supported element of
     // pubKeyCredParams — the platform's order is its preference order, so an
     // ML-DSA entry listed after a classic one does NOT override it.
     assert_eq!(selected_alg(&[ALG_ES256, ALG_MLDSA44]), Ok(ALG_ES256));
@@ -1837,10 +2249,43 @@ fn build_request_ea(ea: u64) -> std::vec::Vec<u8> {
     buf[..n].to_vec()
 }
 
+/// [`build_request_ea`] with a `["none"]` attestationFormatsPreference (0x0B).
+fn build_request_ea_none(ea: u64) -> std::vec::Vec<u8> {
+    let mut buf = [0u8; 512];
+    let n = {
+        let mut e = Encoder::new(Cursor::new(&mut buf[..]));
+        e.map(6).unwrap();
+        e.u8(1).unwrap().bytes(&[0xCDu8; 32]).unwrap();
+        e.u8(2).unwrap().map(1).unwrap();
+        e.str("id").unwrap().str("example.com").unwrap();
+        e.u8(3).unwrap().map(2).unwrap();
+        e.str("id").unwrap().bytes(&[1, 2, 3, 4]).unwrap();
+        e.str("name").unwrap().str("alice").unwrap();
+        e.u8(4).unwrap().array(1).unwrap().map(2).unwrap();
+        e.str("alg").unwrap().i64(ALG_ES256).unwrap();
+        e.str("type").unwrap().str("public-key").unwrap();
+        e.u8(10).unwrap().u64(ea).unwrap();
+        e.u8(11).unwrap().array(1).unwrap().str("none").unwrap();
+        e.writer().position()
+    };
+    buf[..n].to_vec()
+}
+
 // Run makeCredential with enterprise attestation enabled/disabled (the
 // enable persists in flash — EF_EA_ENABLED — per CTAP 2.1).
 fn run_ea(req: &[u8], enable: bool) -> Result<(std::vec::Vec<u8>, Fs<RamStorage>), CtapError> {
-    let mut fs = Fs::new(RamStorage::new());
+    run_ea_with(RamStorage::new(), req, enable, |_| {})
+}
+
+/// [`run_ea`] on `backend`, over a store `setup` has written to first.
+fn run_ea_with<S: Storage>(
+    backend: S,
+    req: &[u8],
+    enable: bool,
+    setup: impl FnOnce(&mut Fs<S>),
+) -> Result<(std::vec::Vec<u8>, Fs<S>), CtapError> {
+    let mut fs = Fs::new(backend);
+    crate::tests::uv_optional(&mut fs);
     let mut rng = SeqRng(1);
     ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
     let mut out = [0u8; 1024];
@@ -1848,6 +2293,7 @@ fn run_ea(req: &[u8], enable: bool) -> Result<(std::vec::Vec<u8>, Fs<RamStorage>
     if enable {
         fs.put(EF_EA_ENABLED, &[1]).unwrap();
     }
+    setup(&mut fs);
     let len = {
         let mut presence = crate::AlwaysConfirm;
         let mut ctx = Ctx {
@@ -1893,7 +2339,7 @@ fn enterprise_attestation_level2_full_attestation() {
 
     // The attestation signature verifies under the DEVICE key (the seed
     // scalar), not the credential key.
-    let device_key = P256Key::from_scalar(&seed).unwrap();
+    let device_key = P256Key::from_scalar(seed.expose()).unwrap();
     let (x, y) = device_key.public_xy();
     let pt = Sec1Point::from_bytes(&crate::ec::sec1_uncompressed(x, y)).unwrap();
     let vk = VerifyingKey::from_sec1_point(&pt).unwrap();
@@ -1902,6 +2348,153 @@ fn enterprise_attestation_level2_full_attestation() {
     let s = Signature::from_der(&sig).unwrap();
     vk.verify(&signed, &s)
         .expect("enterprise attestation verifies under the device key");
+}
+
+/// What a build before ab8bcfc3 could store over today's cap: the record reads back
+/// cut, its count intact and its second certificate running past the buffer.
+fn cut_chain() -> std::vec::Vec<u8> {
+    let cert = [0x30u8; 1500];
+    let mut rec = std::vec![2u8];
+    for _ in 0..2 {
+        rec.extend_from_slice(&(cert.len() as u16).to_le_bytes());
+        rec.extend_from_slice(&cert);
+    }
+    assert!(rec.len() > crate::cert::ATT_CHAIN_REC_MAX);
+    rec
+}
+
+/// The org key the enterprise tests install, with `chain` as its EF_ATT_CHAIN record.
+fn install_org<S: Storage>(fs: &mut Fs<S>, chain: Option<&[u8]>) {
+    crate::seed::store_att_key(&dev(), fs, &[0x21u8; 32]).unwrap();
+    if let Some(chain) = chain {
+        fs.put(EF_ATT_CHAIN, chain).unwrap();
+    }
+}
+
+/// The `x5c` of a `packed` makeCredential response's attStmt.
+fn x5c_of(resp: &[u8]) -> std::vec::Vec<std::vec::Vec<u8>> {
+    let mut d = Decoder::new(resp);
+    d.map().unwrap();
+    for _ in 0..4 {
+        d.skip().unwrap();
+    }
+    assert_eq!(d.u8().unwrap(), 3);
+    d.map().unwrap();
+    for _ in 0..4 {
+        d.skip().unwrap();
+    }
+    assert_eq!(d.str().unwrap(), "x5c");
+    let n = d.array().unwrap().unwrap();
+    (0..n).map(|_| d.bytes().unwrap().to_vec()).collect()
+}
+
+fn verifies_under(key: &P256Key, auth_data: &[u8], sig: &[u8]) -> bool {
+    let (x, y) = key.public_xy();
+    let pt = Sec1Point::from_bytes(&crate::ec::sec1_uncompressed(x, y)).unwrap();
+    let mut signed = auth_data.to_vec();
+    signed.extend_from_slice(&[0xCD; 32]);
+    VerifyingKey::from_sec1_point(&pt)
+        .unwrap()
+        .verify(&signed, &Signature::from_der(sig).unwrap())
+        .is_ok()
+}
+
+/// Over an org chain that is not whole (cut as ab8bcfc3 describes, misframed, or
+/// missing) an enterprise request registers on the device's own key and cert,
+/// without `ep`. ab8bcfc3 promised that; the registration failed CTAP1_ERR_OTHER.
+#[test]
+fn enterprise_attestation_over_a_cut_chain_is_the_device_attestation() {
+    let req = build_request_ea(2);
+    let cut = cut_chain();
+    let misframed = [2u8, 3, 0, 0x30, 1, 2]; // counts two certificates, holds one
+    for (what, chain) in [
+        ("cut", Some(&cut[..])),
+        ("misframed", Some(&misframed[..])),
+        ("missing", None),
+    ] {
+        let (resp, mut fs) =
+            run_ea_with(RamStorage::new(), &req, true, |fs| install_org(fs, chain))
+                .unwrap_or_else(|e| panic!("a {what} chain failed the registration: {e:?}"));
+        let mut d = Decoder::new(&resp);
+        assert_eq!(
+            d.map().unwrap().unwrap(),
+            3,
+            "{what}: no `ep` without the org attestation"
+        );
+        assert_eq!(d.u8().unwrap(), 1);
+        assert_eq!(d.str().unwrap(), "packed");
+        assert_eq!(d.u8().unwrap(), 2);
+        let ad = d.bytes().unwrap().to_vec();
+        assert_eq!(d.u8().unwrap(), 3);
+        assert_eq!(d.map().unwrap().unwrap(), 3);
+        assert_eq!(d.str().unwrap(), "alg");
+        assert_eq!(d.i64().unwrap(), ALG_ES256);
+        assert_eq!(d.str().unwrap(), "sig");
+        let sig = d.bytes().unwrap().to_vec();
+        assert_eq!(d.str().unwrap(), "x5c");
+        assert_eq!(d.array().unwrap().unwrap(), 1);
+        let cert = d.bytes().unwrap().to_vec();
+        let mut ee = [0u8; 1024];
+        let n = fs.read(EF_EE_DEV, &mut ee).unwrap();
+        assert_eq!(cert, ee[..n], "{what}: the device's own certificate");
+        let seed = crate::seed::load_keydev(&dev(), &mut fs).unwrap();
+        let device = P256Key::from_scalar(seed.expose()).unwrap();
+        assert!(
+            verifies_under(&device, &ad, &sig),
+            "{what}: the device key attests it"
+        );
+        let org = P256Key::from_scalar(&[0x21u8; 32]).unwrap();
+        assert!(!verifies_under(&org, &ad, &sig), "{what}");
+    }
+}
+
+/// With no enterprise attestation left to give, nothing outranks a `["none"]`
+/// preference over a cut chain: the device attests nothing, as without EA.
+#[test]
+fn a_none_preference_holds_over_an_enterprise_request_on_a_cut_chain() {
+    let req = build_request_ea_none(2);
+    let (resp, _) = run_ea_with(RamStorage::new(), &req, true, |fs| {
+        install_org(fs, Some(&cut_chain()))
+    })
+    .unwrap();
+    let mut d = Decoder::new(&resp);
+    assert_eq!(d.map().unwrap().unwrap(), 3, "no `ep`");
+    assert_eq!(d.u8().unwrap(), 1);
+    assert_eq!(d.str().unwrap(), "none");
+    assert_eq!(d.u8().unwrap(), 2);
+    d.bytes().unwrap();
+    assert_eq!(d.u8().unwrap(), 3);
+    assert_eq!(d.map().unwrap().unwrap(), 0, "the none statement is empty");
+}
+
+/// A chain read the flash failed is not a cut chain: the registration fails, and
+/// the host can retry it, rather than settle for the device's attestation. The
+/// same store with the read answering gives the org's, with `ep`.
+#[test]
+fn a_faulted_chain_read_fails_the_enterprise_registration() {
+    let req = build_request_ea(2);
+    let mut whole = [0u8; 64];
+    let n = crate::cert::att_chain_pack(&[0x30u8, 0x03, 1, 2, 3], &mut whole).unwrap();
+    let register = |fault: bool| {
+        let (backend, medium) = rsk_fs::storage::faults::ProbeStuck::new();
+        run_ea_with(backend, &req, true, |fs| {
+            install_org(fs, Some(&whole[..n]));
+            medium.stick(fault.then_some(EF_ATT_CHAIN));
+        })
+        .map(|(resp, _)| resp)
+    };
+    let resp = register(false).expect("control: a whole chain registers");
+    assert_eq!(
+        Decoder::new(&resp).map().unwrap().unwrap(),
+        4,
+        "control: `ep`"
+    );
+    assert_eq!(
+        x5c_of(&resp),
+        [whole[3..n].to_vec()],
+        "control: the org chain"
+    );
+    assert_eq!(register(true).unwrap_err(), CtapError::Other);
 }
 
 #[test]
@@ -1966,6 +2559,7 @@ fn enterprise_type1_non_eligible_ignores_org_key() {
     // It returns a normal basic_full attestation with the DEVICE's own cert and
     // no `ep` — never the enterprise batch cert.
     let mut fs = Fs::new(RamStorage::new());
+    crate::tests::uv_optional(&mut fs);
     let mut rng = SeqRng(1);
     ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
     crate::seed::store_att_key(&dev(), &mut fs, &[0x21u8; 32]).unwrap();
@@ -2029,6 +2623,7 @@ fn vendor_ea_eligibility() {
     // device upgraded to this firmware reads. The FIDO conformance test RPID
     // qualifies only under the `ea-conformance-rpid` feature.
     let mut fs = Fs::new(RamStorage::new());
+    crate::tests::uv_optional(&mut fs);
     assert!(!rp_eligible_for_vendor_ea(&mut fs, &sha256(b"example.com")));
     assert_eq!(
         rp_eligible_for_vendor_ea(
@@ -2061,6 +2656,7 @@ fn enterprise_type1_listed_rp_uses_org_key() {
     // It must now come back with `ep` and the org/EP cert — otherwise the storage
     // is wired to nothing and the negative test above passes for the wrong reason.
     let mut fs = Fs::new(RamStorage::new());
+    crate::tests::uv_optional(&mut fs);
     let mut rng = SeqRng(1);
     ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
     crate::seed::store_att_key(&dev(), &mut fs, &[0x21u8; 32]).unwrap();
@@ -2160,6 +2756,7 @@ fn builtin_uv_still_names_the_registration_on_a_display() {
     // cannot (`collect_pin` takes no `Confirm`). Without it a host could trade one
     // context-free PIN entry for a credential at an rp of its choosing.
     let mut fs = Fs::new(RamStorage::new());
+    crate::tests::uv_optional(&mut fs);
     let mut rng = SeqRng(1);
     ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
     crate::clientpin::store_local_pin(&dev(), &mut fs, PIN).unwrap();
@@ -2228,6 +2825,122 @@ fn an_rp_id_carrying_whitespace_is_refused() {
     assert!(!resp.is_empty(), "a plain rpId must still register");
 }
 
+/// The excludeList check fails over a record the flash would not serve only when
+/// that record could be this rp's, as the store's refusal does: another rp's leaves
+/// it answering, a record of its own fails it.
+#[test]
+fn an_exclude_check_fails_only_over_an_unread_record_of_its_own_rp() {
+    let (backend, medium) = rsk_fs::storage::faults::ProbeStuck::new();
+    let mut fs = Fs::new(backend);
+    crate::tests::uv_optional(&mut fs);
+    let mut rng = SeqRng(1);
+    ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
+    let mut register = |fs: &mut Fs<_>, rp: &str| {
+        let mut buf = [0u8; 256];
+        let n = {
+            let mut e = Encoder::new(Cursor::new(&mut buf[..]));
+            e.map(5).unwrap();
+            e.u8(1).unwrap().bytes(&[0xCDu8; 32]).unwrap();
+            e.u8(2).unwrap().map(1).unwrap();
+            e.str("id").unwrap().str(rp).unwrap();
+            e.u8(3).unwrap().map(1).unwrap();
+            e.str("id").unwrap().bytes(&[1, 2, 3, 4]).unwrap();
+            good_params(&mut e);
+            e.u8(7).unwrap().map(1).unwrap();
+            e.str("rk").unwrap().bool(true).unwrap();
+            e.writer().position()
+        };
+        let mut out = [0u8; 1024];
+        let mut state = crate::FidoState::new();
+        let mut presence = crate::AlwaysConfirm;
+        let mut ctx = Ctx {
+            presence: &mut presence,
+            dev: dev(),
+            fs,
+            rng: &mut rng,
+            state: &mut state,
+            now_ms: 1000,
+        };
+        let n = make_credential(&mut ctx, &buf[..n], &mut out).unwrap();
+        out[..n].to_vec()
+    };
+    let ad = verify_response(&register(&mut fs, "example.com"), &[0xCD; 32]);
+    let mine = ad[55..55 + usize::from(u16::from_be_bytes([ad[53], ad[54]]))].to_vec();
+    register(&mut fs, "other.example");
+    let seed = crate::seed::load_keydev(&dev(), &mut fs).unwrap();
+    let hash = rsk_crypto::sha256(b"example.com");
+    let hit = |fs: &mut Fs<_>, id: &[u8]| exclude_hit(fs, seed.expose(), &hash, id, false);
+    let absent = [0x77u8; CRED_RESIDENT_LEN];
+
+    medium.stick(Some(crate::consts::EF_CRED + 1)); // other.example's
+    assert_eq!(hit(&mut fs, &mine), Ok(true));
+    assert_eq!(
+        hit(&mut fs, &absent),
+        Ok(false),
+        "another rp's unread record cannot be this one's"
+    );
+    medium.stick(Some(crate::consts::EF_CRED)); // example.com's own
+    assert_eq!(hit(&mut fs, &absent), Err(CtapError::Other));
+}
+
+/// Presence that never comes, counting how often it was asked.
+struct Unanswered(std::rc::Rc<std::cell::Cell<u32>>);
+impl crate::UserPresence for Unanswered {
+    fn request(&mut self, _confirm: crate::Confirm<'_>) -> crate::Presence {
+        self.0.set(self.0.get() + 1);
+        crate::Presence::Timeout
+    }
+}
+
+/// With one of the RP's own records unread, an excludeList id the store may hold
+/// is refused only after the same touch the healthy card asks for, or the fault
+/// would sort stored ids from others with no one at the key.
+#[test]
+fn an_exclude_check_the_flash_failed_asks_for_the_touch_first() {
+    let (backend, medium) = rsk_fs::storage::faults::ProbeStuck::new();
+    let mut fs = Fs::new(backend);
+    crate::tests::uv_optional(&mut fs);
+    let mut rng = SeqRng(1);
+    ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
+    {
+        let mut out = [0u8; 1024];
+        let mut state = crate::FidoState::new();
+        let mut presence = crate::AlwaysConfirm;
+        let mut ctx = Ctx {
+            presence: &mut presence,
+            dev: dev(),
+            fs: &mut fs,
+            rng: &mut rng,
+            state: &mut state,
+            now_ms: 1000,
+        };
+        make_credential(&mut ctx, &build_request(true), &mut out).unwrap();
+    }
+    let absent = [0x77u8; CRED_RESIDENT_LEN];
+    let req = mc_build_exclude(&[("public-key", &absent[..])]);
+    let attempt = |fs: &mut Fs<_>| {
+        let asked = std::rc::Rc::new(std::cell::Cell::new(0));
+        let mut presence = Unanswered(asked.clone());
+        let mut out = [0u8; 1024];
+        let mut state = crate::FidoState::new();
+        let mut rng = SeqRng(9);
+        let mut ctx = Ctx {
+            presence: &mut presence,
+            dev: dev(),
+            fs,
+            rng: &mut rng,
+            state: &mut state,
+            now_ms: 1000,
+        };
+        let r = make_credential(&mut ctx, &req, &mut out).map(|_| ());
+        (r, asked.get())
+    };
+    let healthy = attempt(&mut fs);
+    assert_eq!(healthy.1, 1, "control: the healthy card asks once");
+    medium.stick(Some(crate::consts::EF_CRED));
+    assert_eq!(attempt(&mut fs), healthy);
+}
+
 /// A makeCredential whose excludeList is `entries`, each a `(type, id)` descriptor.
 fn mc_build_exclude(entries: &[(&str, &[u8])]) -> std::vec::Vec<u8> {
     let mut buf = [0u8; 8192];
@@ -2258,6 +2971,7 @@ fn mc_build_exclude(entries: &[(&str, &[u8])]) -> std::vec::Vec<u8> {
 #[test]
 fn exclude_list_over_max_is_limit_exceeded() {
     let mut fs = Fs::new(RamStorage::new());
+    crate::tests::uv_optional(&mut fs);
     let mut rng = SeqRng(1);
     ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
     let mut state = crate::FidoState::new();
@@ -2290,6 +3004,7 @@ fn exclude_list_over_max_is_limit_exceeded() {
 #[test]
 fn exclude_list_at_max_excludes_and_foreign_types_do_not() {
     let mut fs = Fs::new(RamStorage::new());
+    crate::tests::uv_optional(&mut fs);
     let mut rng = SeqRng(1);
     ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
     let mut state = crate::FidoState::new();
@@ -2439,7 +3154,7 @@ fn mc_user(e: &mut Encoder<Cursor<&mut [u8]>>) {
 /// as `a4cbf54`.
 ///
 /// Bounded at both ends, each end measured rather than assumed. Above: a request
-/// missing one of the mandatory keys 1..=4 is refused by `parse` before key 9 is
+/// missing one of the mandatory keys 1..=3 is refused by `parse` before key 9 is
 /// ever read, so it keeps answering MISSING_PARAMETER where that card answers
 /// INVALID_PARAMETER (`missing_mandatory_param_rejected` pins it), and a
 /// malformed `pubKeyCredParams` entry outranks the protocol on that card too.
@@ -2448,7 +3163,7 @@ fn mc_user(e: &mut Encoder<Cursor<&mut [u8]>>) {
 /// rule and the reason `up:false` is not a row here.
 #[test]
 fn unsupported_protocol_outranks_every_later_check() {
-    let rows: [OrderRow; 2] = [
+    let rows: [OrderRow; 3] = [
         (
             "unsupported alg",
             &|e| {
@@ -2464,10 +3179,9 @@ fn unsupported_protocol_outranks_every_later_check() {
             CtapError::UnsupportedAlgorithm,
         ),
         (
-            // The control code here is OURS, and it is a measured divergence in
-            // its own right: that card answers UNSUPPORTED_ALGORITHM to an empty
-            // list (and to an absent key 4), three readings, since §6.1.2 step 3's
-            // loop simply chooses nothing. Recorded, not silently blessed.
+            // That card answers UNSUPPORTED_ALGORITHM to an empty list and to an
+            // absent key 4, since §6.1.2 step 3's loop simply chooses nothing, and
+            // a YubiKey 5.8.0 does too; so do we.
             "empty pubKeyCredParams",
             &|e| {
                 mc_cdh(e);
@@ -2476,7 +3190,17 @@ fn unsupported_protocol_outranks_every_later_check() {
                 e.u8(4).unwrap().array(0).unwrap();
             },
             4,
-            CtapError::MissingParameter,
+            CtapError::UnsupportedAlgorithm,
+        ),
+        (
+            "absent pubKeyCredParams",
+            &|e| {
+                mc_cdh(e);
+                mc_rp(e);
+                mc_user(e);
+            },
+            3,
+            CtapError::UnsupportedAlgorithm,
         ),
     ];
     for (label, head, nkeys, alone) in rows {
@@ -2669,24 +3393,7 @@ fn attestation_formats_preference_omits_only_for_none_alone() {
 /// administrator turned on.
 #[test]
 fn enterprise_attestation_outranks_a_none_preference() {
-    let mut buf = [0u8; 512];
-    let n = {
-        let mut e = Encoder::new(Cursor::new(&mut buf[..]));
-        e.map(6).unwrap();
-        e.u8(1).unwrap().bytes(&[0xCDu8; 32]).unwrap();
-        e.u8(2).unwrap().map(1).unwrap();
-        e.str("id").unwrap().str("example.com").unwrap();
-        e.u8(3).unwrap().map(2).unwrap();
-        e.str("id").unwrap().bytes(&[1, 2, 3, 4]).unwrap();
-        e.str("name").unwrap().str("alice").unwrap();
-        e.u8(4).unwrap().array(1).unwrap().map(2).unwrap();
-        e.str("alg").unwrap().i64(ALG_ES256).unwrap();
-        e.str("type").unwrap().str("public-key").unwrap();
-        e.u8(10).unwrap().u64(2).unwrap();
-        e.u8(11).unwrap().array(1).unwrap().str("none").unwrap();
-        e.writer().position()
-    };
-    let (resp, _) = run_ea(&buf[..n], true).unwrap();
+    let (resp, _) = run_ea(&build_request_ea_none(2), true).unwrap();
     let mut d = Decoder::new(&resp);
     d.map().unwrap();
     assert_eq!(d.u8().unwrap(), 1);
@@ -2733,11 +3440,13 @@ fn the_trace_reader_reports_the_two_fields_the_gate_is_a_function_of() {
 fn a_faulted_pin_probe_does_not_drop_the_makecredential_uv_gate() {
     let (backend, medium) = rsk_fs::storage::faults::ProbeStuck::new();
     let mut fs = Fs::new(backend);
+    crate::tests::uv_optional(&mut fs);
     fs.scan();
     let dev = Device {
         serial_hash: &[0xAB; 32],
         serial_id: &[1, 2, 3, 4, 5, 6, 7, 8],
         otp_key: None,
+        latched: false,
     };
     let mut rng = SeqRng(1);
     ensure_seed(&dev, &mut fs, &mut rng).unwrap();
@@ -2782,6 +3491,7 @@ fn a_faulted_pin_probe_does_not_drop_the_makecredential_uv_gate() {
 #[test]
 fn an_ea_list_wider_than_this_build_matches_what_it_holds_and_declines_the_rest() {
     let mut fs = Fs::new(RamStorage::new());
+    crate::tests::uv_optional(&mut fs);
     let held = sha256(b"held.example");
     let past = sha256(b"past-the-buffer.example");
     let mut list = [0u8; 32 * (MAX_EA_RPIDS + 1)];
@@ -2795,3 +3505,319 @@ fn an_ea_list_wider_than_this_build_matches_what_it_holds_and_declines_the_rest(
         "an entry past the buffer declines; it must never grant"
     );
 }
+
+// The read-fault sweep lives in its own file; it needs this module's fixtures.
+#[path = "makecredential_reads_tests.rs"]
+mod reads;
+
+/// With alwaysUv off a configured pad is not asked: §6.1.2 step 6.3's upgrade of a
+/// token-less request is alwaysUv's alone. Without `uv`, a non-discoverable credential is
+/// made on presence with `uv` clear (makeCredUvNotRqd) and a discoverable one is refused.
+#[test]
+fn without_always_uv_a_configured_pad_is_not_asked() {
+    let mut fs = Fs::new(RamStorage::new());
+    crate::tests::uv_optional(&mut fs);
+    let mut rng = SeqRng(1);
+    ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
+    crate::clientpin::store_local_pin(&dev(), &mut fs, PIN).unwrap();
+    let cdh = [0xCDu8; 32];
+    let mut out = [0u8; 1024];
+    let mut pad = UvPad::typing();
+    let mut state = crate::FidoState::new();
+    let mut ctx = Ctx {
+        presence: &mut pad,
+        dev: dev(),
+        fs: &mut fs,
+        rng: &mut rng,
+        state: &mut state,
+        now_ms: 0,
+    };
+    let len = make_credential(&mut ctx, &build_request(false), &mut out).unwrap();
+    let auth_data = verify_response(&out[..len], &cdh);
+    assert_eq!(auth_data[32] & FLAG_UV, 0, "the pad was run: UV is set");
+    assert_eq!(
+        make_credential(&mut ctx, &build_request(true), &mut out),
+        Err(CtapError::PuatRequired),
+        "a discoverable credential was verified on the pad instead of refused"
+    );
+}
+
+/// `pubKeyCredParams` absent, empty, or offering nothing this build supports: §6.1.2
+/// step 3 chooses nothing, and a YubiKey 5.8.0 answers all three UNSUPPORTED_ALGORITHM
+/// (measured 2026-09-30). An absent clientDataHash, rp or user stays MISSING_PARAMETER.
+#[test]
+fn a_pub_key_cred_params_that_offers_nothing_is_an_unsupported_algorithm() {
+    let options = |e: &mut Encoder<Cursor<&mut [u8]>>| {
+        e.u8(7).unwrap().map(1).unwrap();
+        e.str("rk").unwrap().bool(false).unwrap();
+    };
+    let rows: [OrderRow; 7] = [
+        (
+            "absent",
+            &|e| {
+                mc_cdh(e);
+                mc_rp(e);
+                mc_user(e);
+            },
+            3,
+            CtapError::UnsupportedAlgorithm,
+        ),
+        (
+            "absent, a later key present",
+            &|e| {
+                mc_cdh(e);
+                mc_rp(e);
+                mc_user(e);
+                options(e);
+            },
+            4,
+            CtapError::UnsupportedAlgorithm,
+        ),
+        (
+            "empty",
+            &|e| {
+                mc_cdh(e);
+                mc_rp(e);
+                mc_user(e);
+                e.u8(4).unwrap().array(0).unwrap();
+            },
+            4,
+            CtapError::UnsupportedAlgorithm,
+        ),
+        (
+            "offering only an unsupported algorithm",
+            &|e| {
+                mc_cdh(e);
+                mc_rp(e);
+                mc_user(e);
+                only_alg(e, -1000);
+            },
+            4,
+            CtapError::UnsupportedAlgorithm,
+        ),
+        (
+            "absent, and no user",
+            &|e| {
+                mc_cdh(e);
+                mc_rp(e);
+            },
+            2,
+            CtapError::MissingParameter,
+        ),
+        (
+            "absent, and no rp",
+            &|e| {
+                mc_cdh(e);
+                mc_user(e);
+            },
+            2,
+            CtapError::MissingParameter,
+        ),
+        (
+            "absent, and no clientDataHash",
+            &|e| {
+                mc_rp(e);
+                mc_user(e);
+            },
+            2,
+            CtapError::MissingParameter,
+        ),
+    ];
+    for (label, head, nkeys, want) in rows {
+        let mut buf = [0u8; 256];
+        let n = {
+            let mut e = Encoder::new(Cursor::new(&mut buf[..]));
+            e.map(nkeys).unwrap();
+            head(&mut e);
+            e.writer().position()
+        };
+        assert_eq!(run_err(&buf[..n]), want, "pubKeyCredParams {label}");
+    }
+}
+
+/// An org key whose record the flash could not read is not an absent one: the
+/// enterprise registration fails `CTAP1_ERR_OTHER` for the host to retry, as a faulted
+/// chain read already does. The same store with the read answering gives the org's.
+#[test]
+fn a_faulted_org_key_read_fails_the_enterprise_registration() {
+    let req = build_request_ea(2);
+    let mut whole = [0u8; 64];
+    let n = crate::cert::att_chain_pack(&[0x30u8, 0x03, 1, 2, 3], &mut whole).unwrap();
+    let register = |fault: bool| {
+        let (backend, medium) = rsk_fs::storage::faults::ProbeStuck::new();
+        run_ea_with(backend, &req, true, |fs| {
+            install_org(fs, Some(&whole[..n]));
+            medium.stick(fault.then_some(crate::consts::EF_ATT_KEY.get()));
+        })
+        .map(|(resp, _)| resp)
+    };
+    let resp = register(false).expect("control: a readable org key registers");
+    assert_eq!(
+        x5c_of(&resp),
+        [whole[3..n].to_vec()],
+        "control: the org chain"
+    );
+    assert_eq!(register(true).unwrap_err(), CtapError::Other);
+}
+
+/// An org key that is there but will not open under this device (sealed by another
+/// one here) can attest nothing: the device's own attestation, with no `ep`, as over a
+/// cut chain. No org key at all is the device's attestation WITH `ep`, as before.
+#[test]
+fn an_org_key_that_will_not_open_is_the_device_attestation_without_ep() {
+    let req = build_request_ea(2);
+    let mut whole = [0u8; 64];
+    let n = crate::cert::att_chain_pack(&[0x30u8, 0x03, 1, 2, 3], &mut whole).unwrap();
+    let elsewhere = Device {
+        serial_hash: &[0xBA; 32],
+        ..dev()
+    };
+    for (what, sealed_by, members) in [
+        ("an org key sealed elsewhere", Some(&elsewhere), 3),
+        ("no org key", None, 4),
+    ] {
+        let (resp, mut fs) = run_ea_with(RamStorage::new(), &req, true, |fs| {
+            if let Some(other) = sealed_by {
+                crate::seed::store_att_key(other, fs, &[0x21u8; 32]).unwrap();
+                fs.put(EF_ATT_CHAIN, &whole[..n]).unwrap();
+            }
+        })
+        .unwrap_or_else(|e| panic!("{what}: the registration failed: {e:?}"));
+        assert_eq!(
+            Decoder::new(&resp).map().unwrap().unwrap(),
+            members,
+            "{what}: `ep` is there only with an org attestation to stand behind it, or none"
+        );
+        let mut ee = [0u8; 1024];
+        let len = fs.read(EF_EE_DEV, &mut ee).unwrap();
+        assert_eq!(
+            x5c_of(&resp),
+            [ee[..len].to_vec()],
+            "{what}: the device's own cert"
+        );
+    }
+}
+
+#[test]
+fn empty_device_certificate_refuses_attestation_and_short_resident_records_are_not_excluded() {
+    let mut fs = Fs::new(RamStorage::new());
+    let mut rng = SeqRng(1);
+    ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
+    fs.put(EF_EE_DEV, &[]).unwrap();
+    let generation = fs.write_gen();
+    let mut state = crate::FidoState::new();
+    let mut presence = crate::AlwaysConfirm;
+    let mut ctx = Ctx {
+        dev: dev(),
+        fs: &mut fs,
+        rng: &mut rng,
+        state: &mut state,
+        presence: &mut presence,
+        now_ms: 0,
+    };
+    let mut att = AttBufs::new();
+    assert_eq!(
+        make_attestation(
+            &mut ctx,
+            &[0x42; 32],
+            b"attestation",
+            &OrgAtt::None,
+            &mut att
+        ),
+        Err(CtapError::Other)
+    );
+    assert_eq!(fs.write_gen(), generation);
+    fs.put(crate::consts::EF_CRED, &[0; RECORD_PREFIX - 1])
+        .unwrap();
+    let generation = fs.write_gen();
+    assert_eq!(
+        exclude_hit(
+            &mut fs,
+            &[0x42; 32],
+            &[0; 32],
+            &[0; CRED_RESIDENT_LEN],
+            true
+        ),
+        Ok(false)
+    );
+    assert_eq!(fs.write_gen(), generation);
+}
+
+#[test]
+fn incomplete_slot_inventory_does_not_turn_absent_records_into_exclusions() {
+    let mut fs = Fs::new(rsk_fs::storage::faults::TruncatedWalk::new());
+    fs.scan();
+    let generation = fs.write_gen();
+    assert_eq!(
+        exclude_hit(
+            &mut fs,
+            &[0x11; 32],
+            &[0x66; 32],
+            &[0x55; CRED_RESIDENT_LEN],
+            true
+        ),
+        Ok(false)
+    );
+    assert_eq!(fs.write_gen(), generation);
+}
+
+#[path = "makecredential_capacity_tests.rs"]
+mod backend_capacity;
+
+#[test]
+fn secp256k1_negotiation_follows_the_compiled_profile() {
+    assert_eq!(
+        alg_to_curve(ALG_ES256K),
+        (!cfg!(feature = "fips-profile")).then_some((ALG_ES256K, CURVE_P256K1))
+    );
+}
+
+#[test]
+fn direct_response_encoding_handles_large_blob_output_in_every_profile() {
+    for large_blob_key in [None, Some([0x55; 32])] {
+        for supported in [false, true] {
+            let mut expected = b"\xa3\x01\x64none\x02\x42ad\x03\xa0".to_vec();
+            if let Some(key) = large_blob_key {
+                expected[0] += 1;
+                expected.extend_from_slice(b"\x05\x58\x20");
+                expected.extend_from_slice(&key);
+            }
+            if supported {
+                expected[0] += 1;
+                expected.extend_from_slice(b"\x06\xa1\x69largeBlob\xa1\x69supported\xf5");
+            }
+            let encode = |out: &mut [u8]| {
+                encode_mc_response(
+                    out,
+                    b"ad",
+                    &AttBufs::new(),
+                    AttShape {
+                        sig_len: 0,
+                        chain_len: 0,
+                        certs: 0,
+                        ea_performed: false,
+                        omitted: true,
+                    },
+                    large_blob_key,
+                    supported,
+                    #[cfg(feature = "preview-sign")]
+                    None,
+                )
+            };
+            let mut out = [0xa5; 128];
+            assert_eq!(encode(&mut out), Ok(expected.len()));
+            assert_eq!(&out[..expected.len()], expected);
+            assert!(out[expected.len()..].iter().all(|&byte| byte == 0xa5));
+            for capacity in 0..expected.len() {
+                assert_eq!(
+                    encode(&mut out[..capacity]),
+                    Err(CtapError::Other),
+                    "key={large_blob_key:?}, supported={supported}, capacity={capacity}"
+                );
+            }
+        }
+    }
+}
+
+#[path = "makecredential_independence_tests.rs"]
+mod independence;

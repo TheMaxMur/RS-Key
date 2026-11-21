@@ -25,7 +25,7 @@ mod wordlist;
 // consumer needs the whole list, and a tighter surface is better for a security-key crate).
 pub(crate) use wordlist::WORDS;
 
-use zeroize::Zeroize;
+use rsk_secret::Secret;
 
 /// The master-secret length this crate splits (256-bit seed).
 pub const SECRET_LEN: usize = 32;
@@ -104,25 +104,32 @@ pub fn generate<F: FnMut(&mut [u8])>(
     }
 
     // 15-bit random identifier (the first randomness the host draws), so vectors line up.
-    let mut idb = [0u8; 2];
-    rng(&mut idb);
-    let identifier = (((idb[0] as u16) << 8) | idb[1] as u16) & ((1 << 15) - 1);
-    idb.zeroize();
+    let mut idb = Secret::<[u8; 2]>::zeroed();
+    rng(idb.expose_mut());
+    let [hi, lo] = *idb.expose();
+    let identifier = (((hi as u16) << 8) | lo as u16) & ((1 << 15) - 1);
+    idb.wipe();
 
     // Encrypt the master secret (4-round Feistel), then split the ciphertext. With group
     // threshold 1 and a single group, the group layer is the identity (group secret =
     // ciphertext), so the device only performs the member split.
     let mut ems = cipher_encrypt(secret, identifier);
 
-    let mut data = [[0u8; SECRET_LEN]; MAX_SHARES];
-    split_secret(threshold, count as usize, &ems, rng, &mut data);
+    let mut data = Secret::new([[0u8; SECRET_LEN]; MAX_SHARES]);
+    split_secret(
+        threshold,
+        count as usize,
+        ems.expose(),
+        rng,
+        data.expose_mut(),
+    );
 
     for (i, o) in out.iter_mut().enumerate().take(count as usize) {
-        *o = encode_share(identifier, threshold, i as u8, &data[i]);
+        *o = encode_share(identifier, threshold, i as u8, &data.expose()[i]);
     }
 
-    ems.zeroize();
-    data.zeroize();
+    ems.wipe();
+    data.wipe();
     Ok(())
 }
 
@@ -189,10 +196,10 @@ fn create_digest(
     random_part: &[u8; RANDOM_PART_LEN],
     secret: &[u8; SECRET_LEN],
 ) -> [u8; DIGEST_LEN] {
-    let mut mac = rsk_crypto::hmac_sha256(random_part, secret);
+    let mut mac = Secret::new(rsk_crypto::hmac_sha256(random_part, secret));
     let mut d = [0u8; DIGEST_LEN];
-    d.copy_from_slice(&mac[..DIGEST_LEN]);
-    mac.zeroize(); // a MAC over the secret — wipe the full output, not just the kept prefix
+    d.copy_from_slice(&mac.expose()[..DIGEST_LEN]);
+    mac.wipe(); // a MAC over the secret — wipe the full output, not just the kept prefix
     d
 }
 
@@ -217,34 +224,33 @@ fn split_secret<F: FnMut(&mut [u8])>(
     for slot in data.iter_mut().take(random_count) {
         rng(slot);
     }
-    let mut random_part = [0u8; RANDOM_PART_LEN];
-    rng(&mut random_part);
-    let digest = create_digest(&random_part, secret);
+    let mut random_part = Secret::<[u8; RANDOM_PART_LEN]>::zeroed();
+    rng(random_part.expose_mut());
+    let digest = create_digest(random_part.expose(), secret);
 
     // Base set: the random members, then the digest share (x=254) and secret share (x=255).
-    let mut base = [(0u8, [0u8; SECRET_LEN]); MAX_SHARES];
+    let mut base = Secret::new([(0u8, [0u8; SECRET_LEN]); MAX_SHARES]);
+    let b = base.expose_mut();
     let mut nb = 0;
     for (i, d) in data.iter().enumerate().take(random_count) {
-        base[nb] = (i as u8, *d);
+        b[nb].0 = i as u8;
+        b[nb].1.copy_from_slice(d);
         nb += 1;
     }
-    let mut digest_share = [0u8; SECRET_LEN];
-    digest_share[..DIGEST_LEN].copy_from_slice(&digest);
-    digest_share[DIGEST_LEN..].copy_from_slice(&random_part);
-    base[nb] = (DIGEST_X, digest_share);
+    b[nb].0 = DIGEST_X;
+    b[nb].1[..DIGEST_LEN].copy_from_slice(&digest);
+    b[nb].1[DIGEST_LEN..].copy_from_slice(random_part.expose());
     nb += 1;
-    base[nb] = (SECRET_X, *secret);
+    b[nb].0 = SECRET_X;
+    b[nb].1.copy_from_slice(secret);
     nb += 1;
 
     for (i, slot) in data.iter_mut().enumerate().take(count).skip(random_count) {
-        *slot = interpolate(&base[..nb], i as u8);
+        *slot = interpolate(&base.expose()[..nb], i as u8);
     }
 
-    random_part.zeroize();
-    digest_share.zeroize();
-    for p in base.iter_mut() {
-        p.1.zeroize();
-    }
+    random_part.wipe();
+    base.wipe();
 }
 
 // === Feistel cipher (PBKDF2-HMAC-SHA256 round function) ===
@@ -252,27 +258,29 @@ fn split_secret<F: FnMut(&mut [u8])>(
 /// One Feistel round function: PBKDF2-HMAC-SHA256 with password `[i] ‖ ""`, salt `salt ‖ r`,
 /// [`ITERS_PER_ROUND`] iterations, 16-byte output. dklen (16) ≤ HMAC width (32), so a single
 /// PBKDF2 block suffices: `T_1 = U_1 ⊕ … ⊕ U_c`, truncated.
-fn round_function(i: u8, salt: &[u8; 8], r: &[u8; 16]) -> [u8; 16] {
-    let mut msg = [0u8; 8 + 16 + 4];
-    msg[..8].copy_from_slice(salt);
-    msg[8..24].copy_from_slice(r);
-    msg[24..].copy_from_slice(&1u32.to_be_bytes()); // PBKDF2 block index INT(1)
+fn round_function(i: u8, salt: &[u8; 8], r: &[u8; 16]) -> Secret<[u8; 16]> {
+    let mut msg = Secret::<[u8; 8 + 16 + 4]>::zeroed();
+    let m = msg.expose_mut();
+    m[..8].copy_from_slice(salt);
+    m[8..24].copy_from_slice(r);
+    m[24..].copy_from_slice(&1u32.to_be_bytes()); // PBKDF2 block index INT(1)
     let pw = [i];
-    let mut u = rsk_crypto::hmac_sha256(&pw, &msg);
-    let mut acc = u;
+    let mut u = Secret::new(rsk_crypto::hmac_sha256(&pw, msg.expose()));
+    let mut acc = Secret::<[u8; 32]>::zeroed();
+    acc.expose_mut().copy_from_slice(u.expose());
     let mut n = 1;
     while n < ITERS_PER_ROUND {
-        u = rsk_crypto::hmac_sha256(&pw, &u);
-        for (a, b) in acc.iter_mut().zip(u.iter()) {
+        *u.expose_mut() = rsk_crypto::hmac_sha256(&pw, u.expose());
+        for (a, b) in acc.expose_mut().iter_mut().zip(u.expose().iter()) {
             *a ^= *b;
         }
         n += 1;
     }
-    msg.zeroize();
-    u.zeroize();
-    let mut out = [0u8; 16];
-    out.copy_from_slice(&acc[..16]);
-    acc.zeroize();
+    msg.wipe();
+    u.wipe();
+    let mut out = Secret::<[u8; 16]>::zeroed();
+    out.expose_mut().copy_from_slice(&acc.expose()[..16]);
+    acc.wipe();
     out
 }
 
@@ -286,29 +294,30 @@ fn salt_of(identifier: u16) -> [u8; 8] {
 
 /// Encrypt the master secret with the 4-round Feistel network (the reference `cipher.encrypt`,
 /// passphrase empty, `extendable=False`). Returns the ciphertext (the EMS) that is then split.
-fn cipher_encrypt(secret: &[u8; SECRET_LEN], identifier: u16) -> [u8; SECRET_LEN] {
+fn cipher_encrypt(secret: &[u8; SECRET_LEN], identifier: u16) -> Secret<[u8; SECRET_LEN]> {
     let salt = salt_of(identifier);
-    let mut l = [0u8; 16];
-    let mut r = [0u8; 16];
-    l.copy_from_slice(&secret[..16]);
-    r.copy_from_slice(&secret[16..]);
+    let mut l = Secret::<[u8; 16]>::zeroed();
+    let mut r = Secret::<[u8; 16]>::zeroed();
+    l.expose_mut().copy_from_slice(&secret[..16]);
+    r.expose_mut().copy_from_slice(&secret[16..]);
     for i in 0..ROUNDS as u8 {
-        let mut f = round_function(i, &salt, &r);
-        let mut new_r = l;
-        for (a, b) in new_r.iter_mut().zip(f.iter()) {
+        let mut f = round_function(i, &salt, r.expose());
+        let mut new_r = Secret::<[u8; 16]>::zeroed();
+        new_r.expose_mut().copy_from_slice(l.expose());
+        for (a, b) in new_r.expose_mut().iter_mut().zip(f.expose().iter()) {
             *a ^= *b;
         }
-        f.zeroize();
-        l = r;
-        r = new_r;
-        // `r = new_r` copied the bytes (Copy); wipe the source slot so no half-block lingers.
-        new_r.zeroize();
+        f.wipe();
+        l.expose_mut().copy_from_slice(r.expose());
+        r.expose_mut().copy_from_slice(new_r.expose());
+        // The copy into `r` left `new_r` holding the same half-block; wipe it now.
+        new_r.wipe();
     }
-    let mut out = [0u8; SECRET_LEN];
-    out[..16].copy_from_slice(&r);
-    out[16..].copy_from_slice(&l);
-    l.zeroize();
-    r.zeroize();
+    let mut out = Secret::<[u8; SECRET_LEN]>::zeroed();
+    out.expose_mut()[..16].copy_from_slice(r.expose());
+    out.expose_mut()[16..].copy_from_slice(l.expose());
+    l.wipe();
+    r.wipe();
     out
 }
 

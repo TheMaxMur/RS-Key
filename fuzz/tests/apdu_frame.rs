@@ -170,6 +170,7 @@ fn an_escape_frame_delivers_a_max_length_put_data() {
         serial_hash: &SERIAL_HASH,
         serial_id: &SERIAL_ID,
         otp_key: None,
+        latched: false,
     };
     scan_files(&dev, &mut fs, &mut CountRng(0)).expect("default files");
     let rng = RefCell::new(CountRng(0));

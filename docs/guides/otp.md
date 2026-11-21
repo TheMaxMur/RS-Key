@@ -6,7 +6,7 @@ button press or read over USB. Program slots 1–2 with stock `ykman otp`. Slots
 
 > **`ykman otp` needs the opt-in Yubico flavor.** `ykman` gates on the "Yubico
 > YubiKey" reader name. Only the opt-in `VIDPID=Yubikey5` build presents it. The
-> default `RSKey` build (VID:PID `0x1209:0x0001`, reader "RS-Key") is invisible
+> default `RSKey` build (VID:PID `0x1209:0xF1D2`, reader "RS-Key") is invisible
 > to it. The HID-keyboard *typing* of a slot's output is identity-independent and
 > works on either build. Only programming and reading slots over `ykman` needs
 > the Yubico flavor.
@@ -103,8 +103,9 @@ Notes on the options:
 - **Access code:** set one with `ykman otp settings <slot> --new-access-code`.
   The firmware then refuses to overwrite, update, delete, **or swap** that slot
   unless the code is presented (`ykman otp --access-code <hex> …`, given *before*
-  the sub-command). Lose the code and the only way out is a factory reset of the
-  OTP applet.
+  the sub-command). Lose the code and no command clears the slot, as on a
+  YubiKey: only a whole-device wipe does — the trusted display's factory reset,
+  or `rsk-wipe` flashed over BOOTSEL.
 
 `ykman otp` reaches the device over the HID frame protocol on the keyboard
 interface (and over CCID). Both work without any PIN. OTP slots are not
@@ -156,8 +157,13 @@ clear, then an AES-128-ECB block over the private id, a 16-bit usage counter, a
 session counter, an uptime stamp, two random bytes and a CRC). A validation
 server decrypts and replay-checks them.
 
-- The usage counter advances every power-up and every session wrap, so a token
-  never repeats across reboots: the standard replay defence.
+- The 15-bit usage counter advances at the first press after every power-up and
+  at every session wrap, until it stops at `0x7FFF`. Before that limit, the
+  persisted advance keeps the `(use, session)` position moving across reboots.
+  At the ceiling, rebooting or wrapping the session can repeat that position;
+  reprogram the slot with new secrets shared with the verifier before reaching
+  it. This follows [Yubico's counter limit](https://docs.yubico.com/yesdk/users-manual/application-otp/yubico-otp.html).
+  A host cannot advance the counter without a press.
 - **Public validation (YubiCloud)** requires uploading the slot's AES key to
   Yubico. `--generate-key` prints the key, public id and private id at
   programming time. Capture them then, because they cannot be read back later.
@@ -200,7 +206,7 @@ that types), `ykman config usb --disable otp` now genuinely turns OTP off:
 ```sh
 ykman config usb --disable otp        # disables the OTP application (enforced)
 ykman config usb --list               # confirm what is on
-ykman config usb --enable otp         # reversible — turns it back on
+ykman config usb --enable otp         # reversible — turns it back on (-L <code> once a lock code is set)
 ```
 
 The write persists to the Yubico management capability blob (`EF_DEV_CONF`) and
@@ -236,8 +242,8 @@ stops the presses.
 - **`ykman otp calculate` returns `CONDITIONS_NOT_SATISFIED` / waits forever** →
   the slot is `--touch`. Press the button.
 - **Overwrite/delete refused** → the slot has an access code. Pass it with
-  `ykman otp --access-code <hex> …` (before the sub-command), or factory-reset
-  the OTP applet.
+  `ykman otp --access-code <hex> …` (before the sub-command); a lost code needs a
+  whole-device wipe (see *Access code* above).
 - **Slots 3/4 don't show in `ykman otp info`** → expected. `ykman otp` only
   enumerates 1 and 2.
 - **A configure / update / swap / `set-scan-map` fails where the same command

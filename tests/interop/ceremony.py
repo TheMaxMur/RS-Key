@@ -92,7 +92,7 @@ CHECKLIST = """Stage-2 differential checklist — run ONCE PER KEY (leave one pl
     [otp-type]   Focus a text field, short-tap the key — does it type a Yubico-OTP / static string?
     [macos-ctk]  sc_auth identities ; system_profiler SPSmartCardsDataType — CTK sees reader + ATR.
 
-  Record each cell's real-vs-rsk result in docs/interop.md (the Stage-2 matrix rows).
+  Record each cell's real-vs-rsk result in assurance/reports/interop.md (the Stage-2 matrix rows).
 """
 
 

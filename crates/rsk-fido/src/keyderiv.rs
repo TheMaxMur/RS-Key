@@ -5,7 +5,7 @@
 //! the private scalar is an HKDF-SHA512 ratchet over the device seed, salted per
 //! 4-byte path entry, and the tag binds the handle to an app id (rpIdHash).
 
-use zeroize::Zeroize;
+use rsk_secret::Secret;
 
 use rsk_crypto::{ct_eq, hkdf_sha512, hmac_sha256};
 
@@ -28,25 +28,27 @@ const RESIDENT_PATH_FIRST: u32 = 0x8000_0000 | 10022;
 /// expanded to [`RATCHET_LEN`] (66 — a P-521 scalar); by HKDF's prefix property
 /// the expansion width never changes the leading bytes, so each curve's scalar
 /// is just its length sliced off the front.
-pub(crate) fn ratchet(seed: &[u8; 32], path: &[u8; KEY_PATH_LEN]) -> [u8; RATCHET_LEN] {
-    let mut outk = [0u8; RATCHET_LEN]; // [ikm(32) | info(32) | extra]; info starts zero
-    outk[..32].copy_from_slice(seed);
+pub(crate) fn ratchet(seed: &[u8; 32], path: &[u8; KEY_PATH_LEN]) -> Secret<[u8; RATCHET_LEN]> {
+    // [ikm(32) | info(32) | extra]; info starts zero
+    let mut outk = Secret::<[u8; RATCHET_LEN]>::zeroed();
+    outk.expose_mut()[..32].copy_from_slice(seed);
     for i in 0..KEY_PATH_ENTRIES {
         let salt = &path[i * 4..i * 4 + 4];
-        let mut tmp = [0u8; RATCHET_LEN];
-        hkdf_sha512(salt, &outk[..32], &outk[32..64], &mut tmp).expect("HKDF output");
-        outk.copy_from_slice(&tmp);
-        tmp.zeroize();
+        let mut tmp = Secret::<[u8; RATCHET_LEN]>::zeroed();
+        let o = outk.expose();
+        hkdf_sha512(salt, &o[..32], &o[32..64], tmp.expose_mut()).expect("HKDF output");
+        outk.expose_mut().copy_from_slice(tmp.expose());
+        tmp.wipe();
     }
     outk
 }
 
 /// The first 32 bytes of the ratchet — the P-256 scalar and the HMAC-tag key.
-fn ratchet_scalar32(seed: &[u8; 32], path: &[u8; KEY_PATH_LEN]) -> [u8; 32] {
+fn ratchet_scalar32(seed: &[u8; 32], path: &[u8; KEY_PATH_LEN]) -> Secret<[u8; 32]> {
     let mut full = ratchet(seed, path);
-    let mut scalar = [0u8; 32];
-    scalar.copy_from_slice(&full[..32]);
-    full.zeroize();
+    let mut scalar = Secret::<[u8; 32]>::zeroed();
+    scalar.expose_mut().copy_from_slice(&full.expose()[..32]);
+    full.wipe();
     scalar
 }
 
@@ -64,7 +66,7 @@ pub fn derive_new(
     seed: &[u8; 32],
     app_id: &[u8; 32],
     rng: &mut impl Rng,
-) -> ([u8; KEY_HANDLE_LEN], [u8; 32]) {
+) -> ([u8; KEY_HANDLE_LEN], Secret<[u8; 32]>) {
     let mut path = [0u8; KEY_PATH_LEN];
     for i in 0..KEY_PATH_ENTRIES {
         let mut e = [0u8; 4];
@@ -75,7 +77,7 @@ pub fn derive_new(
     let scalar = ratchet_scalar32(seed, &path);
     let mut kh = [0u8; KEY_HANDLE_LEN];
     kh[..32].copy_from_slice(&path);
-    kh[32..].copy_from_slice(&handle_tag(&scalar, app_id, &path));
+    kh[32..].copy_from_slice(&handle_tag(scalar.expose(), app_id, &path));
     (kh, scalar)
 }
 
@@ -88,7 +90,7 @@ pub fn verify_key(
     seed: &[u8; 32],
     app_id: &[u8; 32],
     key_handle: &[u8; KEY_HANDLE_LEN],
-) -> Option<[u8; 32]> {
+) -> Option<Secret<[u8; 32]>> {
     // Every path entry must have its high bit set.
     for i in 0..KEY_PATH_ENTRIES {
         if key_handle[i * 4 + 3] & 0x80 == 0 {
@@ -99,7 +101,7 @@ pub fn verify_key(
     path.copy_from_slice(&key_handle[..KEY_PATH_LEN]);
     let scalar = ratchet_scalar32(seed, &path);
     if ct_eq(
-        &handle_tag(&scalar, app_id, &path),
+        &handle_tag(scalar.expose(), app_id, &path),
         &key_handle[KEY_PATH_LEN..],
     ) {
         Some(scalar)
@@ -113,7 +115,7 @@ pub fn verify_key(
 /// every entry's high bit set. Returns the full [`RATCHET_LEN`]-byte ratchet
 /// output; the caller builds a [`crate::ec::CredKey`] for the credential's
 /// curve, which reads the curve's scalar length off the front.
-pub fn fido_load_key(seed: &[u8; 32], cred_id: &[u8]) -> Option<[u8; RATCHET_LEN]> {
+pub fn fido_load_key(seed: &[u8; 32], cred_id: &[u8]) -> Option<Secret<[u8; RATCHET_LEN]>> {
     if cred_id.len() < KEY_PATH_LEN {
         return None;
     }

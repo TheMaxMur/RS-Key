@@ -1,10 +1,14 @@
 # tests/interop — real-world consumer sweep
 
+For request/response traces, per-request timing, stateful applet fixtures and
+offline comparison, see the [USB oracle recorder](oracle.md). Its matrix
+coverage is reported separately from this consumer compatibility sweep.
+
 The layer above protocol conformance: does the device work with the actual
 software a user runs (`gpg`, `ssh`, `ykman`, `fido2-token`, OpenSC), not with
 our own APDU/CBOR scripts. This is the executable companion to
-[../../docs/interop.md](../../docs/interop.md) — read that for the full matrix,
-the status legend, and the touch-vs-no-touch build split.
+the [interop report](../../assurance/reports/interop.md), which records results,
+the status legend, and which probes use a touch build.
 
 ```sh
 nix develop -c python tests/interop/run.py            # read-only CLI cells
@@ -41,7 +45,7 @@ nix develop -c python tests/interop/capture.py --label rsk  --serial <rsk-serial
 
 # classify every field: MATCH / ALLOWED / RULE_VIOLATION / UNEXPECTED
 nix develop -c python tests/interop/diff.py real.json rsk.json            # human report
-nix develop -c python tests/interop/diff.py real.json rsk.json --markdown # docs/interop.md block
+nix develop -c python tests/interop/diff.py real.json rsk.json --markdown # block for the interop report
 
 # crypto-parity: RS-Key's OATH engine vs the RFC 4226 known-answer (755224…)
 nix develop -c python tests/interop/parity.py --serial <serial>
@@ -72,3 +76,40 @@ Other platforms (move the two keys there and re-run the same three commands):
 - **Windows** — no nix: `pip install ykman pyscard hidapi cryptography`, then run
   `python tests\interop\capture.py …`. PIV/WebAuthn ride the OS minidriver /
   Windows Hello; those are the GUI stage, out of scope for this read-only sweep.
+
+## The frozen YubiKey baseline
+
+`baseline/yubikey-5.8.0.json` is a YubiKey 5C NFC, firmware 5.8.0, captured in
+factory state — no FIDO PIN, no resident credentials — and frozen, so the
+differential runs without the key: `scripts/emu-suites.sh` diffs a fresh emulator
+against it on every run, and a maintainer with only an RS-Key board can diff the
+board against it (capture the board with `--baseline` too, so both sides are
+reduced the same way).
+
+Only the identity cells are kept, read over the raw transports: USB descriptors,
+CTAP2 getInfo, the ATR and page 0 of the management DeviceInfo. The applet-content
+cells are left out because they record secrets (OATH account names, cardholder
+data, the PKCS#11 object dump); the serial and the host's reader name are
+stripped; `encIdentifier` and `encCredStoreState` are re-encrypted under a fresh
+IV on every call, so the file keeps only that the key emits them. A host test in
+the gate holds the committed file to exactly that.
+
+```sh
+# re-freeze, with only that key plugged and in factory state
+nix develop -c python tests/interop/capture.py --label real --baseline \
+  --out tests/interop/baseline/yubikey-5.8.0.json
+# what emu-suites.sh runs, against a fresh `rsk-emu --yubico`
+python tests/emu.py tests/interop/capture.py --label rsk --baseline --out emu.json
+python tests/interop/diff.py tests/interop/baseline/yubikey-5.8.0.json emu.json \
+  --cells fido_getinfo,ccid_atr,mgmt_tlv
+```
+
+The emulator has no USB stack, so its descriptor cell skips, and `--cells` refuses
+a cell either side did not capture rather than comparing it against nothing. A
+difference no rule in `divergences.py` explains fails the run, and so does a rule
+whose divergence drifted. Some rules cannot fail here, because they were written
+for a live key whose state can differ from the reference's: `alwaysUv`,
+`makeCredUvNotRqd`, `ep`, `remainingDiscoverableCredentials` and the USB-enabled
+mask accept any value, and the DeviceInfo tags RS-Key may omit (`deviceFlags`,
+`configLock`, the NFC masks) accept their absence. A regression in those shows up
+only where a test pins it.

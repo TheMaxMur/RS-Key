@@ -17,7 +17,7 @@
 
 use p256::elliptic_curve::sec1::{FromSec1Point, ToSec1Point};
 use p256::{FieldBytes, PublicKey, Sec1Point, SecretKey, ecdh};
-use zeroize::Zeroize;
+use rsk_secret::Secret;
 
 use crate::aes::{Mode, aes_decrypt, aes_encrypt};
 use crate::hash::sha256;
@@ -117,9 +117,8 @@ pub fn ecdh(
     if out.len() < n {
         return Err(Error::BadLength);
     }
-    let mut z = ecdh_raw(our_scalar, peer_x, peer_y)?;
-    kdf(proto, &z, &mut out[..n]);
-    z.zeroize();
+    let z = ecdh_raw(our_scalar, peer_x, peer_y)?;
+    kdf(proto, z.expose(), &mut out[..n]);
     Ok(n)
 }
 
@@ -127,7 +126,11 @@ pub fn ecdh(
 /// The MSE backup channel ([`crate::chachapoly`] + HKDF) derives its own channel
 /// key from this, so it needs the bare secret rather than the clientPIN `kdf`
 /// output. `Err` if the peer point is not a valid P-256 public key.
-pub fn ecdh_raw(our_scalar: &[u8; 32], peer_x: &[u8; 32], peer_y: &[u8; 32]) -> Result<[u8; 32]> {
+pub fn ecdh_raw(
+    our_scalar: &[u8; 32],
+    peer_x: &[u8; 32],
+    peer_y: &[u8; 32],
+) -> Result<Secret<[u8; 32]>> {
     let sk = SecretKey::from_bytes(&FieldBytes::from(*our_scalar)).map_err(|_| Error::Ecdh)?;
     // 0.14 dropped `Sec1Point::from_affine_coordinates`; splice `04 ‖ x ‖ y`.
     let mut sec1 = [0u8; 65];
@@ -137,8 +140,8 @@ pub fn ecdh_raw(our_scalar: &[u8; 32], peer_x: &[u8; 32], peer_y: &[u8; 32]) -> 
     let ep = Sec1Point::from_bytes(&sec1).map_err(|_| Error::Ecdh)?;
     let peer = Option::<PublicKey>::from(PublicKey::from_sec1_point(&ep)).ok_or(Error::Ecdh)?;
     let shared = ecdh::diffie_hellman(sk.to_nonzero_scalar(), peer.as_affine());
-    let mut z = [0u8; 32];
-    z.copy_from_slice(shared.raw_secret_bytes());
+    let mut z = Secret::<[u8; 32]>::zeroed();
+    z.expose_mut().copy_from_slice(shared.raw_secret_bytes());
     Ok(z)
 }
 

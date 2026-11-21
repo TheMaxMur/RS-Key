@@ -2,22 +2,19 @@
 // Copyright (C) 2026 RS-Key contributors
 
 //! Composite USB device: FIDO CTAPHID + CCID smart-card + emulated keyboard.
-//! Two-executor split: USB + the transports run on a high-priority interrupt
-//! executor, the [`worker::Worker`] (slow synchronous applet dispatch) on the
-//! thread executor — so keepalives keep flowing during long crypto. The second
-//! core joins in for RSA keygen only ([`core1`]): both cores race the prime
-//! search while the transports keep the host alive.
+//! USB framing runs in Non-secure; the Secure [`worker::Worker`] owns applets,
+//! keys and storage. Higher-priority transport interrupts keep USB alive during
+//! crypto. [`core1`] joins Secure RSA prime searches.
 #![no_std]
 #![no_main]
+#![expect(unsafe_code, reason = "board glue; docs/unsafe.md lists every site")]
 
 use core::cell::RefCell;
 
-use embassy_executor::{InterruptExecutor, Spawner};
+use embassy_executor::Spawner;
 use embassy_rp::bind_interrupts;
 use embassy_rp::dma::InterruptHandler as DmaIrq;
 use embassy_rp::flash::{Blocking, Flash};
-use embassy_rp::interrupt;
-use embassy_rp::interrupt::{InterruptExt, Priority};
 use embassy_rp::peripherals::{DMA_CH0, PIO0, TRNG, USB};
 use embassy_rp::pio::InterruptHandler as PioIrq;
 // The `ws2812` LED backend drives the addressable LED over the PIO. Any non-`none`
@@ -30,19 +27,11 @@ use embassy_rp::pio::Pio;
 #[cfg(not(led_kind = "none"))]
 use embassy_rp::pio_programs::ws2812::{PioWs2812, PioWs2812Program};
 use embassy_rp::trng::{Config as TrngConfig, InterruptHandler as TrngIrq, Trng};
-use embassy_rp::usb::{Driver as UsbDriver, InterruptHandler as UsbIrq};
-use embassy_time::Timer;
-use embassy_usb::class::hid::{
-    Config as HidConfig, HidBootProtocol, HidReaderWriter, HidSubclass, HidWriter,
-    State as HidState,
-};
-use embassy_usb::{Builder, Config as UsbConfig, UsbDevice};
+use embassy_rp::usb::InterruptHandler as UsbIrq;
 use static_cell::StaticCell;
 
-use rsk_crypto::{Device, FusedKey, read_fused};
+use rsk_crypto::{Device, FusedKey};
 use rsk_fs::Fs;
-use rsk_usb::ccid::{ATR_RSKEY, ATR_YUBIKEY, Ccid};
-use rsk_usb::ctaphid::{CtapHid, FIDO_REPORT_DESCRIPTOR};
 
 mod core1;
 #[cfg(feature = "display")]
@@ -55,7 +44,11 @@ mod otp_keys;
 mod pin_lock;
 mod presence;
 mod rescue_platform;
+mod sweep;
+
+mod trustzone;
 mod usb_attach;
+mod usb_fence;
 mod vendor;
 mod worker;
 
@@ -74,14 +67,51 @@ use flash_storage::FLASH_SIZE;
 use handler::{FidoRng, Store};
 #[cfg(not(feature = "display"))]
 use presence::ButtonPresence;
-use worker::{ClientCcid, ClientCtap, Worker};
+use worker::Worker;
 
-use panic_halt as _;
-
+use core::alloc::{GlobalAlloc, Layout};
 use embedded_alloc::LlffHeap as Heap;
 
+/// The heap `rsk-rsa`'s big integers and the ML-DSA keys live on, zeroing each
+/// block as it is freed: `num-bigint-dig` frees its limbs unwiped. `realloc` stays
+/// the default alloc-copy-free, so a grown `Vec`'s old block is wiped too.
+struct ZeroingHeap(Heap);
+
+// SAFETY: both methods forward to `Heap` under the caller's own contract, and
+// `dealloc` writes only into the block the caller is handing back.
+unsafe impl GlobalAlloc for ZeroingHeap {
+    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+        // SAFETY: the caller's `alloc` contract, passed through unchanged.
+        unsafe { self.0.alloc(layout) }
+    }
+
+    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+        // Words over the aligned body, bytes at the ends: an RSA keygen frees tens
+        // of megabytes, and a byte loop is four times the stores.
+        let len = layout.size();
+        let head = ptr.align_offset(size_of::<u32>()).min(len);
+        let words = (len - head) / size_of::<u32>();
+        // SAFETY: `ptr` is a live block of `len` bytes this allocator handed out
+        // (the caller's contract), so every store lands inside it, and `body` is
+        // 4-aligned by `head`. Volatile, so no dead-store elimination drops them.
+        unsafe {
+            for i in 0..head {
+                ptr.add(i).write_volatile(0);
+            }
+            let body = ptr.add(head).cast::<u32>();
+            for i in 0..words {
+                body.add(i).write_volatile(0);
+            }
+            for i in head + words * size_of::<u32>()..len {
+                ptr.add(i).write_volatile(0);
+            }
+            self.0.dealloc(ptr, layout);
+        }
+    }
+}
+
 #[global_allocator]
-static HEAP: Heap = Heap::empty();
+static HEAP: ZeroingHeap = ZeroingHeap(Heap::empty());
 
 const HEAP_SIZE: usize = 128 * 1024;
 
@@ -92,7 +122,7 @@ static IMAGE_DEF: embassy_rp::block::ImageDef = embassy_rp::block::ImageDef::sec
 bind_interrupts!(struct Irqs {
     PIO0_IRQ_0 => PioIrq<PIO0>;
     DMA_IRQ_0 => DmaIrq<DMA_CH0>;
-    USBCTRL_IRQ => UsbIrq<USB>;
+    USBCTRL_IRQ => trustzone::usb::InterruptHandler, UsbIrq<USB>;
     TRNG_IRQ => TrngIrq<TRNG>;
 });
 
@@ -160,7 +190,7 @@ const XOSC_DELAY_MULT: u32 = env_u32(env!("PK_XOSC_DELAY_MULT"));
 // flags say. Only a non-`none` build renders an LED, so these exist only there.
 // The wire-order default lives in `led` (the `LED_RG_SWAP` atomic seeds from the
 // `led_order` cfg). `BUILD_DRIVER` maps the build LED_KIND onto the phy driver
-// numbering (1=gpio, 2=pimoroni, 3=ws2812).
+// numbering (1=gpio, 2=pimoroni, 3=ws2812, 4=rgb_gpio).
 #[cfg(not(led_kind = "none"))]
 const BUILD_LED_PIN: u8 = env_u16(env!("PK_LED_PIN")) as u8;
 // Optional LED power-enable pin: a GPIO driven high at boot to power a gated LED
@@ -297,6 +327,10 @@ const _: () = {
     }
 
     if BUILD_WAKE_ENABLED {
+        assert!(
+            !contains(HW_PINS, BUILD_WAKE_PIN),
+            "WAKE_PIN overlaps hard-wired PIO/I2C1 pin 6/7/10/11"
+        );
         let mut i = 0;
         while i < DISPLAY_CTLS.len() {
             assert!(
@@ -388,28 +422,25 @@ const BUILD_DRIVER: u8 = 3;
 const BUILD_DRIVER: u8 = 1;
 #[cfg(led_kind = "pimoroni")]
 const BUILD_DRIVER: u8 = 2;
+#[cfg(led_kind = "rgb_gpio")]
+const BUILD_DRIVER: u8 = 4;
+#[cfg(led_kind = "rgb_gpio")]
+const _: () = {
+    // Romu owns GPIO27–29 for RGB. These configurable owners bypass typed pins.
+    assert!(
+        !(BUILD_PRESENCE_IS_GPIO && matches!(BUILD_PRESENCE_PIN, 27..=29)),
+        "PRESENCE_PIN overlaps a Romu RGB pin"
+    );
+    assert!(
+        !(BUILD_LED_POWER_ENABLED && matches!(BUILD_LED_POWER_PIN, 27..=29)),
+        "LED_POWER_PIN overlaps a Romu RGB pin"
+    );
+    assert!(
+        !(BUILD_USR_LED_ENABLED && matches!(BUILD_USR_LED_PIN, 27..=29)),
+        "USR_LED_PIN overlaps a Romu RGB pin"
+    );
+};
 
-type Drv = UsbDriver<'static, USB>;
-
-static EXECUTOR_HIGH: InterruptExecutor = InterruptExecutor::new();
-
-#[interrupt]
-unsafe fn SWI_IRQ_1() {
-    unsafe { EXECUTOR_HIGH.on_interrupt() }
-}
-
-static CONFIG_DESC: StaticCell<[u8; 256]> = StaticCell::new();
-static BOS_DESC: StaticCell<[u8; 256]> = StaticCell::new();
-static MSOS_DESC: StaticCell<[u8; 64]> = StaticCell::new();
-static CONTROL_BUF: StaticCell<[u8; 64]> = StaticCell::new();
-static HID_STATE: StaticCell<HidState> = StaticCell::new();
-static KBD_STATE: StaticCell<HidState> = StaticCell::new();
-// The OTP frame protocol is served on the keyboard interface only. macOS gates a
-// Generic Desktop/Keyboard HID nub behind Input Monitoring while the 0xF1D0 FIDO nub
-// opens unprompted, so answering OTP on the FIDO interface would hand slot programming
-// and challenge-response to any unprivileged console-user process (audit run-30).
-static OTP_HID_HANDLER_KBD: StaticCell<otp_kbd::OtpHidHandler> = StaticCell::new();
-static USB_HANDLER: StaticCell<led::StatusHandler> = StaticCell::new();
 // Holds the LED power-enable `Output` for the device's lifetime; dropping it would
 // release the pad and let the gated LED rail fall (see the LED block below).
 #[cfg(not(led_kind = "none"))]
@@ -424,7 +455,8 @@ static USR_LED: StaticCell<embassy_rp::gpio::Output<'static>> = StaticCell::new(
 // `EXCHANGE` in worker.rs). Within the thread executor, `borrow_mut()` never spans
 // an `.await`: flash ops resolve immediately via `block_on`, and all dispatch is
 // synchronous. Clippy's `await_holding_refcell_ref` lint catches regressions.
-static FS: StaticCell<RefCell<Store>> = StaticCell::new();
+static FS: static_cell::ConstStaticCell<RefCell<Store>> =
+    static_cell::ConstStaticCell::new(RefCell::new(Fs::new(flash_storage::FlashStorage)));
 static FLASH_CELL: StaticCell<RefCell<flash_storage::AsyncFlash>> = StaticCell::new();
 static RNG_CELL: StaticCell<RefCell<FidoRng>> = StaticCell::new();
 static PRESENCE: StaticCell<RefCell<presence::Presence>> = StaticCell::new();
@@ -450,9 +482,10 @@ static PHY_MANUFACTURER: StaticCell<[u8; 64]> = StaticCell::new();
 /// invariant as FS/RNG above — borrows never span `.await`.
 #[cfg(feature = "display")]
 static UI: StaticCell<RefCell<display::Ui>> = StaticCell::new();
-
-struct SendUsb(UsbDevice<'static, Drv>);
-unsafe impl Send for SendUsb {}
+/// The device identity the display's own screens unbox the resident-credential seed
+/// with, behind the `'static` reference their [`display::Parked`] cells carry.
+#[cfg(feature = "display")]
+static DISPLAY_KEYS: StaticCell<display::DeviceKeys> = StaticCell::new();
 
 /// Hold core0's stack to the floor the linker gave it.
 ///
@@ -473,28 +506,90 @@ fn arm_stack_limit() {
     unsafe { cortex_m::register::msplim::write(&raw const _stack_end as u32) };
 }
 
-#[embassy_executor::task]
-async fn usb_task(mut device: SendUsb) {
-    device.0.run().await;
+struct WorkerInit {
+    fs: &'static RefCell<Store>,
+    rng: &'static RefCell<handler::FidoRng>,
+    presence: &'static RefCell<presence::Presence>,
+    platform: &'static RefCell<rescue_platform::RescuePlatform>,
+    hooks: &'static RefCell<handler::DeviceHooks>,
+    fido_state: &'static RefCell<rsk_fido::FidoState>,
+    serial_id: [u8; 8],
+    serial_hash: [u8; 32],
+    mkek_source: Option<FusedKey>,
+    devk_source: Option<FusedKey>,
+    kv_total: u32,
+    openpgp_mfr: u16,
 }
 
-#[embassy_executor::task]
-async fn ctap_task(mut ctap: CtapHid<'static, Drv, ClientCtap>) {
-    ctap.run().await;
+#[inline(never)]
+fn initialize_worker(init: WorkerInit) -> Worker<'static> {
+    let WorkerInit {
+        fs,
+        rng,
+        presence,
+        platform,
+        hooks,
+        fido_state,
+        serial_id,
+        serial_hash,
+        mkek_source,
+        devk_source,
+        kv_total,
+        openpgp_mfr,
+    } = init;
+    // Return this constructor frame before the worker polls command futures.
+    static CTAP_STATE: StaticCell<handler::Ctap<'static>> = StaticCell::new();
+    static CCID_STATE: StaticCell<handler::Ccid<'static>> = StaticCell::new();
+    let ctap = CTAP_STATE.init_with(|| {
+        handler::Ctap::new(
+            fs,
+            rng,
+            hooks,
+            presence,
+            fido_state,
+            vendor::VendorPlatform,
+            serial_id,
+            serial_hash,
+            mkek_source,
+            devk_source,
+        )
+    });
+    let ccid = CCID_STATE.init_with(|| {
+        handler::Ccid::new(
+            fs,
+            rng,
+            hooks,
+            presence,
+            fido_state,
+            platform,
+            vendor::VendorPlatform,
+            serial_id,
+            serial_hash,
+            mkek_source,
+            devk_source,
+            kv_total,
+            flash_storage::FLASH_SIZE as u32,
+            openpgp_mfr,
+        )
+    });
+    Worker::new(ctap, ccid, rng, presence)
 }
 
+// The first poll runs after main returns its peripheral-initialization frame.
+// Run below USB/transport priorities so their keepalives can preempt crypto.
 #[embassy_executor::task]
-async fn ccid_task(mut ccid: Ccid<'static, Drv, ClientCcid>) {
-    ccid.run().await;
-}
-
-// The worker is spawned, not awaited at the tail of `main`, so `main` returns and
-// its ~95 KiB one-time init stack frame is reclaimed off the shared MSP before any
-// crypto runs. Awaiting it inline kept that frame live under every dispatch, which
-// left ML-DSA-65 keygen flush against the stack ceiling (it halted on the next
-// interrupt). Must stay on the thread executor, never `hp`, so keepalives keep flowing.
-#[embassy_executor::task]
-async fn worker_task(mut worker: Worker<'static>) {
+async fn worker_task(
+    init: WorkerInit,
+    spawner: Spawner,
+    usb: embassy_rp::Peri<'static, embassy_rp::peripherals::USB>,
+    seal_restart: bool,
+) {
+    let mut worker = initialize_worker(init);
+    if seal_restart {
+        worker.reboot(1).await;
+    }
+    trustzone::usb::init(usb);
+    spawner.spawn(trustzone::launch().unwrap());
     worker.run().await;
 }
 
@@ -517,7 +612,46 @@ fn kvcnt_range() -> core::ops::Range<u32> {
     start..end
 }
 
-#[embassy_executor::main]
+#[inline(never)]
+fn initialize_storage(
+    flash: &'static RefCell<flash_storage::AsyncFlash>,
+    serial_hash: [u8; 32],
+    latched: bool,
+) -> &'static RefCell<Store> {
+    flash_storage::initialize_storage(
+        flash,
+        kvmain_range(),
+        kvcnt_range(),
+        rsk_store::authenticated::KeySource::new(
+            serial_hash,
+            flash_storage::read_storage_root,
+            latched,
+        ),
+    );
+    FS.take()
+}
+
+static STORAGE_READY: embassy_sync::signal::Signal<
+    embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex,
+    (),
+> = embassy_sync::signal::Signal::new();
+
+#[embassy_executor::task]
+async fn storage_task(
+    flash: &'static RefCell<flash_storage::AsyncFlash>,
+    serial_hash: [u8; 32],
+    latched: bool,
+    epoch: [u8; 16],
+    result: &'static core::cell::Cell<Option<&'static RefCell<Store>>>,
+) {
+    // A separate poll keeps constructor frames off main's peripheral-init frame.
+    let fs = initialize_storage(flash, serial_hash, latched);
+    let _recovery_required = fs.borrow_mut().boot_storage(epoch).is_err();
+    result.set(Some(fs));
+    STORAGE_READY.signal(());
+}
+
+#[embassy_executor::task]
 async fn main(spawner: Spawner) {
     arm_stack_limit();
 
@@ -535,69 +669,35 @@ async fn main(spawner: Spawner) {
     {
         use core::mem::MaybeUninit;
         static mut HEAP_MEM: [MaybeUninit<u8>; HEAP_SIZE] = [MaybeUninit::uninit(); HEAP_SIZE];
-        unsafe { HEAP.init(core::ptr::addr_of_mut!(HEAP_MEM) as usize, HEAP_SIZE) }
+        // SAFETY: runs once, before any allocation, over memory declared in this
+        // block and so nameable by nothing else.
+        unsafe {
+            HEAP.0
+                .init(core::ptr::addr_of_mut!(HEAP_MEM) as usize, HEAP_SIZE)
+        }
     }
 
     let serial_id = embassy_rp::otp::get_chipid().unwrap_or(0).to_le_bytes();
     let serial_hash = rsk_crypto::sha256(&serial_id);
-
+    // Use the validated latch snapshot: a second failed read must not reopen arms.
+    let provisioning = otp_keys::check_boot_provisioning();
+    let latched = provisioning.map_or(true, |raw| {
+        raw.is_some_and(rsk_rescue::otp_lock::arms_closed)
+    });
+    let seal_pending =
+        matches!(provisioning, Ok(Some(raw)) if !rsk_rescue::otp_lock::arms_closed(raw));
     // The applets carry these readers, not the keys: a fused key exists in RAM only
     // for the operation that asked for it, so a bug that discloses adjacent memory
     // has nothing to disclose — the OTP window is not RAM.
-    let mkek_source: Option<FusedKey> = Some(otp_keys::read_mkek);
-    let devk_source: Option<FusedKey> = Some(otp_keys::read_devk);
+    let mut mkek_source: Option<FusedKey> = Some(if latched {
+        FusedKey::latched(otp_keys::read_mkek)
+    } else {
+        FusedKey::open(otp_keys::read_mkek)
+    });
+    let devk_source: Option<FusedKey> = Some(FusedKey::open(otp_keys::read_devk));
     otp_keys::sw_lock_key_page();
+    let seal_restart;
 
-    let flash = Flash::<_, Blocking, FLASH_SIZE>::new_blocking(p.FLASH);
-    let flash_cell = FLASH_CELL.init(RefCell::new(flash_storage::wrap_flash(flash)));
-    let storage = flash_storage::new_storage(flash_cell, kvmain_range(), kvcnt_range());
-    let mut fs = Fs::new(storage);
-    fs.scan(); // recover dynamic files (counter, resident creds) from flash
-
-    let mut usb_vid = USB_VID;
-    let mut usb_pid = USB_PID;
-    // Explicit phy string overrides; `None` ⇒ the VID-derived default, then the
-    // build const, are chosen at the identity assembly below. The product is
-    // normalized against the ykman YK4_ crash; the manufacturer is copied verbatim
-    // (that crash is a product/reader-name concern only). Both need a StaticCell so
-    // the descriptor's `&'static str` outlives the USB Builder. The phy record also
-    // drives the LED hardware, applied at the spawn site below.
-    let mut phy_product: Option<&str> = None;
-    let mut phy_manufacturer: Option<&str> = None;
-    // Not `rsk_phy::load`: it folds "never written" into "the flash would not say",
-    // and the second one then takes the build defaults -- including the interface
-    // mask, which is the one field here that is a gate rather than an identity.
-    let phy_boot = rsk_phy::boot_load(&mut fs);
-    let usb_itf = phy_boot.usb_itf();
-    let phy = phy_boot.record();
-    if let Some(phy) = phy {
-        if let Some((vid, pid)) = phy.vid_pid {
-            (usb_vid, usb_pid) = (vid, pid);
-        }
-        if let Some(s) = phy.usb_product.as_ref().and_then(|prod| prod.as_str()) {
-            let buf = PHY_PRODUCT.init([0; 64]);
-            let n = rsk_phy::normalize_usb_product(s.as_bytes(), buf);
-            phy_product = core::str::from_utf8(&buf[..n]).ok();
-        }
-        if let Some(s) = phy.usb_manufacturer.as_ref().and_then(|m| m.as_str()) {
-            // Clamp to the descriptor ceiling, not the buffer: the binding limit is
-            // the 64-byte USB control buffer (USB_STR_MAX code units), not this cell.
-            let buf = PHY_MANUFACTURER.init([0; 64]);
-            let n = rsk_phy::clamp_usb_string(s.as_bytes(), buf);
-            phy_manufacturer = core::str::from_utf8(&buf[..n]).ok();
-        }
-        // Touch-wait timeout (phy tag 0x08, seconds; 0/absent = default).
-        presence::set_timeout_secs(phy.presence_timeout.unwrap_or(0));
-    }
-
-    // Provision/recover all persistent state BEFORE attaching to USB. `builder.build()`
-    // below asserts the bus pull-up (embassy `driver.start` -> `set_pullup_en`), so the
-    // host starts enumerating the instant we attach. The task that answers control
-    // transfers (`usb_task` -> `device.run()`) must then be spawned with no blocking
-    // work in between — otherwise the host enumerates into a device that is attached
-    // but mute and times out the first descriptor request. That window (heaviest on a
-    // fresh device: seed + attestation cert + OpenPGP DEK + flash writes) was the
-    // "blink red / not recognised until several replugs" report on a Waveshare RP2350.
     let mut trng_cfg = TrngConfig::default();
     // The default sample_count (25) is too low for some RP2350 ROSC units: the
     // TRNG's autocorrelation health-check fails, the hardware soft-resets and
@@ -609,223 +709,243 @@ async fn main(spawner: Spawner) {
     trng_cfg.sample_count = 1000;
     let trng = Trng::new(p.TRNG, Irqs, trng_cfg);
     let mut rng = FidoRng::new(trng);
+    let mut storage_epoch = [0; 16];
+    rsk_sdk::Rng::fill(&mut rng, &mut storage_epoch);
 
-    // Boot is the one place the firmware needs the MKEK's value rather than a way
-    // to read it, and this block is that place: the read dies at its closing brace,
-    // and everything past it carries only `mkek_source`.
-    {
-        let mkek = read_fused(mkek_source);
-        let dev = Device {
-            serial_hash: &serial_hash,
-            serial_id: &serial_id,
-            otp_key: mkek.as_deref(),
+    let flash = Flash::<_, Blocking, FLASH_SIZE>::new_blocking(p.FLASH);
+    let flash_cell = FLASH_CELL.init(RefCell::new(flash_storage::wrap_flash(flash)));
+    static MOUNTED: StaticCell<core::cell::Cell<Option<&'static RefCell<Store>>>> =
+        StaticCell::new();
+    let mounted = MOUNTED.init(core::cell::Cell::new(None));
+    spawner.spawn(storage_task(flash_cell, serial_hash, latched, storage_epoch, mounted).unwrap());
+    STORAGE_READY.wait().await;
+    let fs_ref = mounted
+        .take()
+        .expect("storage task publishes its handle before signaling");
+    let (usb_vid, usb_pid, phy_product, phy_manufacturer, usb_itf, _phy, rng) = {
+        let mut fs = fs_ref.borrow_mut();
+        fs.scan(); // recover dynamic files (counter, resident creds) from flash
+
+        let mut usb_vid = USB_VID;
+        let mut usb_pid = USB_PID;
+        // Explicit phy string overrides; `None` ⇒ the VID-derived default, then the
+        // build const, are chosen at the identity assembly below. The product is
+        // normalized against the ykman YK4_ crash; the manufacturer is copied verbatim
+        // (that crash is a product/reader-name concern only). Both need a StaticCell so
+        // the descriptor's `&'static str` outlives the USB Builder. The phy record also
+        // drives the LED hardware, applied at the spawn site below.
+        let mut phy_product: Option<&str> = None;
+        let mut phy_manufacturer: Option<&str> = None;
+        // Not `rsk_phy::load`: it folds "never written" into "the flash would not say",
+        // and the second one then takes the build defaults -- including the interface
+        // mask, which is the one field here that is a gate rather than an identity.
+        let phy_boot = rsk_phy::boot_load(&mut fs);
+        let storage_ready = fs.storage_state() == rsk_fs::storage::StorageState::Ready;
+        let usb_itf = if storage_ready {
+            phy_boot.usb_itf()
+        } else {
+            rsk_phy::USB_ITF_CCID
         };
-        let _ = rsk_fido::seed::migrate_keydev_boot(&dev, &mut fs);
-        rsk_rescue::keydev::migrate_kbase(&dev, &mut fs, &mut rng);
-        rsk_piv::migrate_kbase(&dev, &mut fs, &mut rng);
-        rsk_oath::migrate_seal(&dev, &mut fs, &mut rng);
-        rsk_otp::migrate_seal(&dev, &mut fs, &mut rng);
-        rsk_fido::credential::migrate_rp_seal(&dev, &mut fs);
-        let _ = rsk_fido::seed::ensure_seed(&dev, &mut fs, &mut rng);
-        let _ = rsk_openpgp::scan_files(&dev, &mut fs, &mut rng);
-        // One-shot at-rest hardening: the seal migrations above leave the superseded
-        // chip-serial-sealed copies recoverable from a flash dump until a GC lap
-        // reclaims the page. The marker, the write order and the crash-safety are
-        // `rsk_fs::run_at_rest_lap`; here because the lap is a multi-second stall
-        // that belongs before USB attach, at an attended provisioning boot, and
-        // because the OTP gate is ours — a pre-OTP board has nothing weaker to
-        // supersede. See `flash_storage::FlashStorage::compact`.
-        //
-        // Standing here AFTER the migrations is not what makes the order hold, and
-        // each of them re-arms before its own superseding write for that reason: a
-        // boot where one silently skipped a record — a faulted `read_key`, a refused
-        // `put` — latches the marker anyway, and the boot that finally migrates that
-        // record finds the lap gated shut for the life of the key. The re-arm costs
-        // nothing at this position: it clears the marker the lap below re-latches.
-        if mkek.is_some() {
-            rsk_fs::run_at_rest_lap(&mut fs);
+        let phy = phy_boot.record().copied();
+        if let Some(phy) = phy {
+            if let Some((vid, pid)) = phy.vid_pid {
+                (usb_vid, usb_pid) = (vid, pid);
+            }
+            if let Some(s) = phy.usb_product.as_ref().and_then(|prod| prod.as_str()) {
+                let buf = PHY_PRODUCT.init([0; 64]);
+                let n = rsk_phy::normalize_usb_product(s.as_bytes(), buf);
+                phy_product = core::str::from_utf8(&buf[..n]).ok();
+            }
+            if let Some(s) = phy.usb_manufacturer.as_ref().and_then(|m| m.as_str()) {
+                // Clamp to the descriptor ceiling, not the buffer: the binding limit is
+                // the 64-byte USB control buffer (USB_STR_MAX code units), not this cell.
+                let buf = PHY_MANUFACTURER.init([0; 64]);
+                let n = rsk_phy::clamp_usb_string(s.as_bytes(), buf);
+                phy_manufacturer = core::str::from_utf8(&buf[..n]).ok();
+            }
+            // Touch-wait timeout (phy tag 0x08, seconds; 0/absent = default).
+            presence::set_timeout_secs(phy.presence_timeout.unwrap_or(0));
         }
-    }
-    // PHY carries the boot-default LED brightness + steady (PicoForge's global LED
-    // knobs) and the RS-Key wire-order tag. Apply them BEFORE `load_led_config` so
-    // a per-status `EF_LED_CONF` (set via `rsk led`) overrides brightness/steady;
-    // the wire order is not in EF_LED_CONF, so it stands.
-    #[cfg(not(led_kind = "none"))]
-    if let Some(phy) = &phy {
-        // OPT_DIMM ("LED Dimmable") gates the global brightness override: without
-        // it, the boot brightness is not forced and the per-status EF_LED_CONF /
-        // defaults stand, so the toggle actually means something.
-        if phy.opts & rsk_phy::OPT_DIMM != 0
-            && let Some(b) = phy.led_brightness
+
+        // Provision/recover all persistent state BEFORE attaching to USB. `builder.build()`
+        // below asserts the bus pull-up (embassy `driver.start` -> `set_pullup_en`), so the
+        // host starts enumerating the instant we attach. The task that answers control
+        // transfers (`usb_task` -> `device.run()`) must then be spawned with no blocking
+        // work in between — otherwise the host enumerates into a device that is attached
+        // but mute and times out the first descriptor request. That window (heaviest on a
+        // fresh device: seed + attestation cert + OpenPGP DEK + flash writes) was the
+        // "blink red / not recognised until several replugs" report on a Waveshare RP2350.
+
+        // Boot is the one place the firmware needs the MKEK's value rather than a way
+        // to read it, and this block is that place: the read dies at its closing brace,
+        // and everything past it carries only `mkek_source`.
         {
-            led::set_all_brightness(b);
+            use rsk_rescue::otp_lock::{
+                KeyRows, PRE_OTP_DEVICE_KEY, PRE_OTP_FIDO, PRE_OTP_KEY_UNREADABLE, PRE_OTP_OATH,
+                PRE_OTP_OTP, PRE_OTP_PIV, PRE_OTP_STORAGE,
+            };
+            let mut key = rsk_secret::Secret::<[u8; 32]>::zeroed();
+            let rows = match otp_keys::read_boot_mkek(key.expose_mut()) {
+                // The latch burns only over fused keys, so blank rows past it are a fault
+                // too: taken for a blank page, the passes would provision under the serial.
+                KeyRows::Blank if latched => KeyRows::Unreadable,
+                rows => rows,
+            };
+            let mkek = (rows == KeyRows::Fused).then_some(&key);
+            let dev = Device {
+                serial_hash: &serial_hash,
+                serial_id: &serial_id,
+                otp_key: mkek.map(|k| k.expose()),
+                latched,
+            };
+            // A fused key the boot cannot read is no blank page: each step in the else
+            // would re-seal, provision or migrate under the chip-serial arm what only the
+            // fused root should hold. None runs, and READ 1E/07 says why.
+            if rows == KeyRows::Unreadable || !storage_ready {
+                rescue_platform::record_pre_otp_left(Some(PRE_OTP_KEY_UNREADABLE));
+            } else {
+                // What each pass left under the pre-burn key is what the page-58 lock waits on.
+                let passes = [
+                    (
+                        rsk_fido::seed::migrate_keydev_boot(&dev, &mut fs).unwrap_or(true),
+                        PRE_OTP_FIDO,
+                    ),
+                    (
+                        rsk_rescue::keydev::migrate_kbase(&dev, &mut fs, &mut rng),
+                        PRE_OTP_DEVICE_KEY,
+                    ),
+                    (rsk_piv::migrate_kbase(&dev, &mut fs, &mut rng), PRE_OTP_PIV),
+                    (
+                        rsk_oath::migrate_seal(&dev, &mut fs, &mut rng),
+                        PRE_OTP_OATH,
+                    ),
+                    (rsk_otp::migrate_seal(&dev, &mut fs, &mut rng), PRE_OTP_OTP),
+                ];
+                let left = passes.iter().filter(|(l, _)| *l).fold(
+                    if fs.storage_root_closed() {
+                        0
+                    } else {
+                        PRE_OTP_STORAGE
+                    },
+                    |m, (_, bit)| m | bit,
+                );
+                rescue_platform::record_pre_otp_left(dev.otp_key.is_some().then_some(left));
+                rsk_fido::credential::migrate_rp_seal(&dev, &mut fs);
+                let _ = rsk_fido::seed::ensure_seed(&dev, &mut fs, &mut rng);
+                let _ = rsk_openpgp::scan_files(&dev, &mut fs, &mut rng);
+            }
+            let mut scrub_ready = true;
+            if storage_ready {
+                let _ = rsk_devconf::scrub_legacy_lock(&mut fs);
+                let _ = rsk_fido::credmgmt::settle_rp_records(&mut fs);
+                // One-shot at-rest hardening: the seal migrations above leave the superseded
+                // chip-serial-sealed copies recoverable from a flash dump until a GC lap
+                // reclaims the page. The marker, the write order and the crash-safety are
+                // `rsk_fs::run_at_rest_lap`; here because the lap is a multi-second stall
+                // that belongs before USB attach, at an attended provisioning boot, and
+                // because the OTP gate is ours — a pre-OTP board has nothing weaker to
+                // supersede. See `flash_storage::FlashStorage::compact`.
+                //
+                // Standing here AFTER the migrations is not what makes the order hold, and
+                // each of them re-arms before its own superseding write for that reason: a
+                // boot where one silently skipped a record — a faulted `read_key`, a refused
+                // `put` — latches the marker anyway, and the boot that finally migrates that
+                // record finds the lap gated shut for the life of the key. The re-arm costs
+                // nothing at this position: it clears the marker the lap below re-latches.
+                if mkek.is_some() {
+                    if seal_pending && rescue_platform::RescuePlatform.pre_otp_left() == Some(0) {
+                        scrub_ready = rsk_rescue::seal::scrub_before_seal(&mut fs);
+                    } else {
+                        rsk_fs::run_at_rest_lap(&mut fs);
+                    }
+                }
+            }
+            use rsk_rescue::Platform;
+            let mut marker = [0; 1];
+            let scrubbed = scrub_ready
+                && fs.read(rsk_fs::EF_HARDENED, &mut marker) == Some(1)
+                && marker == [1];
+            let outcome = rsk_rescue::seal::seal_at_boot(
+                &mut otp_keys::Page58,
+                rescue_platform::RescuePlatform.pre_otp_left(),
+                scrubbed,
+                latched,
+            );
+            rescue_platform::record_auto_seal(outcome.status);
+            seal_restart = outcome.restart;
+            if outcome.quarantine {
+                otp_keys::quarantine_provisioning();
+                mkek_source = Some(FusedKey::latched(otp_keys::read_mkek));
+                let _ = fs.mount_storage();
+            }
         }
-        led::set_steady(phy.opts & rsk_phy::OPT_LED_STEADY != 0);
-        if let Some(order) = phy.led_order {
-            led::set_rg_swap(order != 0);
+        // PHY carries the boot-default LED brightness + steady (PicoForge's global LED
+        // knobs) and the RS-Key wire-order tag. Apply them BEFORE `load_led_config` so
+        // a per-status `EF_LED_CONF` (set via `rsk led`) overrides brightness/steady;
+        // the wire order is not in EF_LED_CONF, so it stands.
+        #[cfg(not(led_kind = "none"))]
+        if let Some(phy) = &phy {
+            // OPT_DIMM ("LED Dimmable") gates the global brightness override: without
+            // it, the boot brightness is not forced and the per-status EF_LED_CONF /
+            // defaults stand, so the toggle actually means something.
+            if phy.opts & rsk_phy::OPT_DIMM != 0
+                && let Some(b) = phy.led_brightness
+            {
+                led::set_all_brightness(b);
+            }
+            led::set_steady(phy.opts & rsk_phy::OPT_LED_STEADY != 0);
+            if let Some(order) = phy.led_order {
+                led::set_rg_swap(order != 0);
+            }
+            // Runtime LED count from phy; 0 or None means "use the build default"
+            // (already set as `RUNTIME_LEDS = MAX_LEDS` at init).
+            if let Some(n) = phy.led_num.filter(|&n| n > 0) {
+                led::set_runtime_leds(n);
+            }
         }
-        // Runtime LED count from phy; 0 or None means "use the build default"
-        // (already set as `RUNTIME_LEDS = MAX_LEDS` at init).
-        if let Some(n) = phy.led_num.filter(|&n| n > 0) {
-            led::set_runtime_leds(n);
-        }
-    }
-    vendor::load_led_config(&mut fs);
-    // Only a real power cycle advances the Yubico-OTP use counter. A host-requested
-    // warm reset (the ungated vendor `INS_REBOOT` P1=0) re-runs `main`, so bumping
-    // unconditionally would let an unprivileged host walk the 15-bit counter to its
-    // ceiling — where it saturates while the RAM session counter restarts at 0, so the
-    // key re-emits (useCtr, sessionCtr) pairs a validation server rejects as replays.
-    if !pin_lock::was_warm_boot() {
-        let mkek = read_fused(mkek_source);
-        let dev = Device {
-            serial_hash: &serial_hash,
-            serial_id: &serial_id,
-            otp_key: mkek.as_deref(),
-        };
-        rsk_otp::power_up_bump(&dev, &mut fs, &mut rng);
-    }
+        vendor::load_led_config(&mut fs);
 
-    let fs_ref = FS.init(RefCell::new(fs));
+        (
+            usb_vid,
+            usb_pid,
+            phy_product,
+            phy_manufacturer,
+            usb_itf,
+            phy,
+            rng,
+        )
+    };
+    #[cfg(not(led_kind = "none"))]
+    let phy = _phy;
     let rng_ref = RNG_CELL.init(RefCell::new(rng));
 
-    let driver = UsbDriver::new(p.USB, Irqs);
-    Timer::after_millis(200).await;
+    let device_release: u16 = 0x0BED;
 
-    // Manufacturer + product strings and the OpenPGP AID vendor follow the
-    // EFFECTIVE (phy-overridden) VID, so a runtime Yubico VID yields a consistent
-    // Yubico identity that ykman / Yubico Authenticator recognize. Precedence per
-    // string: an explicit phy override > the VID-derived default > the build const.
-    // ⚠ a phy-repointed key can thus present a full Yubico identity at runtime —
-    // a deliberate masquerade capability (docs/threat-model).
-    let (vid_manufacturer, vid_product) = if usb_vid == YUBICO_VID {
-        (YUBICO_MANUFACTURER, YUBICO_PRODUCT)
-    } else {
-        (USB_MANUFACTURER, USB_PRODUCT)
-    };
-    let usb_manufacturer = phy_manufacturer.unwrap_or(vid_manufacturer);
-    let usb_product = phy_product.unwrap_or(vid_product);
+    {
+        let (manufacturer, product) = if usb_vid == YUBICO_VID {
+            (YUBICO_MANUFACTURER, YUBICO_PRODUCT)
+        } else {
+            (USB_MANUFACTURER, USB_PRODUCT)
+        };
+        trustzone::usb::set_identity(
+            rsk_usb::identity::Identity::new(
+                usb_vid,
+                usb_pid,
+                device_release,
+                usb_itf,
+                usb_vid == YUBICO_VID,
+                phy_manufacturer.unwrap_or(manufacturer),
+                phy_product.unwrap_or(product),
+                "rs-key-0001",
+            )
+            .unwrap()
+            .with_pinpad_verify(cfg!(feature = "display"))
+            .unwrap(),
+        );
+    }
     let openpgp_mfr = openpgp_mfr_for(usb_vid);
-
-    let mut config = UsbConfig::new(usb_vid, usb_pid);
-    config.manufacturer = Some(usb_manufacturer);
-    config.product = Some(usb_product);
-    config.serial_number = Some("rs-key-0001");
-    config.max_power = 100;
-    config.max_packet_size_0 = 64;
-    // bcdDevice build counter; also surfaced on the trusted-display Firmware screen.
-    // 0x09DB: PIV serves a synthesized Card Capability Container (`5FC107`,
-    // mandatory per SP 800-73-4 pt1 §3.1.1) where it previously answered 6A82 —
-    // the object a Windows key-container open reads.
-    let device_release: u16 = 0x09DC;
-    config.device_release = device_release;
-
-    let mut builder = Builder::new(
-        driver,
-        config,
-        CONFIG_DESC.init([0; 256]),
-        BOS_DESC.init([0; 256]),
-        MSOS_DESC.init([0; 64]),
-        CONTROL_BUF.init([0; 64]),
-    );
-
-    // The keyboard (OTP) interface is built FIRST so it lands on interface 0 like a
-    // stock YubiKey: the libusb backend ykpers/ykcore ships — KeePassXC, ykchalresp,
-    // pam_yubico — claims interface 0 and sends the OTP frame reports there blind.
-    let otp_enabled = usb_itf & rsk_phy::USB_ITF_KB != 0;
-    let kbd = otp_enabled.then(|| {
-        HidWriter::<_, 8>::new(
-            &mut builder,
-            KBD_STATE.init(HidState::new()),
-            HidConfig {
-                report_descriptor: rsk_usb::kbd::KEYBOARD_REPORT_DESCRIPTOR,
-                request_handler: Some(OTP_HID_HANDLER_KBD.init(otp_kbd::OtpHidHandler)),
-                poll_ms: 10,
-                max_packet_size: 8,
-                hid_subclass: HidSubclass::No,
-                hid_boot_protocol: HidBootProtocol::None,
-            },
-        )
-    });
-
-    // The keyboard interface (built above, always index 0 when present) is what
-    // ykpers/ykcore's libusb backend addresses for OTP — the interface reorder is what
-    // fixed issue #55. Serving the frame protocol on the FIDO interface too gains no
-    // host that needs it and only removes the macOS Input Monitoring gate (see
-    // OTP_HID_HANDLER_KBD), so keep this interface CTAP-only (audit run-30).
-    let hid = (usb_itf & rsk_phy::USB_ITF_HID != 0).then(|| {
-        HidReaderWriter::<_, 64, 64>::new(
-            &mut builder,
-            HID_STATE.init(HidState::new()),
-            HidConfig {
-                report_descriptor: FIDO_REPORT_DESCRIPTOR,
-                request_handler: None,
-                // 1 ms HID interval: a credMgmt/getAssertion response is several
-                // 64-byte IN frames; at 5 ms/frame that framing dominated once the
-                // per-call flash scan was removed. Full-speed floor is 1 ms.
-                poll_ms: 1,
-                max_packet_size: 64,
-                hid_subclass: HidSubclass::No,
-                hid_boot_protocol: HidBootProtocol::None,
-            },
-        )
-    });
-
-    // Advertise CCID secure PIN entry (bPINSupport = VERIFY) only on the display
-    // build, where the trusted touchscreen can collect the PIN; a button build has
-    // no pad and leaves it off. The byte is the single switch every host CCID stack
-    // reads to drive on-device PIN entry.
-    let ccid_pin_support: u8 = if cfg!(feature = "display") {
-        0x01
-    } else {
-        0x00
-    };
-    // Present the YubiKey ATR only when the effective VID is Yubico's, mirroring
-    // the iManufacturer / OpenPGP AID: a default (non-Yubico) build must not
-    // impersonate a YubiKey on the wire — it carries the "RS-Key" ATR instead.
-    let card_atr: &'static [u8] = if usb_vid == YUBICO_VID {
-        ATR_YUBIKEY
-    } else {
-        ATR_RSKEY
-    };
-    let ccid = (usb_itf & rsk_phy::USB_ITF_CCID != 0)
-        .then(|| Ccid::new(&mut builder, ClientCcid, card_atr, ccid_pin_support));
-
-    // Go green (idle) the moment the host configures us, not on the first applet
-    // command — a healthy, enumerated key with no PC/SC client talking to it would
-    // otherwise sit on the red boot status. (See `led::StatusHandler`.)
-    builder.handler(USB_HANDLER.init(led::StatusHandler));
-
-    // Attach to the host (pull-up) and immediately start servicing it: no blocking
-    // work between `build()` and the `usb_task` spawn (see the init note above).
-    // Everything above is boot work no host could have used, so the CTAP 2.1 §6.6
-    // reset window starts here rather than at the time driver's zero.
-    usb_attach::mark();
-    let usb = builder.build();
-    let ctap = hid.map(|h| {
-        let (reader, writer) = h.split();
-        CtapHid::new(
-            reader,
-            writer,
-            ClientCtap,
-            presence::up_pending,
-            presence::request_cancel,
-        )
-    });
-
-    interrupt::SWI_IRQ_1.set_priority(Priority::P2);
-    let hp = EXECUTOR_HIGH.start(interrupt::SWI_IRQ_1);
-    hp.spawn(usb_task(SendUsb(usb)).unwrap());
-    if let Some(ctap) = ctap {
-        hp.spawn(ctap_task(ctap).unwrap());
-    }
-    if let Some(ccid) = ccid {
-        hp.spawn(ccid_task(ccid).unwrap());
-    }
-    if let Some(kbd) = kbd {
-        hp.spawn(otp_kbd::kbd_task(kbd).unwrap());
-    }
-
+    #[cfg(not(led_kind = "none"))]
+    let _hp = trustzone::led_spawner();
     // Hold a nuisance onboard user LED off (`USR_LED_PIN`), independent of the
     // addressable status LED so it also applies on a `none` build. Drive the pad to
     // the LED's OFF level and park the `Output` for the device's lifetime — dropping
@@ -845,9 +965,8 @@ async fn main(spawner: Spawner) {
         USR_LED.init(Output::new(any, off));
     }
 
-    // LED backend, selected at runtime from the phy record (PicoForge-compatible),
-    // defaulting to the build LED_KIND / LED_PIN. A non-`none` build compiles all
-    // three hardware backends so the driver + pin can change without reflashing; a
+    // The generic LED backends read the phy record at runtime. Romu fixes its
+    // RGB backend because its three cathodes are wired to specific pins. A
     // `none` build is headless (the status engine still runs — vendor SET/GET LED
     // keep working — but nothing renders it). The runtime pin reaches the PIO state
     // machine via a `match` that moves the shared `sm0`/`DMA_CH0` across its
@@ -901,9 +1020,14 @@ async fn main(spawner: Spawner) {
             .unwrap_or(BUILD_LED_PIN);
         // PHY led_driver (1=gpio, 2=pimoroni, 3=ws2812) overrides the build kind;
         // anything else (unset, or the N/A esp32 value) keeps the build default.
-        let led_driver = match phy.as_ref().and_then(|p| p.led_driver) {
-            Some(d @ 1..=3) => d,
-            _ => BUILD_DRIVER,
+        let led_driver = if cfg!(led_kind = "rgb_gpio") {
+            // An older EF_PHY may select a driver wired to a different board.
+            BUILD_DRIVER
+        } else {
+            match phy.as_ref().and_then(|p| p.led_driver) {
+                Some(d @ 1..=3) => d,
+                _ => BUILD_DRIVER,
+            }
         };
         // Publish the boot-resolved phy values so CONFIG_READ can show the host
         // the effective LED pin/driver + touch timeout, not a bare "default". A
@@ -920,6 +1044,13 @@ async fn main(spawner: Spawner) {
         rsk_fido::config::set_effective_phy(led_gpio, led_driver, effective_timeout_secs);
 
         match led_driver {
+            #[cfg(led_kind = "rgb_gpio")]
+            BUILD_DRIVER => {
+                let red = Output::new(p.PIN_29, Level::High);
+                let green = Output::new(p.PIN_28, Level::High);
+                let blue = Output::new(p.PIN_27, Level::High);
+                _hp.spawn(led::rgb_gpio_task(red, green, blue).unwrap());
+            }
             1 => {
                 // `gpio`: a plain on/off LED on `led_gpio`. `Output<'static>` erases
                 // the pin, so every arm is the same type.
@@ -960,7 +1091,7 @@ async fn main(spawner: Spawner) {
                     28 => gpio_pin!(p.PIN_28),
                     _ => gpio_pin!(p.PIN_29),
                 };
-                hp.spawn(led::gpio_task(led).unwrap());
+                _hp.spawn(led::gpio_task(led).unwrap());
             }
             2 => {
                 // `pimoroni`: a 3-pin PWM RGB on fixed pins (Pimoroni Tiny 2350) —
@@ -968,7 +1099,7 @@ async fn main(spawner: Spawner) {
                 // common-anode polarity is in `led::pimoroni_cfg`. led_gpio is N/A.
                 let rg = Pwm::new_output_ab(p.PWM_SLICE1, p.PIN_18, p.PIN_19, led::pimoroni_cfg());
                 let b = Pwm::new_output_a(p.PWM_SLICE2, p.PIN_20, led::pimoroni_cfg());
-                hp.spawn(led::pimoroni_task(rg, b).unwrap());
+                _hp.spawn(led::pimoroni_task(rg, b).unwrap());
             }
             _ => {
                 // `ws2812` (driver 3, and the safe fallback): the single addressable
@@ -1022,7 +1153,7 @@ async fn main(spawner: Spawner) {
                     28 => ws2812_pin!(p.PIN_28),
                     _ => ws2812_pin!(p.PIN_29),
                 };
-                hp.spawn(led::ws2812_task(ws2812).unwrap());
+                _hp.spawn(led::ws2812_task(ws2812).unwrap());
             }
         }
     }
@@ -1058,22 +1189,25 @@ async fn main(spawner: Spawner) {
         let i2c = I2c::new_blocking(p.I2C1, p.PIN_7, p.PIN_6, i2c_cfg);
 
         let cs = Output::new(
+            // SAFETY: a board-config panel pin that `main` hands to no other driver.
             unsafe { embassy_rp::gpio::AnyPin::steal(BUILD_DISPLAY_CS) },
             Level::High,
         );
         let dc = Output::new(
+            // SAFETY: a board-config panel pin that `main` hands to no other driver.
             unsafe { embassy_rp::gpio::AnyPin::steal(BUILD_DISPLAY_DC) },
             Level::Low,
         );
         let rst = Output::new(
+            // SAFETY: a board-config panel pin that `main` hands to no other driver.
             unsafe { embassy_rp::gpio::AnyPin::steal(BUILD_DISPLAY_RST) },
             Level::High,
         );
         // Display-sleep wake button (default the BAT_PWR / KEY_BAT button on GPIO25).
         // Active-low with an internal pull-up by default (`WAKE_ACTIVE_HIGH` flips it);
         // `WAKE_PIN=none` leaves it unwired so only a touch wakes. Stealing the pin is
-        // sound: it is never handed to another driver, and a compile-time assert rejects
-        // a `WAKE_PIN` in the LCD/touch range.
+        // sound: it is never handed to another driver — the const asserts above keep it
+        // off the LCD range, the hard-wired PIO/I2C1 pins and the panel control lines.
         let wake_btn = if BUILD_WAKE_ENABLED {
             use embassy_rp::gpio::{Input, Pull};
             let pull = if BUILD_WAKE_ACTIVE_HIGH {
@@ -1083,6 +1217,7 @@ async fn main(spawner: Spawner) {
             };
             Some((
                 Input::new(
+                    // SAFETY: sound for the reason given above — no other driver gets it.
                     unsafe { embassy_rp::gpio::AnyPin::steal(BUILD_WAKE_PIN) },
                     pull,
                 ),
@@ -1113,6 +1248,7 @@ async fn main(spawner: Spawner) {
             }
         };
         let tp_rst = Output::new(
+            // SAFETY: a board-config panel pin that `main` hands to no other driver.
             unsafe { embassy_rp::gpio::AnyPin::steal(BUILD_DISPLAY_TP_RST) },
             Level::High,
         );
@@ -1132,19 +1268,21 @@ async fn main(spawner: Spawner) {
         // The device key material the read-only Passkeys tab needs to unbox the
         // resident-credential seed on demand (the same identity the worker's `Ctx`
         // carries). Copied — these are all `Copy`, so the worker below still gets them.
-        let keys = display::DeviceKeys {
+        let keys: &'static display::DeviceKeys = DISPLAY_KEYS.init(display::DeviceKeys {
             serial_id,
             serial_hash,
             mkek_source,
-        };
+        });
+        // The worker's `fs_ref` and `rng_ref`, for the panel's own screens only: the
+        // `TouchPresence` backend below gets the `Ui` alone.
+        let cells = display::Parked::new(fs_ref, keys, rng_ref);
         // Reborrow the `&'static mut` from the cell as a shared `&'static` so both
         // `status_task` and the `TouchPresence` backend can hold it (a shared
-        // reference is `Copy`; the `RefCell` provides the interior mutability). The
-        // panel also shares the worker's `fs_ref` to enumerate resident credentials.
+        // reference is `Copy`; the `RefCell` provides the interior mutability).
         let ui: &'static RefCell<display::Ui> = UI.init(RefCell::new(display::build(
-            panel, touch, info, fs_ref, keys, rng_ref, wake_btn,
+            panel, touch, info, cells, rng_ref, wake_btn,
         )));
-        spawner.spawn(display::status_task(ui).unwrap());
+        spawner.spawn(display::status_task(ui, cells).unwrap());
         ui
     };
     core1::spawn(p.CORE1);
@@ -1168,19 +1306,32 @@ async fn main(spawner: Spawner) {
     let (kvm, kvc) = (kvmain_range(), kvcnt_range());
     let kv_total = (kvm.end - kvm.start) + (kvc.end - kvc.start);
     let fido_state_ref = FIDO_STATE.init(RefCell::new(rsk_fido::FidoState::new()));
-    let worker = Worker::new(
-        fs_ref,
-        rng_ref,
-        presence_ref,
-        platform_ref,
-        hooks_ref,
-        fido_state_ref,
-        serial_id,
-        serial_hash,
-        mkek_source,
-        devk_source,
-        kv_total,
-        openpgp_mfr,
+    spawner.spawn(
+        worker_task(
+            WorkerInit {
+                fs: fs_ref,
+                rng: rng_ref,
+                presence: presence_ref,
+                platform: platform_ref,
+                hooks: hooks_ref,
+                fido_state: fido_state_ref,
+                serial_id,
+                serial_hash,
+                mkek_source,
+                devk_source,
+                kv_total,
+                openpgp_mfr,
+            },
+            spawner,
+            p.USB,
+            seal_restart,
+        )
+        .unwrap(),
     );
-    spawner.spawn(worker_task(worker).unwrap());
+}
+
+#[cortex_m_rt::entry]
+fn trustzone_main() -> ! {
+    trustzone::start();
+    trustzone::idle()
 }

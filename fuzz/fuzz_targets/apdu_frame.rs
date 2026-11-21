@@ -9,9 +9,9 @@
 //!
 //! The framing is `[len][apdu bytes…]*` with one escape. A one-byte length can
 //! never build a command body over 255 bytes, so the whole extended-length band
-//! was unreachable: OpenPGP PUT DATA up to `MAX_DO_BYTES` (2036), the IMPORT
-//! extended header list, PIV certificate import, and the dispatcher's 2038-byte
-//! chaining buffer. Raising the ceiling alone would not have helped —
+//! was unreachable: OpenPGP PUT DATA up to `MAX_DO_BYTES`, the IMPORT extended
+//! header list, PIV certificate import, and the dispatcher's chaining buffer.
+//! Raising the ceiling alone would not have helped —
 //! `Apdu::parse`'s extended branch wants `buf[4] == 0` plus a be16 that exactly
 //! equals the bytes that follow, a 3-byte exact match a mutator does not stumble
 //! onto, which is why most framed chunks fail `Apdu::parse` outright today. So

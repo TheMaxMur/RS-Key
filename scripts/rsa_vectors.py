@@ -46,7 +46,7 @@ Q1024 = int(
     "ed764fec2f76eb5ac58a8d99c6075e8d5f8647e801f25665d187ccad0841e2c6"
     "edfee5c3969de9ee4801043b4c2130d98397ba2b5d948070f67b35a87deb1c5f", 16)
 
-# RSA-640: 40-byte primes, the width the asm CRT core refuses (not a multiple
+# RSA-640: 40-byte primes, the width the fixed-width CRT core refuses (not a multiple
 # of 32). Below what OpenSSL will even generate, so these were sieved by hand.
 P640 = int(
     "ffe2e4a07c75787c7b8b5b902633f9495f8daf04cd3b6930c04b5879ad1e9122"
@@ -121,7 +121,7 @@ use alloc::vec::Vec;
 {const_str("Q1024_HEX", f"{Q1024:x}", "/// See [`P1024_HEX`].")}
 {const_str("N1024_HEX", f"{P1024 * Q1024:x}", "/// See [`P1024_HEX`].")}
 
-{const_str("P640_HEX", f"{P640:x}", "/// An RSA-640 key: 40-byte primes, the width the asm CRT core refuses because\n/// it is not a multiple of 32.")}
+{const_str("P640_HEX", f"{P640:x}", "/// An RSA-640 key: 40-byte primes, the width the fixed-width CRT core refuses because\n/// it is not a multiple of 32.")}
 {const_str("Q640_HEX", f"{Q640:x}", "/// See [`P640_HEX`].")}
 
 /// `(plaintext, ciphertext)` under the [`P_HEX`] key — OpenSSL built the padded
@@ -131,8 +131,8 @@ pub const ENCRYPT: &[(&str, &str)] = &[
 ];
 
 /// `(SHA-256 digest, signature)` under the [`P_HEX`] key — RSASSA-PKCS1-v1_5.
-/// The digest is what a host sends as a bare hash; prefixed with the SHA-256
-/// DigestInfo header it is what gpg sends. Both spellings owe this signature.
+/// Prefixed with the SHA-256 DigestInfo header it is what gpg sends, and the CRT
+/// signer owes this signature for that.
 pub const SIGN_SHA256: &[(&str, &str)] = &[
 {table(sig)}
 ];

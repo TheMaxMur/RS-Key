@@ -4,6 +4,15 @@
 use super::*;
 
 #[test]
+fn pcsc_friendly_name_matches_the_firmware_serial() {
+    let other_key = c"Yubico YubiKey (12345678) 00 00";
+    let serial_match = c"Yubico YubiKey (rs-key-0001) 01 00";
+    assert_eq!(rs_key_reader(&[other_key, serial_match]), Ok(serial_match));
+    assert!(rs_key_reader(&[other_key]).is_err());
+    assert!(rs_key_reader(&[serial_match, c"RS-Key Security Key 02 00"]).is_err());
+}
+
+#[test]
 fn ber_find_walks_top_level_tlvs() {
     // 4F (short) · 5F52 (2-byte tag) · C4 (short): ber_find must step over the
     // 2-byte-tag object to reach C4, and match the 2-byte tag itself.
@@ -20,7 +29,8 @@ fn ber_find_walks_top_level_tlvs() {
 
 #[test]
 fn ber_find_unwraps_6e_and_reads_pgp_fields() {
-    // A minimal 6E template: 4F AID (serial = bytes 10..14) + C4 PW status.
+    // ber_find over a flat 6E body: 4F AID (serial = bytes 10..14) + C4 PW status.
+    // A card nests C4 in 73, which `pgp_info` looks through.
     let inner = [
         0x4F, 0x10, // AID, 16 bytes
         0xD2, 0x76, 0x00, 0x01, 0x24, 0x01, 0x02, 0x00, 0x00, 0x06, 0xDE, 0xAD, 0xBE, 0xEF, 0x00,
@@ -36,6 +46,36 @@ fn ber_find_unwraps_6e_and_reads_pgp_fields() {
     assert_eq!([c4[4], c4[5], c4[6]], [2, 0, 3]);
 }
 
+/// A `6E` shaped as a card sends it: `4F`, `5F52` and `7F74` at its top, then `73`
+/// holding `C0`–`C3`, `C4` and a four-entry `C5`, both templates in the `82` length
+/// form. The TUI read `C4`/`C5` from the top: no retries, and a key count of 0.
+#[test]
+fn pgp_info_reads_c4_and_c5_inside_73() {
+    let mut aid = [0xD2, 0x76, 0x00, 0x01, 0x24, 0x01, 0x03, 0x04, 0x00, 0x06].to_vec();
+    aid.extend([0xDE, 0xAD, 0xBE, 0xEF, 0x00, 0x00]);
+    let mut c5 = [0u8; 80];
+    c5[20] = 0x11; // the decryption key only
+    let mut dd = vec![0xC0, 0x0A];
+    dd.extend([0x7D, 0x00, 0x0B, 0xFE, 0x08, 0x00, 0x00, 0xFF, 0x00, 0x00]);
+    for tag in [0xC1, 0xC2, 0xC3] {
+        dd.extend([tag, 0x06, 0x13, 0x2A, 0x86, 0x48, 0xCE, 0x3D]);
+    }
+    dd.extend([0xC4, 0x07, 0x00, 0x7F, 0x7F, 0x7F, 0x02, 0x00, 0x03]);
+    dd.extend([0xC5, 80]);
+    dd.extend(c5);
+    let mut inner = vec![0x4F, 0x10];
+    inner.extend(&aid);
+    inner.extend([0x5F, 0x52, 0x01, 0x00, 0x7F, 0x74, 0x03, 0x81, 0x01, 0x20]);
+    inner.extend([0x73, 0x82, 0x00, dd.len() as u8]);
+    inner.extend(&dd);
+    let mut d = vec![0x6E, 0x82, (inner.len() >> 8) as u8, inner.len() as u8];
+    d.extend(&inner);
+    let info = pgp_info(&d);
+    assert_eq!(info.serial.as_deref(), Some("deadbeef"));
+    assert_eq!(info.pin_retries, Some([2, 0, 3]));
+    assert_eq!(info.keys_present, 1);
+}
+
 #[test]
 fn ber_find_handles_long_form_length_and_truncation() {
     let mut d = vec![0xC5, 0x81, 0x3C]; // len 60 via 0x81
@@ -43,6 +83,25 @@ fn ber_find_handles_long_form_length_and_truncation() {
     assert_eq!(ber_find(&d, 0xC5).map(<[u8]>::len), Some(60));
     // Length claims 4 but only 2 bytes present → None, never a panic.
     assert_eq!(ber_find(&[0x4F, 0x04, 0x01, 0x02], 0x4F), None);
+}
+
+#[test]
+fn an_att_state_hash_counts_only_under_an_installed_key_and_when_not_empty() {
+    let att = |installed: bool, hash: &[u8]| {
+        attestation_state(&Value::Map(vec![
+            (iv(1), Value::Bool(installed)),
+            (iv(2), Value::Bytes(hash.to_vec())),
+        ]))
+    };
+    assert_eq!(
+        att(true, &[0x9f, 0x2c]).chain_sha256.as_deref(),
+        Some("9f2c")
+    );
+    assert!(att(true, &[]).chain_unusable());
+    assert!(!att(false, &[0x9f]).chain_unusable());
+    assert_eq!(att(false, &[0x9f]).chain_sha256, None);
+    let bare = attestation_state(&Value::Map(vec![(iv(1), Value::Bool(true))]));
+    assert!(bare.chain_unusable());
 }
 
 #[test]

@@ -8,7 +8,7 @@
 # harness in `rsk-phy` costs half an hour or more and nothing that expensive
 # belongs on a pull request. But that put every proof a day away from the change that broke
 # it, and the split is cheap once the cost is measured rather than assumed: the
-# whole fast tier discharges in 229 s of solving (docs/testing.md carries the
+# fast tier discharged in 229 s of solving on 2026-08-26 (assurance/reports/testing-evidence.md carries the
 # table), while four crates hold everything slow.
 #
 # So: `pr` on every pull request that touches the crates, `state` additionally
@@ -17,7 +17,7 @@
 #
 # The tier membership lives here and nowhere else. It used to be a hand-written
 # `-p` list repeated in the workflow, in the workflow's own header comment and in
-# docs/testing.md, kept in step by `scripts/kani_gate.py` comparing the three
+# assurance/reports/testing-evidence.md, kept in step by `scripts/kani_gate.py` comparing the three
 # strings; three copies were the most that guard could hold, and a fourth tier
 # would have been a fourth copy. `--tiers` prints the table, and that is what the
 # guard reads, so the rows the CI runs and the list the guard checks cannot
@@ -31,8 +31,8 @@ cd "$(dirname "$0")/.."
 
 # --- the tiers ---------------------------------------------------------------
 #
-# FAST: every crate whose whole harness set discharges in under a minute a
-# harness. Measured 2026-08-26 on kani 0.67.0, idle 18-core Apple M5 Pro — 63
+# FAST: the crates whose harnesses fit the PR tier's five-minute cap.
+# Measured 2026-08-26 on kani 0.67.0, idle 18-core Apple M5 Pro — 63
 # harnesses, 229 s of solving all told, the slowest three being
 # `rsk-usb::no_buffer_overrun_after_any_single_frame` at 39 s,
 # `rsk-piv::set_protected…` at 37 s and `rsk-led::every_block_length…` at 34 s.
@@ -131,16 +131,16 @@ STATEFUL="rsk-fido rsk-fs"
 # they are a consistency check against the tree, not a ratchet against history:
 # deleting a harness and pasting the new number is self-consistent, and only
 # the diff shows it.
-FLOOR_pr=65
-FLOOR_state=29
-FLOOR_all=94
+FLOOR_pr=75
+FLOOR_state=33
+FLOOR_all=108
 # The four weekly rows partition `all`, so these sum to FLOOR_all and the guard
 # checks each against the tree the same way. A harness that moves between shards
 # has to move a number with it.
 FLOOR_heavy=5
-FLOOR_light1=32
-FLOOR_light2=29
-FLOOR_light3=28
+FLOOR_light1=36
+FLOOR_light2=34
+FLOOR_light3=33
 
 # Source-level `kani::cover!`s each tier must report on. Kani 0.67.0 has no
 # `--fail-uncoverable`, so an unsatisfiable cover prints "N of M cover properties
@@ -149,13 +149,13 @@ FLOOR_light3=28
 # is caught on its own (the row fails when the per-check listing is absent); the
 # floor is for the partial case, a cover that stopped being reported while the
 # rest still are. Counted from source by the same guard as the floors above.
-COVERS_pr=41
-COVERS_state=36
-COVERS_all=67
+COVERS_pr=60
+COVERS_state=39
+COVERS_all=89
 COVERS_heavy=1
-COVERS_light1=35
-COVERS_light2=12
-COVERS_light3=19
+COVERS_light1=38
+COVERS_light2=14
+COVERS_light3=36
 
 # `kani::cover!` properties CBMC may report unsatisfied while their source-level
 # cover is still reached. One `cover!` becomes several properties wherever the
@@ -306,6 +306,13 @@ fi
 packages="$packages --features kani-soft"
 export RUSTFLAGS="${RUSTFLAGS:+$RUSTFLAGS }--cfg sha2_backend=\"soft\" --cfg poly1305_force_soft --cfg sha1_force_soft"
 
+# FIDO's real HMAC proofs make CBMC build hundreds of automatic reachability
+# traces on successful runs. Assertions and the required cover witnesses
+# still run with those diagnostics off.
+if [[ " $crates " == *" rsk-fido "* ]]; then
+  set -- --no-assertion-reach-checks "$@"
+fi
+
 log=$(mktemp)
 # `set -e` + `pipefail` end this script at the `tee` on any failing run, so an
 # explicit `rm` below it never runs — and a tripped --harness-timeout is now a
@@ -317,8 +324,8 @@ echo "== kani ($tier): $(echo "$crates" | xargs | tr ' ' ',') =="
 # violation ends the run here and never reaches the floor check below.
 # shellcheck disable=SC2086 # $packages is our own list, word-splitting intended
 # `-Z stubbing` for `credmgmt_kani.rs`'s HMAC stand-in, which is what keeps the
-# two call-site harnesses inside a hosted runner's memory; the harness that
-# proves the MAC itself does not carry the stub.
+# two call-site harnesses inside a hosted runner's memory. The two MAC
+# harnesses run the real HMAC.
 cargo kani $packages -Z unstable-options -Z stubbing --harness-timeout "$timeout" "$@" 2>&1 | tee "$log"
 
 # Kani's own count, off its summary line: "Complete - N successfully verified

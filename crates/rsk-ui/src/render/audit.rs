@@ -149,3 +149,7 @@ fn audit_dot(kind: AuditKind) -> Rgb565 {
         _ => theme::GREY,
     }
 }
+
+#[cfg(test)]
+#[path = "audit_tests.rs"]
+mod tests;

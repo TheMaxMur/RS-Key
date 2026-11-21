@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # Copyright (C) 2026 RS-Key contributors
 
-# Seven jobs:
+# Jobs:
 #   changes — what this change can possibly affect (`scripts/ci-scope.sh`), so a
 #             documentation edit does not build 24 firmware images. Gating is by
 #             `if:` on the jobs rather than `paths:` on the trigger: a skipped
@@ -39,12 +39,17 @@
 #   knobs   — the aggregate of those rows, and the name `main`'s ruleset requires.
 #             A required check has to be reported by a fixed name; a matrix
 #             reports one per row.
+#   assurance — the gate's second layer, `scripts/check-assurance.sh`: the TLA+
+#             plumbing and the registries held against the prose, run once
+#             before a pull request rather than per commit (AGENTS.md).
+#   mutants-diff — advisory: cargo-mutants over the PR diff or incoming develop push.
+#   miri-smoke — one APDU integration target under Miri on develop pushes.
 
 name: ci
 
 on:
   push:
-    branches: [main]
+    branches: [main, develop]
   pull_request:
 
 permissions:
@@ -63,6 +68,9 @@ jobs:
       docs_only: ${{ steps.scope.outputs.docs_only }}
       proofs: ${{ steps.scope.outputs.proofs }}
       proofs_state: ${{ steps.scope.outputs.proofs_state }}
+      mutants: ${{ steps.scope.outputs.mutants }}
+      mutants_base: ${{ steps.scope.outputs.mutants_base }}
+      mutants_shards: ${{ steps.scope.outputs.mutants_shards }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -75,20 +83,9 @@ jobs:
       - name: what changed
         id: scope
         env:
-          EVENT: ${{ github.event_name }}
           BASE: ${{ github.base_ref }}
           BEFORE: ${{ github.event.before }}
-        run: |
-          files=""
-          if [ "$EVENT" = "pull_request" ]; then
-            files="$(git diff --name-only "origin/$BASE...HEAD")"
-          elif [ -n "$BEFORE" ] && git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
-            files="$(git diff --name-only "$BEFORE" HEAD)"
-          fi
-          # An empty list means we could not work out a base — ci-scope.sh reads
-          # that as "everything", which is the direction a mistake should fail in.
-          printf '%s\n' "$files"
-          printf '%s\n' "$files" | ./scripts/ci-scope.sh | tee -a "$GITHUB_OUTPUT"
+        run: ./scripts/ci-scope.sh --github | tee -a "$GITHUB_OUTPUT"
 
   docs:
     runs-on: ubuntu-latest
@@ -121,7 +118,8 @@ jobs:
     needs: changes
     if: needs.changes.outputs.docs_only != 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    # A cold check can take almost 150 minutes. Leave time to save its caches.
+    timeout-minutes: 180
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -145,6 +143,7 @@ jobs:
           restore-keys: cargo-check-${{ runner.os }}-
 
       - name: check.sh — fmt, clippy, host tests, fips flavor, firmware builds, audit, deny, gitleaks
+        timeout-minutes: 150
         run: nix develop -c ./scripts/check.sh
         env:
           HOST_TARGET: x86_64-unknown-linux-gnu
@@ -153,10 +152,9 @@ jobs:
     needs: changes
     if: needs.changes.outputs.proofs == 'true'
     runs-on: ubuntu-latest
-    # 30m above `TIMEOUT_state`, so the per-harness cap fires first and names the
-    # proof it fired on. At 60 the job was cut mid-harness twice and reported only
-    # a shutdown signal, which reads as infrastructure and is not.
-    timeout-minutes: 90
+    # Both tiers share this budget. Leave time for the fast tier and cold
+    # builds before the state tier reaches its own per-harness cap.
+    timeout-minutes: 150
     env:
       KANI_VERSION: "0.67.0"
     steps:
@@ -236,11 +234,13 @@ jobs:
             args: "--features no-touch,fips-profile,advertise-pqc"
           # The trusted-display flavor: the panel takes the addressable-LED pin
           # (LED_KIND=none, compile-time-guarded) and the UI assets want the
-          # larger flash (docs/guides/display.md). `env` is empty for every other
-          # row, so only this one carries the extra knobs.
+          # larger flash (docs/guides/display.md). Build both touch controllers.
           - name: display
             args: "--features display"
             env: "LED_KIND=none FLASH_SIZE=16M"
+          - name: display-v2
+            args: "--features display"
+            env: "LED_KIND=none FLASH_SIZE=16M DISPLAY_TP_CHIP=cst3530"
           # Flash-geometry siblings of the default image (default features, RS-Key
           # identity). 2mb shrinks KVMAIN so the image still fits ≥1 MiB of code;
           # smoke-building it here catches a link/fit regression in PR CI rather
@@ -263,6 +263,9 @@ jobs:
           - name: board-seeed-xiao
             args: ""
             env: "BOARD=seeed-xiao"
+          - name: board-romu
+            args: ""
+            env: "BOARD=romu"
           - name: board-waveshare-touch-lcd
             args: "--features display"
             env: "BOARD=waveshare-touch-lcd"
@@ -305,16 +308,15 @@ jobs:
           restore-keys: cargo-flavor-${{ matrix.name }}-${{ runner.os }}-
 
       - name: build (${{ matrix.name }})
-        run: nix develop -c env ${{ matrix.env }} cargo build --release -p firmware ${{ matrix.args }}
+        run: nix develop -c env ${{ matrix.env }} bash scripts/build.sh ${{ matrix.args }}
+
+      - name: build the Romu release package
+        if: matrix.name == 'board-romu'
+        run: nix build .#firmware-romu --no-link
 
       - name: package firmware-${{ matrix.name }}.uf2
         run: |
-          nix develop -c ./scripts/pt.sh \
-            target/thumbv8m.main-none-eabihf/release/firmware \
-            firmware-${{ matrix.name }}.elf
-          nix develop -c picotool uf2 convert \
-            firmware-${{ matrix.name }}.elf -t elf \
-            firmware-${{ matrix.name }}.uf2
+          cp target/trustzone/combined.uf2 firmware-${{ matrix.name }}.uf2
           sha256sum firmware-${{ matrix.name }}.uf2
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -382,3 +384,91 @@ jobs:
             success | skipped) echo "knob builds: $RESULT" ;;
             *) echo "knob builds: $RESULT"; exit 1 ;;
           esac
+
+  # No `needs` and no `if`: its rows read docs/, and a documentation-only change
+  # is exactly what skips `check`. Full history, because the evidence rows read
+  # `git log` and go red on a shallow clone.
+  assurance:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: DeterminateSystems/nix-installer-action@3138316df39ed29be04236d7ffc686fa525866aa # v23
+
+      - uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.2
+        with:
+          primary-key: nix-${{ runner.os }}-${{ hashFiles('flake.lock') }}
+          restore-prefixes-first-match: nix-${{ runner.os }}-
+
+      - name: check-assurance.sh — TLA+ plumbing, registries against prose
+        run: nix develop -c ./scripts/check-assurance.sh
+
+  # The runner reports survivors from completed shards as warnings. Keep the
+  # job advisory for preview publishing even when its infrastructure fails.
+  mutants-diff:
+    needs: changes
+    if: needs.changes.outputs.mutants == 'true' && (github.event_name == 'pull_request' || github.ref == 'refs/heads/develop')
+    continue-on-error: true
+    runs-on: ubuntu-latest
+    # A shard reached 120 minutes while still running storage mutations.
+    timeout-minutes: 150
+    strategy:
+      fail-fast: false
+      max-parallel: 12
+      matrix:
+        shard: ${{ fromJSON(needs.changes.outputs.mutants_shards) }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: DeterminateSystems/nix-installer-action@3138316df39ed29be04236d7ffc686fa525866aa # v23
+
+      - uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.2
+        with:
+          primary-key: nix-${{ runner.os }}-${{ hashFiles('flake.lock') }}
+          restore-prefixes-first-match: nix-${{ runner.os }}-
+
+      - name: mutants over the changed lines (advisory)
+        env:
+          BASE: ${{ needs.changes.outputs.mutants_base }}
+          MUTANTS_SHARD: ${{ matrix.shard }}
+          HOST_TARGET: x86_64-unknown-linux-gnu
+        run: nix develop -c ./scripts/mutants-container.sh --in-diff "$BASE" --advisory
+
+  miri-smoke:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/develop'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: DeterminateSystems/nix-installer-action@3138316df39ed29be04236d7ffc686fa525866aa # v23
+
+      - uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.2
+        with:
+          primary-key: nix-fuzz-${{ runner.os }}-${{ hashFiles('flake.lock') }}
+          # Saving the shared Nix store outlasted the smoke job's deadline.
+          save: false
+          restore-prefixes-first-match: |
+            nix-fuzz-${{ runner.os }}-
+            nix-${{ runner.os }}-
+
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            fuzz/target
+          key: miri-smoke-${{ runner.os }}-${{ hashFiles('fuzz/Cargo.lock', 'flake.lock') }}
+          restore-keys: miri-${{ runner.os }}-default-
+
+      - name: run the APDU framing tests under Miri
+        run: nix develop .#fuzz -c ./scripts/miri-all.sh --smoke

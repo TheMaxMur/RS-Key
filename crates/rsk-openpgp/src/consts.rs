@@ -26,10 +26,22 @@ pub const ALGO_ECDH: u8 = 0x12;
 pub const ALGO_ECDSA: u8 = 0x13;
 pub const ALGO_EDDSA: u8 = 0x16;
 
+/// The exponent length, in bits, every RSA attribute carries: 65537's, which a
+/// YubiKey 5.8.0 advertises in DO `0xFA` and stores for any length from 17 up.
+pub(crate) const RSA_E_BITS: u16 = 17;
+pub(crate) const RSA_E_BITS_BE: [u8; 2] = RSA_E_BITS.to_be_bytes();
+
 /// Default algorithm attribute when the slot has no `EF_ALGO_PRIV*` —
 /// RSA-2048, gpg's default. dobj.rs's C1/C2/C3 GET DATA fallback
 /// (`ATTR_RSA2K`) encodes the same default and must change with it.
-pub(crate) const DEFAULT_ALGO: &[u8] = &[ALGO_RSA, 0x08, 0x00, 0x00, 0x20, 0x00];
+pub(crate) const DEFAULT_ALGO: &[u8] = &[
+    ALGO_RSA,
+    0x08,
+    0x00,
+    RSA_E_BITS_BE[0],
+    RSA_E_BITS_BE[1],
+    0x00,
+];
 
 /// ATR for the OpenPGP card.
 pub const ATR_OPENPGP: &[u8] = &[
@@ -55,6 +67,10 @@ pub const INS_PUT_DATA: u8 = 0xDA;
 pub const INS_PUT_DATA_ODD: u8 = 0xDB; // IMPORT (extended header list)
 pub const INS_MSE: u8 = 0x22;
 pub const INS_VERSION: u8 = 0xF1;
+/// Yubico's SET PIN RETRIES, what `ykman openpgp access set-retries` sends.
+pub const INS_SET_RETRIES: u8 = 0xF2;
+/// Yubico's ATTEST, class `80` only.
+pub const INS_ATTEST: u8 = 0xFB;
 
 // ---------------- Internal EF FIDs (flash-backed) ----------------
 pub const EF_PW1: u16 = 0x1081;
@@ -63,7 +79,7 @@ pub const EF_PW3: u16 = 0x1083;
 pub const EF_ALGO_PRIV1: u16 = 0x10c1;
 pub const EF_ALGO_PRIV2: u16 = 0x10c2;
 pub const EF_ALGO_PRIV3: u16 = 0x10c3;
-pub const EF_PW_PRIV: u16 = 0x10c4;
+pub const EF_PW_PRIV: u16 = rsk_fs::counter::OPENPGP_RETRIES;
 pub const EF_PW_RETRIES: u16 = 0x10c5;
 pub const EF_PK_SIG: KeyFid = KeyFid::new(0x10d1); // private SIG key, DEK-sealed
 pub const EF_PK_DEC: KeyFid = KeyFid::new(0x10d2); // private DEC key, DEK-sealed
@@ -71,11 +87,16 @@ pub const EF_PK_AUT: KeyFid = KeyFid::new(0x10d3); // private AUT key, DEK-seale
 pub const EF_PB_SIG: u16 = 0x10d4; // public-key DO = EF_PK_SIG + 3 (not secret)
 pub const EF_PB_DEC: u16 = 0x10d5;
 pub const EF_PB_AUT: u16 = 0x10d6;
+/// Yubico's attestation key (key reference `81`): minted on the card with its
+/// DEK, never generated or imported by a host, and its public-key DO beside it.
+pub const EF_PK_ATT: KeyFid = KeyFid::new(0x10d7);
+pub const EF_PB_ATT: u16 = 0x10da;
 /// Per-slot key origin backing DO `0xDE`'s status byte — `0x1000 | tag`, the
 /// same private-companion convention `algo_tag_to_priv` uses for C1/C2/C3.
 pub const EF_KEY_ORIGIN: u16 = 0x10de;
-/// Asymmetric key slots (SIG, DEC, AUT) — the pairs DO `0xDE` reports and the
-/// length of the `EF_KEY_ORIGIN` record.
+/// Asymmetric key slots (SIG, DEC, AUT) — the length of the `EF_KEY_ORIGIN` record.
+/// DO `0xDE` reports one pair more, and `C5`/`C6`/`CD` one entry more: the
+/// attestation key's, which is always generated on the card.
 pub const KEY_SLOTS: usize = 3;
 pub const EF_DEK: u16 = 0x1099;
 pub const EF_DEK_PW1: KeyFid = KeyFid::new(0x109a); // DEK wrapped under PW1
@@ -95,6 +116,10 @@ pub const EF_DEK_PWPIV: u16 = 0x109d;
 pub const EF_DEK_STAGE_PW1: KeyFid = KeyFid::new(0x109e);
 pub const EF_DEK_STAGE_RC: KeyFid = KeyFid::new(0x109f);
 pub const EF_DEK_STAGE_PW3: KeyFid = KeyFid::new(0x10a1);
+/// TERMINATE DF's marker: present, the applet answers `6285` to all but ACTIVATE FILE.
+/// Written before the wipe and removed after the factory state: an older build never
+/// reads this fid and its TERMINATE never sweeps it.
+pub const EF_TERMINATED: u16 = 0x10a2;
 pub const EF_CH_1: u16 = 0x1f21;
 pub const EF_CH_2: u16 = 0x1f22;
 pub const EF_CH_3: u16 = 0x1f23;
@@ -105,6 +130,16 @@ pub const CERT_OCCURRENCES: u8 = 3;
 // 0x1f24, which `files::source` classifies as no DO at all and TERMINATE DF does
 // not wipe. The occurrences are a contiguous range and this is what says so.
 const _: () = assert!(EF_CH_1 + CERT_OCCURRENCES as u16 - 1 == EF_CH_3);
+/// SELECT DATA's one body: the tag list naming 7F21 (OpenPGP 3.4 §7.2.5), the
+/// only DO with occurrences.
+pub const SELECT_DATA_CH_CERT: [u8; 6] = [
+    0x60,
+    0x04,
+    0x5C,
+    0x02,
+    (EF_CH_CERT >> 8) as u8,
+    EF_CH_CERT as u8,
+];
 
 // ---------------- Data-object FIDs / tags (tag == FID) ----------------
 // `//C` = computed/composite DO, `//S` = stored DO.
@@ -116,19 +151,26 @@ pub const EF_CH_DATA: u16 = 0x0065; // C — cardholder related data
 pub const EF_APP_DATA: u16 = 0x006e; // C — application related data
 pub const EF_DISCRETE_DO: u16 = 0x0073; // C
 pub const EF_SEC_TPL: u16 = 0x007a; // C — security support template
-pub const EF_SIG_COUNT: u16 = 0x0093; // S — signature counter (3 bytes)
+// S — signature counter (3 bytes). Its DO tag and its FID are one number, and the
+// store routes that FID to the counter partition: so the value is the list's.
+pub const EF_SIG_COUNT: u16 = rsk_fs::counter::EF_SIG_COUNT.get();
 pub const EF_EXT_CAP: u16 = 0x00c0; // S — extended capabilities
 pub const EF_ALGO_SIG: u16 = 0x00c1; // S — algorithm attributes (SIG)
 pub const EF_ALGO_DEC: u16 = 0x00c2; // S
 pub const EF_ALGO_AUT: u16 = 0x00c3; // S
 pub const EF_PW_STATUS: u16 = 0x00c4; // S — PW status bytes (7)
-pub const EF_FP: u16 = 0x00c5; // S — fingerprints (3×20)
-pub const EF_CA_FP: u16 = 0x00c6; // S — CA fingerprints (3×20)
+pub const EF_FP: u16 = 0x00c5; // S — fingerprints (4×20)
+pub const EF_CA_FP: u16 = 0x00c6; // S — CA fingerprints (4×20)
 /// OpenPGP 3.4 §4.4.1 fixes a fingerprint at 20 bytes and a key-generation
-/// timestamp at 4; `C5`/`C6`/`CD` are read-only concatenations of `KEY_SLOTS` of
-/// them, so the writer's length gate and the reader's stride are one value.
+/// timestamp at 4; `C5`/`C6`/`CD` are read-only concatenations of them, so the
+/// writer's length gate and the reader's stride are one value.
 pub const FP_LEN: usize = 20;
 pub const TS_LEN: usize = 4;
+/// What `C5`, `C6` and `CD` concatenate, in key order: SIG, DEC, AUT and then the
+/// attestation key, whose `DB`/`DC`/`DD` a YubiKey takes by PUT DATA only.
+pub const FP_DOS: [u16; 4] = [EF_FP_SIG, EF_FP_DEC, EF_FP_AUT, EF_FP_ATT];
+pub const CA_FP_DOS: [u16; 4] = [EF_FP_CA1, EF_FP_CA2, EF_FP_CA3, EF_FP_CA4];
+pub const TS_DOS: [u16; 4] = [EF_TS_SIG, EF_TS_DEC, EF_TS_AUT, EF_TS_ATT];
 
 /// The maxima OpenPGP 3.4 §4.4.1 gives the cardholder DOs it caps: the name `5B`
 /// at 39 bytes, the language preference `5F2D` at 8 (four two-letter codes). The
@@ -147,7 +189,7 @@ pub const EF_FP_AUT: u16 = 0x00c9; // S
 pub const EF_FP_CA1: u16 = 0x00ca; // S
 pub const EF_FP_CA2: u16 = 0x00cb; // S
 pub const EF_FP_CA3: u16 = 0x00cc; // S
-pub const EF_TS_ALL: u16 = 0x00cd; // S — generation timestamps (3×4)
+pub const EF_TS_ALL: u16 = 0x00cd; // S — generation timestamps (4×4)
 pub const EF_TS_SIG: u16 = 0x00ce; // S
 pub const EF_TS_DEC: u16 = 0x00cf; // S
 pub const EF_TS_AUT: u16 = 0x00d0; // S
@@ -167,6 +209,12 @@ pub const AES_KEY_LENS: [usize; 2] = [16, 32];
 pub const EF_UIF_SIG: u16 = 0x00d6; // S — user-interaction flag (touch)
 pub const EF_UIF_DEC: u16 = 0x00d7; // S
 pub const EF_UIF_AUT: u16 = 0x00d8; // S
+pub const EF_UIF_ATT: u16 = 0x00d9; // S — ATTEST's touch
+pub const EF_ALGO_ATT: u16 = 0x00da; // C — the attestation key's attributes, in 73 only
+pub const EF_FP_ATT: u16 = 0x00db; // S — write-only, read through C5
+pub const EF_FP_CA4: u16 = 0x00dc; // S — write-only, read through C6
+pub const EF_TS_ATT: u16 = 0x00dd; // S — write-only, read through CD
+pub const EF_ATT_CERT: u16 = 0x00fc; // S — the attestation key's certificate
 
 /// UIF flag byte "permanently enabled" (OpenPGP 3.4, D6/D7/D8 DO table): once
 /// stored, PUT DATA may not change it — only a factory reset (TERMINATE DF, which
@@ -196,6 +244,8 @@ pub(crate) fn slot_pub_fid(pk: KeyFid) -> u16 {
         EF_PB_SIG
     } else if pk == EF_PK_AUT {
         EF_PB_AUT
+    } else if pk == EF_PK_ATT {
+        EF_PB_ATT
     } else {
         EF_PB_DEC
     }
@@ -227,6 +277,16 @@ pub(crate) fn crt_slot(tag: u8) -> Option<KeyFid> {
         _ => None,
     }
 }
+
+/// The tag of the key reference a control-reference template may carry, `84 01 <ref>`.
+pub const CRT_KEY_REF: u8 = 0x84;
+// The key references: DO `DE`'s numbering (§4.4.3.8), also MSE's and ATTEST's, and
+// the `81` ykman sends inside `B6` for Yubico's attestation key.
+pub const KEY_REF_SIG: u8 = 0x01;
+pub const KEY_REF_DEC: u8 = 0x02;
+pub const KEY_REF_AUT: u8 = 0x03;
+pub const KEY_REF_ATT: u8 = 0x81;
+
 pub const EF_KEY_INFO: u16 = 0x00de; // S
 pub const EF_KDF: u16 = 0x00f9; // C — KDF parameters
 pub const EF_ALGO_INFO: u16 = 0x00fa; // C — algorithm info

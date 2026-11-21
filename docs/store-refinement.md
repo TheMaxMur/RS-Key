@@ -9,6 +9,11 @@ the `Fs` primitives that write them. **RS-Key is not formally verified**: this i
 one half of one model bridged to the code that maintains it, and the statuses
 below are what that buys and no more.
 
+Storage v2 adds authenticated authority and an automatic boot migration and authenticated recovery lifecycle below
+this cache contract. This pilot does not prove the MAC construction, replicated
+journal, import or root transition. Those mechanisms have concrete native and
+real-NOR fuzz controls; the model still assumes its backend append contract.
+
 ## Why only half
 
 `RSKeyStore` has seven variables. Five of them — `val`, `meta`, `dead`,
@@ -92,7 +97,7 @@ Three things stop being proved:
   whose subject is EF_META itself is a state the shipped store cannot reach — so
   `store_meta_kani.rs` assumes the collision away and says so;
 - that `scan` registers every file it is handed. Its `fid == EF_META` skip
-  (`fs.rs:286`) is compiled under `cfg(kani)` too, so under the alias it refuses
+  (`fs.rs:287`) is compiled under `cfg(kani)` too, so under the alias it refuses
   FID 23 — a FID the harnesses' own domain draws from. Inert today, because no
   harness in the tree reaches `scan`; it is what the `Scan` bullet below would
   have to deal with.
@@ -253,9 +258,10 @@ and no meta-only file. It is reachable on hardware — `rsk-store`'s `read` and
 `size` set `last_err` straight from `sequential-storage`'s `fetch_item`, so
 `last_error()` is a flash read error and not a modelling device. And the tree
 already treats the consequence as a defect **in one place**: `rsk-piv`'s
-`files.rs:302-310` reaches for `force_delete` precisely because "a stale AES-256
-head left over a re-minted 24-byte DEFAULT_MGM wedges the slot on the length
-compare". PIV's other `meta_add_slot` sites have no such repair.
+`crates/rsk-piv/src/files.rs:423-432` rewrites the management key's head
+unconditionally, because after a `force_delete` "a stale AES-256 head left over a re-minted 24-byte
+DEFAULT_MGM wedges the slot on the length compare". PIV's other `meta_add_slot`
+sites have no such repair.
 
 **Closed in the code half, and not the way the first draft of this paragraph
 proposed.** Propagating with `self.meta_delete(fid)?` *before* the value goes was

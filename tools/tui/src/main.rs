@@ -15,6 +15,11 @@
 //!     rsk-tui --identify       # blink the indicator so you can tell this key apart
 //!     rsk-tui --json           # one-shot machine-readable status
 //!     rsk-tui --selftest [PIN] # native backup round-trip self-test (no-touch build)
+#![allow(
+    clippy::disallowed_methods,
+    clippy::disallowed_types,
+    reason = "a host tool: the zeroization contract in clippy.toml is the device's"
+)]
 
 mod actions;
 mod app;

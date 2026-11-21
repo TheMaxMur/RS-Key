@@ -41,19 +41,14 @@ have left every future workflow unchecked in order to excuse three forms.
 
 ## The exemptions, and their debt
 
-Vendored code keeps its own notice; stamping AGPL on someone else's file would be
-a false statement about it. So `third_party/` and the BSD-licensed bignum sources
-under `crates/rsk-rsa/csrc/` are exempt — and the exemption is checked, the
-way `kani_gate.py` checks its own: an exempt file must carry a `Copyright` line of
+Vendored code keeps its own notice. The exemption for `third_party/` requires
+each exempt file to carry a `Copyright` line of
 its own **or** sit under a directory holding a `LICENCE`/`LICENSE` file. An
 exemption that covers a file with no notice at all is not an exemption, it is an
 unlicensed file. A prefix that matches nothing is stale and fails too.
 
-The directory half is a statement about the directory, so anything beside a
-`LICENSE` inherits it — `crates/rsk-rsa/csrc/LICENSE.txt` covers the four
-files there. That is the right reading for a vendored tree, and the reason the
-repo's own top-level `LICENSE` is excluded from the walk: it would otherwise
-cover the whole checkout.
+The repo's top-level `LICENSE` is excluded from this walk so that files in
+vendored trees must carry their own notice or inherit one from that tree.
 
 ## What this cannot say
 
@@ -76,8 +71,12 @@ WINDOW = 3
 #: three exceptions are listed by name below rather than excusing the extension.
 #: Growing this set means stamping the files that do not — a bulk edit,
 #: deliberately not this guard's to make on its own.
+#: `.tsv` joined it the cheap way: the tree held one, and it was stamped before
+#: the extension was. The neighbouring `.txt`/`.cfg` say "data" and go unchecked,
+#: so a measurement landing as data would otherwise have been the one file in
+#: assurance/ whose terms a reader guesses.
 CHECKED = frozenset({".rs", ".py", ".sh", ".nix", ".svg", ".x", ".tla", ".js", ".mjs", ".html",
-                     ".c", ".h", ".S", ".yml"})
+                     ".c", ".h", ".S", ".yml", ".tsv", ".dict"})
 
 #: Below this the guard is green over nothing. It has no roster to go empty, but
 #: it does walk a tree, and a walk that returns nothing exits 0 — the shape four
@@ -119,7 +118,6 @@ UNCHECKED = {
 #: a prefix matching nothing is stale, and a file it covers still owes a notice.
 EXEMPT = {
     "third_party/": "vendored upstream trees, each under its own licence",
-    "crates/rsk-rsa/csrc/": "Emil Lenngren's BSD-2-Clause bignum C and asm",
 }
 
 #: Files of a checked type that carry no header for a stated reason. Listed one

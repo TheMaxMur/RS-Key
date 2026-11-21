@@ -9,7 +9,7 @@ use super::*;
 
 /// Persisted display-settings record: the backlight level and display-sleep timeout
 /// edited in Settings → Display, read at boot ([`Ui::new`]) and rewritten on
-/// Settings exit ([`Ui::persist_settings`]) so they survive a reboot. In the system
+/// Settings exit ([`Local::persist_settings`]) so they survive a reboot. In the system
 /// config FID range next to `EF_PHY` (`0xE020`) / `EF_META`, outside every applet's
 /// reset scope; not reachable by any host APDU. The touch timeout is *not* here — it
 /// rides `EF_PHY`'s `PresenceTimeout` tag, the same record `rsk hw --touch-timeout`
@@ -29,6 +29,9 @@ enum Nav {
     Goto(SettingsPage),
     /// Leave the menu, handing the ambient loop its next destination.
     Leave(Option<NavTab>),
+    /// A factory reset wiped the store and queued its reboot: leave writing nothing, as an
+    /// edit the debounce has not flushed would re-create its record past the wipe.
+    Wiped,
 }
 
 /// The −/+ of an adjust page, or `None` for Back / a miss — which [`adjust_exit`]
@@ -73,7 +76,7 @@ fn settings_sleep(p: rsk_ui::Point, dirty: &mut bool) -> Nav {
     Nav::Stay
 }
 
-impl<'a, P, T, H, S, R> Ui<'a, P, T, H, S, R>
+impl<'a, P, T, H, S, R> Local<'_, 'a, P, T, H, S, R>
 where
     P: rsk_ui::scene::FrameTarget,
     T: TouchPad,
@@ -85,11 +88,11 @@ where
     /// the view. Clears `shown` so the ambient loop repaints once the menu releases
     /// the panel.
     fn render_settings(&mut self, page: SettingsPage) {
-        // Read every store-backed flag under ONE borrow: multiple `self.fs.borrow_mut()`
+        // Read every store-backed flag under ONE borrow: multiple `self.cells.fs.borrow_mut()`
         // temporaries in a single expression all live to the end of the statement, so a
         // second one would panic the RefCell (`already borrowed`).
         let (device_pin_set, fido_pin_set, backup_sealed) = {
-            let mut fs = self.fs.borrow_mut();
+            let mut fs = self.cells.fs.borrow_mut();
             (
                 rsk_fido::passkeys::device_pin_is_set(&mut fs),
                 rsk_fido::passkeys::pin_is_set(&mut fs),
@@ -132,7 +135,7 @@ where
         let persist_after = Duration::from_millis(SETTINGS_PERSIST_QUIET_MS);
 
         // Track whether the user actually changed a knob, so the persist on exit is one
-        // flash write per editing session (on every exit path), not one per −/+ tap.
+        // flash write per editing session (on every exit but a wipe's), not one per −/+ tap.
         let mut display_dirty = false;
         let mut presence_dirty = false;
 
@@ -154,6 +157,11 @@ where
                     SettingsPage::Sleep => settings_sleep(p, &mut display_dirty),
                 } {
                     Nav::Leave(next) => break next,
+                    Nav::Wiped => {
+                        display_dirty = false;
+                        presence_dirty = false;
+                        break None;
+                    }
                     Nav::Idle => false,
                     Nav::Stay => true,
                     Nav::Goto(next) => {
@@ -217,10 +225,10 @@ where
             // Security drills into Set/Change PIN + Factory reset (the destructive
             // reset lives one tap deeper).
             Some(RootEntry::Security) => Nav::Goto(SettingsPage::Security),
-            // Firmware: the installed-version + reboot-to-update sub-flow. A
-            // completed update hold queues a reboot and returns `true` — leave the
-            // menu so the ambient loop can park and hand the executor to the worker,
-            // which scrubs + resets. A cancel falls back to this list.
+            // Firmware: the installed-version + reboot-to-update sub-flow. A completed
+            // hold queues a reboot and returns `true`: leave, still writing a pending edit
+            // (an update wipes nothing), so the ambient loop can park and hand the executor
+            // to the worker, which scrubs + resets. A cancel falls back to this list.
             Some(RootEntry::Firmware) => {
                 if self.run_firmware() {
                     return Nav::Leave(None);
@@ -250,13 +258,14 @@ where
             }
             Some(SecurityEntry::AuditLog) => self.run_auditlog(),
             Some(SecurityEntry::Backup) => self.run_backup(),
-            // A confirmed reset queues the reboot and returns `true` — leave at once
-            // so nothing runs between the wipe and the reset (`persist_settings`
-            // would otherwise re-create EF_DISPLAY, carrying `pin_declined` across
-            // the factory reset). A cancel falls back to this page.
+            // A confirmed reset queues the reboot and returns `true`. A cancel or a failed
+            // wipe falls back to this page.
             Some(SecurityEntry::FactoryReset) => {
                 if self.run_factory_reset() {
-                    return Nav::Leave(None);
+                    // The wipe took `EF_PIN`, but a token lives in RAM until the reset and a
+                    // host command already waiting runs first: end that session now.
+                    self.hooks.note_local_pin_changed();
+                    return Nav::Wiped;
                 }
             }
             None => return Nav::Idle,
@@ -272,7 +281,8 @@ where
             return adjust_exit(p);
         };
         let was = self.brightness;
-        self.set_brightness(rsk_ui::step_brightness(self.brightness, step));
+        let level = rsk_ui::step_brightness(self.brightness, step);
+        self.set_brightness(level);
         *dirty |= self.brightness != was;
         Nav::Stay
     }
@@ -303,7 +313,7 @@ where
         }
         if save_presence {
             let secs = (self.hooks.presence_timeout_ms() / 1000) as u8;
-            let mut fs = self.fs.borrow_mut();
+            let mut fs = self.cells.fs.borrow_mut();
             let _ = rsk_phy::update(&mut fs, |phy| phy.presence_timeout = Some(secs));
         }
     }
@@ -319,7 +329,7 @@ where
             pin_declined: self.pin_declined,
             scramble_pin: self.scramble_pin,
         };
-        let _ = self.fs.borrow_mut().put(EF_DISPLAY, &cfg.encode());
+        let _ = self.cells.fs.borrow_mut().put(EF_DISPLAY, &cfg.encode());
     }
 }
 

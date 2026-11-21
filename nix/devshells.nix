@@ -2,7 +2,7 @@
 # Copyright (C) 2026 RS-Key contributors
 #
 # The dev shells: `default` (toolchain + picotool + security tooling + the host
-# `rsk`/`rsk-tui` commands) and `fuzz` (nightly for cargo-fuzz).
+# `rsk` command), `tui` (host dashboard) and `fuzz` (nightly for cargo-fuzz).
 {
   pkgs,
   sdl2,
@@ -13,7 +13,25 @@
   rskBin,
   rskTui,
 }:
-{
+let
+  llvmBin = "${toolchain}/lib/rustlib/${pkgs.stdenv.hostPlatform.rust.rustcTarget}/bin";
+  # Keep the coverage test compiler and LLVM tools together. The nixpkgs
+  # Rust 1.99.0 package crashes its instrumented test binaries on Darwin.
+  cargoLlvmCov =
+    (pkgs.cargo-llvm-cov.override {
+      rustPlatform = pkgs.makeRustPlatform {
+        cargo = toolchain;
+        rustc = toolchain;
+      };
+    }).overrideAttrs
+      (old: {
+        env = old.env // {
+          LLVM_COV = "${llvmBin}/llvm-cov";
+          LLVM_PROFDATA = "${llvmBin}/llvm-profdata";
+        };
+      });
+in
+rec {
   default = pkgs.mkShell {
     packages = [
       toolchain
@@ -21,24 +39,29 @@
       pkgs.probe-rs-tools # flash/debug over SWD (optional; needs a probe)
       pkgs.picotool # ELF -> UF2 + BOOTSEL flashing, no probe needed
       pkgs.pkg-config
-      pkgs.gcc-arm-embedded
-      # arm-none-eabi-gcc — builds rsk-rsa's C+ARM-asm
-      # fast RSA modexp. `cc` auto-detects it.
+      pkgs.gcc-arm-embedded # Secure TrustZone gateway and ARM image tools
 
       pkgs.yubikey-manager # ykman CLI (device management, guides)
       pkgs.libgcrypt # the vendored OpenPGP card suite loads it via ctypes
 
       # Security tooling (see scripts/check.sh).
       pkgs.gitleaks # secret detection (pre-commit hook over staged diff)
+      pkgs.git # provenance and history checks also run on minimal NixOS hosts
       pkgs.cargo-audit # SCA: RustSec advisory scan of Cargo.lock
       pkgs.cargo-deny # SCA: advisories + licenses + source/ban policy
       pkgs.cargo-cyclonedx # CycloneDX SBOM generation (release provenance)
       pkgs.cargo-vet # supply-chain: provenance-of-review (audited dependency set)
-      pkgs.cargo-llvm-cov # host-crate line-coverage floor for the daily deep-checks
+      cargoLlvmCov # host-crate line-coverage floor for the daily deep-checks
       # Mutation testing (scripts/mutants-all.sh, weekly + `--in-diff` by hand).
       # Coverage says a line ran; this says a test would notice if it changed —
       # which is the property the `require_pin_inputs` gap was invisible to.
       pkgs.cargo-mutants
+      # Per-test processes let timeouts kill the full test process group.
+      pkgs.cargo-nextest
+
+      pkgs.nodejs # preview publisher's node:test gate
+      pkgs.rsync # assurance-trace image comparison's isolated source copy
+      pkgs.openssl # the sealed-image gate generates a throwaway signing key
 
       # Workflow linting (the `workflow lint` row in scripts/check.sh).
       # Nothing in the tree parsed `.github/workflows` at all, and a workflow
@@ -69,12 +92,9 @@
       pkgs.mdbook-mermaid
       pkgs.lychee
 
-      # Host-side tooling: the `rsk` CLI (tools/rsk) + the `rsk-tui` dashboard
-      # (tools/tui) + the CTAPHID/FIDO device tests (tests/). See host-tools.nix
-      # for the Python deps.
+      # Host CLI and device tests; the dashboard lives in the tui shell.
       rskPython
       rskBin
-      rskTui
 
       # Host-only inputs for scripts/generate_ui_fonts.py. The generated 4-bit
       # coverage data is committed, so neither package enters the firmware.
@@ -86,16 +106,10 @@
       sdl2
     ];
 
-    # tools/tui links the host PC/SC and HID stacks. On Linux the pcsc-sys and
-    # hidapi build scripts resolve libpcsclite/libudev via pkg-config (the gate
-    # clippies the TUI, so CI needs them); darwin uses the system frameworks.
-    buildInputs = [
-      sdl2
-    ]
-    ++ pkgs.lib.optionals pkgs.stdenv.isLinux [
-      pkgs.pcsclite
-      pkgs.systemd # libudev, for the hidapi crate's hidraw backend
-    ];
+    buildInputs = [ sdl2 ];
+
+    # Cargo may prefer rustup's subcommand shims in ~/.cargo/bin over PATH.
+    RUSTUP_TOOLCHAIN = "${toolchain}";
 
     shellHook = ''
       # flip-link (the embedded linker in .cargo/config.toml) shells out to
@@ -108,9 +122,7 @@
       export DYLD_FALLBACK_LIBRARY_PATH="${pkgs.lib.getLib pkgs.libgcrypt}/lib''${DYLD_FALLBACK_LIBRARY_PATH:+:$DYLD_FALLBACK_LIBRARY_PATH}"
       export IBM_PLEX_SANS_DIR="${pkgs.ibm-plex}/share/fonts/truetype"
       export IBM_PLEX_MONO_DIR="${pkgs.ibm-plex}/share/fonts/truetype"
-      # The dev-shell `rsk-tui` and `rsk-emu` are bare `cargo run`s (no nix
-      # RPATH), so their DT_NEEDED libudev/libpcsclite/libSDL2 must be on the
-      # loader path at run time — `LIBRARY_PATH` above only satisfies the linker.
+      # The emulator needs a runtime loader path as well as LIBRARY_PATH.
       #
       # SDL2 belongs here even though nothing in CI opens a window: `tools/emu`
       # links `embedded-graphics-simulator` unconditionally, so EVERY run of the
@@ -125,8 +137,6 @@
             sdl2
           ]
           ++ pkgs.lib.optionals pkgs.stdenv.isLinux [
-            pkgs.systemd
-            pkgs.pcsclite
             # check.sh's fuzz-liveness row executes the libFuzzer binaries, whose
             # runtime is C++, and this shell — not `.#fuzz`, which already names
             # it — is where that row runs. Without it every target dies on
@@ -170,16 +180,33 @@
       echo "  target:   ${target}"
       echo "  picotool: $(picotool version 2>/dev/null | head -1 || echo 'n/a')"
       echo
-      echo "Build:  cargo build --release -p firmware   # pick the target crate"
+      echo "Build:  bash scripts/build.sh [--features ...]"
       echo "  (or:  nix build .#firmware                 # hermetic → result/firmware.uf2)"
-      echo "PT:     scripts/pt.sh target/${target}/release/firmware fw-pt.elf   # fence the KV store"
-      echo "UF2:    picotool uf2 convert fw-pt.elf -t elf firmware.uf2"
+      echo "Image:  target/trustzone/combined.uf2       # includes the KV partition fence"
       echo "Flash:  hold BOOTSEL, plug in the RP2350, drag firmware.uf2 to the RP2350 drive"
       echo "Check:  ./scripts/check.sh        # fmt + clippy + test + audit + deny + gitleaks"
       echo "Fuzz:   nix develop .#fuzz -c cargo fuzz run <target>"
       echo "CLI:    rsk status | rsk backup … | rsk secure-boot … | rsk otp … (rsk --help)"
-      echo "TUI:    rsk-tui                    # live device dashboard"
+      echo "TUI:    nix develop .#tui -c rsk-tui       # separate dashboard shell"
       echo "Docs:   ./scripts/docs.sh serve    # preview the docs site (build|check)"
+    '';
+  };
+
+  tui = pkgs.mkShell {
+    inputsFrom = [ default ];
+    packages = [ rskTui ];
+    buildInputs = pkgs.lib.optionals pkgs.stdenv.isLinux [
+      pkgs.pcsclite
+      pkgs.udev
+    ];
+    RSK_TUI_SHELL = "1";
+    shellHook = pkgs.lib.optionalString pkgs.stdenv.isLinux ''
+      export LD_LIBRARY_PATH="${
+        pkgs.lib.makeLibraryPath [
+          pkgs.pcsclite
+          pkgs.udev
+        ]
+      }''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
     '';
   };
 
@@ -190,6 +217,9 @@
     packages = [
       fuzzToolchain
       pkgs.cargo-fuzz
+      cargoLlvmCov # branch and condition instrumentation require nightly
+      pkgs.git # coverage provenance must not depend on the host's Git installation
+      rskPython # corpus preparation uses the same pinned stack as the host tests
     ];
     # `-Zmiri-many-seeds` (bare) re-runs the whole suite once per seed over a
     # large default range; under the interpreter, with ML-KEM/ML-DSA/EC/RSA in
@@ -199,6 +229,8 @@
     # (~4 h) began timing out as the crypto suite grew; 8 (~2 h) samples that
     # nondeterminism just as well and leaves headroom under the job budget.
     MIRIFLAGS = "-Zmiri-many-seeds=0..8 -Zdeduplicate-diagnostics -Zmiri-strict-provenance";
+    # cargo-miri may invoke rustup on hosts that also have a stable installation.
+    RUSTUP_TOOLCHAIN = "${fuzzToolchain}";
     # libFuzzer's runtime is C++: on Linux the fuzz binaries need
     # libstdc++.so.6 at run time, and a nix-linked binary's loader does not
     # search the host's /usr/lib (broke the deep-checks CI job, every target

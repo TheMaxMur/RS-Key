@@ -3,7 +3,7 @@
 # Copyright (C) 2026 RS-Key contributors
 """Hold every published sentence about a registered property to the registry.
 
-Stage 0 п.3 and the last exit of stage 4 are ONE predicate — "a public claim
+Stage 0 item 3 and the last exit of stage 4 are ONE predicate — "a public claim
 about a P0-family id is generated from the registry; one written by hand fails on
 a docs row" — and it was closed by nothing. Measured before this file existed:
 four false hand-written sentences, including "`SEC-FIDO-001` … PROVEN on
@@ -124,14 +124,14 @@ needed a trick one:
   reddens the shipped tree twice, on `CHANGELOG.md`'s `SEC-DISP` and
   `SEC-FIDO-NNN` — a family named as a family, and a placeholder;
 * **the REVERSE direction is open, and the number is why.** "A registry row no
-  hand-written page names" is not held, because it would report 34 of the 59 on
+  hand-written page names" is not held, because it would report 34 of the 60 on
   a clean tree — measured, and they are not rot: every occurrence of all 34 is
-  generator-written, on `docs/assurance-vector.md`, `docs/assurance-matrix.md`
-  and `docs/platform-assumptions.md`, or inside one of the six generated REGIONS
-  of `formal/README.md`, which drops that page from 59 registered ids to 7 once
+  generator-written, on `assurance/reports/assurance-vector.md`, `docs/assurance-matrix.md`
+  and `assurance/reports/platform-assumptions.md`, or inside one of the six generated REGIONS
+  of `formal/README.md`, which drops that page from 60 registered ids to 8 once
   [`mask_regions`] has run. The weaker form — a row no page names AT ALL — is 0
   today and would be decorative: `evidence_gate` refuses a stale
-  `docs/assurance-vector.md` and `assurance_gate` refuses a stale
+  `assurance/reports/assurance-vector.md` and `assurance_gate` refuses a stale
   `formal/README.md` table, so a row missing from a generated page is already
   their finding. What stays unheld is the middle: a row that only ever appears
   in a table, which no prose has ever had to explain.
@@ -351,11 +351,13 @@ DISCLAIMER_PARAGRAPH = (
     " [limitations](limitations.md) and the [threat model](threat-model.md)."
 )
 
+REPORT_DISCLAIMER_PARAGRAPH = DISCLAIMER_PARAGRAPH.replace("](", "](../../docs/")
+
 #: How many distinct registered ids make a page one a reader takes an assurance
 #: claim FROM. Three, and MARKDOWN only: `.tla`, `.toml` and `.sh` name ids as
 #: data and are not where anyone reads a summary. Measured, seven `.md` pages
-#: clear it — `docs/assurance-vector.md` and `formal/README.md` at 59 each,
-#: `docs/assurance-matrix.md` at 40, `docs/platform-assumptions.md` at 34 — and
+#: clear it — `assurance/reports/assurance-vector.md` and `formal/README.md` at 59 each,
+#: `docs/assurance-matrix.md` at 40, `assurance/reports/platform-assumptions.md` at 34 — and
 #: exactly ONE of the eight carried the sentence.
 DISCLAIMER_IDS = 3
 

@@ -8,9 +8,11 @@
 
 #![cfg_attr(not(test), no_std)]
 
+pub mod boot_status;
 pub mod keydev;
 pub mod otp_lock;
 pub mod rollback;
+pub mod seal;
 
 use core::cell::RefCell;
 
@@ -36,6 +38,7 @@ const INS_OTP_LOCK: u8 = 0x1B;
 const INS_WRITE: u8 = 0x1C;
 const INS_READ: u8 = 0x1E;
 const INS_REBOOT_BOOTSEL: u8 = 0x1F;
+const INS_STORAGE: u8 = 0x20;
 
 /// OTP_LOCK payload guard: the irreversible page-58 lock fires only for this
 /// exact data, so a stray or fuzzed APDU on INS 0x1B can never trigger it.
@@ -66,10 +69,18 @@ pub trait Platform {
     /// Raw 24-bit value of PAGE58_LOCK1; `None` on a read error. Drives the
     /// idempotency / refuse-foreign decision in [`otp_lock`].
     fn read_page58_lock_raw(&self) -> Option<u32>;
-    /// Burn the page-58 access lock ([`otp_lock::PAGE58_LOCK_VALUE`] into
-    /// [`otp_lock::PAGE58_LOCK1_ROW`]). The implementation fixes both the row
-    /// and the value, so a caller can never redirect this write. IRREVERSIBLE;
-    /// returns whether it succeeded.
+    /// What this boot's seal passes left under the pre-burn key, as
+    /// `otp_lock::PRE_OTP_*` bits; `None` when they ran without the fused key and
+    /// so checked nothing. [`otp_lock`]'s page-58 burn waits for `Some(0)`.
+    fn pre_otp_left(&self) -> Option<u16>;
+    /// Result of the boot-only automatic page-58 seal, without performing I/O.
+    fn auto_seal_status(&self) -> seal::Status {
+        seal::Status::Unchecked
+    }
+    /// Burn the page-58 access lock and fuse latch ([`otp_lock::PAGE58_LATCH_VALUE`]
+    /// into [`otp_lock::PAGE58_LOCK1_ROW`], over a blank row or an older build's
+    /// lock). The implementation fixes both the row and the value, so a caller can
+    /// never redirect this write. IRREVERSIBLE; returns whether it succeeded.
     fn lock_page58(&mut self) -> bool;
     /// Raw RBIT-3 copies of the anti-rollback rows ([`rollback`]); `None` on
     /// any read error. Drives the idempotency decision and the READ report.
@@ -126,12 +137,9 @@ impl<'a> RescueApplet<'a> {
         }
     }
 
-    fn device<'k>(&'k self, mkek: &'k FusedRead) -> Device<'k> {
-        Device {
-            serial_hash: &self.serial_hash,
-            serial_id: &self.serial_id,
-            otp_key: mkek.as_deref(),
-        }
+    /// `None` past the latch when the fused key did not read ([`Device::fused`]).
+    fn device<'k>(&'k self, mkek: &'k FusedRead) -> Option<Device<'k>> {
+        Device::fused(&self.serial_hash, &self.serial_id, mkek)
     }
 
     /// Require a physical user-presence confirmation before a privileged
@@ -155,12 +163,14 @@ impl<'a> RescueApplet<'a> {
                     return Sw::CONDITIONS_NOT_SATISFIED;
                 }
                 let mut rng = self.rng.borrow_mut();
-                // Both fuses are read for this command alone: each local is the
-                // only copy in RAM and dies at the end of this arm.
+                // Both fuses are read for this command alone, into locals wiped at
+                // the end of this arm.
                 let fused = read_fused(self.devk);
                 let mkek = read_fused(self.mkek_source);
-                let dev = self.device(&mkek);
-                let key = keydev::load_or_generate(&dev, fused.as_deref(), fs, &mut *rng);
+                let Some(dev) = self.device(&mkek) else {
+                    return Sw::FUSED_KEY_UNREAD;
+                };
+                let key = keydev::load_or_generate(&dev, fused.key(), fs, &mut *rng);
                 let Some(key) = key else {
                     return Sw::EXEC_ERROR;
                 };
@@ -179,12 +189,14 @@ impl<'a> RescueApplet<'a> {
                     return Sw::WRONG_LENGTH;
                 }
                 let mut rng = self.rng.borrow_mut();
-                // Both fuses are read for this command alone: each local is the
-                // only copy in RAM and dies at the end of this arm.
+                // Both fuses are read for this command alone, into locals wiped at
+                // the end of this arm.
                 let fused = read_fused(self.devk);
                 let mkek = read_fused(self.mkek_source);
-                let dev = self.device(&mkek);
-                let key = keydev::load_or_generate(&dev, fused.as_deref(), fs, &mut *rng);
+                let Some(dev) = self.device(&mkek) else {
+                    return Sw::FUSED_KEY_UNREAD;
+                };
+                let key = keydev::load_or_generate(&dev, fused.key(), fs, &mut *rng);
                 let Some(key) = key else {
                     return Sw::EXEC_ERROR;
                 };
@@ -215,6 +227,11 @@ impl<'a> RescueApplet<'a> {
         }
         match apdu.p1 {
             0x01 => {
+                // The configuration lock covers this record, and no code opens it
+                // here: refused before the touch, which it would only waste.
+                if let Err(e) = rsk_devconf::ensure_unlocked(fs) {
+                    return e.sw();
+                }
                 // The phy record is device identity (VID/PID, USB interfaces,
                 // LED); a hostile host must not rewrite it silently.
                 if !self.require_presence(Confirm::titled("Write device config?")) {
@@ -334,6 +351,34 @@ impl<'a> RescueApplet<'a> {
                 res.extend(&[required as u8, version, rollback::VERSION_CAPACITY]);
                 Sw::OK
             }
+            // What the page-58 burn waits on, big-endian `PRE_OTP_*` bits.
+            0x07 => {
+                let left = self.platform.borrow().pre_otp_left();
+                res.extend(&left.unwrap_or(otp_lock::PRE_OTP_UNCHECKED).to_be_bytes());
+                Sw::OK
+            }
+            0x08 => {
+                if apdu.p2 != 0 {
+                    return Sw::INCORRECT_P1P2;
+                }
+                let ready = fs.storage_state() == rsk_fs::storage::StorageState::Ready;
+                res.extend(&[2, u8::from(ready)]);
+                Sw::OK
+            }
+            0x09 => {
+                if apdu.p2 != 0 {
+                    return Sw::INCORRECT_P1P2;
+                }
+                let platform = self.platform.borrow();
+                res.extend(&[1, platform.auto_seal_status() as u8]);
+                res.extend(
+                    &platform
+                        .pre_otp_left()
+                        .unwrap_or(otp_lock::PRE_OTP_UNCHECKED)
+                        .to_be_bytes(),
+                );
+                Sw::OK
+            }
             _ => Sw::INCORRECT_P1P2,
         }
     }
@@ -376,9 +421,11 @@ impl<'a> RescueApplet<'a> {
     /// tooling cannot (the lock row lives in bootloader-read-only OTP page 63).
     /// IRREVERSIBLE, so it is triply guarded: P1=0x58 (the page), the
     /// [`OTP_LOCK_MAGIC`] payload, and a provisioned MKEK (locking a blank
-    /// page would only hide nothing while blinding BOOTSEL). Idempotent: a row
-    /// already holding our value returns OK; any other non-blank value is
-    /// refused rather than clobbered. See [`otp_lock`].
+    /// page would only hide nothing while blinding BOOTSEL); and it waits for a
+    /// boot that left nothing under the pre-burn key ([`Platform::pre_otp_left`]).
+    /// Idempotent: a row already holding the latch returns OK; a subset of it (an
+    /// older build's lock, a torn burn) is attempted under the same guards; a bit
+    /// outside it is refused rather than clobbered. See [`otp_lock`].
     fn lock_page58(&mut self, apdu: &Apdu) -> Sw {
         if apdu.data != OTP_LOCK_MAGIC {
             return Sw::DATA_INVALID;
@@ -387,7 +434,7 @@ impl<'a> RescueApplet<'a> {
         // testing the `Option` would answer "is a reader present" instead of "are
         // the keys provisioned" — and this guard is the whole reason the lock
         // cannot be burnt over a blank page (audit run-36).
-        if read_fused(self.mkek_source).is_none() {
+        if read_fused(self.mkek_source).key().is_none() {
             return Sw::CONDITIONS_NOT_SATISFIED;
         }
         let Some(cur) = self.platform.borrow().read_page58_lock_raw() else {
@@ -396,7 +443,15 @@ impl<'a> RescueApplet<'a> {
         match otp_lock::lock_decision(cur) {
             otp_lock::LockDecision::AlreadyLocked => Sw::OK,
             otp_lock::LockDecision::Unexpected => Sw::CONDITIONS_NOT_SATISFIED,
-            otp_lock::LockDecision::Write => {
+            // A subset of the latch, an older build's lock or a torn burn, takes it under
+            // a blank row's guards: the latch closes the arms below the fused root.
+            otp_lock::LockDecision::Write | otp_lock::LockDecision::Latch => {
+                // Only over a device whose boot moved every device-sealed record to the
+                // fused root, and before the touch: the latch is what every later boot
+                // reads as "migrated", so it must not be burnt over one that is not.
+                if self.platform.borrow().pre_otp_left() != Some(0) {
+                    return Sw::CONDITIONS_NOT_SATISFIED;
+                }
                 // Irreversible fuse burn: gate on the operator like every other
                 // privileged rescue op — the magic payload is a source-visible
                 // constant, not authentication against a hostile USB host.
@@ -408,7 +463,7 @@ impl<'a> RescueApplet<'a> {
                 }
                 // Confirm the fuse took with a raw read-back.
                 match self.platform.borrow().read_page58_lock_raw() {
-                    Some(otp_lock::PAGE58_LOCK_VALUE) => Sw::OK,
+                    Some(otp_lock::PAGE58_LATCH_VALUE) => Sw::OK,
                     _ => Sw::EXEC_ERROR,
                 }
             }
@@ -473,7 +528,53 @@ impl<S: Storage> Applet<Fs<S>> for RescueApplet<'_> {
         if apdu.cla != 0x80 {
             return Sw::CLA_NOT_SUPPORTED;
         }
+        if fs.storage_state() == rsk_fs::storage::StorageState::Recovery
+            && !(apdu.ins == INS_STORAGE
+                || apdu.ins == INS_REBOOT_BOOTSEL
+                || apdu.ins == INS_READ
+                    && matches!(apdu.p1, 0x03 | 0x04 | 0x06 | 0x07 | 0x08 | 0x09))
+        {
+            return Sw::MEMORY_FAILURE;
+        }
         match apdu.ins {
+            INS_STORAGE => {
+                use rsk_fs::storage::{StorageAction, StorageState};
+                let (action, magic, title) = match apdu.p1 {
+                    0 => (
+                        StorageAction::Initialize,
+                        b"INITV2".as_slice(),
+                        "Initialize empty storage?",
+                    ),
+                    1 => (
+                        StorageAction::ImportLegacy,
+                        b"IMPORTV2".as_slice(),
+                        "Import legacy storage?",
+                    ),
+                    _ => return Sw::INCORRECT_P1P2,
+                };
+                if apdu.p2 != 0 {
+                    return Sw::INCORRECT_P1P2;
+                }
+                if apdu.data != magic {
+                    return Sw::DATA_INVALID;
+                }
+                if fs.storage_state() != StorageState::Recovery {
+                    return Sw::CONDITIONS_NOT_SATISFIED;
+                }
+                if !self.require_presence(Confirm::titled(title)) {
+                    return Sw::CONDITIONS_NOT_SATISFIED;
+                }
+                let mut epoch = [0; 16];
+                self.rng.borrow_mut().fill(&mut epoch);
+                match fs.administer_storage(action, epoch) {
+                    Ok(()) => {
+                        self.platform.borrow_mut().request_reboot(false);
+                        Sw::OK
+                    }
+                    Err(rsk_sdk::error::Error::Blocked) => Sw::CONDITIONS_NOT_SATISFIED,
+                    Err(_) => Sw::MEMORY_FAILURE,
+                }
+            }
             INS_KEYDEV_SIGN => self.keydev_sign(apdu, fs, res),
             INS_OTP_LOCK => self.otp_lock(apdu),
             INS_WRITE => self.write(apdu, fs),

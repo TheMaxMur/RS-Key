@@ -13,7 +13,17 @@ use minicbor::Decoder;
 fn advertised_algs() -> std::vec::Vec<i64> {
     let mut out = [0u8; 1024];
     let n = get_info(
-        false, 6, false, false, false, false, 256, None, None, &mut out,
+        false,
+        6,
+        false,
+        crate::consts::PIN_COMPLEXITY_POLICY,
+        false,
+        false,
+        false,
+        256,
+        None,
+        None,
+        &mut out,
     )
     .unwrap();
     let mut d = Decoder::new(&out[..n]);
@@ -81,7 +91,17 @@ fn algorithms_advertisement_policy() {
 fn get_info_fields() {
     let mut buf = [0u8; 1024];
     let n = get_info(
-        true, 4, false, false, false, false, 200, None, None, &mut buf,
+        true,
+        4,
+        false,
+        crate::consts::PIN_COMPLEXITY_POLICY,
+        false,
+        false,
+        false,
+        200,
+        None,
+        None,
+        &mut buf,
     )
     .unwrap();
     let mut d = Decoder::new(&buf[..n]);
@@ -102,7 +122,7 @@ fn get_info_fields() {
 
     // 0x02 extensions
     assert_eq!(d.u8().unwrap(), 0x02);
-    assert_eq!(d.array().unwrap().unwrap(), 7);
+    assert_eq!(d.array().unwrap().unwrap(), EXTENSIONS);
     assert_eq!(d.str().unwrap(), "credBlob");
     assert_eq!(d.str().unwrap(), "credProtect");
     assert_eq!(d.str().unwrap(), "hmac-secret");
@@ -110,6 +130,10 @@ fn get_info_fields() {
     assert_eq!(d.str().unwrap(), "minPinLength");
     assert_eq!(d.str().unwrap(), "hmac-secret-mc");
     assert_eq!(d.str().unwrap(), "thirdPartyPayment");
+    assert_eq!(d.str().unwrap(), "uvm");
+    assert_eq!(d.str().unwrap(), "pinComplexityPolicy");
+    #[cfg(feature = "preview-sign")]
+    assert_eq!(d.str().unwrap(), "previewSign");
 
     // 0x03 aaguid
     assert_eq!(d.u8().unwrap(), 0x03);
@@ -162,7 +186,7 @@ fn get_info_fields() {
 
     // 0x08 maxCredentialIdLength
     assert_eq!(d.u8().unwrap(), 0x08);
-    assert_eq!(d.u64().unwrap(), MAX_CRED_ID_LENGTH);
+    assert_eq!(d.u64().unwrap(), 748);
 
     // 0x09 transports ["usb", "smart-card"] — the FIDO AID is routed onto CCID too
     assert_eq!(d.u8().unwrap(), 0x09);
@@ -278,7 +302,17 @@ fn get_info_fields() {
 fn str_member(key: u32) -> std::vec::Vec<std::string::String> {
     let mut out = [0u8; 1024];
     let n = get_info(
-        false, 4, false, false, false, false, 256, None, None, &mut out,
+        false,
+        4,
+        false,
+        crate::consts::PIN_COMPLEXITY_POLICY,
+        false,
+        false,
+        false,
+        256,
+        None,
+        None,
+        &mut out,
     )
     .unwrap();
     let mut d = Decoder::new(&out[..n]);
@@ -291,6 +325,32 @@ fn str_member(key: u32) -> std::vec::Vec<std::string::String> {
         d.skip().unwrap();
     }
     std::vec::Vec::new()
+}
+
+/// previewSign is advertised by its own build and by no other: the default list is
+/// the seven it always was, name for name.
+#[test]
+fn preview_sign_is_advertised_only_on_its_build() {
+    let large_blob = if LARGE_BLOB_EXT {
+        "largeBlob"
+    } else {
+        "largeBlobKey"
+    };
+    let mut want = std::vec![
+        "credBlob",
+        "credProtect",
+        "hmac-secret",
+        large_blob,
+        "minPinLength",
+        "hmac-secret-mc",
+        "thirdPartyPayment",
+        "uvm",
+        "pinComplexityPolicy",
+    ];
+    if cfg!(feature = "preview-sign") {
+        want.push("previewSign");
+    }
+    assert_eq!(str_member(0x02), want);
 }
 
 /// `transportsForReset` (0x1A) tells a platform where a reset can be driven. One
@@ -320,7 +380,17 @@ fn transports_for_reset_matches_transports() {
 fn option_pairs(builtin_uv: bool, pin_set: bool) -> std::vec::Vec<(std::string::String, bool)> {
     let mut buf = [0u8; 1024];
     let n = get_info(
-        pin_set, 4, false, false, false, builtin_uv, 256, None, None, &mut buf,
+        pin_set,
+        4,
+        false,
+        crate::consts::PIN_COMPLEXITY_POLICY,
+        false,
+        false,
+        builtin_uv,
+        256,
+        None,
+        None,
+        &mut buf,
     )
     .unwrap();
     let mut d = Decoder::new(&buf[..n]);
@@ -364,7 +434,17 @@ fn client_pin_reflects_pin_state() {
     let mut buf = [0u8; 1024];
     for pin_set in [false, true] {
         let n = get_info(
-            pin_set, 4, false, false, false, false, 256, None, None, &mut buf,
+            pin_set,
+            4,
+            false,
+            crate::consts::PIN_COMPLEXITY_POLICY,
+            false,
+            false,
+            false,
+            256,
+            None,
+            None,
+            &mut buf,
         )
         .unwrap();
         let mut d = Decoder::new(&buf[..n]);
@@ -400,7 +480,17 @@ fn min_pin_policy_reflected() {
     // 0x0D mirrors minPINLength, 0x0C the forceChangePin flag.
     let mut buf = [0u8; 1024];
     let n = get_info(
-        true, 8, true, false, false, false, 256, None, None, &mut buf,
+        true,
+        8,
+        true,
+        crate::consts::PIN_COMPLEXITY_POLICY,
+        false,
+        false,
+        false,
+        256,
+        None,
+        None,
+        &mut buf,
     )
     .unwrap();
     let mut d = Decoder::new(&buf[..n]);
@@ -423,7 +513,20 @@ fn ep_reflects_ea_enabled() {
     // state: false at reset, true once EA has been enabled.
     for ea in [false, true] {
         let mut buf = [0u8; 1024];
-        let n = get_info(true, 4, false, ea, false, false, 256, None, None, &mut buf).unwrap();
+        let n = get_info(
+            true,
+            4,
+            false,
+            crate::consts::PIN_COMPLEXITY_POLICY,
+            ea,
+            false,
+            false,
+            256,
+            None,
+            None,
+            &mut buf,
+        )
+        .unwrap();
         let mut d = Decoder::new(&buf[..n]);
         d.map().unwrap();
         for _ in 0..3 {
@@ -445,7 +548,17 @@ fn always_uv_reflects_state() {
     for always_uv in [false, true] {
         let mut buf = [0u8; 1024];
         let n = get_info(
-            true, 4, false, false, always_uv, false, 256, None, None, &mut buf,
+            true,
+            4,
+            false,
+            crate::consts::PIN_COMPLEXITY_POLICY,
+            false,
+            always_uv,
+            false,
+            256,
+            None,
+            None,
+            &mut buf,
         )
         .unwrap();
         let mut d = Decoder::new(&buf[..n]);
@@ -478,7 +591,17 @@ fn u2f_v2_dropped_when_always_uv() {
     for (always_uv, want) in cases {
         let mut buf = [0u8; 1024];
         let n = get_info(
-            true, 4, false, false, always_uv, false, 256, None, None, &mut buf,
+            true,
+            4,
+            false,
+            crate::consts::PIN_COMPLEXITY_POLICY,
+            false,
+            always_uv,
+            false,
+            256,
+            None,
+            None,
+            &mut buf,
         )
         .unwrap();
         let mut d = Decoder::new(&buf[..n]);
@@ -508,7 +631,17 @@ fn u2f_v2_survives_always_uv_behind_a_configured_pad() {
     for (builtin_uv, pin_set, want_u2f) in cases {
         let mut buf = [0u8; 1024];
         let n = get_info(
-            pin_set, 4, false, false, true, builtin_uv, 256, None, None, &mut buf,
+            pin_set,
+            4,
+            false,
+            crate::consts::PIN_COMPLEXITY_POLICY,
+            false,
+            true,
+            builtin_uv,
+            256,
+            None,
+            None,
+            &mut buf,
         )
         .unwrap();
         let mut d = Decoder::new(&buf[..n]);
@@ -528,7 +661,17 @@ fn get_info_buffer_too_small() {
     let mut tiny = [0u8; 8];
     assert_eq!(
         get_info(
-            false, 4, false, false, false, false, 256, None, None, &mut tiny
+            false,
+            4,
+            false,
+            crate::consts::PIN_COMPLEXITY_POLICY,
+            false,
+            false,
+            false,
+            256,
+            None,
+            None,
+            &mut tiny
         ),
         Err(CtapError::Other)
     );
@@ -544,7 +687,17 @@ fn make_cred_uv_not_rqd_is_cleared_by_always_uv() {
     for always_uv in [false, true] {
         let mut buf = [0u8; 1024];
         let n = get_info(
-            true, 4, false, false, always_uv, false, 256, None, None, &mut buf,
+            true,
+            4,
+            false,
+            crate::consts::PIN_COMPLEXITY_POLICY,
+            false,
+            always_uv,
+            false,
+            256,
+            None,
+            None,
+            &mut buf,
         )
         .unwrap();
         let mut d = Decoder::new(&buf[..n]);
@@ -579,6 +732,7 @@ fn enc_identifier_is_conditional_and_sorts_between_its_neighbours() {
         true,
         4,
         false,
+        crate::consts::PIN_COMPLEXITY_POLICY,
         false,
         false,
         false,
@@ -593,6 +747,7 @@ fn enc_identifier_is_conditional_and_sorts_between_its_neighbours() {
         true,
         4,
         false,
+        crate::consts::PIN_COMPLEXITY_POLICY,
         false,
         false,
         false,
@@ -639,6 +794,7 @@ fn enc_cred_store_state_is_conditional_and_sorts_between_its_neighbours() {
         true,
         4,
         false,
+        crate::consts::PIN_COMPLEXITY_POLICY,
         false,
         false,
         false,
@@ -653,6 +809,7 @@ fn enc_cred_store_state_is_conditional_and_sorts_between_its_neighbours() {
         true,
         4,
         false,
+        crate::consts::PIN_COMPLEXITY_POLICY,
         false,
         false,
         false,
@@ -747,6 +904,7 @@ fn getinfo_stays_inside_the_cbor_subset_yubikit_decodes() {
             pin_set,
             63,
             true,
+            crate::consts::PIN_COMPLEXITY_POLICY,
             true,
             always_uv,
             builtin_uv,

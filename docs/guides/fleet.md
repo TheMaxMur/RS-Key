@@ -69,7 +69,7 @@ record carries all of them:
 | `aaguid` | the device AAGUID (hex) |
 | `backup` | `{sealed, has_seed}` — seed-export lifecycle |
 | `lock` | `{locked, unlocked}` — [soft-lock](soft-lock.md) state |
-| `org_attestation` | `{installed, chain_sha256}` |
+| `org_attestation` | `{installed, chain_unusable, chain_sha256}` — `chain_unusable` is `true` for an installed key whose chain the device cannot read back whole, which `list` prints as `chain UNUSABLE` ([repair](attestation.md#provisioning)); `chain_sha256` comes only with a usable chain |
 | `error` | populated if an applet threw mid-read |
 
 A foreign PC/SC reader that does not answer the rescue SELECT is skipped, not
@@ -229,7 +229,7 @@ what the tool saw and the device never vouched for.
   },
   "host_observations": {
     "device": "37bebfdca282523b",
-    "timestamp": "2026-06-13T14:22:09-04:00",
+    "timestamp": "<RFC 3339 timestamp>",
     "steps": {"otp": "ok", "oath": "ok", "piv": "ok", "openpgp": "ok",
               "fido_reset": "ok", "org_attestation": "cleared"},
     "journal_window": [{"seq": 412, "event": "RESET", "...": "..."}]
@@ -314,6 +314,36 @@ device's own OTP DEVK. A wipe tool cannot forge it.
 - **`head-mismatch` in `notes`** means the signed head did not fold from the
   window the device exported. Treat that as tampering or a broken device, not as
   a retryable error.
+- **A configuration lock code stays.** Offboarding leaves the enabled-applications
+  set and its [lock](#configuration-lock) as they were. Clear the code before the
+  key leaves (`ykman config set-lock-code -l <code> --clear`), or the next holder
+  cannot change which applications are on without it.
+
+## Configuration lock
+
+`ykman config set-lock-code` works as on a YubiKey 5.8.0. Once a code is set,
+changing which applications are enabled needs it, on every transport:
+
+```sh
+ykman config set-lock-code --generate          # prints the code; keep it
+ykman config usb --disable otp -L <code>       # later changes pass it
+ykman config set-lock-code -l <code> --clear   # remove the lock
+```
+
+Setting a code on a key that has none takes a touch of the key (a YubiKey asks
+none), so a host cannot set one behind your back; set one at provisioning anyway,
+since a touch given to the wrong prompt could, and a code you do not hold keeps
+every later change behind a wipe. Changing a code needs the current one.
+
+`ykman info` reports "Configured capabilities are protected by a lock code". The
+key keeps only a salted hash of the code, and counts no wrong tries, as a
+YubiKey counts none: `--generate` gives a code nobody can guess, and a code a
+person made up can be. A factory reset from the [trusted display](display.md) or an
+[`rsk-wipe`](https://github.com/TheMaxMur/RS-Key/blob/main/rsk-wipe/README.md)
+erase clears a lost code; a YubiKey has no such way back. The lock also shuts
+RS-Key's own USB identity and LED records, which no code opens: `rsk hw` and
+`rsk led` are refused until it is cleared. The trusted display's own settings stay
+open ([protocol.md §6.2](../protocol.md#62-configuration-lock)).
 
 ## See also
 

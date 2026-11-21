@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 RS-Key contributors
 
-//! Stage 5A п.5: the `present`/`decided` bitmap arithmetic over the WHOLE
+//! Stage 5A item 5: the `present`/`decided` bitmap arithmetic over the WHOLE
 //! shipped `u16` FID domain, not three bytes of it.
 //!
 //! `store_refinement_kani.rs` proves the aliasing clauses over a symbolic pair
 //! drawn from `0..FID_LIMIT`, and under `cfg(kani)` that limit is 24 — the
 //! shrink `FID_PRESENT_BYTES = 3` produces. The roadmap's own rule for that
-//! shrink is §7.2 п.5: say what stops being proved. What stops being proved is
+//! shrink is §7.2 item 5: say what stops being proved. What stops being proved is
 //! everything above bit 23, which is 99.96 % of the map, and extrapolating three
 //! bytes to 8192 is the error the stage names.
 //!

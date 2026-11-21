@@ -107,10 +107,10 @@ MAINTAINER_VERDICTS = ("defends-nothing", "would-overclaim")
 
 #: Floors AT today's counts, in the shape the rest of `scripts/` uses them: a
 #: derivation that finds nothing satisfies every rule below over an empty roster.
-#: 50 clauses is the page as it stands and 40 the P0 family as the tranches stand;
+#: 50 clauses is the page as it stands and 41 the P0 family as the tranches stand;
 #: shrinking either for real is a deliberate edit here, in the same diff.
 FLOOR_CLAUSES = 50
-FLOOR_P0 = 40
+FLOOR_P0 = 41
 #: The untraced list is a finding register, and a finding register that grows
 #: silently is a hatch. Raising this is the deliberate admission that another
 #: property has no threat behind it. THIS row holds it as a strict upper bound;

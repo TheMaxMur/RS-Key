@@ -189,6 +189,12 @@ fn a_cancel_reaches_a_job_waiting_for_a_touch() {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let address = listener.local_addr().unwrap();
 
+    let mut client = TcpStream::connect(address).unwrap();
+    client
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .unwrap();
+    let (mut stream, _) = listener.accept().unwrap();
+
     let signals = Arc::new(Signals::default());
     signals.set_wait_scope(SCOPE_FIDO);
     signals.begin(CID);
@@ -212,12 +218,15 @@ fn a_cancel_reaches_a_job_waiting_for_a_touch() {
         while !device.cancelled() && Instant::now() < deadline {
             std::thread::sleep(Duration::from_millis(5));
         }
+        assert!(
+            device.cancelled(),
+            "the job timed out before receiving CANCEL"
+        );
         let _ = req.reply.send(Some(vec![0x2d]));
     });
 
     let (done_tx, done) = mpsc::channel();
     std::thread::spawn(move || {
-        let (mut stream, _) = listener.accept().unwrap();
         let job = Job::Cbor {
             cid: CID,
             data: vec![0x0b],
@@ -226,10 +235,6 @@ fn a_cancel_reaches_a_job_waiting_for_a_touch() {
         done_tx.send(out.unwrap()).unwrap();
     });
 
-    let mut client = TcpStream::connect(address).unwrap();
-    client
-        .set_read_timeout(Some(Duration::from_secs(5)))
-        .unwrap();
     let mut msg = [0u8; HID_RPT_SIZE];
     client.read_exact(&mut msg).unwrap();
     assert_eq!(msg[4], CTAPHID_KEEPALIVE);

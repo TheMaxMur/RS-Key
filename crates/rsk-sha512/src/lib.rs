@@ -69,7 +69,7 @@ fn core_finalize(state: &mut [u64; 8], block_len: u128, buffer: &mut Sha512Buffe
     buffer.len128_padding_be(bit_len, |b| {
         sha512_compress(state, core::slice::from_ref(b))
     });
-    for (chunk, word) in out.chunks_exact_mut(8).zip(state.iter()) {
+    for (chunk, word) in out.as_chunks_mut::<8>().0.iter_mut().zip(state.iter()) {
         chunk.copy_from_slice(&word.to_be_bytes());
     }
 }

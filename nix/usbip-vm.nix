@@ -24,6 +24,7 @@
   system,
   rskPython,
   ccidOverlay,
+  sdl2,
 }:
 (nixpkgs.lib.nixosSystem {
   inherit system;
@@ -31,11 +32,23 @@
     (nixpkgs + "/nixos/modules/virtualisation/qemu-vm.nix")
     (
       { pkgs, config, ... }:
+      let
+        # OpenSC with its PKCS#11 suite: nixpkgs builds it without cmocka, and
+        # p11test is a noinst program, so neither the suite nor its binary ships.
+        opensc-p11test = pkgs.opensc.overrideAttrs (old: {
+          pname = "opensc-p11test";
+          buildInputs = old.buildInputs ++ [ pkgs.cmocka ];
+          configureFlags = (old.configureFlags or [ ]) ++ [ "--enable-cmocka" ];
+          postInstall = (old.postInstall or "") + ''
+            install -Dm755 src/tests/p11test/p11test $out/bin/p11test
+          '';
+        });
+      in
       {
         # The whole reason this guest exists.
         boot.kernelModules = [ "vhci-hcd" ];
 
-        # pcscd binds by USB id, and the default RS-Key identity (0x1209:0x0001)
+        # pcscd binds by USB id, and the default RS-Key identity (0x1209:0xF1D2)
         # is not in the stock driver's list — the CCID interface would be skipped
         # silently and every card suite would read as "applet missing". Same
         # overlay `docs/linux.md` tells a user to add.
@@ -48,6 +61,9 @@
           config.boot.kernelPackages.usbip
           pkgs.gnupg # the OpenPGP suites shell out to gpg-connect-agent
           pkgs.yubikey-manager # `ykman otp chalresp --touch` arms the slot 77 needs
+          opensc-p11test # `tests/p11test/run.sh`
+          pkgs.picotool # image PICOBOOT and UF2 clients
+          pkgs.gcc-arm-embedded # `arm-none-eabi-nm` locates the image's KV fence
         ];
 
         # Boot time is the budget here: this runs under TCG on every PR, so the
@@ -76,6 +92,7 @@
             out = {
               source = "\"$RSK_OUT\"";
               target = "/out";
+              writable = true;
             };
           };
         };
@@ -85,6 +102,12 @@
         # console is the log.
         systemd.services.rsk-usbip-suites = {
           description = "RS-Key: the suites that need a real USB stack";
+          # Cargo builds have no Nix RPATH. SDL2 is linked even without --display.
+          environment.LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath [
+            sdl2
+            pkgs.systemd
+            pkgs.pcsclite
+          ];
           wantedBy = [ "multi-user.target" ];
           after = [
             "network-online.target"
@@ -95,6 +118,10 @@
             rskPython
             config.boot.kernelPackages.usbip
             pkgs.yubikey-manager
+            opensc-p11test
+            pkgs.picotool
+            pkgs.gcc-arm-embedded
+            pkgs.diffutils # p11test's result against its reference
             pkgs.kmod
             pkgs.coreutils
             pkgs.gnugrep

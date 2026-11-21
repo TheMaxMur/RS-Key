@@ -1,86 +1,27 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 RS-Key contributors
 
-//! PKCS#1 v1.5 (RFC 8017): the DigestInfo encoding the signature paths build,
-//! the two signers over it — one on the asm CRT core ([`crate::crt`]), one on a
-//! full [`RsaKey`] for the PIV certificate path — the decryption both DECIPHER
-//! arms end in, and the constant-time unpadding they read the block back with.
+//! PKCS#1 v1.5 (RFC 8017): the signer on the fixed-width CRT core ([`crate::crt`]) over
+//! the bytes a host sends, the decryption both DECIPHER arms end in, and the
+//! constant-time unpadding they read the block back with.
 //!
 //! Every structural test in that unpad is a mask, never a branch: which of the
 //! four ways an EM can be malformed must not be timeable, or the status word's
 //! padding oracle gains a finer-grained sibling.
 
-use zeroize::Zeroize;
+use rsk_secret::Secret;
 
 use crate::{MAX_RSA_BYTES, Rng, RsaError, RsaKey};
 
-/// PKCS#1 DigestInfo prefixes (`SEQ { SEQ { OID, NULL }, OCTET STRING }` header,
-/// without the trailing hash) for the five hashes `rsa_sign_em` recognises.
-pub(crate) const DI_SHA1: &[u8] = &[
-    0x30, 0x21, 0x30, 0x09, 0x06, 0x05, 0x2b, 0x0e, 0x03, 0x02, 0x1a, 0x05, 0x00, 0x04, 0x14,
-];
-pub(crate) const DI_SHA224: &[u8] = &[
-    0x30, 0x2d, 0x30, 0x0d, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x04, 0x05,
-    0x00, 0x04, 0x1c,
-];
-pub(crate) const DI_SHA256: &[u8] = &[
-    0x30, 0x31, 0x30, 0x0d, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x01, 0x05,
-    0x00, 0x04, 0x20,
-];
-pub(crate) const DI_SHA384: &[u8] = &[
-    0x30, 0x41, 0x30, 0x0d, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x02, 0x05,
-    0x00, 0x04, 0x30,
-];
-pub(crate) const DI_SHA512: &[u8] = &[
-    0x30, 0x51, 0x30, 0x0d, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x03, 0x05,
-    0x00, 0x04, 0x40,
-];
-const DIGESTINFOS: [(&[u8], usize); 5] = [
-    (DI_SHA1, 20),
-    (DI_SHA224, 28),
-    (DI_SHA256, 32),
-    (DI_SHA384, 48),
-    (DI_SHA512, 64),
-];
-
-/// Largest DigestInfo `rsa_sign_em` builds: 19-byte prefix (SHA-512) + 64-byte hash.
-pub const MAX_RSA_DIGESTINFO: usize = 19 + 64;
-
-/// Find the recognised DigestInfo prefix + hash for a canonical PKCS#1 DigestInfo
-/// (`SEQ { SEQ { OID, NULL }, OCTET STRING }`). gpg always sends the canonical
-/// form, so a prefix + exact-length match identifies it without a full DER walk.
-fn match_digestinfo(data: &[u8]) -> Option<(&'static [u8], &[u8])> {
-    for (prefix, hlen) in DIGESTINFOS {
-        if data.len() == prefix.len() + hlen && data.starts_with(prefix) {
-            return Some((prefix, &data[prefix.len()..]));
-        }
-    }
-    None
-}
-
-/// Decide what PKCS#1 v1.5 should sign: write the canonical DigestInfo
-/// (`prefix ‖ hash`) for a recognised DigestInfo or a bare hash whose length
-/// names the algorithm into `em`, returning its length; `None` means neither (the
-/// raw private-op fallback). Pure (no key / modexp), so the `openpgp_rsa_sign`
-/// fuzz target exercises the parser + buffer construction at full speed.
-pub fn rsa_sign_em(data: &[u8], em: &mut [u8; MAX_RSA_DIGESTINFO]) -> Option<usize> {
-    let (prefix, hash): (&[u8], &[u8]) = if let Some(di) = match_digestinfo(data) {
-        di
-    } else {
-        let &(prefix, _) = DIGESTINFOS.iter().find(|&&(_, hlen)| hlen == data.len())?;
-        (prefix, data)
-    };
-    let dlen = prefix.len() + hash.len();
-    em[..prefix.len()].copy_from_slice(prefix);
-    em[prefix.len()..dlen].copy_from_slice(hash);
-    Some(dlen)
-}
+/// PKCS#1 v1.5's framing: `00 01|02`, at least eight bytes of padding and the `00`
+/// separator, so a block of `k` bytes carries at most `k − 11` (RFC 8017 §9.2).
+pub const PKCS1_V15_OVERHEAD: usize = 11;
 
 /// Write the EMSA-PKCS1-v1_5 block `00 01 PS 00 ‖ di` for an `mlen`-byte modulus
 /// into the pre-zeroed `em` (RFC 8017 §9.2). `PS` is `0xFF`·(mlen−dlen−3), and
 /// the width check is what holds it to the mandatory eight bytes.
 fn emsa_block(di: &[u8], mlen: usize, em: &mut [u8]) -> Result<(), RsaError> {
-    if mlen < di.len() + 11 {
+    if mlen < di.len() + PKCS1_V15_OVERHEAD {
         return Err(RsaError::BadWidth);
     }
     let ps_end = mlen - di.len() - 1;
@@ -90,11 +31,11 @@ fn emsa_block(di: &[u8], mlen: usize, em: &mut [u8]) -> Result<(), RsaError> {
     Ok(())
 }
 
-/// PKCS#1 v1.5 sign over the supplied data with the cached CRT params on the
-/// UMAAL asm. If `data` is a DigestInfo (or a bare hash whose length names the
-/// algorithm), build the EMSA-PKCS1-v1_5 encoding and sign that; otherwise treat
-/// `data` as a raw block. Either way the block runs through the blinded,
-/// Bellcore-fault-checked private op ([`crate::crt::private_op`]).
+/// PKCS#1 v1.5 over `data` exactly as given, with the cached CRT params on the
+/// fixed-width CRT: `00 01 FF… 00 ‖ data` through the blinded, Bellcore-fault-checked
+/// private op ([`crate::crt::private_op`]). This is how a YubiKey 5.8.0 signs for
+/// OpenPGP: a DigestInfo is what a conformant host sends, a bare hash is not
+/// wrapped in one, and nothing is signed raw. `BadWidth` past `mlen − 11` bytes.
 pub fn rsa_sign_crt(
     crt: &crate::crt::RsaCrt,
     data: &[u8],
@@ -103,55 +44,14 @@ pub fn rsa_sign_crt(
 ) -> Result<usize, RsaError> {
     let mlen = crt.modulus_len();
     let mut em = [0u8; MAX_RSA_BYTES];
-    let mut di = [0u8; MAX_RSA_DIGESTINFO];
-    match rsa_sign_em(data, &mut di) {
-        Some(dlen) => emsa_block(&di[..dlen], mlen, &mut em)?,
-        // gpg never reaches this — it always sends a DigestInfo — but a raw block
-        // still signs (left-padded to the modulus width) through the same blinded,
-        // fault-checked op, so no non-conformant caller sees a different path.
-        None => {
-            if data.len() > mlen {
-                return Err(RsaError::BadBlock);
-            }
-            em[mlen - data.len()..mlen].copy_from_slice(data);
-        }
-    }
+    emsa_block(data, mlen, &mut em)?;
     crate::crt::private_op(crt, &em[..mlen], rng, out)
-}
-
-/// PKCS#1 v1.5 over the supplied data with a full [`RsaKey`], on the software
-/// private op. Used by the PIV x509 cert-signing path (`rsk_piv::x509`), whose
-/// key may be any width an IMPORT accepted; the OpenPGP applet's own PSO:CDS /
-/// INTERNAL AUTHENTICATE use [`rsa_sign_crt`] (asm). If it is a DigestInfo (or a
-/// bare hash whose length names the algorithm), sign that digest; otherwise fall
-/// back to the raw private operation.
-pub fn rsa_sign(
-    key: &RsaKey,
-    data: &[u8],
-    rng: &mut dyn Rng,
-    out: &mut [u8],
-) -> Result<usize, RsaError> {
-    let mut di = [0u8; MAX_RSA_DIGESTINFO];
-    let Some(dlen) = rsa_sign_em(data, &mut di) else {
-        return rsa_raw(key, data, out, rng);
-    };
-    let mlen = key.size();
-    if mlen > MAX_RSA_BYTES {
-        return Err(RsaError::Failed);
-    }
-    let mut em = [0u8; MAX_RSA_BYTES];
-    // Every failure past the DigestInfo parse is `Failed` — the one status word
-    // (`EXEC_ERROR`) the `rsa` crate's `sign_with_rng` could answer here, and
-    // `rsk-piv`'s certificate path still keys off it.
-    emsa_block(&di[..dlen], mlen, &mut em).map_err(|_| RsaError::Failed)?;
-    key.private_op(&em[..mlen], rng, out)
-        .map_err(|_| RsaError::Failed)
 }
 
 /// PKCS#1 v1.5 decryption with a full [`RsaKey`], on the software private op —
 /// the arm PSO:DECIPHER falls back to for a legacy `P‖Q` key whose prime width
-/// the asm CRT core cannot take. Same blinded, Bellcore-fault-checked operation
-/// and the same constant-time [`unpad_encrypt`] as the asm arm.
+/// the fixed-width CRT core cannot take. Same blinded, Bellcore-fault-checked operation
+/// and the same constant-time [`unpad_encrypt`] as the CRT arm.
 pub fn rsa_decrypt(
     key: &RsaKey,
     ct: &[u8],
@@ -162,46 +62,12 @@ pub fn rsa_decrypt(
     if mlen > MAX_RSA_BYTES {
         return Err(RsaError::BadWidth);
     }
-    let mut em = [0u8; MAX_RSA_BYTES];
+    let mut em = Secret::<[u8; MAX_RSA_BYTES]>::zeroed();
     let res = key
-        .private_op(ct, rng, &mut em[..mlen])
-        .and_then(|_| unpad_encrypt(&em[..mlen], out));
-    em.zeroize();
+        .private_op(ct, rng, &mut em.expose_mut()[..mlen])
+        .and_then(|_| unpad_encrypt(&em.expose()[..mlen], out));
+    em.wipe();
     res
-}
-
-/// Run the raw RSA private operation `m^d mod n` (no padding scheme). gpg never
-/// reaches this — it always sends a DigestInfo — but the operation is
-/// base-blinded `(m·rᵉ)ᵈ·r⁻¹ mod n` with a fresh random `r`, so even a
-/// non-conformant caller cannot turn `num-bigint-dig`'s variable-time
-/// exponentiation into a Marvin-style timing oracle on the private exponent.
-fn rsa_raw(
-    key: &RsaKey,
-    data: &[u8],
-    out: &mut [u8],
-    rng: &mut dyn Rng,
-) -> Result<usize, RsaError> {
-    use num_bigint_dig::BigUint;
-    let key_size = key.size();
-    if key_size > MAX_RSA_BYTES {
-        return Err(RsaError::BadWidth);
-    }
-    if data.len() > key_size {
-        return Err(RsaError::BadBlock);
-    }
-    let (n, e, d) = (key.n(), key.e(), key.d());
-    let m = BigUint::from_bytes_be(data);
-    let (r, r_inv) = crate::key::blind_pair(n, key_size, rng);
-    let blinded = (&m * r.modpow(e, n)) % n;
-    let res = (blinded.modpow(d, n) * &*r_inv) % n;
-    let rb = res.to_bytes_be();
-    if rb.len() > key_size {
-        return Err(RsaError::Failed);
-    }
-    let off = key_size - rb.len();
-    out[..off].fill(0);
-    out[off..key_size].copy_from_slice(&rb);
-    Ok(key_size)
 }
 
 /// `0xFF` when `a == b`, `0x00` otherwise.
@@ -266,3 +132,7 @@ pub fn unpad_encrypt(em: &[u8], out: &mut [u8]) -> Result<usize, RsaError> {
 #[cfg(test)]
 #[path = "pkcs1v15_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "pkcs1v15_wycheproof_tests.rs"]
+mod wycheproof_tests;

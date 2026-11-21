@@ -124,3 +124,14 @@ fn u2f_authenticate_signature_verifies() {
     signed.extend_from_slice(&CHAL);
     super::verify_p256(x, y, &signed, &r[5..]);
 }
+
+#[test]
+fn an_untouched_u2f_registration_returns_no_key_material() {
+    let mut authenticator = Authr::declining();
+    let generation = authenticator.fs.write_gen();
+    assert_eq!(
+        authenticator.send_u2f(&ext(0, CTAP_REGISTER, 0, &register_data())),
+        (Sw::CONDITIONS_NOT_SATISFIED, vec![])
+    );
+    assert_eq!(authenticator.fs.write_gen(), generation);
+}

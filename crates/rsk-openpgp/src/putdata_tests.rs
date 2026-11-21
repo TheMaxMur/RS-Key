@@ -23,6 +23,7 @@ fn dev() -> Device<'static> {
         serial_hash: &[0x44; 32],
         serial_id: &[1, 2, 3, 4, 5, 6, 7, 8],
         otp_key: None,
+        latched: false,
     }
 }
 
@@ -101,6 +102,79 @@ fn changing_algo_attr_invalidates_the_key_pair() {
     assert_eq!(put_data(&mut fs, &sess, EF_ALGO_SIG, &ed25519), Sw::OK);
     assert!(!fs.has_data(EF_PK_SIG.get()));
     assert!(!fs.has_data(EF_PB_SIG));
+}
+
+/// What a YubiKey 5.8.0 does with an RSA attribute: any exponent length from 17
+/// bits (65537's) is taken and stored as 17; 16 bits, a sixth byte other than the
+/// standard import format, or a value that is not six bytes long is `6A80`.
+#[test]
+fn rsa_attributes_take_any_exponent_length_from_17_bits_and_store_17() {
+    let (mut fs, mut sess) = setup();
+    admin(&mut fs, &mut sess);
+    for e_bits in [[0x00, 0x11], [0x00, 0x18], [0x00, 0x20], [0x01, 0x00]] {
+        let attr = [ALGO_RSA, 0x0C, 0x00, e_bits[0], e_bits[1], 0x00];
+        assert_eq!(
+            put_data(&mut fs, &sess, EF_ALGO_SIG, &attr),
+            Sw::OK,
+            "{attr:02x?}"
+        );
+        let mut stored = [0u8; 8];
+        let n = fs.read(EF_ALGO_PRIV1, &mut stored).unwrap();
+        assert_eq!(&stored[..n], &[ALGO_RSA, 0x0C, 0x00, 0x00, 0x11, 0x00]);
+    }
+    for attr in [
+        &[ALGO_RSA, 0x08, 0x00, 0x00, 0x10, 0x00][..],
+        &[ALGO_RSA, 0x08, 0x00, 0x00, 0x11, 0x01],
+        &[ALGO_RSA, 0x08, 0x00, 0x00, 0x11, 0x03],
+        &[ALGO_RSA, 0x08, 0x00, 0x00, 0x11],
+        &[ALGO_RSA, 0x08, 0x00, 0x00, 0x11, 0x00, 0x00],
+    ] {
+        assert_eq!(
+            put_data(&mut fs, &sess, EF_ALGO_SIG, attr),
+            Sw::WRONG_DATA,
+            "{attr:02x?}"
+        );
+    }
+}
+
+/// The key stays when only the exponent length differs — the stored value does not
+/// change — and goes when the size does, as on a YubiKey 5.8.0. An attribute an
+/// older build stored as sent (e length 32) counts as the same one.
+#[test]
+fn another_exponent_length_keeps_the_key_and_another_size_retires_it() {
+    let (mut fs, mut sess) = setup();
+    admin(&mut fs, &mut sess);
+    fs.put(EF_ALGO_PRIV1, &[ALGO_RSA, 0x08, 0x00, 0x00, 0x20, 0x00])
+        .unwrap();
+    fs.put(EF_PK_SIG.get(), &[0xAA; 16]).unwrap();
+    fs.put(EF_PB_SIG, &[0xBB; 16]).unwrap();
+
+    for e_bits in [0x11, 0x20] {
+        let attr = [ALGO_RSA, 0x08, 0x00, 0x00, e_bits, 0x00];
+        assert_eq!(put_data(&mut fs, &sess, EF_ALGO_SIG, &attr), Sw::OK);
+        assert!(
+            fs.has_data(EF_PK_SIG.get()),
+            "e length {e_bits:#04x} retired the key"
+        );
+        assert!(fs.has_data(EF_PB_SIG));
+    }
+    let rsa3k = [ALGO_RSA, 0x0C, 0x00, 0x00, 0x11, 0x00];
+    assert_eq!(put_data(&mut fs, &sess, EF_ALGO_SIG, &rsa3k), Sw::OK);
+    assert!(!fs.has_data(EF_PK_SIG.get()));
+    assert!(!fs.has_data(EF_PB_SIG));
+}
+
+/// Only C1/C2/C3 are attributes: a six-byte value that happens to read as RSA is
+/// stored as sent anywhere else.
+#[test]
+fn a_value_shaped_like_an_rsa_attribute_is_stored_as_sent_elsewhere() {
+    let (mut fs, mut sess) = setup();
+    admin(&mut fs, &mut sess);
+    let value = [ALGO_RSA, 0x08, 0x00, 0x00, 0x20, 0x00];
+    assert_eq!(put_data(&mut fs, &sess, EF_LOGIN_DATA, &value), Sw::OK);
+    let mut stored = [0u8; 8];
+    let n = fs.read(EF_LOGIN_DATA, &mut stored).unwrap();
+    assert_eq!(&stored[..n], &value);
 }
 
 #[test]
@@ -383,4 +457,15 @@ fn a_faulted_public_slot_probe_does_not_skip_its_retirement() {
     // With every probe answering, the retirement completes.
     assert_eq!(put_data(&mut fs, &sess, EF_ALGO_SIG, DEFAULT_ALGO), Sw::OK);
     assert!(!fs.has_data(EF_PB_SIG));
+}
+
+#[test]
+fn a_missing_pw_status_is_not_recreated_by_an_authenticated_update() {
+    let (mut fs, mut sess) = setup();
+    admin(&mut fs, &mut sess);
+    fs.delete(EF_PW_PRIV).unwrap();
+    let generation = fs.write_gen();
+    assert_eq!(put_pw_status(&mut fs, &sess, &[1]), Sw::REFERENCE_NOT_FOUND);
+    assert_eq!(fs.write_gen(), generation);
+    assert!(sess.has_pw3);
 }

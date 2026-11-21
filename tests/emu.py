@@ -55,10 +55,13 @@ CCID_XFR_BLOCK = 0x6F
 CCID_DATA_BLOCK_RET = 0x80
 CCID_SLOT_STATUS_RET = 0x81
 CCID_HEADER = 10
-# bmCommandStatus (bStatus bits 7:6) == 01 — "time extension requested": the card
-# is still working, and the answer is the message after it.
+# bmCommandStatus (bStatus bits 7:6): `10` is "time extension requested", the card
+# still working and the answer the message after it; `01` is a command that failed.
 CCID_STATUS_MASK = 0xC0
 CCID_STATUS_TIMEEXT = 0x80
+CCID_STATUS_FAILED = 0x40
+# What pcsc-lite makes of a block libccid reports failed: that one transmit fails.
+SCARD_E_NOT_TRANSACTED = 0x80100016
 
 # An on-card RSA-4096 keygen is the slowest thing the card socket ever answers.
 CARD_TIMEOUT_S = 300
@@ -66,15 +69,6 @@ CARD_TIMEOUT_S = 300
 # Exit code for a suite the emulator cannot serve — the autotools convention, so
 # a sweep can count skips apart from both passes and failures.
 EXIT_SKIP = 77
-
-# Suites that need the Yubico card identity — the emulator has it, but only when
-# started `--yubico`. Skipped by *asking the card* rather than by a fixed entry
-# below: the identity is a runtime choice, and a hardcoded skip would go on
-# refusing a run that would have passed.
-NEEDS_YUBICO = {"30_ccid_transport": "asserts the Yubico ATR — start the emulator with --yubico"}
-# The Yubico ATR's first two bytes (`rsk_usb::ccid::ATR_YUBIKEY`); the RS-Key one
-# differs from byte 1 on.
-ATR_YUBICO_PREFIX = bytes([0x3B, 0xFD])
 
 # What the emulator has nothing to answer with, and why. Each of these fails on
 # the emulator for a reason that is not a defect, so it is refused before it
@@ -92,6 +86,9 @@ UNSUPPORTED = {
     "02_usb_interfaces": "reads the USB descriptors; this shim serves reports",
     "73_otp_keyboard": "drives the OTP keyboard interface over raw USB",
     "77_otp_touch_wait": "drives the OTP keyboard interface over raw USB",
+    "100_trustzone_usb_regressions": "resets and inspects physical USB through PyUSB",
+    "101_trustzone_otp_status": "exchanges OTP feature reports through raw USB",
+    "108_trustzone_hardware": "uses a selected physical USB key; run its model subcommand directly",
     "53_ccid_pinpad": "needs the PC/SC reader's FEATURE_VERIFY_PIN_DIRECT layer",
     # Faking python-fido2's own transport would leave the suite testing this shim
     # instead of a third-party client, which is the whole point of it. Under
@@ -101,7 +98,23 @@ UNSUPPORTED = {
     # Hardware by definition.
     "29_reset_power_cut": "cuts physical USB power during a flash write",
     "54_sram_residue": "measures SRAM residue on a real chip",
+    "55_stack_residue": "probes the dead stack of a `--features bench` board image",
+    "105_fido_getinfo_latency": "needs physical XIP-cache timing; neither backend models misses",
     "90_otp_mkek_migration": "migrates the OTP MKEK; the emulator has no fuses",
+}
+
+# These suites own their image, inspection socket or fault injection.
+IMAGE_ONLY = {
+    "103_trustzone_configuration",
+    "104_trustzone_late_reset",
+    "106_trustzone_rsa_events",
+    "107_trustzone_fault_recovery",
+    "94_trustzone_keepalive",
+    "95_trustzone_crypto_keepalive",
+    "96_trustzone_sessions",
+    "97_trustzone_isolation",
+    "98_trustzone_presence",
+    "99_trustzone_core1_fault",
 }
 
 # Suites that take a mandatory argument, and the flag each needs. Run without it
@@ -216,11 +229,8 @@ def _enumerate(vid=0, pid=0):
         {
             "path": EMU_PATH,
             "vendor_id": 0x1209,
-            # The default build's identity (`VIDPID=RSKey`), which is also what
-            # `--usbip` presents. It was 0x000D here and in the USB/IP device
-            # info — a number neither the firmware nor its build script has ever
-            # produced, written twice from the same guess.
-            "product_id": 0x0001,
+            # Match the firmware's RSKey preset and the native USB/IP backend.
+            "product_id": 0xF1D2,
             "serial_number": EMU_SERIAL,
             "product_string": EMU_PRODUCT,
             "manufacturer_string": "RS-Key",
@@ -236,7 +246,12 @@ class SmartcardException(Exception):
 
 
 class CardConnectionException(SmartcardException):
-    pass
+    """`hresult` as pyscard sets it: 0 for a transmit that worked and brought back no
+    status word, the stack's `SCARD_E_*` code for one that failed, -1 for the rest."""
+
+    def __init__(self, message="", hresult=-1):
+        super().__init__(message)
+        self.hresult = hresult
 
 
 class NoCardException(SmartcardException):
@@ -246,6 +261,25 @@ class NoCardException(SmartcardException):
 
 
 class CardRequestTimeoutException(SmartcardException):
+    pass
+
+
+class ExclusiveConnectCardConnection:
+    """pyscard's exclusive-access wrapper, which ykman opens every card through. The
+    emulator's card has one client by construction, so it only delegates."""
+
+    def __init__(self, connection):
+        self.connection = connection
+
+    def __getattr__(self, name):
+        return getattr(self.connection, name)
+
+
+class ListReadersException(SmartcardException):
+    pass
+
+
+class EstablishContextException(SmartcardException):
     pass
 
 
@@ -310,7 +344,9 @@ class EmuCard:
             raise CardConnectionException("transmit on a card that is not connected")
         resp = self._exchange(CCID_XFR_BLOCK, bytes(apdu))
         if len(resp) < 2:
-            raise CardConnectionException(f"response shorter than a status word: {resp.hex()}")
+            raise CardConnectionException(
+                f"response shorter than a status word: {resp.hex()}", hresult=0
+            )
         return list(resp[:-2]), resp[-2], resp[-1]
 
     def reconnect(self, protocol=None, mode=None, disposition=None):
@@ -333,8 +369,9 @@ class EmuCard:
     def _exchange(self, msg_type, payload=b""):
         """Send one `PC_to_RDR` and return the answering message's body, stepping
         over the time extensions a slow command (on-card RSA keygen) streams
-        first. Checks what a driver checks — the echoed sequence and the reply
-        type — because a client that accepts any framing tests none of it."""
+        first. Checks what a driver checks — the echoed sequence, and a block the
+        reader answers failed — because a client that accepts any framing tests none
+        of it."""
         self.seq = (self.seq + 1) & 0xFF
         header = bytes([msg_type]) + len(payload).to_bytes(4, "little") + bytes(
             [0x00, self.seq, 0x00, 0x00, 0x00]
@@ -353,6 +390,11 @@ class EmuCard:
                 raise CardConnectionException(f"bSeq {resp[6]} answering {self.seq}")
             if resp[0] == CCID_DATA_BLOCK_RET and resp[7] & CCID_STATUS_MASK == CCID_STATUS_TIMEEXT:
                 continue
+            if msg_type == CCID_XFR_BLOCK and resp[7] & CCID_STATUS_MASK == CCID_STATUS_FAILED:
+                raise CardConnectionException(
+                    f"the reader refused the block: bError {resp[8]:02X}",
+                    hresult=SCARD_E_NOT_TRANSACTED,
+                )
             dw = int.from_bytes(resp[1:5], "little")
             if len(resp) < CCID_HEADER + dw:
                 raise CardConnectionException(f"dwLength {dw} over {len(resp)} bytes")
@@ -389,6 +431,9 @@ def install():
     fake = types.ModuleType("hid")
     fake.device = EmuHid
     fake.enumerate = _enumerate
+    # `_enumerate`'s descriptor fields are placeholders, not the emulator's; a
+    # caller that would report them as USB descriptors checks this first.
+    fake.NO_USB_STACK = True
     sys.modules["hid"] = fake
     _install_smartcard()
     _patch_replug()
@@ -425,6 +470,18 @@ def _install_smartcard():
     exceptions.NoCardException = NoCardException
     exceptions.CardRequestTimeoutException = CardRequestTimeoutException
 
+    exclusive = types.ModuleType("smartcard.ExclusiveConnectCardConnection")
+    exclusive.ExclusiveConnectCardConnection = ExclusiveConnectCardConnection
+
+    # ykman imports the PC/SC exceptions; `PCSCContext` it only tries after one.
+    pcsc = types.ModuleType("smartcard.pcsc")
+    pcsc.__path__ = []
+    pcsc_exceptions = types.ModuleType("smartcard.pcsc.PCSCExceptions")
+    pcsc_exceptions.ListReadersException = ListReadersException
+    pcsc_exceptions.EstablishContextException = EstablishContextException
+    pcsc.PCSCExceptions = pcsc_exceptions
+    sys.modules["smartcard.pcsc.PCSCExceptions"] = pcsc_exceptions
+
     sys.modules["smartcard"] = pkg
     for name, module in (
         ("System", system),
@@ -433,6 +490,8 @@ def _install_smartcard():
         ("CardType", card_type),
         ("CardRequest", card_request),
         ("Exceptions", exceptions),
+        ("ExclusiveConnectCardConnection", exclusive),
+        ("pcsc", pcsc),
     ):
         sys.modules[f"smartcard.{name}"] = module
         setattr(pkg, name, module)
@@ -467,19 +526,6 @@ def _patch_replug():
     replug.wait_back = wait_back
 
 
-def _card_identity():
-    """The ATR the emulator is serving, or `None` when the card socket is not
-    there to ask."""
-    try:
-        card = EmuCard()
-        card.connect()
-        atr = bytes(card.getATR())
-        card.disconnect()
-        return atr
-    except Exception:
-        return None
-
-
 def main():
     if len(sys.argv) < 2:
         sys.exit(f"usage: {sys.argv[0]} <test script> [args…]")
@@ -488,15 +534,13 @@ def main():
     if name in UNSUPPORTED:
         print(f"SKIP: {name} — {UNSUPPORTED[name]}. Run it against a board.")
         sys.exit(EXIT_SKIP)
+    if name in IMAGE_ONLY:
+        print(f"SKIP: {name} — run directly with its TrustZone image fixtures.")
+        sys.exit(EXIT_SKIP)
     flag = NEEDS_ARGS.get(name)
     if flag and not any(a == flag or a.startswith(f"{flag}=") for a in sys.argv[2:]):
         print(f"SKIP: {name} — it needs {flag}. Re-run as: {sys.argv[0]} {target} {flag} <value>")
         sys.exit(EXIT_SKIP)
-    if name in NEEDS_YUBICO:
-        atr = _card_identity()
-        if atr is None or not atr.startswith(ATR_YUBICO_PREFIX):
-            print(f"SKIP: {name} — {NEEDS_YUBICO[name]}.")
-            sys.exit(EXIT_SKIP)
     install()
     sys.argv = sys.argv[1:]
     # The suites add their own directory to sys.path for `_device`; do it here

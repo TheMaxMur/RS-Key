@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 RS-Key contributors
 
-#![no_main]
+#![cfg_attr(not(test), no_main)]
 
 //! Stateful cross-applet fuzzing over the *shipped* wiring. Every other applet
 //! target drives ONE applet from a fresh state; this one builds the real
@@ -32,14 +32,16 @@
 //! | `0xF1` | `reset_card()` — the ICC power transition |
 //! | `0xF2` | `reset_chaining()` — what the out-of-band on-pad VERIFY does first |
 //! | `0xF3` | `refresh_enabled()` — re-read the capability mask from flash |
-//! | `0xF4` | `factory_wipe()` — the device-wide reset |
+//! | `0xF4` | `Fs::factory_wipe` as the trusted display runs it — the device-wide reset |
 //! | `0xF5` | `handle_otp_hid(slot, payload)` — the keyboard interface |
 //! | `0xF6` | WRITE CONFIG `USB_ENABLED = be16(hi, lo)` — the capability mask |
+//! | `0xF7` | a scripted OATH SET CODE / VALIDATE route (algorithm, secret, challenge, variants); builds real APDUs and checks the HMACs |
 //! | anything else | a raw APDU, framed by `apdu_frame::next_frame`: one length byte then that many bytes, or `0xFF` for the extended-Lc escape |
 //!
 //! Beyond not panicking, the oracle is the set of rules this crate owns and no
-//! applet can enforce for itself: a reply always carries its status word and fits
-//! one CCID frame; an application the capability mask has disabled answers
+//! applet can enforce for itself: a reply carries its status word and fits one
+//! CCID frame, or is empty for a class the card does not serve and for no other;
+//! an application the capability mask has disabled answers
 //! `FILE_NOT_FOUND` to SELECT and an ungated one never does; a card reset leaves
 //! nothing selected for the PIN pad to paint for; READ CONFIG never goes silent;
 //! the mask never reports a capability this build does not have; a factory wipe
@@ -48,17 +50,24 @@
 
 use core::cell::RefCell;
 
-use libfuzzer_sys::fuzz_target;
+#[cfg(not(test))]
+use libfuzzer_sys as fuzzing;
 // DeviceInfo's `USB_ENABLED` tag — the one writable field that decides which
 // applets exist.
 use rsk_devconf::raw::TAG_USB_ENABLED;
 use rsk_device::{CcidApplets, Hooks};
 use rsk_fs::Fs;
 use rsk_fs::storage::ram::RamStorage;
+use rsk_sdk::apdu::INS_GET_RESPONSE;
 use rsk_sdk::{Apdu, Sw};
 
 mod apdu_frame;
 use apdu_frame::next_frame;
+
+mod cross_applet_oath;
+mod cross_applet_oath_script;
+use cross_applet_oath::OathOracle;
+use cross_applet_oath_script::oath_script;
 
 const SERIAL_ID: [u8; 8] = [0x12, 0x34, 0x56, 0x78, 1, 2, 3, 4];
 const SERIAL_HASH: [u8; 32] = [0x22; 32];
@@ -71,6 +80,7 @@ const INS_GENERATE: u8 = 0x47;
 /// The ykman vendor commands the FIDO transport serves: READ CONFIG must always
 /// answer, and WRITE CONFIG is its ungated twin on the default build.
 const CTAP_READ_CONFIG: u8 = 0x42;
+#[cfg(not(feature = "strict-config"))]
 const CTAP_WRITE_CONFIG: u8 = 0x43;
 /// The four PIN references the trusted display's pad can be asked to collect.
 const PIN_REFS: [u8; 4] = [
@@ -108,6 +118,7 @@ const OP_REFRESH: u8 = 0xF3;
 const OP_FACTORY_WIPE: u8 = 0xF4;
 const OP_OTP_HID: u8 = 0xF5;
 const OP_SET_CAPS: u8 = 0xF6;
+const OP_OATH_SCRIPT: u8 = 0xF7;
 
 /// The board underneath the wiring. Every [`Hooks`] method stays at its default,
 /// which is what a build with none of that hardware does — and `rsa_search`'s
@@ -170,6 +181,9 @@ impl rsk_rescue::Platform for RescueBoard {
     fn read_page58_lock_raw(&self) -> Option<u32> {
         Some(0)
     }
+    fn pre_otp_left(&self) -> Option<u16> {
+        Some(0)
+    }
     fn lock_page58(&mut self) -> bool {
         false
     }
@@ -220,7 +234,7 @@ fn chunk<'a>(data: &'a [u8], i: &mut usize) -> &'a [u8] {
     s
 }
 
-fuzz_target!(|data: &[u8]| {
+pub(crate) fn exercise(data: &[u8]) {
     let fs = RefCell::new(Fs::new(RamStorage::new()));
     fs.borrow_mut().scan();
     let rng = RefCell::new(SeqRng(1));
@@ -247,6 +261,8 @@ fuzz_target!(|data: &[u8]| {
         OPENPGP_MFR,
     );
 
+    let mut oath = OathOracle::default();
+
     let mut i = 0;
     while i < data.len() {
         let op = byte(data, &mut i);
@@ -260,7 +276,11 @@ fuzz_target!(|data: &[u8]| {
                 sel[4] = aid.len() as u8;
                 sel[5..5 + aid.len()].copy_from_slice(aid);
                 let enabled = ccid.caps_enabled(cap);
-                let sw = status(ccid.handle_apdu(&sel[..5 + aid.len()], 0));
+                let enabled_applets = APPLETS.map(|(_, cap)| ccid.caps_enabled(cap));
+                let raw = &sel[..5 + aid.len()];
+                let res = ccid.handle_apdu(raw, 0);
+                let sw = status(res);
+                oath.observe(raw, res, enabled_applets);
                 // No applet's own `select` answers FILE_NOT_FOUND, so this is
                 // exactly the gate: `ykman config usb --disable X` really removes
                 // X, and the three ungated applets can never be removed at all.
@@ -286,6 +306,7 @@ fuzz_target!(|data: &[u8]| {
             }
             OP_RESET_CARD => {
                 ccid.reset_card();
+                oath.reset_card();
                 for p2 in PIN_REFS {
                     // Nothing is selected, so the pad must not be painted for any
                     // reference — audit run-36, where the check ran on the VERIFY
@@ -293,7 +314,10 @@ fuzz_target!(|data: &[u8]| {
                     assert!(!ccid.pin_ref_ready(p2), "pin pad armed for {p2:#04x}");
                 }
             }
-            OP_RESET_CHAINING => ccid.reset_chaining(),
+            OP_RESET_CHAINING => {
+                ccid.reset_chaining();
+                oath.clear_chaining();
+            }
             OP_REFRESH => {
                 let mask = ccid.refresh_enabled();
                 assert_eq!(
@@ -303,7 +327,17 @@ fuzz_target!(|data: &[u8]| {
                 );
             }
             OP_FACTORY_WIPE => {
-                if ccid.factory_wipe() {
+                // The trusted display's device-wide wipe, with its predicates
+                // (rsk-display's pin.rs), run while the CCID applets stay live.
+                let wiped = fs
+                    .borrow_mut()
+                    .factory_wipe(
+                        rsk_fido::survives_factory_reset,
+                        rsk_fido::is_fido_seed_fid,
+                        rsk_device::gates_wiped_last,
+                    )
+                    .is_ok();
+                if wiped {
                     // The wipe is not allowed to spare `EF_DEV_CONF`, or an owner
                     // who disabled every application has no way back.
                     assert_eq!(
@@ -311,6 +345,9 @@ fuzz_target!(|data: &[u8]| {
                         rsk_devconf::SUPPORTED_CAPS,
                         "a factory wipe left the enabled-applications record behind"
                     );
+                    // The OATH access code is a gate, not a credential; the
+                    // device-wide wipe removes it with the rest of the applets.
+                    oath.factory_wipe();
                 }
             }
             OP_OTP_HID => {
@@ -335,15 +372,48 @@ fuzz_target!(|data: &[u8]| {
                 let hi = byte(data, &mut i);
                 let lo = byte(data, &mut i);
                 let blob = [0x04, TAG_USB_ENABLED, 0x02, hi, lo];
+                #[cfg(not(feature = "strict-config"))]
                 let _ = ccid.ctap_mgmt(CTAP_WRITE_CONFIG, &blob);
+                // That arm is the default build's; `strict-config` compiles none, so
+                // the record goes in through the function it calls. Without this the
+                // mask is stuck on and the SELECT gate above only ever checks one side.
+                #[cfg(feature = "strict-config")]
+                let _ = rsk_devconf::persist_touched(
+                    &rsk_sdk::serial4(SERIAL_ID),
+                    &mut fs.borrow_mut(),
+                    &blob[1..],
+                );
+            }
+            OP_OATH_SCRIPT => {
+                let alg = byte(data, &mut i);
+                let secret_len = byte(data, &mut i);
+                let fill = byte(data, &mut i);
+                let mut host_challenge = [0u8; 8];
+                for b in &mut host_challenge {
+                    *b = byte(data, &mut i);
+                }
+                let variants = byte(data, &mut i);
+                // A disabled OATH answers FILE_NOT_FOUND to SELECT, and a code a
+                // previous record installed is a secret this route cannot know.
+                if ccid.caps_enabled(rsk_devconf::CAP_OATH) && !oath.code_set() {
+                    oath_script(
+                        &mut ccid,
+                        &mut oath,
+                        alg,
+                        secret_len,
+                        fill,
+                        host_challenge,
+                        variants,
+                    );
+                }
             }
             // A raw APDU. The length is its own byte rather than the opcode's:
             // reserving `0x00`–`0x06` would otherwise make every 4-, 5- and
             // 6-byte APDU — case 1 and case 2 — unreachable.
             _ => {
                 // `next_frame`, not `chunk`: this is the only target that reaches
-                // the dispatcher's 2038-byte chaining buffer and its GET RESPONSE
-                // tail, and neither is reachable from a one-byte length.
+                // the dispatcher's chaining buffer and its GET RESPONSE tail, and
+                // neither is reachable from a one-byte length.
                 let Some((frame, tail)) = next_frame(&data[i..]) else {
                     break;
                 };
@@ -355,8 +425,24 @@ fuzz_target!(|data: &[u8]| {
                 if matches!(Apdu::parse(raw), Ok(p) if p.ins == INS_GENERATE) {
                     continue;
                 }
-                let _ = status(ccid.handle_apdu(raw, 0));
+                let enabled = APPLETS.map(|(_, cap)| ccid.caps_enabled(cap));
+                let res = ccid.handle_apdu(raw, 0);
+                oath.observe(raw, res, enabled);
+                // An unserved class is answered with nothing, as by a YubiKey 5.8.0;
+                // a GET RESPONSE under one still collects a tail that is owed.
+                match Apdu::parse(raw) {
+                    Ok(p) if !p.is_served_over_ccid() && p.ins != INS_GET_RESPONSE => {
+                        assert!(res.is_empty(), "an unserved class got {res:02X?}");
+                    }
+                    Ok(p) if !p.is_served_over_ccid() && res.is_empty() => {}
+                    _ => {
+                        let _ = status(res);
+                    }
+                }
             }
         }
     }
-});
+}
+
+#[cfg(not(test))]
+fuzzing::fuzz_target!(|data: &[u8]| exercise(data));

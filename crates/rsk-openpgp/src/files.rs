@@ -7,8 +7,8 @@
 
 use crate::consts::*;
 
-/// Historical bytes.
-pub const HISTORICAL_BYTES: &[u8] = &[0x00, 0x31, 0x84, 0x73, 0x80, 0x01, 0xC0, 0x05, 0x90, 0x00];
+/// Historical bytes (DO 5F52): a YubiKey 5.8.0's, byte for byte.
+pub const HISTORICAL_BYTES: &[u8] = &[0x00, 0x73, 0x00, 0x00, 0xE0, 0x05, 0x90, 0x00];
 
 /// One CCID frame's payload — `MAX_CCID_MSG - 10` bytes — which is both the
 /// largest command APDU the transport delivers and the largest response APDU it
@@ -17,26 +17,22 @@ pub const HISTORICAL_BYTES: &[u8] = &[0x00, 0x31, 0x84, 0x73, 0x80, 0x01, 0xC0, 
 /// included, so this is exactly the number to announce there. `rsk-device` holds
 /// the compile-time assertion tying it to `rsk-usb`'s own constants; neither
 /// crate can see the other's.
-pub const MAX_APDU_BYTES: usize = 2038;
+pub const MAX_APDU_BYTES: usize = 3062;
 
 /// The largest value PUT DATA accepts and GET DATA returns whole, for both DO
 /// classes DO C0 sizes: the cardholder certificate (bytes 5-6) and the special
-/// DOs (bytes 7-8). One owner — C0 is built from it below and `SCRATCH` is it, so
-/// the announcement cannot drift from what the card can actually serve.
+/// DOs (bytes 7-8). One owner — C0 is built from it below, so the announcement
+/// cannot drift from what the card can actually serve.
 ///
-/// The value is the CCID transport's real body ceiling: the applet is handed one
-/// frame minus the two status bytes. Announcing the rounder 2048 a YubiKey does
-/// would put the cliff back, twelve bytes further out — `ResBuf::extend` writes
-/// *nothing* when the body does not fit and its `false` is discarded, so an
-/// over-long DO would read as empty with `9000`.
-pub const MAX_DO_BYTES: usize = MAX_APDU_BYTES - 2;
+/// A YubiKey 5.8.0's 2048 for the certificate, which it stores whole and refuses
+/// one byte past with `6A80`. For the special DOs it announces 255 and keeps a
+/// longer one modulo 256, which is data loss and not copied.
+pub const MAX_DO_BYTES: usize = 2048;
 
-/// The most random bytes GET CHALLENGE serves, and DO C0 bytes 3-4. One owner,
-/// for the same reason [`MAX_DO_BYTES`] is: C0 announced 128 while the command
-/// served anything up to the applet's 1024-byte scratch, so the number a host
-/// reads off the card said nothing about what the card would do. `rsk-openpgp`'s
-/// `SCRATCH` is the ceiling this may take, asserted at compile time there.
-pub const MAX_CHALLENGE_BYTES: usize = 1024;
+/// The most random bytes GET CHALLENGE serves, and DO C0 bytes 3-4: one response
+/// APDU less its status word, the most one frame carries back, generated in place in
+/// the response. One owner, so what C0 announces is what the card does.
+pub const MAX_CHALLENGE_BYTES: usize = MAX_APDU_BYTES - 2;
 
 /// Extended capabilities: no secure messaging, GET CHALLENGE, key import,
 /// PW-status puttable, private DO, changeable algo attrs, AES, KDF-DO.
@@ -124,6 +120,7 @@ pub fn source(fid: u16) -> DoSource {
     if fid == EF_PK_SIG.get()
         || fid == EF_PK_DEC.get()
         || fid == EF_PK_AUT.get()
+        || fid == EF_PK_ATT.get()
         || fid == EF_DEK_PW1.get()
         || fid == EF_DEK_RC.get()
         || fid == EF_DEK_PW3.get()
@@ -141,6 +138,10 @@ pub fn source(fid: u16) -> DoSource {
         // here and the `Flash` arm served the DO as an empty object under
         // `9000`, which is a reset code reading as "set to nothing".
         || fid == EF_RESET_CODE
+        // The attestation key's fingerprint, CA fingerprint and generation time:
+        // PUT DATA takes them and a YubiKey 5.8.0 answers GET DATA `6B00`, serving
+        // them in C5/C6/CD alone.
+        || matches!(fid, EF_FP_ATT | EF_FP_CA4 | EF_TS_ATT)
     {
         return DoSource::Internal;
     }
@@ -166,18 +167,50 @@ pub fn source(fid: u16) -> DoSource {
         // Flash-backed working DOs.
         EF_CH_NAME | EF_LOGIN_DATA | EF_LANG_PREF | EF_SEX | EF_URI_URL | EF_SIG_COUNT
         | EF_FP_SIG | EF_FP_DEC | EF_FP_AUT | EF_FP_CA1 | EF_FP_CA2 | EF_FP_CA3 | EF_TS_SIG
-        | EF_TS_DEC | EF_TS_AUT | EF_UIF_SIG | EF_UIF_DEC | EF_UIF_AUT | EF_KDF | EF_PRIV_DO_1
-        | EF_PRIV_DO_2 | EF_PRIV_DO_3 | EF_PRIV_DO_4 => DoSource::Flash,
+        | EF_TS_DEC | EF_TS_AUT | EF_UIF_SIG | EF_UIF_DEC | EF_UIF_AUT | EF_UIF_ATT | EF_KDF
+        | EF_ATT_CERT | EF_PRIV_DO_1 | EF_PRIV_DO_2 | EF_PRIV_DO_3 | EF_PRIV_DO_4 => {
+            DoSource::Flash
+        }
 
         // Internal EFs (PINs, public-key DOs, base/PWPIV DEK, algo-priv,
         // chaining): not GET-DATA-able. The private-key + PW-DEK slots are
         // handled by the KeyFid guard above.
         EF_PW1 | EF_RC | EF_PW3 | EF_ALGO_PRIV1 | EF_ALGO_PRIV2 | EF_ALGO_PRIV3 | EF_PW_PRIV
-        | EF_PW_RETRIES | EF_PB_SIG | EF_PB_DEC | EF_PB_AUT | EF_KEY_ORIGIN | EF_DEK
-        | EF_DEK_PWPIV | EF_CH_1 | EF_CH_2 | EF_CH_3 => DoSource::Internal,
+        | EF_PW_RETRIES | EF_PB_SIG | EF_PB_DEC | EF_PB_AUT | EF_PB_ATT | EF_KEY_ORIGIN
+        | EF_DEK | EF_DEK_PWPIV | EF_CH_1 | EF_CH_2 | EF_CH_3 => DoSource::Internal,
 
         _ => DoSource::None,
     }
+}
+
+/// A DO that GET DATA does not read on its own: OpenPGP 3.4 §4.4.1 lists it only
+/// inside 65, 6E or 7A, or not at all (`C7`..`D0`, slices of `C5`/`C6`/`CD`), and a
+/// YubiKey 5.8.0 answers `6B00` to each, key or no key. The templates carry them.
+pub fn nested_only(fid: u16) -> bool {
+    matches!(
+        fid,
+        EF_CH_NAME
+            | EF_LANG_PREF
+            | EF_SEX
+            | EF_SIG_COUNT
+            | EF_DISCRETE_DO
+            | EF_EXT_CAP
+            | EF_ALGO_SIG
+            | EF_ALGO_DEC
+            | EF_ALGO_AUT
+            | EF_FP
+            | EF_CA_FP
+            | EF_TS_ALL
+            | EF_FP_SIG
+            | EF_FP_DEC
+            | EF_FP_AUT
+            | EF_FP_CA1
+            | EF_FP_CA2
+            | EF_FP_CA3
+            | EF_TS_SIG
+            | EF_TS_DEC
+            | EF_TS_AUT
+    )
 }
 
 /// The 8-digit device serial as 4 packed-BCD bytes, matching how a real YubiKey
@@ -215,3 +248,7 @@ pub fn full_aid(serial: &[u8; 4], manufacturer: u16) -> [u8; 16] {
 pub fn aid_for(serial_id: &[u8; 8], manufacturer: u16) -> [u8; 16] {
     full_aid(&serial_bcd(&rsk_sdk::serial4(*serial_id)), manufacturer)
 }
+
+#[cfg(test)]
+#[path = "files_catalog_tests.rs"]
+mod catalog_tests;

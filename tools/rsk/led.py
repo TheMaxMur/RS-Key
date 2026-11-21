@@ -17,12 +17,20 @@ from .backup import (
     CONFIG_READ,
     CONFIG_TARGET_LED,
     CONFIG_WRITE,
+    ERR_NOT_ALLOWED,
     _die_pin_required,
     _die_touch_denied,
     _gated,
     _vendor,
 )
-from .common import add_pin_arg, connect_fido, device_has_pin, die, resolve_pin
+from .common import (
+    add_pin_arg,
+    connect_fido,
+    device_has_pin,
+    die,
+    die_config_locked,
+    resolve_pin,
+)
 
 COLORS = {
     "off": 0,
@@ -199,6 +207,8 @@ def _run_ccid(args):
             if args.speed is not None:
                 data.append(args.speed & 0xFF)
         _, s1, s2 = ccid.transmit(conn, [0x00, 0x10, brightness & 0xFF, p2] + data)
+        if (s1, s2) == ccid.SW_COMMAND_NOT_ALLOWED:
+            die_config_locked("LED", f"{s1:02X}{s2:02X}")
         if (s1, s2) != ccid.SW_OK:
             raise SystemExit(f"SET LED failed: {s1:02X}{s2:02X}")
         parts = [
@@ -251,6 +261,8 @@ def _run_fido(args):
     st, _ = _vendor(dev, cid, fields)
     _die_pin_required(st)
     _die_touch_denied(st)
+    if st == ERR_NOT_ALLOWED:
+        die_config_locked("LED", f"{st:#04x}")
     if st != 0:
         die(f"CONFIG_WRITE LED failed: {st:#x}")
     print("LED config written over FIDO ✓ (applied live)")

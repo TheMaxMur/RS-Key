@@ -70,6 +70,29 @@ fn assemble_openpgp_pw3_admin_no_padding() {
 }
 
 #[test]
+fn openpgp_maximum_pin_and_the_next_length_have_independent_output_bounds() {
+    for reference in [0x81, 0x82, 0x83] {
+        let block = secure_block(reference);
+        let request = parse_secure(&block).unwrap();
+        let mut out = [0xA5; 5 + MAX_PIN + 2];
+        let pin = [b'1'; MAX_PIN];
+        assert_eq!(
+            assemble_verify(request.apdu_template, &pin, &mut out),
+            Some(5 + MAX_PIN)
+        );
+        assert_eq!(&out[..5], &[0, INS_VERIFY, 0, reference, 0x7F]);
+        assert_eq!(&out[5..5 + MAX_PIN], &pin);
+        assert_eq!(&out[5 + MAX_PIN..], &[0xA5; 2]);
+        let mut out = [0xA5; 5 + MAX_PIN + 2];
+        assert_eq!(
+            assemble_verify(request.apdu_template, &[b'1'; MAX_PIN + 1], &mut out),
+            None
+        );
+        assert_eq!(out, [0xA5; 5 + MAX_PIN + 2]);
+    }
+}
+
+#[test]
 fn assemble_piv_pads_with_ff_to_eight() {
     let mut out = [0u8; 64];
     let n = assemble_verify(&[0x00, 0x20, 0x00, 0x80], b"123456", &mut out).unwrap();
@@ -177,4 +200,30 @@ fn secure_pin_codec_property_fuzz() {
             );
         }
     }
+}
+
+/// The buffer check is `5 + body_len > out.len()`, so a buffer holding exactly the
+/// APDU (five header bytes plus the body) is enough — the exact fit a caller sizes
+/// on purpose. `>=` would refuse it, and only one byte less may be refused.
+#[test]
+fn a_buffer_exactly_the_apdu_size_is_accepted() {
+    const PIN: &[u8] = b"123456";
+    let template = [0x00, INS_VERIFY, 0x00, 0x81];
+    let mut out = [0xA5u8; 5 + PIN.len()];
+    assert_eq!(
+        assemble_verify(&template, PIN, &mut out),
+        Some(5 + PIN.len())
+    );
+    assert_eq!(
+        &out,
+        &[
+            0x00, INS_VERIFY, 0x00, 0x81, 6, b'1', b'2', b'3', b'4', b'5', b'6'
+        ]
+    );
+
+    let mut one_short = [0xA5u8; 5 + PIN.len() - 1];
+    assert!(
+        assemble_verify(&template, PIN, &mut one_short).is_none(),
+        "a buffer one byte short must still be refused"
+    );
 }

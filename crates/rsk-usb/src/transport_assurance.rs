@@ -28,7 +28,7 @@ pub struct TxView {
 
 impl Reassembler {
     /// The model's state, read from the real fields
-    /// (`crates/rsk-usb/src/ctaphid.rs:341-349`).
+    /// (`crates/rsk-usb/src/ctaphid.rs:371-379`).
     pub fn tx_view(&self) -> TxView {
         TxView {
             owner: if self.in_tx { Some(self.cid) } else { None },
@@ -39,7 +39,7 @@ impl Reassembler {
     }
 
     /// A reassembler mid-transaction, as a harness poses one — the pre-state
-    /// `crates/rsk-usb/src/ctaphid.rs:405-475` decides a frame against. The
+    /// `crates/rsk-usb/src/ctaphid.rs:453-531` decides a frame against. The
     /// buffer stays concrete: none of the three properties reads a payload byte,
     /// and a symbolic 7609-byte array gives CBMC unrelated state to unwind.
     pub fn mid_transaction(cid: u32, seq: u8, cur: usize, bcnt: usize) -> Self {
@@ -70,7 +70,7 @@ impl Reassembler {
 
     /// `NoBufferOverrun` as a state predicate over the real fields: the assembled
     /// length never passes the declared one, and neither passes the buffer. The
-    /// state the copy at `crates/rsk-usb/src/ctaphid.rs:463-464` indexes through.
+    /// state the copy at `crates/rsk-usb/src/ctaphid.rs:514-520` indexes through.
     pub fn within_the_buffer(&self) -> bool {
         self.cur <= self.bcnt && self.bcnt <= CTAP_MAX_MESSAGE && self.cur <= self.msg.len()
     }
@@ -145,3 +145,7 @@ pub fn cont_frame(cid: u32, seq: u8) -> [u8; HID_RPT_SIZE] {
     f[4] = seq & 0x7F;
     f
 }
+
+#[cfg(test)]
+#[path = "transport_assurance_tests.rs"]
+mod tests;

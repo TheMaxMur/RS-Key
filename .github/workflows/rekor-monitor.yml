@@ -11,15 +11,25 @@
 # Every hour this asks sigstore/rekor-monitor "did anything sign as an RS-Key
 # GitHub-Actions identity?" and files a GitHub issue with whatever it finds.
 # Every legitimate release adds entries from release-build.yml, so a couple of
-# EXPECTED issues per release are normal — confirm and close them. The signal
-# that matters is an entry you do NOT recognise: that would mean our signing
-# identity was used by something we did not run (a compromised GitHub-OIDC
-# token, repo, or Actions runner) — the one thing that could forge provenance
-# the SLSA Build L3 attestation otherwise vouches for.
+# EXPECTED issues per release are normal — confirm and close them.
+#
+# An entry under release-build.yml you do not recognise is NOT by itself a
+# compromise. The watched subject is the certificate's SAN, the workflow that
+# signed, and release-build.yml is a public reusable workflow: a run in ANY
+# repository that calls it signs with exactly our SAN. Read the entry's
+# certificate (`openssl x509 -noout -text` prints the extensions by OID):
+#   - repository 1.3.6.1.4.1.57264.1.5 (also .1.12, as a URL) and ref .1.6:
+#     TheMaxMur/RS-Key at a release tag you pushed is a release, expected;
+#   - TheMaxMur/RS-Key at any other ref is the alarm: a run of ours nobody
+#     meant to sign, or a leaked GitHub-OIDC token, repo access or runner;
+#   - any other repository is someone else calling the builder. It verifies as
+#     none of our releases, because rsk flash and the published verify commands
+#     pin the repository and the tag, so there is nothing to rotate.
 #
 # We watch the WHOLE …/RS-Key/.github/workflows/ namespace, not just
-# release-build.yml: only release-build.yml ever signs legitimately, so a
-# signature from any other workflow path in this repo is itself the alarm.
+# release-build.yml: only release-build.yml ever signs legitimately, and it is
+# the only workflow here another repository can call, so a signature from any
+# other workflow path in this repo is itself the alarm.
 #
 # rekor-monitor ships no tags/releases, so the reusable workflow is pinned to a
 # main commit; Dependabot's weekly github-actions group keeps the pin fresh.

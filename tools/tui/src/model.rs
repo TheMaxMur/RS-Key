@@ -212,11 +212,27 @@ pub struct AttestationState {
 }
 
 impl AttestationState {
+    /// ATT_STATE hashes only a chain the device reads back whole, so an installed
+    /// key without a hash has a chain enterprise attestation cannot use.
+    pub fn chain_unusable(&self) -> bool {
+        self.installed && self.chain_sha256.is_none()
+    }
     pub fn describe(&self) -> &'static str {
-        if self.installed {
+        if self.chain_unusable() {
+            "installed, chain unusable"
+        } else if self.installed {
             "installed"
         } else {
             "not installed"
+        }
+    }
+    pub fn health(&self) -> Health {
+        if self.chain_unusable() {
+            Health::Warn
+        } else if self.installed {
+            Health::Ok
+        } else {
+            Health::Unknown
         }
     }
 }
@@ -384,15 +400,7 @@ impl DeviceSnapshot {
             ));
         }
         if let Some(a) = &self.attestation {
-            out.push(FeatureStatus::new(
-                if a.installed {
-                    Health::Ok
-                } else {
-                    Health::Unknown
-                },
-                "org attest",
-                a.describe(),
-            ));
+            out.push(FeatureStatus::new(a.health(), "org attest", a.describe()));
         }
         if let Some(fl) = self.flash {
             out.push(FeatureStatus::new(
@@ -549,8 +557,9 @@ impl DeviceSnapshot {
                 .as_ref()
                 .map(|a| {
                     format!(
-                        "{{\"installed\":{},\"chain_sha256\":{}}}",
+                        "{{\"installed\":{},\"chain_unusable\":{},\"chain_sha256\":{}}}",
                         json_bool(a.installed),
+                        json_bool(a.chain_unusable()),
                         json_opt_str(a.chain_sha256.as_deref())
                     )
                 })

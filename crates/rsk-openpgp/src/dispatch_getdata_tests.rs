@@ -16,6 +16,7 @@
 //! (macOS CCID) artifact, not a firmware bug.
 
 use super::*;
+use crate::test_tlv::{child, children};
 use rsk_fs::storage::ram::RamStorage;
 use rsk_sdk::Dispatcher;
 
@@ -39,6 +40,7 @@ fn setup() -> Fs<RamStorage> {
         serial_hash: &SERIAL_HASH,
         serial_id: &SERIAL_ID,
         otp_key: None,
+        latched: false,
     };
     scan_files(&dev, &mut fs, &mut CountRng(0)).unwrap();
     fs
@@ -52,7 +54,7 @@ fn dispatch(
     fs: &mut Fs<RamStorage>,
     raw: &[u8],
 ) -> (Vec<u8>, Sw) {
-    let mut buf = [0u8; 2048];
+    let mut buf = [0u8; rsk_sdk::applet::RESP_BUILD];
     let mut res = ResBuf::new(&mut buf);
     let sw = disp.process(raw, applets, fs, &mut res);
     (res.as_slice().to_vec(), sw)
@@ -163,7 +165,8 @@ fn verify_default_pw1_via_dispatcher_is_ok() {
 /// lived in the applet's own scratch, not in `put_data` or `get_data`: a 1500-byte
 /// certificate — an ordinary X.509 size, and §9.7's named use — used to write OK,
 /// read back 1024 bytes and report success, losing 476 with nothing to tell the
-/// host. A YubiKey 5.7.4 announces the same 2048 and holds to it exactly.
+/// host. A YubiKey 5.8.0 announces 2048, stores that whole and refuses 2049 with
+/// `6A80`, keeping what it held.
 #[test]
 fn a_do_the_card_announces_room_for_reads_back_whole() {
     let mut fs = setup();
@@ -189,15 +192,20 @@ fn a_do_the_card_announces_room_for_reads_back_whole() {
         Sw::OK
     );
 
-    // C0 bytes 5-6 (certificate) and 7-8 (special DOs) are the announcement.
-    let (c0, sw) = dispatch(
+    // C0 bytes 5-6 (certificate) and 7-8 (special DOs) are the announcement, read
+    // where a host reads C0: inside 6E's 73, whole under an extended Le.
+    let (app_data, sw) = dispatch(
         &mut disp,
         &mut applets,
         &mut fs,
-        &[0x00, 0xCA, 0x00, 0xC0, 0x00],
+        &[0x00, 0xCA, 0x00, 0x6E, 0x00, 0x00, 0x00],
     );
     assert_eq!(sw, Sw::OK);
+    let related = child(&children(&app_data), consts::EF_APP_DATA);
+    let discrete = child(&children(&related), consts::EF_DISCRETE_DO);
+    let c0 = child(&children(&discrete), consts::EF_EXT_CAP);
     let announced = u16::from_be_bytes([c0[4], c0[5]]) as usize;
+    assert_eq!(announced, 2048, "a YubiKey 5.8.0's C0 announces 2048");
     assert_eq!(announced, crate::files::MAX_DO_BYTES);
     assert_eq!(u16::from_be_bytes([c0[6], c0[7]]) as usize, announced);
 
@@ -268,8 +276,11 @@ fn a_do_the_card_announces_room_for_reads_back_whole() {
     // applet sees a thing, with the `WRONG_LENGTH` its own test pins from both
     // ends of that check; what matters here is that it is not a success and the
     // stored certificate is untouched.
-    let way_over = std::vec![0x5Au8; announced + 512];
-    assert_ne!(write(&mut disp, &mut applets, &mut fs, &way_over), Sw::OK);
+    let way_over = std::vec![0x5Au8; rsk_sdk::applet::CHAIN_BUF_SIZE + 1];
+    assert_eq!(
+        write(&mut disp, &mut applets, &mut fs, &way_over),
+        Sw::WRONG_LENGTH
+    );
     let (survived, _) = read_cert(&mut disp, &mut applets, &mut fs);
     assert_eq!(survived, value);
 }
@@ -314,9 +325,8 @@ fn exlen_info_announces_the_apdu_the_transport_carries() {
         ],
         "7F66 must announce {max} in both directions"
     );
-    // The same DO inside the application-related data `6E`, which is where a
-    // YubiKey serves it and where `gpg` reads it. Extended `Le`, so the template
-    // arrives whole instead of through `61xx`.
+    // The same DO inside 6E's 73, right after DE, and not at 6E's top: where a
+    // YubiKey 5.8.0 serves it. Extended `Le`, so the template arrives whole.
     let (tpl, sw) = dispatch(
         &mut disp,
         &mut applets,
@@ -324,25 +334,31 @@ fn exlen_info_announces_the_apdu_the_transport_carries() {
         &[0x00, 0xCA, 0x00, 0x6E, 0x00, 0x00, 0x00],
     );
     assert_eq!(sw, Sw::OK);
-    let at = tpl
-        .windows(2)
-        .position(|w| w == [0x7F, 0x66])
-        .expect("7F66 inside 6E");
+    let related = children(&child(&children(&tpl), consts::EF_APP_DATA));
+    let top: Vec<u16> = related.iter().map(|c| c.0).collect();
     assert_eq!(
-        &tpl[at + 3..at + 11],
-        &body[..],
-        "6E carries the same bytes"
+        top,
+        [
+            consts::EF_FULL_AID,
+            consts::EF_HIST_BYTES,
+            consts::EF_GFM,
+            consts::EF_DISCRETE_DO
+        ]
     );
+    let dd = children(&child(&related, consts::EF_DISCRETE_DO));
+    let at = dd.iter().position(|c| c.0 == consts::EF_EXLEN_INFO);
+    let at = at.expect("7F66 inside 73");
+    assert_eq!(dd[at - 1].0, consts::EF_KEY_INFO, "7F66 right after DE");
+    assert_eq!(dd[at].1, body, "73 carries the same bytes");
 }
 
-/// The P1P2 values GET DATA serves. Everything else in the 16-bit space answers
+/// The P1P2 values GET DATA serves: a YubiKey 5.8.0's sweep of pages 00, 01, 5F
+/// and 7F, cell for cell (measured 2026-09-25). Everything else in the 16-bit space answers
 /// one status word — including the internal storage FIDs, which are addressable
 /// through P1P2 and used to answer `6982` where an absent tag answered `6A88`.
 const SERVED: &[u16] = &[
-    0x004F, 0x005B, 0x005E, 0x0065, 0x006E, 0x0073, 0x007A, 0x0093, 0x00C0, 0x00C1, 0x00C2, 0x00C3,
-    0x00C4, 0x00C5, 0x00C6, 0x00C7, 0x00C8, 0x00C9, 0x00CA, 0x00CB, 0x00CC, 0x00CD, 0x00CE, 0x00CF,
-    0x00D0, 0x00D6, 0x00D7, 0x00D8, 0x00DE, 0x00F9, 0x00FA, 0x0101, 0x0102, 0x0103, 0x0104, 0x5F2D,
-    0x5F35, 0x5F50, 0x5F52, 0x7F21, 0x7F66, 0x7F74,
+    0x004F, 0x005E, 0x0065, 0x006E, 0x007A, 0x00C4, 0x00D6, 0x00D7, 0x00D8, 0x00D9, 0x00DE, 0x00F9,
+    0x00FA, 0x00FC, 0x0101, 0x0102, 0x0103, 0x0104, 0x5F50, 0x5F52, 0x7F21, 0x7F66, 0x7F74,
 ];
 
 /// The pages the sweep walks end to end: every page carrying a served DO, plus
@@ -359,10 +375,8 @@ const SWEPT_PAGES: &[u8] = &[0x00, 0x01, 0x10, 0x1F, 0x5F, 0x7F];
 /// reset-code DO — so the split enumerated the file system through a command
 /// that needs no credential.
 ///
-/// In-application SELECT is swept in the same loop because it resolves the fid
-/// from the same table and the dispatcher does not intercept it: it had the same
-/// split, and a fix in one command alone would leave the map readable from the
-/// other.
+/// In-application SELECT is swept in the same loop: it once resolved the fid from
+/// the same table and had the same split. It answers `6D00` to every fid now.
 #[test]
 fn get_data_answers_one_status_word_for_every_do_it_does_not_serve() {
     let mut fs = setup();
@@ -418,18 +432,14 @@ fn get_data_answers_one_status_word_for_every_do_it_does_not_serve() {
                 assert_eq!(sw, Sw::WRONG_P1P2, "GET DATA {tag:04X} verified={verified}");
             }
             // The same question through in-application SELECT, which the
-            // dispatcher does NOT intercept for `P1 <= 0x02` and which resolves
-            // the fid from the same table: an internal EF must be
-            // indistinguishable from an absent one here too. `0103`/`0104` are
-            // ungated for SELECT on both sides — it selects, it does not read.
+            // dispatcher does not intercept for `P1 <= 0x02`.
             let sel = [0x00, 0xA4, 0x00, 0x00, 0x02, (tag >> 8) as u8, tag as u8];
             let sw = dispatch(disp, applets, fs, &sel).1;
-            let want = if SERVED.contains(&tag) {
-                Sw::OK
-            } else {
-                Sw::REFERENCE_NOT_FOUND
-            };
-            assert_eq!(sw, want, "SELECT fid {tag:04X} verified={verified}");
+            assert_eq!(
+                sw,
+                Sw::INS_NOT_SUPPORTED,
+                "SELECT fid {tag:04X} verified={verified}"
+            );
         };
         for &p1 in SWEPT_PAGES {
             for p2 in 0..=0xFFu8 {
@@ -458,4 +468,134 @@ fn get_data_answers_one_status_word_for_every_do_it_does_not_serve() {
         }
         assert_eq!(cells, 2036, "the swept surface must not shrink silently");
     }
+}
+
+/// A YubiKey 5.8.0's OpenPGP answers its SELECT by AID with no FCI, a truncated
+/// AID included, and has no SELECT of its own: every other form reaching it is
+/// `6D00`, and it stays selected (measured 2026-09-25).
+#[test]
+fn a_select_answers_as_a_yubikeys_openpgp_does() {
+    let mut fs = setup();
+    let rng = RefCell::new(CountRng(0));
+    let presence = RefCell::new(crate::AlwaysConfirm);
+    let mut app = OpenpgpApplet::new(SERIAL_ID, SERIAL_HASH, None, &rng, &presence);
+    let mut disp = Dispatcher::default();
+    let mut applets: [&mut dyn rsk_sdk::Applet<Fs<RamStorage>>; 1] = [&mut app];
+    let aid = &SELECT_OPENPGP[5..];
+    let with = |p1: u8, p2: u8, data: &[u8]| {
+        let mut a = std::vec![0x00, consts::INS_SELECT, p1, p2];
+        if !data.is_empty() {
+            a.push(data.len() as u8);
+            a.extend_from_slice(data);
+        }
+        a
+    };
+    for selection in [with(0x04, 0x00, aid), with(0x04, 0x00, &aid[..5])] {
+        let (body, sw) = dispatch(&mut disp, &mut applets, &mut fs, &selection);
+        assert_eq!((body.len(), sw), (0, Sw::OK), "{selection:02X?}");
+    }
+    let forms = [
+        with(0x04, 0x01, aid),
+        with(0x04, 0x0C, aid),
+        with(0x04, 0x02, aid),
+        with(0x04, 0x05, aid),
+        with(0x04, 0x08, aid),
+        with(0x00, 0x00, &[]),
+        with(0x00, 0x00, &[0x3F, 0x00]),
+        with(0x00, 0x00, &[0x00, 0x6E]),
+        with(0x01, 0x00, &[0x00, 0x6E]),
+        with(0x02, 0x00, &[0x00, 0x6E]),
+        with(0x03, 0x00, &[]),
+        with(0x08, 0x00, &[0x00, 0x6E]),
+    ];
+    for form in forms {
+        let (body, sw) = dispatch(&mut disp, &mut applets, &mut fs, &form);
+        assert_eq!((body.len(), sw), (0, Sw::INS_NOT_SUPPORTED), "{form:02X?}");
+        let get_aid = [0x00, 0xCA, 0x00, 0x4F, 0x00];
+        let still = dispatch(&mut disp, &mut applets, &mut fs, &get_aid).1;
+        assert_eq!(still, Sw::OK, "OpenPGP still selected after {form:02X?}");
+    }
+}
+
+/// DO 5F52 carries a YubiKey 5.8.0's historical bytes, `00 73 00 00 E0 05 90 00`, on
+/// its own and inside 6E alike. Ours were pico-openpgp's ten, from the tree this
+/// applet came from.
+#[test]
+fn the_historical_bytes_are_a_yubikeys() {
+    let mut fs = setup();
+    let rng = RefCell::new(CountRng(0));
+    let presence = RefCell::new(crate::AlwaysConfirm);
+    let mut app = OpenpgpApplet::new(SERIAL_ID, SERIAL_HASH, None, &rng, &presence);
+    let mut disp = Dispatcher::default();
+    let mut applets: [&mut dyn rsk_sdk::Applet<Fs<RamStorage>>; 1] = [&mut app];
+    assert_eq!(
+        dispatch(&mut disp, &mut applets, &mut fs, SELECT_OPENPGP).1,
+        Sw::OK
+    );
+    let (hist, sw) = dispatch(
+        &mut disp,
+        &mut applets,
+        &mut fs,
+        &[0x00, 0xCA, 0x5F, 0x52, 0x00],
+    );
+    assert_eq!(
+        (hist.as_slice(), sw),
+        (
+            &[0x00, 0x73, 0x00, 0x00, 0xE0, 0x05, 0x90, 0x00][..],
+            Sw::OK
+        )
+    );
+    let (tpl, sw) = dispatch(
+        &mut disp,
+        &mut applets,
+        &mut fs,
+        &[0x00, 0xCA, 0x00, 0x6E, 0x00, 0x00, 0x00],
+    );
+    assert_eq!(sw, Sw::OK);
+    let related = children(&child(&children(&tpl), consts::EF_APP_DATA));
+    assert_eq!(
+        child(&related, consts::EF_HIST_BYTES),
+        hist,
+        "6E carries another"
+    );
+}
+
+/// GET CHALLENGE serves up to one response APDU less its status word, 3060 bytes,
+/// generated in place in the response; it stopped at its 1024-byte scratch. DO C0
+/// bytes 3-4 announce exactly that, and the rest of C0 is as it was, the AES bit and
+/// the MSE byte included.
+#[test]
+fn get_challenge_serves_a_whole_frame() {
+    let mut fs = setup();
+    let rng = RefCell::new(CountRng(0));
+    let presence = RefCell::new(crate::AlwaysConfirm);
+    let mut app = OpenpgpApplet::new(SERIAL_ID, SERIAL_HASH, None, &rng, &presence);
+    let mut disp = Dispatcher::default();
+    let mut applets: [&mut dyn rsk_sdk::Applet<Fs<RamStorage>>; 1] = [&mut app];
+    assert_eq!(
+        dispatch(&mut disp, &mut applets, &mut fs, SELECT_OPENPGP).1,
+        Sw::OK
+    );
+    let (tpl, sw) = dispatch(
+        &mut disp,
+        &mut applets,
+        &mut fs,
+        &[0x00, 0xCA, 0x00, 0x6E, 0x00, 0x00, 0x00],
+    );
+    assert_eq!(sw, Sw::OK);
+    let related = children(&child(&children(&tpl), consts::EF_APP_DATA));
+    let c0 = child(
+        &children(&child(&related, consts::EF_DISCRETE_DO)),
+        consts::EF_EXT_CAP,
+    );
+    assert_eq!(
+        c0,
+        [0x7F, 0x00, 0x0B, 0xF4, 0x08, 0x00, 0x08, 0x00, 0x00, 0x01]
+    );
+
+    let challenge = |ne: u16| [0x00, 0x84, 0x00, 0x00, 0x00, (ne >> 8) as u8, ne as u8];
+    let (body, sw) = dispatch(&mut disp, &mut applets, &mut fs, &challenge(3060));
+    assert_eq!((body.len(), sw), (3060, Sw::OK));
+    let (body, sw) = dispatch(&mut disp, &mut applets, &mut fs, &challenge(3061));
+    assert_eq!((body.len(), sw), (0, Sw::WRONG_LENGTH));
 }

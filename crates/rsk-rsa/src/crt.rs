@@ -3,7 +3,7 @@
 
 //! The sealed CRT parameter layout (`P ‖ Q ‖ dP ‖ dQ ‖ qInv`), its
 //! length-discriminated parse, and the blinded, Bellcore-fault-checked private
-//! operation on the UMAAL asm (the crate-private `sign_crt` / `modexp_pub`).
+//! operation backed by fixed-width Montgomery arithmetic.
 //! The PIV and OpenPGP applets store the same plaintext and sign through the
 //! same [`private_op`], so this security-critical path (blinding, fault check,
 //! zeroization) lives once.
@@ -14,9 +14,10 @@
 //! [`crt_plaintext`] and seal the result.
 
 use num_bigint_dig::BigUint;
-use zeroize::{Zeroize, Zeroizing};
+use rsk_secret::Secret;
+use zeroize::Zeroize;
 
-use crate::key::blind_pair;
+use crate::key::{blind_pair, from_secret_be};
 use crate::{MAX_RSA_BYTES, Rng, RsaError, RsaKey};
 
 /// A single fixed-width CRT field buffer (a prime's max width, RSA-4096 = 256 B).
@@ -48,7 +49,7 @@ fn put_field(dst: &mut [u8], src: &[u8]) -> Result<(), RsaError> {
 /// the tie. Returns the prime width `half` and whether it is the CRT form. Only
 /// this firmware writes 5-field (always a 32-multiple width); a legacy `P‖Q`
 /// blob may carry any width, so the 2-field arm is not width-restricted (its
-/// caller enforces what its consumer needs — the asm CRT path wants a 32-mult).
+/// caller enforces what its consumer needs — the fixed-width CRT path wants a 32-mult).
 pub fn parse_rsa_blob(plain: &[u8]) -> Result<(usize, bool), RsaError> {
     let n = plain.len();
     let five = n
@@ -77,52 +78,50 @@ pub fn parse_rsa_blob(plain: &[u8]) -> Result<(usize, bool), RsaError> {
 /// A `P‖Q` blob mis-sliced into five fields fails this with overwhelming
 /// probability, so it disambiguates a colliding length.
 fn five_field_consistent(plain: &[u8], half: usize) -> bool {
-    let p = Zeroizing::new(BigUint::from_bytes_be(&plain[..half]));
-    if *p < BigUint::from(2u8) {
+    let p = Secret::new(from_secret_be(&plain[..half]));
+    if *p.expose() < BigUint::from(2u8) {
         return false;
     }
-    let q = Zeroizing::new(BigUint::from_bytes_be(&plain[half..2 * half]));
-    let qinv = Zeroizing::new(BigUint::from_bytes_be(&plain[4 * half..5 * half]));
-    let mul = Zeroizing::new(&*qinv * &*q);
-    let prod = Zeroizing::new(&*mul % &*p);
-    *prod == BigUint::from(1u8)
+    let q = Secret::new(from_secret_be(&plain[half..2 * half]));
+    let qinv = Secret::new(from_secret_be(&plain[4 * half..5 * half]));
+    let mul = Secret::new(qinv.expose() * q.expose());
+    let prod = Secret::new(mul.expose() % p.expose());
+    *prod.expose() == BigUint::from(1u8)
 }
 
 /// Build the CRT plaintext `P ‖ Q ‖ dP ‖ dQ ‖ qInv` (five `half`-byte big-endian
 /// fields) for `key` into the pre-zeroed `out`, returning its length `5·half`.
-/// Caching the CRT parameters next to the primes lets [`crt_from_plain`] feed the
-/// asm CRT signer directly, so a signature no longer rebuilds `d`, `dP`, `dQ` and
-/// `qInv` (two modular inversions) every time.
+/// Caching the CRT parameters lets [`crt_from_plain`] feed the signer without
+/// recomputing `d`, `dP`, `dQ` and `qInv` on each signature.
 pub fn crt_plaintext(key: &RsaKey, out: &mut [u8]) -> Result<usize, RsaError> {
     // Absent only for a key whose primes share a factor — an IMPORT can offer
     // such a pair, and it is refused here rather than sealed unusable.
     let (dp, dq, qinv) = key.crt().ok_or(RsaError::Failed)?;
-    let mut pb = key.p().to_bytes_be();
-    let mut qb = key.q().to_bytes_be();
-    let half = pb.len().max(qb.len());
+    let mut pb = Secret::new(key.p().to_bytes_be());
+    let mut qb = Secret::new(key.q().to_bytes_be());
+    let half = pb.expose().len().max(qb.expose().len());
     let n = 5 * half;
-    let mut dpb = dp.to_bytes_be();
-    let mut dqb = dq.to_bytes_be();
-    let mut qib = qinv.to_bytes_be();
+    let mut dpb = Secret::new(dp.to_bytes_be());
+    let mut dqb = Secret::new(dq.to_bytes_be());
+    let mut qib = Secret::new(qinv.to_bytes_be());
     let r = (|| {
-        // The asm CRT signer processes 32-bit words in 32-byte groups, so a
-        // non-32-multiple prime width has no fast path — reject it at seal time
-        // (fail loud) rather than write a blob the loader would refuse.
+        // The sealed CRT format accepts prime widths in multiples of 32 bytes.
+        // Enforce that at seal time so the loader can reopen the blob.
         if !half.is_multiple_of(32) || n > out.len() {
             return Err(RsaError::BadWidth);
         }
-        put_field(&mut out[0..half], &pb)?;
-        put_field(&mut out[half..2 * half], &qb)?;
-        put_field(&mut out[2 * half..3 * half], &dpb)?;
-        put_field(&mut out[3 * half..4 * half], &dqb)?;
-        put_field(&mut out[4 * half..5 * half], &qib)?;
+        put_field(&mut out[0..half], pb.expose())?;
+        put_field(&mut out[half..2 * half], qb.expose())?;
+        put_field(&mut out[2 * half..3 * half], dpb.expose())?;
+        put_field(&mut out[3 * half..4 * half], dqb.expose())?;
+        put_field(&mut out[4 * half..5 * half], qib.expose())?;
         Ok(n)
     })();
-    pb.zeroize();
-    qb.zeroize();
-    dpb.zeroize();
-    dqb.zeroize();
-    qib.zeroize();
+    pb.wipe();
+    qb.wipe();
+    dpb.wipe();
+    dqb.wipe();
+    qib.wipe();
     r
 }
 
@@ -170,25 +169,32 @@ impl RsaCrt {
 }
 
 impl Drop for RsaCrt {
+    #[expect(clippy::disallowed_methods, reason = "a RsaCrt's drop is its wipe")]
     fn drop(&mut self) {
-        self.p.zeroize();
-        self.q.zeroize();
-        self.dp.zeroize();
-        self.dq.zeroize();
-        self.qinv.zeroize();
+        let Self {
+            half: _,
+            p,
+            q,
+            dp,
+            dq,
+            qinv,
+        } = self;
+        p.zeroize();
+        q.zeroize();
+        dp.zeroize();
+        dq.zeroize();
+        qinv.zeroize();
+        #[cfg(test)]
+        crate::tests::observe_crt_drop(&[p, q, dp, dq, qinv]);
     }
 }
 
 /// Parse a decrypted sealed plaintext into an [`RsaCrt`]. New
-/// `P‖Q‖dP‖dQ‖qInv` blobs slice directly; older `P‖Q` blobs recompute
-/// `dP/dQ/qInv` once here (the cost the new layout removes — such keys still get
-/// the fast asm CRT modexp, but keep the one-time precompute per signature until
-/// re-provisioned).
+/// `P‖Q‖dP‖dQ‖qInv` blobs slice directly. Loading an older `P‖Q` blob
+/// recomputes `dP/dQ/qInv` before calling the same signer.
 pub fn crt_from_plain(plain: &[u8]) -> Result<RsaCrt, RsaError> {
     let (half, is_crt) = parse_rsa_blob(plain)?;
-    // The asm CRT signer needs a 32-multiple field width; a legacy `P‖Q` blob of
-    // a non-standard width still DECIPHERs (via load_rsa_key on num-bigint) but
-    // cannot sign here — fail closed rather than feed the asm a bad width.
+    // Legacy DECIPHER accepts other widths through the BigUint signer.
     if !half.is_multiple_of(32) {
         return Err(RsaError::BadWidth);
     }
@@ -200,31 +206,28 @@ pub fn crt_from_plain(plain: &[u8]) -> Result<RsaCrt, RsaError> {
         crt.dq[..half].copy_from_slice(&plain[3 * half..4 * half]);
         crt.qinv[..half].copy_from_slice(&plain[4 * half..5 * half]);
     } else {
-        let p = BigUint::from_bytes_be(&plain[..half]);
-        let q = BigUint::from_bytes_be(&plain[half..2 * half]);
+        let p = from_secret_be(&plain[..half]);
+        let q = from_secret_be(&plain[half..2 * half]);
         let k = RsaKey::from_p_q(p, q, rsa_e()).ok_or(RsaError::BadBlob)?;
         let (dp, dq, qinv) = k.crt().ok_or(RsaError::Failed)?;
-        let mut dpb = dp.to_bytes_be();
-        let mut dqb = dq.to_bytes_be();
-        let mut qib = qinv.to_bytes_be();
-        let put = put_field(&mut crt.dp[..half], &dpb)
-            .and(put_field(&mut crt.dq[..half], &dqb))
-            .and(put_field(&mut crt.qinv[..half], &qib));
-        dpb.zeroize();
-        dqb.zeroize();
-        qib.zeroize();
+        let mut dpb = Secret::new(dp.to_bytes_be());
+        let mut dqb = Secret::new(dq.to_bytes_be());
+        let mut qib = Secret::new(qinv.to_bytes_be());
+        let put = put_field(&mut crt.dp[..half], dpb.expose())
+            .and(put_field(&mut crt.dq[..half], dqb.expose()))
+            .and(put_field(&mut crt.qinv[..half], qib.expose()));
+        dpb.wipe();
+        dqb.wipe();
+        qib.wipe();
         put?;
     }
     Ok(crt)
 }
 
 /// Raw RSA private-key operation `sig = cᵈ mod n`, computed over the cached CRT
-/// parameters with the UMAAL asm (the crate-private `sign_crt`, the backend this wraps —
-/// same job, one layer down, without blinding or the fault check). Base-blinded
-/// `(c·rᵉ)ᵈ·r⁻¹ mod n` with a fresh random `r`, so the variable-time modexp
-/// cannot become a timing oracle; then Bellcore fault-checked (`sigᵉ ≡ c mod n`)
-/// so a faulted CRT half — or an asm/marshaling bug — can never leave as a valid
-/// signature. `c` is the full modulus-width block (a PKCS#1 EM for OpenPGP, a
+/// parameters. Base blinding with fresh `r` randomizes the base before the
+/// private exponentiation. The Bellcore check verifies `sigᵉ ≡ c mod n`
+/// before returning the result. `c` is the full modulus-width block (a PKCS#1 EM for OpenPGP, a
 /// host-padded block for PIV GENERAL AUTHENTICATE). Writes the `modulus_len`-byte
 /// big-endian signature to `out`.
 pub fn private_op(
@@ -238,71 +241,92 @@ pub fn private_op(
         return Err(RsaError::BadBlock);
     }
     // num-bigint-dig's BigUint has no zeroizing Drop (its heap limbs are freed
-    // un-wiped), so every secret value here rides in a `Zeroizing` that scrubs it
-    // on drop — on the success path and every `?`/error return alike.
-    let p = Zeroizing::new(BigUint::from_bytes_be(crt.p()));
-    let q = Zeroizing::new(BigUint::from_bytes_be(crt.q()));
-    let n = &*p * &*q;
+    // un-wiped), so the key's halves, the blinding values and the result — for a
+    // decipher, the plaintext — ride in a `Secret`; the library's own copies do not.
+    let p = Secret::new(from_secret_be(crt.p()));
+    let q = Secret::new(from_secret_be(crt.q()));
+    let n = p.expose() * q.expose();
     let m = BigUint::from_bytes_be(c);
 
-    // The modulus little-endian, for the asm public-exponent modexp that both
-    // blinding (`rᵉ`) and the fault check (`sigᵉ`) use — the two full-width
-    // modexps that otherwise ran on num-bigint.
+    // Blinding and the fault check share the full-width public exponentiation.
     let mut n_le = [0u8; MAX_RSA_BYTES];
     let nb = n.to_bytes_le();
     n_le[..nb.len()].copy_from_slice(&nb);
     let pub_pow = |base: &BigUint| -> Option<BigUint> {
-        let mut b_le = [0u8; MAX_RSA_BYTES];
-        let bb = base.to_bytes_le();
-        b_le[..bb.len()].copy_from_slice(&bb);
-        let mut o_le = [0u8; MAX_RSA_BYTES];
-        let ok = crate::modexp_pub(
-            &b_le[..mlen],
-            crate::RSA_PUB_EXP_BE,
+        let mut b_le = Secret::<[u8; MAX_RSA_BYTES]>::zeroed();
+        let bb = Secret::new(base.to_bytes_le());
+        b_le.expose_mut()[..bb.expose().len()].copy_from_slice(bb.expose());
+        let mut o_le = Secret::<[u8; MAX_RSA_BYTES]>::zeroed();
+        let ok = crate::pubexp::modexp_pub(
+            &b_le.expose()[..mlen],
             &n_le[..mlen],
-            &mut o_le[..mlen],
+            &mut o_le.expose_mut()[..mlen],
         );
-        let out = ok.then(|| BigUint::from_bytes_le(&o_le[..mlen]));
-        b_le.zeroize();
-        o_le.zeroize();
+        let out = ok.then(|| BigUint::from_bytes_le(&o_le.expose()[..mlen]));
+        b_le.wipe();
+        o_le.wipe();
         out
     };
 
     let (r, r_inv) = blind_pair(&n, mlen, rng);
-    let blinded = Zeroizing::new((&m * pub_pow(&r).ok_or(RsaError::Failed)?) % &n);
+    let re = Secret::new(pub_pow(r.expose()).ok_or(RsaError::Failed)?);
+    let mre = Secret::new(&m * re.expose());
+    let blinded = Secret::new(mre.expose() % &n);
 
     // CRT private op on the blinded message, then unblind.
-    let mut base_le = [0u8; MAX_RSA_BYTES];
-    let mut bl = blinded.to_bytes_le();
-    base_le[..bl.len()].copy_from_slice(&bl);
-    bl.zeroize();
-    let mut sig_le = [0u8; MAX_RSA_BYTES];
-    crate::sign_crt(
-        &base_le[..mlen],
+    let mut base_le = Secret::<[u8; MAX_RSA_BYTES]>::zeroed();
+    let mut bl = Secret::new(blinded.expose().to_bytes_le());
+    base_le.expose_mut()[..bl.expose().len()].copy_from_slice(bl.expose());
+    bl.wipe();
+    let mut sig_le = Secret::<[u8; MAX_RSA_BYTES]>::zeroed();
+    if !crate::privexp::sign_crt(
+        &base_le.expose()[..mlen],
         crt.dp(),
         crt.dq(),
         crt.p(),
         crt.q(),
         crt.qinv(),
-        &mut sig_le[..mlen],
-    );
-    let s_blind = Zeroizing::new(BigUint::from_bytes_le(&sig_le[..mlen]));
-    let s = (&*s_blind * &*r_inv) % &n;
-    base_le.zeroize();
-    sig_le.zeroize();
+        &mut sig_le.expose_mut()[..mlen],
+    ) {
+        return Err(RsaError::Failed);
+    }
+    let s_blind = Secret::new(BigUint::from_bytes_le(&sig_le.expose()[..mlen]));
+    let prod = Secret::new(s_blind.expose() * r_inv.expose());
+    let s = Secret::new(prod.expose() % &n);
+    base_le.wipe();
+    sig_le.wipe();
 
     // Bellcore fault check: a correct signature satisfies sigᵉ ≡ c (mod n).
-    if pub_pow(&s).ok_or(RsaError::Failed)? != m {
+    if pub_pow(s.expose()).ok_or(RsaError::Failed)? != m {
         return Err(RsaError::Failed);
     }
-    let sb = s.to_bytes_be();
-    if sb.len() > mlen {
+    let sb = Secret::new(s.expose().to_bytes_be());
+    if sb.expose().len() > mlen {
         return Err(RsaError::Failed);
     }
-    let off = mlen - sb.len();
+    let off = mlen - sb.expose().len();
     out[..off].fill(0);
-    out[off..mlen].copy_from_slice(&sb);
+    out[off..mlen].copy_from_slice(sb.expose());
     Ok(mlen)
+}
+
+/// The pairwise-consistency test a key takes before it is stored: laid out as the
+/// signer holds it (its refusals are [`crt_plaintext`]'s too), it signs one block
+/// through [`private_op`]'s fault check at e = 65537. Composite primes fail here.
+pub fn pairwise_consistent(key: &RsaKey, rng: &mut dyn Rng) -> Result<(), RsaError> {
+    let mut plain = Secret::<[u8; MAX_CRT_PLAIN]>::zeroed();
+    let mut sig = Secret::<[u8; MAX_RSA_BYTES]>::zeroed();
+    let r = (|| {
+        let n = crt_plaintext(key, plain.expose_mut())?;
+        let crt = crt_from_plain(&plain.expose()[..n])?;
+        let mlen = crt.modulus_len();
+        let mut block = [0u8; MAX_RSA_BYTES];
+        block[mlen - 1] = 2;
+        private_op(&crt, &block[..mlen], rng, sig.expose_mut()).map(|_| ())
+    })();
+    plain.wipe();
+    sig.wipe();
+    r
 }
 
 #[cfg(test)]

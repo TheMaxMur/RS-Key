@@ -140,3 +140,67 @@ fn gcm_aad_roundtrip_and_tamper() {
     aes256gcm_decrypt(&key, &nonce, aad, &mut buf, &tag).unwrap();
     assert_eq!(buf, plain);
 }
+
+#[test]
+fn every_aes_key_width_uses_the_selected_mode() {
+    let pt = unhex::<16>("00112233445566778899aabbccddeeff");
+    for (key, cipher) in [
+        (
+            unhex::<16>("000102030405060708090a0b0c0d0e0f").to_vec(),
+            unhex::<16>("69c4e0d86a7b0430d8cdb78070b4c55a"),
+        ),
+        (
+            unhex::<24>("000102030405060708090a0b0c0d0e0f1011121314151617").to_vec(),
+            unhex::<16>("dda97ca4864cdfe06eaf70a0ec0d7191"),
+        ),
+        (
+            unhex::<32>("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f")
+                .to_vec(),
+            unhex::<16>("8ea2b7ca516745bfeafc49904b496089"),
+        ),
+    ] {
+        let mut block = pt;
+        aes_encrypt(&key, &[0; 16], Mode::Cbc, &mut block).unwrap();
+        assert_eq!(block, cipher);
+        aes_decrypt(&key, &[0; 16], Mode::Cbc, &mut block).unwrap();
+        assert_eq!(block, pt);
+
+        let mut stream = [0x55; 13];
+        aes_encrypt(&key, &pt, Mode::Cfb, &mut stream).unwrap();
+        assert_eq!(stream, core::array::from_fn(|i| cipher[i] ^ 0x55));
+        aes_decrypt(&key, &pt, Mode::Cfb, &mut stream).unwrap();
+        assert_eq!(stream, [0x55; 13]);
+    }
+}
+
+#[test]
+fn invalid_aes_lengths_leave_the_callers_bytes_unchanged() {
+    for len in [0, 1, 15, 17, 23, 25, 31, 33] {
+        let key = vec![0x11; len];
+        for mode in [Mode::Cbc, Mode::Cfb] {
+            let mut bytes = [0x55; 16];
+            assert_eq!(
+                aes_encrypt(&key, &[0; 16], mode, &mut bytes),
+                Err(Error::BadLength)
+            );
+            assert_eq!(
+                aes_decrypt(&key, &[0; 16], mode, &mut bytes),
+                Err(Error::BadLength)
+            );
+            assert_eq!(bytes, [0x55; 16]);
+        }
+    }
+    for len in [16, 24, 32] {
+        let key = vec![0x11; len];
+        let mut bytes = [0x55; 17];
+        assert_eq!(
+            aes_encrypt(&key, &[0; 16], Mode::Cbc, &mut bytes),
+            Err(Error::BadLength)
+        );
+        assert_eq!(
+            aes_decrypt(&key, &[0; 16], Mode::Cbc, &mut bytes),
+            Err(Error::BadLength)
+        );
+        assert_eq!(bytes, [0x55; 17]);
+    }
+}

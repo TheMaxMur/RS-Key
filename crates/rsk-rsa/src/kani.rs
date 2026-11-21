@@ -70,7 +70,7 @@ fn sieve_step_keeps_residues() {
         let mut composite = false;
         for k in 0..s.cnt {
             let r = mod_small(&s.cand[..s.half], SMALL_PRIMES[k]);
-            assert_eq!(s.res[k], r);
+            assert_eq!(u32::from(s.res[k]), r);
             composite |= r == 0;
         }
         assert_eq!(pass, !composite);

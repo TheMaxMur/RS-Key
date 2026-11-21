@@ -42,6 +42,7 @@ image is read off `optional = true`, not decided here.
 
 import argparse
 import collections
+import math
 import pathlib
 import re
 import sys
@@ -58,7 +59,7 @@ DENY = ROOT / "deny.toml"
 #: must point into a *later* band. Order inside a band is horizontal placement
 #: only — nothing may depend sideways, so nothing reads it.
 TIERS = [
-    ("BINARIES", "the two flashable images", "#3E3A36", ["firmware", "rsk-wipe"]),
+    ("BINARIES", "device binaries", "#3E3A36", ["firmware", "firmware-ns", "rsk-wipe"]),
     ("DISPLAY FLOW", "which screen is shown when — display build only", "#57514A",
      ["rsk-display"]),
     ("DEVICE WIRING", "which applets exist, and how a message reaches one", "#57514A",
@@ -85,6 +86,7 @@ TIERS = [
         [
             "rsk-phy",
             "rsk-devconf",
+            "rsk-x509",
             "rsk-store",
             "rsk-led",
             "rsk-ui",
@@ -98,12 +100,14 @@ TIERS = [
     ("APDU CORE", "parsing, TLV, status words, the Applet seams", "#2F7E75", ["rsk-sdk"]),
     ("CRYPTO FACADE", "the one crate that names a primitive", "#37877E", ["rsk-crypto"]),
     ("ALGORITHMS", "reached by an allowlist, never by every applet", "#4C9086",
-     ["rsk-rsa", "rsk-ec", "rsk-sha512", "rsk-mldsa"]),
+     ["rsk-rsa", "rsk-ec", "rsk-sha512", "rsk-sha256", "rsk-mldsa"]),
+    ("SECRETS", "key-grade bytes that wipe themselves on every exit", "#5E9A92",
+     ["rsk-secret"]),
 ]
 
 APPLET_LABEL = "APPLETS"
 #: A row of `docs/architecture.md`'s per-crate table.
-CRATE_ROW = re.compile(r"^\| `(firmware|rsk-[a-z0-9]+)` \|", re.M)
+CRATE_ROW = re.compile(r"^\| `(firmware(?:-ns)?|rsk-[a-z0-9]+)` \|", re.M)
 
 
 def applet_tier():
@@ -256,7 +260,7 @@ def notes(members, edges, gated):
 CHAR_W, CHIP_PAD, CHIP_H, CHIP_GAP = 6.6, 20.0, 28.0, 10.0
 #: 11px bold with .5px letter-spacing, plus the gap before the subtitle.
 TIER_CHAR_W, TIER_SUB_GAP = 8.0, 14
-WIDTH, MARGIN = 780, 34
+MIN_WIDTH, MARGIN = 780, 34
 
 
 def esc(text):
@@ -264,11 +268,14 @@ def esc(text):
     return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
-def band_svg(y, label, sub, colour, crates, gated):
+def band_span(widths):
+    return sum(widths) + CHIP_GAP * (len(widths) - 1)
+
+
+def band_svg(y, band, widths, gated, width):
     """One tier: its label, its subtitle, and a centred run of chips."""
-    widths = [CHIP_PAD + CHAR_W * len(c) + (9 if c in gated else 0) for c in crates]
-    span = sum(widths) + CHIP_GAP * (len(crates) - 1)
-    x = (WIDTH - span) / 2
+    label, sub, colour, crates = band
+    x = (width - band_span(widths)) / 2
     out = [
         f'  <text class="tier" x="{MARGIN}" y="{y:.0f}">{label}</text>',
         f'  <text class="sub2" x="{MARGIN + TIER_CHAR_W * len(label) + TIER_SUB_GAP:.0f}"'
@@ -294,10 +301,37 @@ def band_svg(y, label, sub, colour, crates, gated):
 NOTE_BUDGET = 108
 
 
+def break_at_commas(plain, markup):
+    """One `crates ← a, b, …` note too long for a line, broken after its commas.
+
+    Only the allowlist grows with the workspace: every crate that takes a secret
+    joins the bottom tier's parent list, so that list outruns the card first.
+    """
+    head_plain, _, rest = plain.partition(" ← ")
+    head_markup = markup.partition(" ← ")[0]
+    items = rest.split(", ")
+    lines, cur_plain, cur = [], head_plain + " ←", head_markup + " ←"
+    for i, item in enumerate(items):
+        piece = item + ("," if i + 1 < len(items) else "")
+        if len(cur_plain) + 1 + len(piece) > NOTE_BUDGET:
+            lines.append(cur)
+            cur_plain, cur = "  " + piece, "  " + piece
+        else:
+            cur_plain, cur = cur_plain + " " + piece, cur + " " + piece
+    lines.append(cur)
+    return lines
+
+
 def wrap(chunks, sep):
     """Greedily pack (plain, markup) chunks into lines that fit the card."""
     lines, plain, markup = [], "", []
     for chunk_plain, chunk_markup in chunks:
+        if len(chunk_plain) > NOTE_BUDGET and " ← " in chunk_plain:
+            if markup:
+                lines.append(sep.join(markup))
+                plain, markup = "", []
+            lines += break_at_commas(chunk_plain, chunk_markup)
+            continue
         joined = chunk_plain if not markup else plain + sep + chunk_plain
         if markup and len(joined) > NOTE_BUDGET:
             lines.append(sep.join(markup))
@@ -311,21 +345,28 @@ def wrap(chunks, sep):
 
 def render(members, edges, firm):
     gated = members - firm
+    band_widths = [
+        [CHIP_PAD + CHAR_W * len(crate) + (9 if crate in gated else 0) for crate in crates]
+        for _, _, _, crates in TIERS
+    ]
+    width = max(MIN_WIDTH, math.ceil(max(map(band_span, band_widths)) + 2 * MARGIN))
     sideways, head, allow, mark = notes(members, edges, gated)
+    bottom, n = TIERS[-1][0].lower(), len(TIERS[-1][3])
     desc = (
         f"Crate dependency layers: {len(members)} crates in {len(TIERS)} tiers, from the "
-        f"{len(TIERS[0][3])} flashable binaries at the top, down through the "
-        f"{len(TIERS[applet_tier()][3])} applets, to the {len(TIERS[-1][3])} algorithm "
-        f"crates. All {len(edges)} in-workspace dependencies point strictly downward, and "
-        f"applet-to-applet edges number {sideways}."
+        f"{len(TIERS[0][3])} device binaries at the top, down through the "
+        f"{len(TIERS[applet_tier()][3])} applets, to the {n} {bottom} "
+        f"crate{'s' if n != 1 else ''} at the bottom. All {len(edges)} in-workspace "
+        f"dependencies point strictly downward, and applet-to-applet edges number "
+        f"{sideways}."
     )
     body, y = [], 118
-    for i, (label, sub, colour, crates) in enumerate(TIERS):
-        rows, y = band_svg(y, label, sub, colour, crates, gated)
+    for i, (band, widths) in enumerate(zip(TIERS, band_widths)):
+        rows, y = band_svg(y, band, widths, gated, width)
         body += rows
         if i + 1 < len(TIERS):
             body.append(
-                f'  <path class="arw" d="M{WIDTH / 2:.0f} {y + 6:.0f} l6 0 -6 9 -6 -9 z"/>'
+                f'  <path class="arw" d="M{width / 2:.0f} {y + 6:.0f} l6 0 -6 9 -6 -9 z"/>'
             )
         y += 26
     note_y = y + 4
@@ -335,7 +376,7 @@ def render(members, edges, firm):
         "<!-- SPDX-License-Identifier: AGPL-3.0-only -->",
         "<!-- Copyright (C) 2026 RS-Key contributors -->",
         "<!-- GENERATED by scripts/crate_graph.py — do not edit; run the script. -->",
-        f'<svg viewBox="0 0 {WIDTH} {height:.0f}" xmlns="http://www.w3.org/2000/svg" role="img"'
+        f'<svg viewBox="0 0 {width} {height:.0f}" xmlns="http://www.w3.org/2000/svg" role="img"'
         ' aria-labelledby="ttl dsc"'
         " font-family=\"'Segoe UI', system-ui, -apple-system, sans-serif\">",
         '  <title id="ttl">RS-Key crate dependency layers</title>',
@@ -355,14 +396,15 @@ def render(members, edges, firm):
         "      .foot{font-size:10.5px;fill:#ADA398}",
         "    </style>",
         "  </defs>",
-        f'  <rect x="6" y="6" width="{WIDTH - 12}" height="{height - 12:.0f}" rx="16"'
+        f'  <rect x="6" y="6" width="{width - 12}" height="{height - 12:.0f}" rx="16"'
         ' fill="#FBFAF8" stroke="#E4DED5" stroke-width="1.5"/>',
         "",
         f'  <text class="h1" x="{MARGIN}" y="46">Crate dependency layers</text>',
         f'  <text class="sub" x="{MARGIN}" y="68">{len(members)} crates · {len(edges)}'
         " in-workspace dependencies · every one points strictly downward</text>",
         f'  <text class="sub" x="{MARGIN}" y="88">each tier is host-tested (no_std) except'
-        ' <tspan font-weight="700">firmware</tspan> and <tspan font-weight="700">rsk-wipe</tspan>,'
+        ' <tspan font-weight="700">firmware</tspan>, <tspan font-weight="700">firmware-ns</tspan>'
+        ' and <tspan font-weight="700">rsk-wipe</tspan>,'
         " which are thumbv8m-only</text>",
         "",
     ]

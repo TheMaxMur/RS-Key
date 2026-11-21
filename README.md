@@ -53,6 +53,7 @@ Which file to take:
 |---|---|
 | Most RP2350 boards, 4 MB flash | `default` |
 | 2 MB flash (Seeed XIAO RP2350, Waveshare RP2350-Zero-CM) | `2mb` |
+| Bitmerse Romu | `romu` |
 | 16 MB flash (TenStar RP2350-USB) | `16mb` |
 | Waveshare RP2350-Touch-LCD-2.8 | `display` |
 
@@ -71,7 +72,7 @@ librekeys project) reads the device's state and writes the same config surface t
 
 <p align="center">
   <img src="docs/images/picoforge-overview.png" width="720" alt="PicoForge on its Device Overview page, reading a freshly flashed RS-Key: a sidebar of sections (Home, Passkeys, Accounts, Slots, PIV, OpenPGP, Audit, Backup, Lock, Attestation, Configuration, Security, Offboard) and four cards — Device Information (serial number, firmware RS-Key build 0x0872, VID:PID 1209:0001, product name RS-Key Security Key, storage 2 of 1536 KB, 4 MB flash chip), FIDO2 Information (AAGUID, U2F_V2 and FIDO 2.0 / 2.1 / 2.3, PIN Not Set, resident keys supported, 256 remaining credentials), LED Configuration (GPIO 16, 30 s presence touch timeout) and Security Status (boot mode Development, debug enabled, secure lock pending)"><br>
-  <sub>A board straight out of step 3, in PicoForge: the default <code>1209:0001</code> identity, no PIN yet, boot mode still <code>Development</code></sub>
+  <sub>A board straight out of step 3, in PicoForge: the former test identity <code>1209:0001</code> (current builds use <code>1209:F1D2</code>), no PIN yet, boot mode still <code>Development</code></sub>
 </p>
 
 The demo below runs on a board with a screen. A plain RP2350 board behaves the
@@ -155,7 +156,7 @@ The docs live in [docs/](docs/) and are published as a site:
 | [Feature guides](docs/guides/) | FIDO2, SSH, OpenPGP, PIV, OATH, OTP, backup, soft-lock, LED, audit, … |
 | [Threat model](docs/threat-model.md) · [Limitations](docs/limitations.md) | what it protects against, and what it does not |
 | [Architecture](docs/architecture.md) · [`unsafe` audit](docs/unsafe.md) | how it's built; every `unsafe` site |
-| [Testing](docs/testing.md) · [Interop](docs/interop.md) | host tests, fuzzing; real-tool results |
+| [Testing](docs/testing.md) | host tests, fuzzing, and client compatibility |
 | [Linux setup](docs/linux.md) · [Motivation](docs/motivation.md) | pcscd/udev/polkit; why this exists |
 
 ## Build it yourself
@@ -167,9 +168,9 @@ The release images are reproducible, so you can rebuild any of them bit for bit
 git clone https://github.com/TheMaxMur/RS-Key && cd RS-Key
 nix develop                       # toolchain, picotool, host tools, everything
 
-cargo build --release -p firmware
-scripts/pt.sh target/thumbv8m.main-none-eabihf/release/firmware firmware-pt.elf   # fence the key's storage off the bootloader
-picotool uf2 convert firmware-pt.elf -t elf firmware.uf2
+bash scripts/build.sh
+# combined Secure + Non-secure image, with the storage partition fence
+cp target/trustzone/combined.uf2 firmware.uf2
 
 # hold BOOTSEL, plug the board in, then flash, either way:
 cp firmware.uf2 /Volumes/RP2350/                    # macOS drag-and-drop; Linux: the mounted RP2350 volume
@@ -177,7 +178,7 @@ picotool load -v firmware.uf2 && picotool reboot    # more robust; verifies the 
 ```
 
 Re-plug the board and it enumerates as a composite USB authenticator. The default
-build requires a **physical touch** (the BOOTSEL button) for FIDO operations;
+TrustZone build requires a **physical touch** (the BOOTSEL button) for FIDO operations;
 build with `--features no-touch` for a no-touch build (the automated test
 suites need it). Every compile-time knob, including the flash size, LED pin and
 USB identity, is in [docs/build.md](docs/build.md).
@@ -186,10 +187,12 @@ USB identity, is in [docs/build.md](docs/build.md).
 
 `nix develop` is the whole setup: Rust with the `thumbv8m.main-none-eabihf`
 target, `picotool`, the Python host stack, and the security tooling. One command
-is the merge gate, and CI runs exactly the same script:
+is the per-commit gate, a second is the assurance layer run once before a pull
+request, and CI runs both as they are:
 
 ```sh
-nix develop -c ./scripts/check.sh   # fmt, clippy, host tests, firmware builds, audit, deny, gitleaks
+nix develop -c ./scripts/check.sh            # fmt, clippy, host tests, firmware builds, audit, deny, gitleaks
+nix develop -c ./scripts/check-assurance.sh  # TLA+ plumbing, registries against prose
 ```
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) and [docs/testing.md](docs/testing.md).
@@ -211,7 +214,8 @@ attaches it to the kernel as a *real* USB device, which is how a browser, `ykman
 or `gpg` reach it.
 
 It is **not** a security key: no secure boot, no OTP root, no fuses, and the seed
-sits in a file. It emulates behaviour, not the device. See
+sits in a file. It emulates behaviour, not the device. `--image` runs the firmware
+image itself instead, booted through the real bootrom on an emulated RP2350. See
 [`tools/emu/README.md`](tools/emu/README.md).
 
 ## Production / secure boot (irreversible — read first)
@@ -266,7 +270,7 @@ inspecting and managing a local FIDO2/CTAP authenticator, built on
 client stack, which is what makes it interesting here: a second opinion on what
 this firmware answers, from a parser that is not libfido2 or python-fido2. It has
 not been run against RS-Key yet; it is `⏳` in the
-[interop matrix](docs/interop.md#fido2--webauthn--u2f).
+[interop report](assurance/reports/interop.md#fido2--webauthn--u2f).
 
 ## Limitations (short list)
 
@@ -276,7 +280,7 @@ not been run against RS-Key yet; it is `⏳` in the
   OpenPGP and PIV keys do not survive a board swap.
 - **No brainpoolP512r1 / X448 / Ed448** OpenPGP curves (no mature `no_std` Rust
   arithmetic yet); brainpoolP256r1 and P384r1 are supported.
-- The default USB identity is **RS-Key's own** pid.codes id `0x1209:0x0001`;
+- The default USB identity is **RS-Key's own** [pid.codes allocation](https://pid.codes/1209/F1D2/) `0x1209:0xF1D2`;
   the YubiKey USB identity that `ykman` / Yubico Authenticator auto-recognize is
   the opt-in `VIDPID=Yubikey5` build, not for distribution.
 

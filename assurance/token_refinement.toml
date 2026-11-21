@@ -5,7 +5,7 @@
 # domains, flash keys, the Fs write API, the permission set and the module graph,
 # then refuses any unowned writer/outcome producer.
 #
-# `disposition` is roadmap stage 4 п.4, and every entry answers it: `step`
+# `disposition` is roadmap stage 4 item 4, and every entry answers it: `step`
 # implements the named abstract Step (the default, and the only one that may
 # carry an `op`), `stutter` moves security-visible state the abstraction does not
 # observe, `out-of-scope` is a real gate outside the abstraction's vocabulary.
@@ -89,6 +89,12 @@ function = "arm_token"
 op = "IssueToken"
 test_only = true
 
+[[volatile_writer]]
+file = "crates/rsk-fido/src/tests.rs"
+function = "dispatch_without_response_space_has_no_effect"
+op = "IssueToken"
+test_only = true
+
 [[persistent_writer]]
 file = "crates/rsk-fido/src/clientpin.rs"
 function = "spend_and_verify_pin_hash"
@@ -168,6 +174,12 @@ op = "Noop"
 [[persistent_writer]]
 file = "crates/rsk-fido/src/conformance/mod.rs"
 function = "set_pin_file"
+op = "SetPin"
+test_only = true
+
+[[persistent_writer]]
+file = "crates/rsk-fido/src/conformance/getinfo.rs"
+function = "getinfo_keeps_an_empty_owner_pin_record_configured"
 op = "SetPin"
 test_only = true
 
@@ -289,10 +301,10 @@ disposition = "out-of-scope"
 why = "restores the lock from the board's boot state on every power-up; B's clause is (lock.policyMism >= MismatchLimit) => lock.soft and A has no image of it"
 
 [[softlock_owner]]
-file = "crates/rsk-device/src/ctap.rs"
-function = "handle_cbor"
+file = "crates/rsk-device/src/lib.rs"
+function = "persist_pin_lock"
 disposition = "out-of-scope"
-why = "stores the lock through Hooks after every dispatch, which is what makes it survive an ungated SCB::sys_reset"
+why = "stores the lock through Hooks after every dispatch on both transports — AppletHandler::handle_cbor and CcidApplets::handle_apdu call it — which is what makes it survive an ungated SCB::sys_reset"
 
 [[softlock_owner]]
 file = "crates/rsk-device/src/ctap.rs"
@@ -355,3 +367,16 @@ file = "crates/rsk-fido/src/reset.rs"
 function = "reset"
 disposition = "out-of-scope"
 why = "the window's only production caller, and it consults it only where the presence backend shows no prompt"
+
+[[softlock_owner]]
+file = "crates/rsk-device/src/tests.rs"
+function = "absent_board_capabilities_preserve_a_cold_unlocked_boot"
+disposition = "out-of-scope"
+test_only = true
+why = "checks the default Hooks implementation's cold boot after a lock write; compiled only under cfg(test), with no production token event"
+
+[[softlock_owner]]
+file = "crates/rsk-device/src/ctap.rs"
+function = "reset_transport_session"
+disposition = "out-of-scope"
+why = "USB transport reset preserves the current per-boot mismatch batch and soft lock across volatile authorization scrubbing; the abstract token relation has no retry-budget state"

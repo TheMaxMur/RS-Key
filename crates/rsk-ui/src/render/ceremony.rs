@@ -321,3 +321,7 @@ where
     outline_button(t, DENY_RECT, "Cancel", theme::DENY)?;
     button(t, ALLOW_RECT, "Save", theme::ACCENT_FILL)
 }
+
+#[cfg(test)]
+#[path = "ceremony_helper_tests.rs"]
+mod helper_tests;

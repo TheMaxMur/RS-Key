@@ -17,7 +17,7 @@ impl Sw {
     pub const fn new(sw1: u8, sw2: u8) -> Self {
         Sw(((sw1 as u16) << 8) | sw2 as u16)
     }
-    #[inline]
+    #[cfg_attr(not(coverage), inline)]
     pub const fn sw1(self) -> u8 {
         (self.0 >> 8) as u8
     }
@@ -30,7 +30,7 @@ impl Sw {
         self.0 == Self::OK.0
     }
     /// Big-endian bytes, as appended to a response APDU.
-    #[inline]
+    #[cfg_attr(not(coverage), inline)]
     pub const fn to_bytes(self) -> [u8; 2] {
         [self.sw1(), self.sw2()]
     }
@@ -51,8 +51,13 @@ impl Sw {
     pub const BYTES_REMAINING_00: Sw = Sw::new(0x61, 0x00);
     pub const WARNING_STATE_UNCHANGED: Sw = Sw::new(0x62, 0x00);
     pub const WARNING_EOF: Sw = Sw::new(0x62, 0x82);
+    /// ISO 7816-4 "selected file in termination state": OpenPGP after TERMINATE DF.
+    pub const TERMINATED: Sw = Sw::new(0x62, 0x85);
     pub const WARNING_NOINFO: Sw = Sw::new(0x63, 0x00);
     pub const EXEC_ERROR: Sw = Sw::new(0x64, 0x00);
+    /// Past the fuse latch the fused key did not read: nothing opens or seals, so
+    /// the command refuses as a failed OTP read does.
+    pub const FUSED_KEY_UNREAD: Sw = Sw::EXEC_ERROR;
     pub const MEMORY_FAILURE: Sw = Sw::new(0x65, 0x81);
     pub const SECURE_MESSAGE_EXEC_ERROR: Sw = Sw::new(0x66, 0x00);
     pub const WRONG_LENGTH: Sw = Sw::new(0x67, 0x00);

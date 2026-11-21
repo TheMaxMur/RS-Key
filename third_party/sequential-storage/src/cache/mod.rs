@@ -105,7 +105,7 @@ impl<PAGE: PageStatesCache, POINTERS: PagePointersCache, KEYS: KeyPointersCache<
     Cache<PAGE, POINTERS, KEYS, KEY>
 {
     /// Create a new cache object from the given subcaches
-    pub fn new(page_states: PAGE, page_pointers: POINTERS, key_pointers: KEYS) -> Self {
+    pub const fn new(page_states: PAGE, page_pointers: POINTERS, key_pointers: KEYS) -> Self {
         Self {
             dirt_tracker: DirtTracker::new(),
             page_states,

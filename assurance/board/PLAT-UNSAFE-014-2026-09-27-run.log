@@ -1,0 +1,26 @@
+# capture 2026-09-27, Waveshare RP2350-Zero 4M, chipid 0x6e4a9b82bbbc05a7, secure boot off
+# image: cargo build --release -p firmware --features bench,no-touch at e54914a9884bb6b1bd0596896eb93700359f8e52 (bcdDevice 0x0A4E),
+#        partition table applied by scripts/pt.sh, loaded with picotool v2.2.0-a4: load -u -v -x (verify OK)
+elf     sha256 411bba2402f8e322590692b66c23c38ca3423d983ee6379fcd15f39c242bff41  (before scripts/pt.sh)
+elf+pt  sha256 7b84bafa9a860be1809ce7ab61edc0f86314cbe235ece81f00e1b19ad81df093  (the file loaded)
+
+## run 1: nix develop -c python tests/55_stack_residue.py
+reader: RS-Key RS-Key Security Key
+sweep stopped: key 0, key ^ ipad 0, key ^ opad 1; 1860 of 209848 dead-stack bytes not zero
+sweep running: key 0, key ^ ipad 0, key ^ opad 0; 181 of 209848 dead-stack bytes not zero
+PASS: the control found the key's residue, and the sweep removed all of it
+EXIT=0
+
+## run 2: nix develop -c python tests/55_stack_residue.py
+reader: RS-Key RS-Key Security Key
+sweep stopped: key 0, key ^ ipad 0, key ^ opad 1; 1854 of 209848 dead-stack bytes not zero
+sweep running: key 0, key ^ ipad 0, key ^ opad 0; 181 of 209848 dead-stack bytes not zero
+PASS: the control found the key's residue, and the sweep removed all of it
+EXIT=0
+
+## run 3: nix develop -c python tests/55_stack_residue.py
+reader: RS-Key RS-Key Security Key
+sweep stopped: key 0, key ^ ipad 0, key ^ opad 1; 1988 of 209848 dead-stack bytes not zero
+sweep running: key 0, key ^ ipad 0, key ^ opad 0; 180 of 209848 dead-stack bytes not zero
+PASS: the control found the key's residue, and the sweep removed all of it
+EXIT=0

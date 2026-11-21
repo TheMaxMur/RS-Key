@@ -28,8 +28,9 @@ const TAG_NEW_PASSWORD: u8 = 0x81;
 
 /// The OTP-fused MKEK, as the applet takes it: a reader, not the key. Matches how
 /// the firmware supplies one — the fuse is read on demand, never held in RAM.
-fn fused_mkek() -> Option<[u8; 32]> {
-    Some([0x5A; 32])
+fn fused_mkek(out: &mut [u8; 32]) -> bool {
+    *out = [0x5A; 32];
+    true
 }
 
 struct CountRng(u8);
@@ -73,7 +74,7 @@ fuzz_target!(|data: &[u8]| {
 
     // Both generations: None exercises the legacy/serial arm, Some exercises the
     // v1 OTP-rooted verifier and its without_otp() fallback.
-    let generations: [Option<FusedKey>; 2] = [None, Some(fused_mkek)];
+    let generations: [Option<FusedKey>; 2] = [None, Some(FusedKey::open(fused_mkek))];
     for otp in generations {
         let mut fs = Fs::new(RamStorage::new());
         fs.scan();

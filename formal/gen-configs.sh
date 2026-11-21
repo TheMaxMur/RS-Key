@@ -149,7 +149,7 @@ emit() { # $1 = cfg, $2 = bug switch (""), $3 = sweep fix, $4 = ppuat fix
     # symmetry is what pays for the two constants below being the firmware's
     # own. Quotienting the interchangeable relying parties and channels takes
     # 61 215 504 distinct states to 25 829 584, which is what let MAX_PIN_RETRIES
-    # = 8 and PIN_MISMATCH_LIMIT = 3 (consts.rs:368,372) be affordable at all.
+    # = 8 and PIN_MISMATCH_LIMIT = 3 (consts.rs:371,375) be affordable at all.
     # They cost 108 618 956 now -- MORE than the reduced 3 : 2 explored before the
     # quotient, the token-less registration and the grant record having been folded
     # in since. The mechanism is the measurement; the margin was, and is not.
@@ -441,10 +441,15 @@ echo "wrote Shipped.cfg, 2 historical configs, ${#BUGS[@]} mutant configs and ${
 # carries the measurement), so a product would multiply 17 M states by this
 # module's own and buy no new interleavings.
 SEAM_BUGS=(BugSelectKeepsOtherApplet BugReselectResetsStatus
+           BugOathReselectUnrecorded
            BugCardResetKeepsStatus BugAdminOpensKeyOps
            BugFailedChangeKeepsStatus BugPinFreshNotSpent BugPinFreshOutlivesPin
-           BugSigPinNotSpent
-           BugUserStatusOpensAdmin BugRefusedValidateGrants
+           BugSigPinNotSpent BugDecipherGhostSpentLikeSig
+           BugDecipherPinSpentLikeSig BugAnyPgpVerifyArmsSig
+           BugRefusedPw1ChangeKeepsSig
+           BugUserStatusOpensAdmin BugAdminPolicyIgnoresApplet
+           BugRefusedSigPinNotSpent
+           BugRefusedValidateGrants
            BugPwStatusIgnoresAdmin BugPivChangeResetsStatus
            BugRefusedValidateDropsUnlock BugRemoveCodeUnvalidated
            BugFreshCardOpensOtpPin BugDeselectKeepsOathUnlock
@@ -455,13 +460,28 @@ seam_target() {
   case "$1" in
     BugSelectKeepsOtherApplet)  echo NoStatusOutsideItsSelection ;;
     BugReselectResetsStatus)    echo ReselectPreservesAccessStatus ;;
+    # The recorder's OATH exemption removed: the same invariant, reddened from
+    # the other side -- by a re-lock the shipped applet performs on purpose.
+    BugOathReselectUnrecorded)  echo ReselectPreservesAccessStatus ;;
     BugCardResetKeepsStatus)    echo NoStatusOutsideItsSelection ;;
     BugAdminOpensKeyOps)        echo NoKeyOpOnTheAdminStatus ;;
     BugFailedChangeKeepsStatus) echo NoStatusAfterARefusedAuth ;;
     BugPinFreshNotSpent)        echo NoKeyOpOnTheAdminStatus ;;
     BugPinFreshOutlivesPin)     echo NoKeyOpOnTheAdminStatus ;;
     BugSigPinNotSpent)          echo NoKeyOpOnTheAdminStatus ;;
+    # The same invariant's STRUCTURAL clause `held["pw1"] = psig`, split the
+    # other way: the ghost spends at the decipher reference, `held` does not.
+    BugDecipherGhostSpentLikeSig) echo NoKeyOpOnTheAdminStatus ;;
+    # Its mirror on the implementation half, and the ghost's two per-reference
+    # answers turned: each splits `held["pw1"] = psig` from one side.
+    BugDecipherPinSpentLikeSig) echo NoKeyOpOnTheAdminStatus ;;
+    BugAnyPgpVerifyArmsSig)     echo NoKeyOpOnTheAdminStatus ;;
+    BugRefusedPw1ChangeKeepsSig) echo NoKeyOpOnTheAdminStatus ;;
     BugUserStatusOpensAdmin)    echo NoKeyOpOnTheAdminStatus ;;
+    # The requirement's per-applet dispatch collapsed: the admin recorder fires.
+    BugAdminPolicyIgnoresApplet) echo NoKeyOpOnTheAdminStatus ;;
+    # A refused PSO:CDS or ATTEST that keeps PW1.81 the requirement spent.
+    BugRefusedSigPinNotSpent)   echo NoKeyOpOnTheAdminStatus ;;
     BugRefusedValidateGrants)   echo NoStatusAfterARefusedAuth ;;
     BugPwStatusIgnoresAdmin)    echo NoKeyOpOnTheAdminStatus ;;
     BugPivChangeResetsStatus)   echo ExemptRefusalPreservesStatus ;;
@@ -592,22 +612,39 @@ echo "wrote Store.cfg, StoreInduction.cfg and ${#STORE_BUGS[@]} x 2 store config
 # module for the same measured reason: it shares no variable with the others (it
 # has counters, the seam has statuses), and it is the one part of the applet
 # surface with no safe oracle -- exhausting a real PUK ladder blocks the card.
-LATTICE_BUGS=(BugUseWhenBlocked BugWrongDoesNotSpend BugRecoveryWithoutSecret)
+LATTICE_BUGS=(BugUseWhenBlocked BugWrongDoesNotSpend BugRecoveryWithoutSecret
+              BugSetRetriesWithoutAdmin BugSetRetriesOnUserStatus
+              BugSetRetriesRefillsOldMaximum BugSetRetriesKeepsCount
+              BugPivSetRetriesWithoutMgm BugPivSetRetriesWithoutPin
+              BugResetRetryWithoutAdmin BugResetCodeWithoutAdmin
+              BugKdfWithoutAdmin BugKdfWithKeys)
 
 lattice_target() {
   case "$1" in
     BugUseWhenBlocked)        echo NoAuthWhenBlocked ;;
     BugWrongDoesNotSpend)     echo WrongAttemptIsCharged ;;
     BugRecoveryWithoutSecret) echo BudgetRisesOnlyWithItsSecret ;;
+    # SET PIN RETRIES raising a budget with no status, under the user's, or to a
+    # count other than the maximum it sets.
+    BugSetRetriesWithoutAdmin)      echo BudgetRisesOnlyWithItsSecret ;;
+    BugSetRetriesOnUserStatus)      echo BudgetRisesOnlyWithItsSecret ;;
+    BugSetRetriesRefillsOldMaximum) echo CountWithinMaximum ;;
+    BugSetRetriesKeepsCount) echo CountWithinMaximum ;;
+    BugPivSetRetriesWithoutMgm|BugPivSetRetriesWithoutPin|BugResetRetryWithoutAdmin|\
+    BugResetCodeWithoutAdmin|BugKdfWithoutAdmin|BugKdfWithKeys)
+        echo BudgetRisesOnlyWithItsSecret ;;
   esac
 }
-LATTICE_INV=(NoAuthWhenBlocked WrongAttemptIsCharged BudgetRisesOnlyWithItsSecret)
+LATTICE_INV=(NoAuthWhenBlocked WrongAttemptIsCharged BudgetRisesOnlyWithItsSecret CountWithinMaximum)
 
-emit_lattice() { # $1 = cfg, $2 = switch (""), $3 = 1 for solo
-  local out=$1 on=${2:-} solo=${3:-0}
+emit_lattice() { # $1 = cfg, $2 = switch (""), $3 = 1 for solo, $4 = 1 for induction
+  local out=$1 on=${2:-} solo=${3:-0} induct=${4:-0}
   {
     echo "\\* Generated by formal/gen-configs.sh -- do not edit by hand."
-    echo "SPECIFICATION Spec"
+    # An induction probe starts from every state `IndInv` admits instead of from
+    # `Init`, so depth 1 IS the claim `IndInv /\ Next => IndInv'`.
+    if [ "$induct" = 1 ]; then echo "INIT IndInv"; echo "NEXT Next"
+    else echo "SPECIFICATION Spec"; fi
     echo "CONSTANTS"
     echo "    Max = 2"
     for b in "${LATTICE_BUGS[@]}"; do
@@ -628,7 +665,14 @@ emit_lattice() { # $1 = cfg, $2 = switch (""), $3 = 1 for solo
 emit_lattice Lattice.cfg ""
 for b in "${LATTICE_BUGS[@]}"; do emit_lattice "LatMut_$b.cfg" "$b"; done
 for b in "${LATTICE_BUGS[@]}"; do emit_lattice "LatSolo_$b.cfg" "$b" 1; done
-echo "wrote Lattice.cfg and ${#LATTICE_BUGS[@]} x 2 lattice configs"
+# The induction probe, and ONE mutant of it, the shape StoreInduction.cfg uses.
+# `Init` satisfies `IndInv` (every counter at `Max`, `viol = {}`), so a defect
+# that breaks the step from an admitted state breaks it from a reachable one too
+# and the other two would only repeat their `LatSolo_` rows. This one is here to
+# show the INIT/NEXT wiring can go red at all.
+emit_lattice LatInduction.cfg "" 0 1
+emit_lattice LatInductionMut_BugWrongDoesNotSpend.cfg BugWrongDoesNotSpend 1 1
+echo "wrote Lattice.cfg, LatInduction.cfg and ${#LATTICE_BUGS[@]} x 2 lattice configs"
 
 # ---------------------------------------------------------------------------
 # RSKeyAppletPolicies -- the real stateful operation doors across PIV,
@@ -638,7 +682,7 @@ POLICY_BUGS=(BugPivPolicyIgnored BugPivAlwaysDoesNotSpend
              BugPgpAttributeKeepsKey BugOathCodeIgnored BugOathTouchIgnored
              BugOtpCodeIgnored BugOtpCounterRepeats
              BugOtpPressTypesUnpersisted BugOtpBootKeepsPosition
-             BugOtpSwapKeepsSession)
+             BugOtpSwapKeepsSession BugNeverSlotOwesASpend)
 
 policy_target() {
   case "$1" in
@@ -652,6 +696,7 @@ policy_target() {
     BugOtpPressTypesUnpersisted)  echo OtpCounterNeverRepeats ;;
     BugOtpBootKeepsPosition)      echo OtpCounterNeverRepeats ;;
     BugOtpSwapKeepsSession)       echo OtpCounterNeverRepeats ;;
+    BugNeverSlotOwesASpend)       echo PivAlwaysSpendsFreshness ;;
   esac
 }
 POLICY_INV=(PivOperationNeedsSlotPolicy PivAlwaysSpendsFreshness
@@ -664,7 +709,9 @@ emit_policy() { # $1 = cfg, $2 = switch (""), $3 = 1 for solo
     echo "\\* Generated by formal/gen-configs.sh -- do not edit by hand."
     echo "SPECIFICATION Spec"
     echo "CONSTANTS"
-    echo "    CounterMax = 2"
+    # A boot's first press takes a step of the counter before it types, so three
+    # leaves a record room to be pressed in a second boot; at two it never is.
+    echo "    CounterMax = 3"
     # The session wraps at SessionMax, which is where the persisted half moves;
     # a second slot is what a swap needs to re-pair a record with the wrong
     # session. Both minima are measured and recorded in formal/scopes.txt.

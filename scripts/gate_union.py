@@ -9,7 +9,7 @@ and then lost power leaves the applet's secrets reachable. Each applet exports
 the predicate naming its own gate records; `gates_wiped_last` in the firmware is
 their union.
 
-The union is hand-maintained across four crates and nothing in the type system
+The union is hand-maintained across five crates and nothing in the type system
 notices an arm that is missing — the code compiles, and a test written against
 the remaining arms still passes. That is not hypothetical: `is_oath_lock_fid`
 was private for a release, so the firmware could not name it and OATH was simply
@@ -39,10 +39,11 @@ EXPORT = re.compile(
     re.MULTILINE,
 )
 
-#: Applets whose records gate access to secrets, so each owes the union one arm.
+#: Applets whose records gate access to secrets, so each owes the union one arm,
+#: and `rsk-devconf`, whose lock is the only gate on the OTP slots once a code is set.
 #: Without a roster an absent predicate shows up as nothing at all — deleting one
 #: reads exactly like an applet that has no gate records (audit run-37).
-APPLETS_OWING_A_GATE = ("rsk-fido", "rsk-oath", "rsk-openpgp", "rsk-piv")
+APPLETS_OWING_A_GATE = ("rsk-devconf", "rsk-fido", "rsk-oath", "rsk-openpgp", "rsk-piv")
 
 
 def union_body(text):

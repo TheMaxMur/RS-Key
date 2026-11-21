@@ -17,6 +17,9 @@ OPENPGP_AID = [0xD2, 0x76, 0x00, 0x01, 0x24, 0x01]
 INS_VERIFY, INS_ACTIVATE, INS_TERMINATE = 0x20, 0x44, 0xE6
 MODE_PW1, MODE_PW3 = 0x81, 0x83
 PW1_DEFAULT, PW3_DEFAULT = b"123456", b"12345678"
+# SET PIN RETRIES (INS F2) gives a PIN up to a byte's worth of tries.
+MAX_TRIES = 255
+SW_BLOCKED = (0x69, 0x83)
 
 
 def _apdu(ins, p1, p2, data=b""):
@@ -48,10 +51,13 @@ def reset(args):
     # prompting again there would raise EOFError on non-TTY stdin and lose its receipt.
     if args is not None:
         confirm("OPENPGP RESET")
-    # Block both PINs (each VERIFY decrements the retry counter; at 0 it blocks).
+    # Block both PINs: each wrong VERIFY spends a try, and the one that spends the
+    # last answers 6983. A guess that happens to match stops the loop too.
     for mode in (MODE_PW3, MODE_PW1):
-        for _ in range(5):
-            ccid.transmit(conn, _apdu(INS_VERIFY, 0x00, mode, b"00000000"))
+        for _ in range(MAX_TRIES):
+            _, s1, s2 = ccid.transmit(conn, _apdu(INS_VERIFY, 0x00, mode, b"00000000"))
+            if (s1, s2) in (SW_BLOCKED, ccid.SW_OK):
+                break
     _, s1, s2 = ccid.transmit(conn, _apdu(INS_TERMINATE, 0x00, 0x00))
     if (s1, s2) != ccid.SW_OK:
         raise SystemExit(f"TERMINATE not accepted ({s1:02X}{s2:02X}) — PINs may not both be blocked")

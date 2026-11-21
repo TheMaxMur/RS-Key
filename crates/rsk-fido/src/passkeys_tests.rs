@@ -10,6 +10,15 @@ use rsk_crypto::sha256;
 use rsk_fs::Fs;
 use rsk_fs::storage::ram::RamStorage;
 
+#[path = "passkeys_fault_tests.rs"]
+mod faults;
+
+#[path = "passkeys_restart_tests.rs"]
+mod restarts;
+
+#[path = "passkeys_record_tests.rs"]
+mod records;
+
 struct SeqRng(u64);
 impl Rng for SeqRng {
     fn fill(&mut self, buf: &mut [u8]) {
@@ -25,6 +34,7 @@ fn dev() -> Device<'static> {
         serial_hash: &[0xAB; 32],
         serial_id: &[1, 2, 3, 4, 5, 6, 7, 8],
         otp_key: None,
+        latched: false,
     }
 }
 
@@ -33,14 +43,14 @@ fn provisioned() -> (Fs<RamStorage>, [u8; 32]) {
     let mut rng = SeqRng(1);
     ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
     let seed = load_keydev(&dev(), &mut fs).unwrap();
-    (fs, seed)
+    (fs, *seed.expose())
 }
 
 // Register a resident credential the way makeCredential's storage primitive does
 // (a sealed box + an EF_CRED record + the boxed EF_RP domain).
 #[allow(clippy::too_many_arguments)]
-fn add(
-    fs: &mut Fs<RamStorage>,
+fn add<S: Storage>(
+    fs: &mut Fs<S>,
     seed: &[u8; 32],
     iv_byte: u8,
     rp_id: &str,
@@ -68,7 +78,18 @@ fn add(
     };
     let mut boxbuf = [0u8; 512];
     let len = credential_create(seed, &dev(), &inp, &rp_hash, &iv, &mut boxbuf).unwrap();
-    credential_store(seed, &dev(), fs, &boxbuf[..len], &rp_hash, rp_id, uid, &[]).unwrap();
+    credential_store(
+        seed,
+        &dev(),
+        fs,
+        &mut SeqRng(7),
+        &boxbuf[..len],
+        &rp_hash,
+        rp_id,
+        uid,
+        &[],
+    )
+    .unwrap();
 }
 
 #[test]
@@ -170,18 +191,8 @@ fn true_total_even_when_visitor_keeps_fewer() {
     assert_eq!(kept, 1, "visitor may keep a subset");
 }
 
-/// `for_each_rp` skips a slot at `n < RP_PREFIX || buf[0] == 0`, and neither half
-/// was tested (the reverse mutation pass, D2). Both shapes are reachable from a
-/// torn write, and neither may be read as a relying party: a record too short
-/// for its own header would have its rpIdHash copied out of the buffer's stale
-/// tail, and a zero count is the emptied slot every enumeration must pass over.
-///
-/// The boundary itself is deliberately NOT pinned here. A record of exactly
-/// `RP_PREFIX` bytes — header, no payload — is enumerated today, because
-/// `unseal_rp_id` falls through to its legacy cleartext domain and an empty tail
-/// decodes as the empty string. Measured, not assumed: it arrives as a relying
-/// party whose `rp_id` is `""`. Whether that should be skipped is a decision,
-/// and a test that pinned either side would cement an accident.
+// Short headers and zero counts are skipped; the header-only legacy domain
+// remains visible and has a separate compatibility test.
 #[test]
 fn a_malformed_rp_slot_is_skipped_by_the_enumeration() {
     for (label, rec) in [
@@ -224,7 +235,7 @@ fn empty_for_rp_with_no_credentials() {
     assert_eq!(calls, 0);
 }
 
-fn fids_under(fs: &mut Fs<RamStorage>, rp_id: &str) -> std::vec::Vec<u16> {
+fn fids_under<S: Storage>(fs: &mut Fs<S>, rp_id: &str) -> std::vec::Vec<u16> {
     let h = sha256(rp_id.as_bytes());
     let mut fids = std::vec::Vec::new();
     for_each_cred(&dev(), fs, &h, |a| fids.push(a.ef_cred_fid));
@@ -239,8 +250,9 @@ fn delete_drops_cred_and_decrements_rp() {
     add(&mut fs, &seed, 3, "google.com", b"u-c", "c", "C", 0);
 
     let gh = fids_under(&mut fs, "github.com");
-    assert_eq!(gh.len(), 2);
-    assert!(delete_cred(&mut fs, gh[0]));
+    assert_eq!(gh, [EF_CRED, EF_CRED + 1]);
+    assert_eq!(fids_under(&mut fs, "google.com"), [EF_CRED + 2]);
+    assert!(delete_cred(&mut fs, &mut SeqRng(3), gh[0]));
 
     // The other github account survives, google is untouched.
     assert_eq!(fids_under(&mut fs, "github.com").len(), 1);
@@ -265,7 +277,7 @@ fn delete_last_cred_removes_rp() {
 
     let solo = fids_under(&mut fs, "solo.example");
     assert_eq!(solo.len(), 1);
-    assert!(delete_cred(&mut fs, solo[0]));
+    assert!(delete_cred(&mut fs, &mut SeqRng(3), solo[0]));
 
     // The RP record is gone with its last credential, so the walk no longer
     // surfaces it — only the untouched RP remains.
@@ -290,12 +302,12 @@ fn an_on_device_delete_moves_the_store_tag() {
 
     let gh = fids_under(&mut fs, "github.com");
     assert_eq!(gh.len(), 1);
-    assert!(delete_cred(&mut fs, gh[0]));
+    assert!(delete_cred(&mut fs, &mut SeqRng(3), gh[0]));
     assert_ne!(cred_store_state(&mut fs).unwrap(), before);
 }
 
 /// A refused on-device delete must not move the tag either way it can be refused —
-/// out of range, or an empty slot. Both return before the bump, so nothing is
+/// out of range, or an empty slot. Both return before the renewal, so nothing is
 /// written and nothing is claimed.
 #[test]
 fn a_refused_on_device_delete_leaves_the_tag_alone() {
@@ -304,8 +316,8 @@ fn a_refused_on_device_delete_leaves_the_tag_alone() {
     let (mut fs, seed) = provisioned();
     add(&mut fs, &seed, 1, "github.com", b"u", "n", "N", 0);
     let before = cred_store_state(&mut fs).unwrap();
-    assert!(!delete_cred(&mut fs, EF_CRED - 1));
-    assert!(!delete_cred(&mut fs, EF_CRED + 200));
+    assert!(!delete_cred(&mut fs, &mut SeqRng(3), EF_CRED - 1));
+    assert!(!delete_cred(&mut fs, &mut SeqRng(3), EF_CRED + 200));
     assert_eq!(cred_store_state(&mut fs).unwrap(), before);
 }
 
@@ -314,9 +326,13 @@ fn delete_bad_fid_is_noop() {
     let (mut fs, seed) = provisioned();
     add(&mut fs, &seed, 1, "github.com", b"u", "n", "N", 0);
     // Out of range below / at the EF_RP boundary, and an in-range but empty slot.
-    assert!(!delete_cred(&mut fs, EF_CRED - 1));
-    assert!(!delete_cred(&mut fs, EF_CRED + MAX_RESIDENT_CREDENTIALS));
-    assert!(!delete_cred(&mut fs, EF_CRED + 200));
+    assert!(!delete_cred(&mut fs, &mut SeqRng(3), EF_CRED - 1));
+    assert!(!delete_cred(
+        &mut fs,
+        &mut SeqRng(3),
+        EF_CRED + MAX_RESIDENT_CREDENTIALS
+    ));
+    assert!(!delete_cred(&mut fs, &mut SeqRng(3), EF_CRED + 200));
     // The real credential is still there — nothing was removed.
     assert_eq!(fids_under(&mut fs, "github.com").len(), 1);
 }
@@ -403,6 +419,47 @@ fn nickname_is_per_rp_and_survives_a_new_account() {
     add(&mut fs, &seed, 3, "github.com", b"u-c", "c", "C", 0);
     assert_eq!(nick_of(&mut fs, "github.com").as_deref(), Some("GH"));
     assert_eq!(nick_of(&mut fs, "google.com").as_deref(), Some("GG"));
+    assert!(set_rp_nickname(&dev(), &mut fs, &gg, ""));
+    assert_eq!(nick_of(&mut fs, "google.com"), None);
+    assert_eq!(nick_of(&mut fs, "github.com").as_deref(), Some("GH"));
+}
+
+#[test]
+fn deleting_slot_two_discards_only_its_own_large_blob() {
+    let (mut fs, seed) = provisioned();
+    for uid in [1, 2, 3] {
+        add(&mut fs, &seed, uid, "example.com", &[uid], "", "", 0);
+    }
+    let mut state = crate::FidoState::new();
+    let mut rng = SeqRng(9);
+    let mut presence = crate::AlwaysConfirm;
+    for slot in [0, 2] {
+        let mut record = [0; 1024];
+        let n = fs.read(EF_CRED + slot, &mut record).unwrap();
+        assert!(n > 74);
+        let id: [u8; 42] = record[32..74].try_into().unwrap();
+        let mut ctx = crate::Ctx {
+            dev: dev(),
+            fs: &mut fs,
+            rng: &mut rng,
+            state: &mut state,
+            presence: &mut presence,
+            now_ms: 0,
+        };
+        assert!(crate::largeblobext::write(
+            &mut ctx,
+            &seed,
+            &id,
+            slot,
+            b"compressed",
+            20
+        ));
+    }
+    let neighbor = fs.size(crate::consts::EF_CRED_BLOB).unwrap();
+    assert!(delete_cred(&mut fs, &mut rng, EF_CRED + 2));
+    assert_eq!(fs.size(crate::consts::EF_CRED_BLOB + 2), None);
+    assert_eq!(fs.size(crate::consts::EF_CRED_BLOB), Some(neighbor));
+    assert_eq!(fids_under(&mut fs, "example.com"), [EF_CRED, EF_CRED + 1]);
 }
 
 #[test]
@@ -414,7 +471,7 @@ fn nickname_is_dropped_when_its_rp_disappears() {
 
     // Delete the only credential — the RP (and its nickname) go away.
     let solo = fids_under(&mut fs, "solo.example");
-    assert!(delete_cred(&mut fs, solo[0]));
+    assert!(delete_cred(&mut fs, &mut SeqRng(3), solo[0]));
 
     // Re-create the same RP; it must NOT inherit the old nickname.
     add(&mut fs, &seed, 2, "solo.example", b"u2", "n2", "N2", 0);
@@ -576,5 +633,77 @@ fn fuzz_unseal_nick_shapes_never_panic() {
         // Random junk practically never authenticates → always None, never panic.
         let r = unseal_nick(&seed, &rp_a, &tail[..len], &mut out[..out_cap]);
         assert!(r.is_none(), "random bytes must not forge a valid nickname");
+    }
+}
+
+/// The panel's delete, cut at every mutation, over an RP that keeps a credential and
+/// one that loses its last. The store tag moves first and the credential goes before
+/// its RP record, so no cut leaves a live credential its RP does not count, or a
+/// delete behind an unchanged tag; and once the boot pass a cut always leads to has
+/// run, the RP record agrees with its credentials exactly, with no RP left naming none.
+#[test]
+fn a_torn_on_device_delete_never_orphans_a_credential_or_hides_behind_the_tag() {
+    use crate::credential::cred_store_state;
+    use crate::credmgmt::settle_rp_records;
+
+    let rp_count = |fs: &mut Fs<rsk_fs::storage::faults::Cut>, rp: &str| {
+        let mut counted = None;
+        for_each_rp(&dev(), fs, |r| {
+            if r.rp_id == rp {
+                counted = Some(usize::from(r.count));
+            }
+        });
+        counted
+    };
+    for (rp, keep) in [("github.com", 1usize), ("solo.example", 0)] {
+        let provision = || {
+            let (cut, medium) = rsk_fs::storage::faults::Cut::new();
+            let mut fs = Fs::new(cut);
+            ensure_seed(&dev(), &mut fs, &mut SeqRng(1)).unwrap();
+            let seed = *load_keydev(&dev(), &mut fs).unwrap().expose();
+            for (i, uid) in [b"u-a", b"u-b"].iter().take(keep + 1).enumerate() {
+                add(&mut fs, &seed, i as u8 + 1, rp, *uid, "n", "N", 0);
+            }
+            (fs, medium)
+        };
+        let (mut fresh, _) = provision();
+        let tag = cred_store_state(&mut fresh).unwrap();
+        let victim = fids_under(&mut fresh, rp)[0];
+        rsk_fs::cut::sweep_restarts(
+            provision,
+            |fs| delete_cred(fs, &mut SeqRng(3), victim),
+            |fs| {
+                let _ = settle_rp_records(fs);
+            },
+            |fs, budget, _second, completed, medium| {
+                let live = fids_under(fs, rp).len();
+                let counted = rp_count(fs, rp);
+                if live > 0 {
+                    assert!(
+                        counted.is_some_and(|c| c >= live),
+                        "{rp}, budget {budget}: {live} live credential(s) under an RP counting {counted:?} — {:?}",
+                        medium.ops()
+                    );
+                }
+                if live == keep {
+                    assert_ne!(
+                        cred_store_state(fs).unwrap(),
+                        tag,
+                        "{rp}, budget {budget}: the delete landed behind an unchanged tag — {:?}",
+                        medium.ops()
+                    );
+                }
+                if completed {
+                    assert_eq!(live, keep, "{rp}, budget {budget}: reported done, is not");
+                }
+                settle_rp_records(fs).unwrap();
+                assert_eq!(
+                    rp_count(fs, rp),
+                    (live > 0).then_some(live),
+                    "{rp}, budget {budget}: after the boot pass the RP disagrees with its credentials — {:?}",
+                    medium.ops()
+                );
+            },
+        );
     }
 }

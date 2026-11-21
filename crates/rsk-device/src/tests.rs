@@ -20,11 +20,18 @@ use rsk_fs::{Fs, Storage};
 
 use super::*;
 
+#[path = "storage_recovery_tests.rs"]
+mod storage_recovery;
+
+#[path = "otp_seal_tests.rs"]
+mod otp_seal;
+
 pub const SERIAL_ID: [u8; 8] = [0xA1, 0xB2, 0xC3, 0xD4, 0xE5, 0xF6, 0x07, 0x18];
 pub const SERIAL_HASH: [u8; 32] = [0x5A; 32];
 const KV_TOTAL: u32 = 64 * 1024;
 const FLASH_SIZE: u32 = 4 * 1024 * 1024;
 const OPENPGP_MFR: u16 = 0x1234;
+pub const FIDO_PIN: &[u8] = b"9f4a27c3";
 
 /// The board verbs, as a record of what a dispatch asked for.
 #[derive(Default)]
@@ -39,10 +46,12 @@ pub struct Board {
     /// one-shot flag.
     pub local_pin_change: bool,
     pub boot_state_reads: usize,
-    /// Off by default, as a host build is; set it and [`Hooks::rsa_search`] says
-    /// "the accelerator ran and found nothing", which is what lets a test see
-    /// whether a keygen fast path fired at all.
+    /// Off by default, as a host build is; set, [`Hooks::rsa_search`] answers as
+    /// an accelerator that ran, finding `search_key` — which is what lets a test
+    /// see whether a keygen fast path fired at all.
     pub accelerator: bool,
+    /// What the accelerator finds, once: `None` is the search that found nothing.
+    pub search_key: Option<Box<rsk_rsa::RsaKey>>,
 }
 
 impl<S: Storage> Hooks<S> for Board {
@@ -64,9 +73,13 @@ impl<S: Storage> Hooks<S> for Board {
     }
     // `None` — no accelerator — is what a host build is, and the fall-through it
     // causes is itself under test in `ccid_tests`; `accelerator` opts into the
-    // other answer so a test can tell a fast path that fired from one that did not.
+    // other two answers, a failed search and a found key.
     fn rsa_search(&mut self, _nbits: usize, _rng: &mut dyn rsk_sdk::Rng) -> SearchResult {
-        if self.accelerator { Some(None) } else { None }
+        if self.accelerator {
+            Some(self.search_key.take())
+        } else {
+            None
+        }
     }
 }
 
@@ -157,6 +170,9 @@ impl rsk_rescue::Platform for RescueBoard {
     fn read_page58_lock_raw(&self) -> Option<u32> {
         Some(0)
     }
+    fn pre_otp_left(&self) -> Option<u16> {
+        Some(0)
+    }
     fn lock_page58(&mut self) -> bool {
         false // never burn a fuse from a test
     }
@@ -178,45 +194,6 @@ pub struct VendorBoard;
 
 impl rsk_vendor::Platform for VendorBoard {}
 
-/// A backend whose enumeration faults immediately: it yields nothing and reports
-/// the walk truncated, while every key stays live and readable. That is the
-/// interrupted-page-erase shape (`sequential-storage`'s `find_first_page` →
-/// `Error::Corrupted`, propagated by `fetch_all_items` before its auto-repair),
-/// and one of the two ways `Fs::factory_wipe` refuses — the other, a backend
-/// `remove` that errors, is `rsk_fs::storage::faults::RemoveStuck`.
-///
-/// Carries `factory_wipe`'s own gate: the strict-config image has no management
-/// RESET, so its only caller is compiled out there and the double is dead code.
-#[cfg(not(feature = "strict-config"))]
-#[derive(Default)]
-pub struct TruncatedScan(RamStorage);
-
-#[cfg(not(feature = "strict-config"))]
-impl TruncatedScan {
-    pub fn new() -> Self {
-        Self::default()
-    }
-}
-
-#[cfg(not(feature = "strict-config"))]
-impl Storage for TruncatedScan {
-    fn read(&mut self, fid: u16, buf: &mut [u8]) -> Option<usize> {
-        self.0.read(fid, buf)
-    }
-    fn write(&mut self, fid: u16, data: &[u8]) -> rsk_sdk::error::Result<()> {
-        self.0.write(fid, data)
-    }
-    fn remove(&mut self, fid: u16) -> rsk_sdk::error::Result<()> {
-        self.0.remove(fid)
-    }
-    fn size(&mut self, fid: u16) -> Option<usize> {
-        self.0.size(fid)
-    }
-    fn for_each_key(&mut self, _f: &mut dyn FnMut(u16)) -> bool {
-        false
-    }
-}
-
 /// A backend that refuses every `write` and serves every read. `RamStorage` cannot
 /// fail, so a wrapper that folds a store error into a bool — `ctap_mgmt`'s WRITE
 /// CONFIG ack — is unobservable over it, and `.is_ok()` → `true` there leaves all
@@ -226,8 +203,8 @@ impl Storage for TruncatedScan {
 /// Local rather than in `rsk_fs::storage::faults`, unlike the two fault mediums the
 /// applet sweeps share: one crate needs this shape, and that module's cost is a bcd
 /// digit, because the counter's row reads FILES and `storage.rs` is a plain module
-/// even where its contents are gated. [`TruncatedScan`] above is local for the same
-/// reason. It carries the same gate too — WRITE CONFIG is a DEFAULT-build arm.
+/// even where its contents are gated. It carries WRITE CONFIG's gate, a DEFAULT-build
+/// arm.
 #[cfg(not(feature = "strict-config"))]
 #[derive(Default)]
 pub struct WriteStuck(RamStorage);
@@ -261,7 +238,7 @@ impl Storage for WriteStuck {
 /// Everything a handler borrows, owned for the test's lifetime. Generic over the
 /// backend because [`RamStorage`] cannot fail: a wrapper that folds a store error
 /// into a `bool` is only observable over one that can (`rsk_fs::storage::faults`,
-/// or the local [`TruncatedScan`]).
+/// or the local [`WriteStuck`]).
 pub struct Env<S: Storage = RamStorage> {
     pub fs: RefCell<Fs<S>>,
     pub rng: RefCell<TestRng>,
@@ -286,6 +263,14 @@ impl Env<RamStorage> {
 }
 
 impl<S: Storage> Env<S> {
+    /// Default-policy transport tests use the explicit toggle-off state.
+    pub fn uv_optional(&self) {
+        self.fs
+            .borrow_mut()
+            .put(rsk_fido::consts::EF_ALWAYS_UV, &[0])
+            .unwrap();
+    }
+
     /// The same wiring over a chosen backend.
     pub fn with_storage(storage: S) -> Self {
         Self {
@@ -300,6 +285,14 @@ impl<S: Storage> Env<S> {
 
     /// The CCID side: the full eight-applet set behind the dispatcher.
     pub fn ccid(&self) -> CcidApplets<'_, S, TestRng, VendorBoard> {
+        self.ccid_fused(None)
+    }
+
+    /// [`Self::ccid`] reading its fused key through `mkek_source`.
+    pub fn ccid_fused(
+        &self,
+        mkek_source: Option<rsk_crypto::FusedKey>,
+    ) -> CcidApplets<'_, S, TestRng, VendorBoard> {
         CcidApplets::new(
             &self.fs,
             &self.rng,
@@ -310,7 +303,7 @@ impl<S: Storage> Env<S> {
             VendorBoard,
             SERIAL_ID,
             SERIAL_HASH,
-            None,
+            mkek_source,
             None,
             KV_TOTAL,
             FLASH_SIZE,
@@ -320,6 +313,14 @@ impl<S: Storage> Env<S> {
 
     /// The CTAPHID side: FIDO/U2F plus the vendor AID.
     pub fn ctap(&self) -> AppletHandler<'_, S, TestRng, VendorBoard> {
+        self.ctap_fused(None)
+    }
+
+    /// [`Self::ctap`] reading its fused key through `mkek_source`.
+    pub fn ctap_fused(
+        &self,
+        mkek_source: Option<rsk_crypto::FusedKey>,
+    ) -> AppletHandler<'_, S, TestRng, VendorBoard> {
         AppletHandler::new(
             &self.fs,
             &self.rng,
@@ -329,9 +330,20 @@ impl<S: Storage> Env<S> {
             VendorBoard,
             SERIAL_ID,
             SERIAL_HASH,
-            None,
+            mkek_source,
             None,
         )
+    }
+}
+
+/// The device key-derivation inputs the handlers are built with, so a test can seal
+/// or verify a record the same way a dispatch would. No secret of its own.
+pub fn dev() -> rsk_crypto::Device<'static> {
+    rsk_crypto::Device {
+        serial_hash: &SERIAL_HASH,
+        serial_id: &SERIAL_ID,
+        otp_key: None,
+        latched: false,
     }
 }
 
@@ -366,4 +378,103 @@ pub fn dev_conf(caps: u16) -> Vec<u8> {
     let mut blob = std::vec![tlv.len() as u8];
     blob.extend_from_slice(&tlv);
     blob
+}
+
+/// `credentialManagement { getCredsMetadata, pinUvAuthProtocol: 2, pinUvAuthParam }`,
+/// the parameter MACed under `token` over the subcommand byte (CTAP 2.1 §6.8.2).
+pub fn get_creds_metadata(token: &[u8; 32]) -> Vec<u8> {
+    let subcommand = rsk_fido::consts::CM_GET_CREDS_METADATA as u8;
+    let mut param = [0u8; 32];
+    let n = rsk_crypto::pinproto::authenticate(
+        rsk_crypto::pinproto::PinProto::Two,
+        token,
+        &[subcommand],
+        &mut param,
+    )
+    .expect("a 32-byte MAC fits");
+    let mut body = std::vec![rsk_fido::consts::CTAP_CREDENTIAL_MGMT, 0xA3];
+    body.extend_from_slice(&[0x01, subcommand, 0x03, 0x02, 0x04, 0x58, n as u8]);
+    body.extend_from_slice(&param[..n]);
+    body
+}
+
+/// The P-256 base point (SEC 2 §2.4.2), whose private half is 1.
+const P256_G: ([u8; 32], [u8; 32]) = (
+    [
+        0x6B, 0x17, 0xD1, 0xF2, 0xE1, 0x2C, 0x42, 0x47, 0xF8, 0xBC, 0xE6, 0xE5, 0x63, 0xA4, 0x40,
+        0xF2, 0x77, 0x03, 0x7D, 0x81, 0x2D, 0xEB, 0x33, 0xA0, 0xF4, 0xA1, 0x39, 0x45, 0xD8, 0x98,
+        0xC2, 0x96,
+    ],
+    [
+        0x4F, 0xE3, 0x42, 0xE2, 0xFE, 0x1A, 0x7F, 0x9B, 0x8E, 0xE7, 0xEB, 0x4A, 0x7C, 0x0F, 0x9E,
+        0x16, 0x2B, 0xCE, 0x33, 0x57, 0x6B, 0x31, 0x5E, 0xCE, 0xCB, 0xB6, 0x40, 0x68, 0x37, 0xBF,
+        0x51, 0xF5,
+    ],
+);
+
+/// `clientPIN { pinUvAuthProtocol: 2, getPinToken, keyAgreement: G, pinHashEnc }` whose PIN
+/// hash is wrong for any PIN: a valid platform key is all the key agreement checks, and 32
+/// zero bytes decrypt to a hash no PIN has.
+pub fn wrong_pin_token_request() -> Vec<u8> {
+    let mut body = std::vec![rsk_fido::consts::CTAP_CLIENT_PIN, 0xA4, 0x01, 0x02, 0x02];
+    body.push(rsk_fido::consts::CP_GET_PIN_TOKEN as u8);
+    // keyAgreement: COSE_Key { kty: EC2, alg: ECDH-ES+HKDF-256, crv: P-256, x, y }.
+    body.extend_from_slice(&[0x03, 0xA5, 0x01, 0x02, 0x03, 0x38, 0x18, 0x20, 0x01]);
+    body.extend_from_slice(&[0x21, 0x58, 0x20]);
+    body.extend_from_slice(&P256_G.0);
+    body.extend_from_slice(&[0x22, 0x58, 0x20]);
+    body.extend_from_slice(&P256_G.1);
+    body.extend_from_slice(&[0x06, 0x58, 0x20]);
+    body.extend_from_slice(&[0; 32]);
+    body
+}
+
+/// A vendor `CONFIG_WRITE` (0x41) CBOR command `{1: subcmd, 2: {1: target, 2: blob}}`,
+/// unauthenticated — the same request `rsk-fido`'s `config_write_req` builds.
+pub fn vendor_config_write(target: u64, blob: &[u8]) -> Vec<u8> {
+    use minicbor::Encoder;
+    use minicbor::encode::write::Cursor;
+    let mut buf = std::vec![0u8; 512];
+    let n = {
+        let mut e = Encoder::new(Cursor::new(&mut buf[..]));
+        e.map(2).unwrap();
+        e.u8(1)
+            .unwrap()
+            .u64(rsk_fido::consts::VENDOR_CONFIG_WRITE)
+            .unwrap();
+        e.u8(2).unwrap().map(2).unwrap();
+        e.u8(1).unwrap().u64(target).unwrap();
+        e.u8(2).unwrap().bytes(blob).unwrap();
+        e.writer().position()
+    };
+    let mut body = std::vec![rsk_fido::consts::CTAP_VENDOR];
+    body.extend_from_slice(&buf[..n]);
+    body
+}
+
+#[test]
+fn absent_board_capabilities_preserve_a_cold_unlocked_boot() {
+    struct Bare;
+    impl Hooks<RamStorage> for Bare {}
+
+    let mut hooks = Bare;
+    let mut fs = Fs::new(RamStorage::new());
+    fs.scan();
+    fs.put(0x1234, b"owner").unwrap();
+    hooks.config_written(&mut fs);
+    hooks.request_reboot();
+    hooks.store_pin_lock(PinLock {
+        engaged: true,
+        mismatches: 3,
+    });
+    let boot = hooks.boot_state();
+    assert!(!boot.warm);
+    assert!(!boot.lock.engaged);
+    assert_eq!(boot.lock.mismatches, 0);
+    assert!(!hooks.local_pin_changed());
+    let mut rng = TestRng(7);
+    assert!(hooks.rsa_search(2048, &mut rng).is_none());
+    let mut out = [0; 8];
+    assert_eq!(fs.read(0x1234, &mut out), Some(5));
+    assert_eq!(&out[..5], b"owner");
 }

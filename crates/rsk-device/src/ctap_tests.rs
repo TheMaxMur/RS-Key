@@ -2,7 +2,9 @@
 // Copyright (C) 2026 RS-Key contributors
 
 use super::*;
-use crate::tests::{Env, apdu, select, sw};
+use crate::tests::{
+    Env, FIDO_PIN, apdu, dev, get_creds_metadata, select, sw, wrong_pin_token_request,
+};
 
 /// U2F VERSION — the one U2F command that touches no credential and needs no
 /// touch, so it can stand for "did this reach the FIDO applet?".
@@ -14,10 +16,32 @@ fn u2f_version() -> std::vec::Vec<u8> {
 const GET_INFO: [u8; 1] = [rsk_fido::consts::CTAP_GET_INFO];
 
 #[test]
+fn transport_reset_wipes_authorization_and_keeps_the_pin_failure_budget() {
+    let env = Env::new();
+    let mut ctap = env.ctap();
+    {
+        let mut state = ctap.fido_state.borrow_mut();
+        state.restore_pin_lock(rsk_fido::state::PinLock {
+            engaged: true,
+            mismatches: 3,
+        });
+        state.paut.token.fill(0xa5);
+        state.paut.in_use = true;
+    }
+    ctap.reset_transport_session();
+    let state = ctap.fido_state.borrow();
+    assert!(state.paut.token.iter().all(|&byte| byte == 0));
+    assert!(!state.paut.in_use);
+    assert!(state.pin_lock().engaged);
+    assert_eq!(state.pin_lock().mismatches, 3);
+}
+
+#[test]
 fn a_u2f_command_reaches_fido_when_nothing_is_selected() {
     // U2F has no SELECT over CTAPHID, so its INS is routed straight to the FIDO
     // applet — but only while the dispatcher holds no selection.
     let env = Env::new();
+    env.uv_optional();
     let mut ctap = env.ctap();
     let res = ctap.handle_msg(&u2f_version(), 0).to_vec();
     assert_eq!(sw(&res), rsk_sdk::Sw::OK);
@@ -47,6 +71,7 @@ fn a_ctaphid_init_drops_a_stale_selection() {
     // A fresh session must start with nothing selected, or U2F — which never
     // selects anything — inherits whatever the previous one left behind.
     let env = Env::new();
+    env.uv_optional();
     let mut ctap = env.ctap();
     ctap.handle_msg(&select(rsk_vendor::VENDOR_AID), 0);
     ctap.deselect_msg();
@@ -152,6 +177,28 @@ fn a_cold_boot_is_the_default() {
 }
 
 #[test]
+fn the_soft_lock_handed_over_is_the_one_the_command_left() {
+    // A hand-over taken before the dispatch counts the same and is one command stale:
+    // a reboot right after the third wrong PIN would find the second one's batch.
+    let env = Env::new();
+    let mut ctap = env.ctap();
+    rsk_fido::passkeys::store_local_pin(&dev(), &mut env.fs.borrow_mut(), FIDO_PIN)
+        .expect("the test PIN meets each shipping policy");
+    let wrong = wrong_pin_token_request();
+    for _ in 0..rsk_fido::consts::PIN_MISMATCH_LIMIT {
+        ctap.handle_cbor(1, &wrong, 0);
+    }
+    assert_eq!(
+        env.board.borrow().pin_locks.last().copied(),
+        Some(rsk_fido::state::PinLock {
+            engaged: true,
+            mismatches: rsk_fido::consts::PIN_MISMATCH_LIMIT,
+        }),
+        "the lock handed over after the third wrong PIN is not the one it left"
+    );
+}
+
+#[test]
 fn the_channel_asking_is_recorded_on_every_command() {
     // Cross-message state a second process on its own CTAPHID channel must not be
     // able to ride binds to this.
@@ -170,26 +217,50 @@ fn a_panel_pin_change_is_consumed_before_the_next_command_runs() {
     // Set on the display task and consumed here, once: a session credential the
     // old PIN authorized must not survive into the command after the re-key.
     let env = Env::new();
-    env.board.borrow_mut().local_pin_change = true;
     let mut ctap = env.ctap();
-    ctap.handle_cbor(1, &GET_INFO, 0);
-    assert!(
-        !env.board.borrow().local_pin_change,
-        "the one-shot flag was not read"
+    // A live cm-permission token, as getPinUvAuthTokenUsingPinWithPermissions leaves one.
+    {
+        let mut state = env.fido_state.borrow_mut();
+        state.reset_pin_uv_auth_token(&mut *env.rng.borrow_mut());
+        state.begin_using_token(false, 0);
+        state.paut.permissions = rsk_fido::state::PERM_CM;
+    }
+    let metadata = get_creds_metadata(&env.fido_state.borrow().paut.token);
+
+    let before = ctap.handle_cbor(1, &metadata, 0)[0];
+    env.board.borrow_mut().local_pin_change = true;
+    let after = ctap.handle_cbor(1, &metadata, 0)[0];
+    assert_eq!(
+        (before, after),
+        (
+            rsk_fido::CTAP2_OK,
+            rsk_fido::CtapError::PinAuthInvalid.as_u8()
+        ),
+        "the token the old PIN authorized must stop verifying once the panel changed it"
     );
 }
 
 // --- the live-config reload -------------------------------------------------
 
 #[test]
-fn a_vendor_command_reapplies_the_configuration_outside_flash() {
+fn an_led_write_reapplies_the_configuration_outside_flash() {
     // A vendor CONFIG_WRITE persists the LED block, but its live copy is a set of
-    // atomics the flash record does not reach — so the board is told after any
-    // 0x41, matching the CCID SET_LED.
+    // atomics the flash record does not reach — so the board is told after the
+    // write, matching the CCID SET_LED, and after nothing else.
     let env = Env::new();
     let mut ctap = env.ctap();
     ctap.handle_cbor(1, &[rsk_fido::consts::CTAP_VENDOR], 0);
+    assert_eq!(
+        env.board.borrow().config_written,
+        0,
+        "a failed 0x41 reloaded"
+    );
+    let write = crate::tests::vendor_config_write(rsk_fido::consts::CONFIG_TARGET_LED, &[0x11; 32]);
+    ctap.handle_cbor(1, &write, 0);
     assert_eq!(env.board.borrow().config_written, 1);
+    // A replay writes no flash and is still applied live, as the CCID SET_LED is.
+    ctap.handle_cbor(1, &write, 0);
+    assert_eq!(env.board.borrow().config_written, 2, "a replayed LED write");
 }
 
 #[test]
@@ -225,6 +296,24 @@ fn scrub_wipes_the_response_buffer() {
 }
 
 #[test]
+fn the_board_wipe_receives_the_whole_response_including_its_dirty_tail() {
+    let env = Env::new();
+    let mut ctap = env.ctap();
+    ctap.handle_cbor(1, &GET_INFO, 0);
+    let selected = ctap.disp.current();
+    ctap.resp.fill(0xa5);
+    let mut received = 0;
+    ctap.scrub_with(|bytes| {
+        received = bytes.len();
+        assert!(bytes.iter().all(|&byte| byte == 0xa5));
+        bytes.fill(0);
+    });
+    assert_eq!(received, RESP_CAP);
+    assert!(ctap.resp.iter().all(|&byte| byte == 0));
+    assert_eq!(ctap.disp.current(), selected);
+}
+
+#[test]
 fn a_secure_reboot_drops_the_auth_state_but_not_the_boot_verdict() {
     // The reboot path ends the PIN/UV token, session key and ephemeral scalar on
     // top of the buffer — but a scrub is not a power cycle, so the warm/cold
@@ -240,6 +329,46 @@ fn a_secure_reboot_drops_the_auth_state_but_not_the_boot_verdict() {
     ctap.scrub_secrets();
     assert!(ctap.resp.iter().all(|&b| b == 0));
     assert!(ctap.fido_state.borrow().warm_boot);
+}
+
+/// Past the latch a fused key that did not read leaves FIDO no arm to open or seal
+/// under: a CBOR command answers `CTAP1_ERR_OTHER` and a U2F one `6400`, before
+/// either reaches the applet.
+#[test]
+fn past_the_latch_an_unread_key_refuses_before_the_applet() {
+    fn unread(_: &mut [u8; 32]) -> bool {
+        false
+    }
+    let env = Env::new();
+    let mut ctap = env.ctap_fused(Some(rsk_crypto::FusedKey::latched(unread)));
+    let resp = ctap.handle_cbor(0xABCD, &GET_INFO, 0).to_vec();
+    assert_eq!(resp, [rsk_fido::CtapError::FUSED_KEY_UNREAD.as_u8()]);
+    let res = ctap.handle_msg(&u2f_version(), 0).to_vec();
+    assert_eq!(res, rsk_sdk::Sw::FUSED_KEY_UNREAD.to_bytes());
+    // The same device before the latch still answers getInfo.
+    let mut open = env.ctap_fused(Some(rsk_crypto::FusedKey::open(unread)));
+    assert_eq!(open.handle_cbor(0xABCD, &GET_INFO, 0)[0], 0);
+}
+
+#[test]
+fn a_secure_reboot_drops_the_vendor_dispatchers_chain() {
+    // The vendor AID's dispatcher over CTAPHID holds a chain as the CCID one does,
+    // and nothing after the reboot's command is there to clear it.
+    let env = Env::new();
+    let mut ctap = env.ctap();
+    let res = ctap.handle_msg(&select(rsk_vendor::VENDOR_AID), 0).to_vec();
+    assert_eq!(sw(&res), rsk_sdk::Sw::OK);
+    let res = ctap
+        .handle_msg(&apdu(0x10, 0x01, 0x00, 0x00, &[1, 2, 3]), 0)
+        .to_vec();
+    assert_eq!(sw(&res), rsk_sdk::Sw::OK);
+    assert!(ctap.disp.chain_open());
+    ctap.scrub_secrets();
+    assert!(
+        !ctap.disp.chain_open(),
+        "the open chain outlived the reboot's wipe"
+    );
+    assert_eq!(ctap.disp.current(), None);
 }
 
 /// The number getInfo puts ON THE WIRE has to be the number the transport
@@ -297,3 +426,178 @@ fn the_security_trace_reports_the_pad_and_not_a_constant() {
         "the recorded field is the backend's answer, not a constant"
     );
 }
+
+#[cfg(feature = "security-trace")]
+#[test]
+fn the_security_trace_keeps_empty_persistent_security_records_present() {
+    use rsk_fido::consts::{EF_BACKUP_SEALED, EF_KEY_DEV, EF_KEY_DEV_ENC, EF_PIN};
+    let env = Env::new();
+    let mut ctap = env.ctap();
+    assert!(!ctap.security_trace_abstract_token().pin_set);
+    {
+        let mut fs = env.fs.borrow_mut();
+        fs.put(EF_PIN, &[]).unwrap();
+        fs.put(EF_BACKUP_SEALED, &[]).unwrap();
+        fs.put_key(EF_KEY_DEV, rsk_fs::Sealed::wrap(&[])).unwrap();
+        fs.put_key(EF_KEY_DEV_ENC, rsk_fs::Sealed::wrap(&[]))
+            .unwrap();
+    }
+    let snapshot = ctap.security_trace_snapshot();
+    assert_eq!(snapshot.pin_record_len, Some(0));
+    assert!(snapshot.backup_sealed_record);
+    assert!(snapshot.seed_plain_record);
+    assert!(snapshot.seed_encrypted_record);
+    assert!(ctap.security_trace_abstract_token().pin_set);
+}
+
+#[cfg(feature = "security-trace")]
+#[test]
+fn the_security_trace_preserves_present_record_widths_beyond_a_byte() {
+    use rsk_fido::consts::{EF_ALWAYS_UV, EF_PIN};
+    let env = Env::new();
+    let mut ctap = env.ctap();
+    for width in [
+        None,
+        Some(0),
+        Some(1),
+        Some(34),
+        Some(35),
+        Some(36),
+        Some(255),
+        Some(256),
+        Some(rsk_fs::MAX_VALUE_BYTES),
+    ] {
+        {
+            let mut fs = env.fs.borrow_mut();
+            for fid in [EF_PIN, EF_ALWAYS_UV] {
+                if let Some(width) = width {
+                    fs.put(fid, &vec![0; width]).unwrap();
+                } else {
+                    fs.force_delete(fid).unwrap();
+                }
+            }
+        }
+        let raw = ctap.security_trace_snapshot();
+        assert_eq!(raw.pin_record_len, width);
+        assert_eq!(raw.always_uv_record_len, width);
+        assert_eq!(raw.always_uv_raw, (width == Some(1)).then_some(0));
+        assert_eq!(
+            ctap.security_trace_abstract_token().pin_set,
+            width.is_some()
+        );
+        let reply = ctap.handle_cbor(0x1234_5678, &GET_INFO, 0).to_vec();
+        assert_eq!(reply[0], 0);
+        let mut decoder = minicbor::Decoder::new(&reply[1..]);
+        let count = decoder.map().unwrap().unwrap();
+        let mut enabled = None;
+        for _ in 0..count {
+            if decoder.u8().unwrap() == 4 {
+                for _ in 0..decoder.map().unwrap().unwrap() {
+                    let key = decoder.str().unwrap();
+                    let flag = decoder.bool().unwrap();
+                    if key == "alwaysUv" {
+                        enabled = Some(flag);
+                    }
+                }
+            } else {
+                decoder.skip().unwrap();
+            }
+        }
+        if let Some(width) = width {
+            assert_eq!(enabled, Some(width != 1));
+        } else {
+            assert!(enabled.is_some());
+        }
+    }
+}
+
+/// CTAPHID_MSG carries U2F in U2F HID's extended-length framing alone: a YubiKey
+/// 5.8.0 answers each of these, measured, as written here, and a malformed length
+/// is refused before the instruction is looked at.
+#[test]
+fn u2f_over_ctaphid_takes_the_extended_encoding_alone() {
+    use rsk_sdk::Sw;
+    let env = Env::new();
+    env.uv_optional();
+    // The seed the boot lays down, which an AUTHENTICATE's key-handle check reads.
+    let seeded =
+        rsk_fido::seed::ensure_seed(&dev(), &mut env.fs.borrow_mut(), &mut *env.rng.borrow_mut());
+    seeded.expect("a blank store takes a seed");
+    let mut ctap = env.ctap();
+    let mut auth = vec![0x00, 0x02, 0x07, 0x00, 0x00, 0x00, 0x81];
+    auth.extend_from_slice(&[0u8; 64]);
+    auth.push(64);
+    auth.extend((0..64).map(|i| i as u8));
+    let cells: [(&str, Vec<u8>, Sw); 11] = [
+        ("VERSION, bare", vec![0x00, 0x03, 0x00, 0x00], Sw::OK),
+        (
+            "VERSION, short Le",
+            vec![0x00, 0x03, 0x00, 0x00, 0x00],
+            Sw::WRONG_LENGTH,
+        ),
+        (
+            "VERSION, 00 Lc 0000",
+            vec![0x00, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00],
+            Sw::OK,
+        ),
+        (
+            "VERSION, 00 Lc 0006",
+            vec![0x00, 0x03, 0x00, 0x00, 0x00, 0x00, 0x06],
+            Sw::WRONG_LENGTH,
+        ),
+        ("AUTHENTICATE, extended", auth.clone(), Sw::WRONG_DATA),
+        (
+            "AUTHENTICATE, extended + Le",
+            [&auth[..], &[0x00, 0x00]].concat(),
+            Sw::WRONG_DATA,
+        ),
+        (
+            "AUTHENTICATE, short Lc",
+            [&[0x00, 0x02, 0x07, 0x00, 0x81][..], &auth[7..]].concat(),
+            Sw::WRONG_LENGTH,
+        ),
+        (
+            "REGISTER, short Lc",
+            [&[0x00, 0x01, 0x00, 0x00, 0x40][..], &[0u8; 64]].concat(),
+            Sw::WRONG_LENGTH,
+        ),
+        (
+            "unknown, short Le",
+            vec![0x00, 0x05, 0x00, 0x00, 0x00],
+            Sw::WRONG_LENGTH,
+        ),
+        (
+            "unknown, bare",
+            vec![0x00, 0x05, 0x00, 0x00],
+            Sw::INS_NOT_SUPPORTED,
+        ),
+        (
+            "class 80, short Le",
+            vec![0x80, 0x03, 0x00, 0x00, 0x00],
+            Sw::CLA_NOT_SUPPORTED,
+        ),
+    ];
+    for (name, command, want) in cells {
+        let res = ctap.handle_msg(&command, 0).to_vec();
+        assert_eq!(sw(&res), want, "{name}");
+    }
+    let res = ctap.handle_msg(&u2f_version(), 0).to_vec();
+    assert_eq!(&res[..res.len() - 2], rsk_fido::consts::U2F_VERSION);
+}
+
+#[test]
+fn a_select_with_a_byte_past_its_le_is_wrong_length_here_too() {
+    // The dispatcher's parser is the CCID one, so its length rule holds on this
+    // transport as well, and the refused SELECT selects nothing.
+    let env = Env::new();
+    let mut ctap = env.ctap();
+    let past = [&select(rsk_vendor::VENDOR_AID)[..], &[0x00, 0xAA]].concat();
+    assert_eq!(
+        ctap.handle_msg(&past, 0),
+        rsk_sdk::Sw::WRONG_LENGTH.to_bytes()
+    );
+    assert!(ctap.disp.current().is_none());
+}
+
+#[path = "ctap_provider_contract_tests.rs"]
+mod provider_contracts;

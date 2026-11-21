@@ -35,6 +35,8 @@ import platform_gate
 # one function. A second copy is a second answer that agrees until one is redone.
 import test_platform_gate as P
 
+pytestmark = pytest.mark.assurance
+
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 
 MINI = """\
@@ -108,6 +110,24 @@ Shipped.cfg     GREEN   1
 Replay.cfg      GREEN   1
 ReplayBad.cfg   RED     -       -       BarNeverOpens
 Solo_*.cfg      RED     -
+"""
+
+#: The observed-run record, present because `run_count_gate` makes it mandatory —
+#: a tree without it has recorded no run at all — and because the freshness axis
+#: now dates a modelled property against it. The axis reads this file's PATH and
+#: not its content, so one row is enough; what it has to be is a file the fixture
+#: can commit and then move.
+RUNS = """\
+[[run]]
+tier = "safety"
+command = "./formal/run-tlc.sh safety"
+date = "2026-01-01"
+commit = "0000000000000000000000000000000000000000"
+host = "a fixture"
+workers = 2
+matrix = '''
+Shipped.cfg    GREEN   states=1  distinct=1  depth=1  1s
+'''
 """
 
 COMUTANTS = """\
@@ -213,6 +233,7 @@ class Tree:
         self.write("formal/Replay.cfg", REPLAY_CFG)
         self.write("formal/ReplayBad.cfg", REPLAY_CFG)
         self.write("formal/floors.txt", FLOORS)
+        self.write("formal/runs.toml", RUNS)
         self.write("formal/comutants.toml", COMUTANTS)
         self.write("formal/traces/session.jsonl", '{"action": "Start"}\n')
         self.write("scripts/check.sh", CHECK_SH)
@@ -282,7 +303,7 @@ class Tree:
 
     def regenerate(self):
         assurance_gate.co_refuted.cache_clear()
-        self.write("docs/assurance-vector.md", evidence_gate.render(self.root))
+        self.write("assurance/reports/assurance-vector.md", evidence_gate.render(self.root))
 
     def problems(self):
         assurance_gate.co_refuted.cache_clear()
@@ -456,6 +477,15 @@ def test_a_script_named_elsewhere_in_check_sh_is_not_wired_to_a_session(tree):
     assert tree.vector("SEC-T-001")["trace"] == 0
 
 
+def test_a_replay_row_in_the_second_runner_is_read_too(tree):
+    """The trace rows run in `check-assurance.sh` now; the handshake reads both."""
+    row = 'run "replay data" python scripts/replay_gen.py formal/traces/session.jsonl\n'
+    tree.edit("scripts/check.sh", row, "")
+    assert evidence_gate.trace_data_modules(tree.root) == {}
+    tree.write("scripts/check-assurance.sh", "#!/usr/bin/env bash\n" + row)
+    assert set(evidence_gate.trace_data_modules(tree.root)) == {"ReplayData"}
+
+
 def test_a_commented_out_row_wires_nothing(tree):
     tree.edit("scripts/check.sh", 'run "replay data"', '# run "replay data"')
     assert evidence_gate.trace_data_modules(tree.root) == {}
@@ -554,12 +584,12 @@ def test_two_bundles_for_one_property(tree):
 
 
 def test_an_edited_page_is_refused(tree):
-    tree.append("docs/assurance-vector.md", "\nand a sentence nobody derived\n")
+    tree.append("assurance/reports/assurance-vector.md", "\nand a sentence nobody derived\n")
     assert only(tree.problems(), "is not what the generator writes")
 
 
 def test_a_missing_page_is_refused(tree):
-    (tree.root / "docs/assurance-vector.md").unlink()
+    (tree.root / "assurance/reports/assurance-vector.md").unlink()
     assert only(tree.problems(), "is not what the generator writes")
 
 
@@ -593,9 +623,9 @@ def test_the_page_says_about_a_board_what_the_axis_says():
 # --- the wiring ----------------------------------------------------------------
 
 
-def test_check_sh_runs_this_gate():
+def test_check_assurance_sh_runs_this_gate():
     """The row's CODE: a `#` in front of it is not a row."""
-    text = (ROOT / "scripts/check.sh").read_text()
+    text = (ROOT / "scripts/check-assurance.sh").read_text()
     assert gate_lines.runs(text, "scripts/evidence_gate.py")
 
 
@@ -733,6 +763,41 @@ def test_a_configuration_committed_after_the_bundle_goes_stale(tree):
     tree.append("formal/Shipped.cfg", "\n")
     tree.commit("touch a configuration after the evidence was taken")
     assert "formal/Shipped.cfg" in tree.vector("SEC-T-001")["behind"]
+
+
+def test_a_re_recorded_run_after_the_bundle_goes_stale(tree):
+    """The clause the tree demonstrated against the axis rather than for it.
+
+    `982fb2f` touches `formal/runs.toml` and the generated pages and NO model,
+    configuration or source, and it re-ran both tiers: a RED closing is where the
+    run stopped, so `Mut_BugTokenlessIgnoresAlwaysUv.cfg` went 61236/10696 to
+    59974/10559 across it — a line `SEC-FIDO-002` transcribes. Driven on the real
+    history before the clause existed, a bundle dated at that commit's parent
+    reported `fresh` over 45 derived inputs with every TLC number in the tree
+    re-measured underneath it.
+    """
+    tree.append("formal/runs.toml", "\n# the tier re-run, model untouched\n")
+    tree.commit("re-record the tier after the evidence was taken")
+    vector = tree.vector("SEC-T-001")
+    assert vector["freshness"] == "stale"
+    assert "formal/runs.toml" in vector["behind"]
+
+
+def test_a_property_no_configuration_checks_is_not_dated_against_the_record(tree):
+    """The other half of that clause: it is conditioned, not blanket.
+
+    A property no configuration checks transcribes no run, so the record is not a
+    file its evidence is about — and an input on every property alike is the
+    decoration this module refuses of a hand-written column.
+    """
+    checked = assurance_gate.checked_names(tree.root / "formal")
+    assert "RuledAwayRisk" not in checked
+    assert "formal/runs.toml" not in evidence_gate.evidence_inputs(
+        tree.root, "RuledAwayRisk", "SEC-R-001", checked, None
+    )
+    assert "formal/runs.toml" in evidence_gate.evidence_inputs(
+        tree.root, "FooStaysClosed", "SEC-T-001", checked, "Mini"
+    )
 
 
 def test_a_comutant_patch_target_committed_after_the_bundle_goes_stale(tree):

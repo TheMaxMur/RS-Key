@@ -9,10 +9,12 @@
 Drives the three lifecycle/management commands over CCID:
 
   * GET CHALLENGE (0x84)  — request N random bytes; two calls must differ.
-  * ACTIVATE FILE (0x44)  — no-op, must answer 9000.
+  * ACTIVATE FILE (0x44)  — a no-op answering 9000 on an active applet.
   * TERMINATE DF  (0xE6)  — factory-reset the OpenPGP applet. Refused without the
                             admin PIN (PW3) while PW3 is unblocked; with PW3 it
-                            wipes the OpenPGP files and re-seeds the defaults.
+                            wipes the OpenPGP files and leaves the applet
+                            terminated: every command, SELECT included, answers
+                            6285 until ACTIVATE FILE restores the defaults.
 
 WARNING: TERMINATE is DESTRUCTIVE — it erases every OpenPGP key/DO and resets the
 PINs to their factory defaults (123456 / 12345678). Run it knowing the OpenPGP
@@ -111,6 +113,9 @@ def main():
         fail(f"login marker not stored: {bytes(got)!r}")
 
     tx(apdu(INS_TERMINATE, 0x00, 0x00), "TERMINATE DF (with PW3)")
+    # Terminated, as a YubiKey 5.8.0 is: 6285 to everything but ACTIVATE FILE.
+    tx(apdu(INS_GET_DATA, 0x00, DO_LOGIN, le=0x00), "GET login data (terminated)", expect=(0x62, 0x85))
+    tx(SELECT, "SELECT OpenPGP AID (terminated)", expect=(0x62, 0x85))
     tx(apdu(INS_ACTIVATE, 0x00, 0x00), "ACTIVATE FILE")
 
     # Card is alive and factory-reset: the marker is gone, defaults restored.

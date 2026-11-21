@@ -15,6 +15,7 @@ use std::path::PathBuf;
 /// encodes. A `FLASH_SIZE` equal to this (with the default `KVMAIN`) writes that
 /// file byte-for-byte.
 const DEFAULT_FLASH_SIZE: u32 = 4 * 1024 * 1024;
+const SMALL_FLASH_SIZE: u32 = 2 * 1024 * 1024;
 
 /// Default KVMAIN — the rsk-fs main partition (creds/keys/DOs) the checked-in
 /// `memory.x` encodes. `KVMAIN` overrides it (shrink it to free code space on a
@@ -28,7 +29,7 @@ const DEFAULT_KVMAIN: u32 = 1408 * 1024;
 const KVCNT_LEN: u32 = 128 * 1024;
 
 /// Smallest code region the flash/KVMAIN split may leave. The shipping image is
-/// ~900 KiB; anything under this can't link, so [`assert_layout_fits`] rejects the
+/// about 1 MiB; anything under this can't link, so [`assert_layout_fits`] rejects the
 /// split here with a fix hint instead of leaving a cryptic linker overflow.
 const MIN_CODE: u32 = 1024 * 1024;
 
@@ -234,14 +235,23 @@ fn parse_toml(raw: &str) -> BoardConfig {
 /// out-of-range pin would otherwise reach a register with no pad behind it.
 const MAX_GPIO: u8 = 29;
 
+#[path = "trustzone/build.rs"]
+mod trustzone_build;
+
 fn main() {
+    trustzone_build::validate_stage();
     let out = PathBuf::from(env::var("OUT_DIR").unwrap());
     println!("cargo:rerun-if-env-changed=BOARD");
     let board = read_board();
     if let Some(ref b) = board {
         let set = |k: &str, v: &str| {
             if env::var(k).is_err() {
-                unsafe { env::set_var(k, v) }
+                // SAFETY: a build script is single-threaded; nothing reads the
+                // environment concurrently.
+                #[expect(unsafe_code, reason = "edition 2024 makes set_var unsafe")]
+                unsafe {
+                    env::set_var(k, v)
+                };
             }
         };
         if let Some(ref v) = b.vidpid {
@@ -314,14 +324,25 @@ fn main() {
     // for any other FLASH_SIZE or KVMAIN we splice a recomputed MEMORY block
     // (code = usable_flash − KVMAIN − KVCNT) into it and keep the rest verbatim.
     let flash_size = resolve_flash_size();
+    println!("cargo:rustc-check-cfg=cfg(rsk_small_flash)");
+    if flash_size <= SMALL_FLASH_SIZE {
+        println!("cargo:rustc-cfg=rsk_small_flash");
+    }
     let kvmain_len = resolve_kvmain_len();
     assert_layout_fits(flash_size, kvmain_len);
     let template = std::fs::read_to_string("memory.x").expect("read memory.x");
-    let memory_x = if flash_size == DEFAULT_FLASH_SIZE && kvmain_len == DEFAULT_KVMAIN {
+    let mut memory_x = if flash_size == DEFAULT_FLASH_SIZE && kvmain_len == DEFAULT_KVMAIN {
         template
     } else {
         splice_memory_block(&template, flash_size, kvmain_len)
     };
+    println!("cargo:rustc-check-cfg=cfg(rsk_tz_test_delay)");
+    println!("cargo:rerun-if-env-changed=RSK_TZ_TEST_DELAY");
+    if env::var("RSK_TZ_TEST_DELAY").as_deref() == Ok("1") {
+        println!("cargo:rustc-cfg=rsk_tz_test_delay");
+    }
+    let main_start = usable_flash(flash_size) - kvmain_len - KVCNT_LEN;
+    trustzone_build::configure(&out, &mut memory_x, main_start, flash_size);
     File::create(out.join("memory.x"))
         .unwrap()
         .write_all(memory_x.as_bytes())
@@ -332,6 +353,8 @@ fn main() {
     println!("cargo:rustc-env=PK_FLASH_SIZE={flash_size}");
     println!("cargo:rerun-if-env-changed=FLASH_SIZE");
     println!("cargo:rustc-env=PK_KVMAIN_LEN={kvmain_len}");
+    println!("cargo:rustc-env=PK_KVMAIN_START={main_start}");
+    println!("cargo:rustc-env=PK_KVCNT_START={}", main_start + kvmain_len);
     println!("cargo:rerun-if-env-changed=KVMAIN");
 
     let (vid, pid, manufacturer, product) = resolve_identity();
@@ -423,14 +446,12 @@ fn main() {
     );
     println!("cargo:rerun-if-env-changed=WAKE_ACTIVE_HIGH");
 
-    // LED backend (default `ws2812`, the Waveshare RP2350-One). Selected at
-    // compile time so only the chosen driver — and its dependencies (PIO, PWM) —
-    // is built. `gpio` = a plain on/off indicator, `pimoroni` = a 3-pin PWM RGB
-    // (Pimoroni Tiny 2350), `none` = headless.
+    // Boot default for the runtime LED selection. Romu's discrete RGB and
+    // headless builds fix the driver at compile time.
     let led_kind = resolve_led_kind();
     println!("cargo:rustc-cfg=led_kind=\"{led_kind}\"");
     println!(
-        "cargo:rustc-check-cfg=cfg(led_kind, values(\"ws2812\", \"gpio\", \"pimoroni\", \"none\"))"
+        "cargo:rustc-check-cfg=cfg(led_kind, values(\"ws2812\", \"gpio\", \"pimoroni\", \"rgb_gpio\", \"none\"))"
     );
     println!("cargo:rerun-if-env-changed=LED_KIND");
 
@@ -557,15 +578,8 @@ fn main() {
             println!("cargo:rustc-env=PK_DISPLAY_COLOR_ORDER={}", v);
         }
     }
-    // Which capacitive-touch controller the panel carries. Waveshare shipped two
-    // revisions of the reference board and the difference is the touch part only:
-    // V1 has a CST328 (7-bit 0x1A, 2-byte register addresses), the V2 of
-    // 2026-10-14 replaced it with a CST3530 (7-bit 0x58, 4-byte register
-    // addresses, a different report block). Same glass, same panel pins, so this
-    // is a knob and not a second board file — but it has to be a *compile-time*
-    // knob, because the wrong driver is not a degraded touch screen, it is no
-    // touch at all: every read NAKs and the whole on-screen flow stalls at the
-    // first prompt.
+    // The two Waveshare board revisions share panel wiring but their touch
+    // controllers use different I2C addresses and register maps.
     {
         let chip = env::var("DISPLAY_TP_CHIP")
             .ok()
@@ -858,8 +872,8 @@ fn resolve_led_kind() -> String {
     let v = raw.trim().to_ascii_lowercase();
     match v.as_str() {
         "" | "ws2812" => "ws2812".into(), // unset / empty → the default backend
-        "gpio" | "pimoroni" | "none" => v,
-        _ => panic!("LED_KIND={raw:?} must be one of: ws2812, gpio, pimoroni, none"),
+        "gpio" | "pimoroni" | "rgb_gpio" | "none" => v,
+        _ => panic!("LED_KIND={raw:?} must be one of: ws2812, gpio, pimoroni, rgb_gpio, none"),
     }
 }
 
@@ -923,7 +937,7 @@ fn resolve_xosc_delay_mult() -> u32 {
 /// Resolve the full USB identity `(VID, PID, manufacturer, product)`.
 ///
 /// `VIDPID=<preset>` picks a named VID/PID pair; the default `RSKey` is this
-/// project's own pid.codes identity (`0x1209:0x0001`). `USB_VID` / `USB_PID`
+/// project's own pid.codes identity (`0x1209:0xF1D2`). `USB_VID` / `USB_PID`
 /// (`0xHHHH` or decimal) override either half, and `USB_MANUFACTURER` /
 /// `USB_PRODUCT` override the descriptor strings.
 ///
@@ -943,7 +957,7 @@ fn resolve_identity() -> (u16, u16, String, String) {
     let preset = env::var("VIDPID").unwrap_or_else(|_| "RSKey".into());
     let (mut vid, mut pid) = match preset.as_str() {
         // This project's own pid.codes identity — the default.
-        "RSKey" => (0x1209, 0x0001),
+        "RSKey" => (0x1209, 0xF1D2),
         // Vendor-mimicking interop presets (opt-in; local interop only, never
         // distributed). Only the Yubico VID also swaps the descriptor strings.
         "NitroHSM" => (0x20A0, 0x4230),

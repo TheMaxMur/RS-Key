@@ -9,7 +9,7 @@
 //! published, so the platform must have fetched it first.
 
 use minicbor::Decoder;
-use zeroize::Zeroize;
+use rsk_secret::Secret;
 
 use rsk_crypto::hmac_sha256;
 use rsk_crypto::pinproto::{self, IV_SIZE, PinProto};
@@ -164,14 +164,20 @@ pub fn eval<R: Rng>(
         return Err(CtapError::InvalidLength);
     }
 
-    let mut shared = [0u8; 64];
-    let slen = pinproto::ecdh(proto, ephemeral, &req.peer_x, &req.peer_y, &mut shared)
-        .map_err(|_| CtapError::InvalidParameter)?;
+    let mut shared = Secret::<[u8; 64]>::zeroed();
+    let slen = pinproto::ecdh(
+        proto,
+        ephemeral,
+        &req.peer_x,
+        &req.peer_y,
+        shared.expose_mut(),
+    )
+    .map_err(|_| CtapError::InvalidParameter)?;
 
     // §12.5: "Authenticator calls verify(shared secret, saltEnc, saltAuth) — if the
     // verification fails, return CTAP2_ERR_PIN_AUTH_INVALID."
-    if !pinproto::verify(proto, &shared[..slen], salt_enc, salt_auth) {
-        shared.zeroize();
+    if !pinproto::verify(proto, &shared.expose()[..slen], salt_enc, salt_auth) {
+        shared.wipe();
         return Err(CtapError::PinAuthInvalid);
     }
 
@@ -181,39 +187,50 @@ pub fn eval<R: Rng>(
     // is refused — after the MAC, exactly as §12.5 orders it.
     let n_salt = salt_enc.len() - proto.iv_overhead();
     if n_salt != 32 && n_salt != 64 {
-        shared.zeroize();
+        shared.wipe();
         return Err(CtapError::InvalidParameter);
     }
 
-    let mut salt_dec = [0u8; 64];
-    let r = pinproto::decrypt(proto, &shared[..slen], salt_enc, &mut salt_dec);
+    let mut salt_dec = Secret::<[u8; 64]>::zeroed();
+    let r = pinproto::decrypt(
+        proto,
+        &shared.expose()[..slen],
+        salt_enc,
+        salt_dec.expose_mut(),
+    );
     if r.is_err() {
-        shared.zeroize();
+        shared.wipe();
         return Err(CtapError::InvalidParameter);
     }
 
     let mut cred_random = derive_hmac_key(seed, cred_id);
     let crd: &[u8] = if uv {
-        &cred_random[32..]
+        &cred_random.expose()[32..]
     } else {
-        &cred_random[..32]
+        &cred_random.expose()[..32]
     };
-    let mut out1 = [0u8; 64];
-    out1[..32].copy_from_slice(&hmac_sha256(crd, &salt_dec[..32]));
+    let mut out1 = Secret::<[u8; 64]>::zeroed();
+    out1.expose_mut()[..32].copy_from_slice(&hmac_sha256(crd, &salt_dec.expose()[..32]));
     if n_salt == 64 {
-        let h2 = hmac_sha256(crd, &salt_dec[32..64]);
-        out1[32..64].copy_from_slice(&h2);
+        let h2 = hmac_sha256(crd, &salt_dec.expose()[32..64]);
+        out1.expose_mut()[32..64].copy_from_slice(&h2);
     }
 
     let mut iv = [0u8; IV_SIZE];
     rng.fill(&mut iv);
-    let nout = pinproto::encrypt(proto, &shared[..slen], &iv, &out1[..n_salt], out)
-        .map_err(|_| CtapError::Other)?;
+    let nout = pinproto::encrypt(
+        proto,
+        &shared.expose()[..slen],
+        &iv,
+        &out1.expose()[..n_salt],
+        out,
+    )
+    .map_err(|_| CtapError::Other)?;
 
-    shared.zeroize();
-    salt_dec.zeroize();
-    cred_random.zeroize();
-    out1.zeroize();
+    shared.wipe();
+    salt_dec.wipe();
+    cred_random.wipe();
+    out1.wipe();
     Ok(nout)
 }
 

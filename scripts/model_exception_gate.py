@@ -14,7 +14,7 @@ Stage 6 asks that each such exception be a registry row with its own mutant, and
 that an exception in a model with no row redden the gate. Before this row there
 was no registry and no gate: `git grep -i exempt scripts/` found only tier
 exclusions, and deleting `\\/ a = Oath` from `RSKeyAppletSeams` — the clause that
-lets OATH re-lock on a re-SELECT while PIV and OpenPGP must not — changed the
+let OATH re-lock on a re-SELECT while PIV and OpenPGP could not — changed the
 input of nothing.
 
 WHICH EXCEPTIONS EXIST IS DERIVED HERE, never stored. That is the whole
@@ -29,13 +29,15 @@ type into it:
 * `clause` — a comparison of a narrowed subject against a domain literal.
   Narrowed three ways, and the second and third are holes this guard's own table
   found in it: the subject is BOUND (a parameter or a `\\A`/`\\E`/`|->` binder) and
-  the comparison is an operand of `\\/` or `/\\`; or the subject is bound and the
+  the comparison GUARDS something — an operand of `\\/` or `/\\`, or the end of
+  an `IF`'s condition, `ELSE IF` and a negation included; or the subject is bound and the
   comparison IS a function constructor's body, where there is no connective to be
   an operand of; or the subject is a state VARIABLE the definition compares
   against two different literals, which is a guard enumerating part of a domain.
-  The connective is what separates an exception from a dispatch:
-  `IF a = Piv THEN … ELSE …` answers for every applet, `IF Bug… \\/ a = Oath THEN`
-  adds one. A `CASE` is dispatch throughout and nothing inside one is collected;
+  An `IF a = Piv THEN … ELSE …` that answers for every applet is collected with
+  the rest and disposed of as `dispatch`: telling it from an `ELSE IF a = Oath` —
+  one applet's exception to the rule its `ELSE` states — is the judgement no scan
+  makes. A `CASE` is dispatch throughout and nothing inside one is collected;
 * `set` — a set literal that is a proper subset of another in the same module, or
   that disagrees with a same-named literal in a sibling module while overlapping
   it. Both directions of the second, so neither module is the privileged one;
@@ -60,6 +62,14 @@ What is checked, and the direction of each:
 * or it says `owes`, and then `owed` names the configuration that would refute it
   and that configuration must NOT exist. That is the ledger held in the second
   direction: pay the debt and the row goes red until it claims what it paid;
+* a `set` or `case` row claims no mutant at all. Its derived half is `omits`,
+  read off the model's text, which no configuration changes, so the derivation
+  cannot see what a switch does. The `mutant` rule above reads the whole
+  definition: a switch on a continuation line past a set literal, or in a CASE
+  arm the scan does not parse, passed it, and the row counted as carried by a
+  switch that changed nothing it records. Such a row owes until the derivation
+  can read a switched arm, and writing its owed configuration reddens it until
+  then;
 * `carried_by`, where a row has one, resolves to an id in
   `assurance/abstractions.toml`. Two registries disposing of the same narrowing
   without knowing about each other is how the second one starts being wrong;
@@ -152,9 +162,12 @@ IDENTIFIER = re.compile(r"[a-z][A-Za-z0-9_]*")
 FUNCTION = re.compile(r"\|->")
 
 SHAPES = ("clause", "set", "case")
+#: The shapes whose derived half is `omits`. It is read off the model's text, which
+#: no configuration changes, so no switch can move it and these rows claim none.
+OMITTING = ("set", "case")
 #: The judgement the derivation cannot make. `narrowing` is a hole in the model
 #: standing for a fact about the product; `dispatch` is a per-case answer the
-#: connective test read as a hole; `mutant-arm` is a defect the module carries on
+#: guard test read as a hole; `mutant-arm` is a defect the module carries on
 #: purpose, and it is the one kind that may never say `owes`.
 KINDS = ("narrowing", "dispatch", "mutant-arm")
 OWES = "owes"
@@ -333,14 +346,17 @@ def visible_sets(module, code):
 
 
 def comparisons(lines, low, high, names, strings):
-    """[(line, subject, operator, literal, is a connective operand)] in one definition.
+    """[(line, subject, operator, literal, guards)] in one definition.
 
     Every comparison of a lowercase identifier against a domain literal, with the
-    one fact the shapes below dispatch on: whether it stands as an OPERAND of
-    `\\/` or `/\\`. That test is taken over TOKENS rather than over the line —
-    reading the line for a connective anywhere calls `IF a = Piv THEN x \\/ y` a
-    narrowing, which is the direction that fills a registry with rows nobody can
-    decide.
+    one fact the shapes below dispatch on: whether it GUARDS — stands as an
+    operand of `\\/` or `/\\`, or as the end of an `IF`'s condition, right before
+    its `THEN`, so `IF ~(a = Oath) THEN` counts. The test is taken over TOKENS rather than over the line: reading the
+    line for a connective anywhere calls the `a = Piv` of `IF y THEN a = Piv ELSE
+    x \\/ z` an operand of the `\\/` in the other branch.
+
+    The `IF` half was a hole: `Reselect`'s `ELSE IF a = Oath THEN`, OATH's OTP PIN
+    dropped by a re-SELECT, is a narrowing this scan did not see at all.
     """
     tokens = []
     for number in range(low, high + 1):
@@ -373,13 +389,14 @@ def comparisons(lines, low, high, names, strings):
             after += 1
         left = tokens[before][0] if before >= 0 else None
         right = tokens[after][0] if after < len(tokens) else None
+        condition = right == "THEN"
         found.append(
             (
                 tokens[i][1],
                 subject,
                 operator,
                 literal,
-                left in CONNECTIVES or right in CONNECTIVES,
+                left in CONNECTIVES or right in CONNECTIVES or condition,
             )
         )
     return found
@@ -394,11 +411,10 @@ def clause_sites(module, code):
 
     * it is BOUND — an operator parameter or a `\\A`/`\\E`/`|->` binder — so it
       ranges over a set and pinning it to one member takes the rest out. Then the
-      comparison must stand as a connective operand, which is what separates
-      `IF Bug… \\/ a = Oath THEN` from the total dispatch `IF a = Piv THEN … ELSE`;
+      comparison must GUARD: a connective operand, or the end of an `IF`'s condition;
     * or it is a STATE VARIABLE the definition compares against two DIFFERENT
-      domain literals, each as a connective operand — a guard enumerating part of
-      a domain. `/\\ sel = Piv` is an action's own subject and not a narrowing;
+      domain literals, each as a guard — enumerating part of a
+      domain. `/\\ sel = Piv` is an action's own subject and not a narrowing;
       `/\\ (sel = Piv \\/ sel = Pgp)` is one, and with only the bound rule a
       constructed defect of exactly that shape passed at rc 0. Closing it found a
       real one: `RSKeyAppletPolicies`'s `PivKeyOp` spends for two of the three PIN
@@ -419,14 +435,14 @@ def clause_sites(module, code):
         seen = comparisons(lines, low, high, names, strings)
         enumerated = {
             subject
-            for subject in {s for _l, s, _o, _lit, conn in seen if conn}
-            if len({lit for _l, s, _o, lit, conn in seen if conn and s == subject}) > 1
+            for subject in {s for _l, s, _o, _lit, guards in seen if guards}
+            if len({lit for _l, s, _o, lit, guards in seen if guards and s == subject}) > 1
         }
-        for number, subject, operator, literal, connective in seen:
+        for number, subject, operator, literal, guards in seen:
             if subject in bound:
-                if not (connective or FUNCTION.search(lines[number - 1])):
+                if not (guards or FUNCTION.search(lines[number - 1])):
                     continue
-            elif not (connective and subject in enumerated):
+            elif not (guards and subject in enumerated):
                 continue
             found.append(
                 {
@@ -697,9 +713,15 @@ def mutant_problems(root, entry, where):
                 " creditor is a note, and nothing can notice it being paid"
             )
         elif switched_on(root, owed) is not None:
+            claim = (
+                f"a `{entry['shape']}` row cannot claim it until the derivation reads"
+                " the switch it turns on, so teach it that first"
+                if entry.get("shape") in OMITTING
+                else "claim it as the mutant"
+            )
             problems.append(
                 f"{where}: owes {owed}, and {MODELS}/{owed} exists — the debt is paid"
-                " and the row still says it is owed; claim it as the mutant"
+                f" and the row still says it is owed; {claim}"
             )
         return problems
     if owed is not None:
@@ -710,6 +732,14 @@ def mutant_problems(root, entry, where):
     on = switched_on(root, claimed)
     if on is None:
         problems.append(f"{where}: claims {claimed}, which is not a file in {MODELS}")
+        return problems
+    if entry.get("shape") in OMITTING:
+        problems.append(
+            f"{where}: claims {claimed}, and a `{entry['shape']}` row is carried by no"
+            " switch — its omits is derived from the model's text, which no"
+            " configuration changes, so the derivation cannot see what the switch"
+            " does; it owes until the derivation can read a switched arm"
+        )
         return problems
     reads = switches(root, entry["module"], entry["line"])
     if not on & reads:

@@ -7,7 +7,7 @@
 
 use alloc::boxed::Box;
 use num_bigint_dig::BigUint;
-use num_bigint_dig::prime::probably_prime_lucas;
+use rsk_secret::{Secret, WipeGuard};
 use zeroize::Zeroize;
 
 use crate::{
@@ -19,8 +19,8 @@ use crate::{
 /// 0x91/0x92/0x93, PIV's `01`/`02` import template).
 pub fn rsa_from_pqe(e: &[u8], p: &[u8], q: &[u8]) -> Option<RsaKey> {
     RsaKey::from_p_q(
-        BigUint::from_bytes_be(p),
-        BigUint::from_bytes_be(q),
+        crate::key::from_secret_be(p),
+        crate::key::from_secret_be(q),
         BigUint::from_bytes_be(e),
     )
 }
@@ -32,9 +32,9 @@ pub fn rsa_from_pqe(e: &[u8], p: &[u8], q: &[u8]) -> Option<RsaKey> {
 /// two `nbits/2`-bit primes with the top two bits set and `gcd(e, prime − 1) = 1`,
 /// assembled into an [`RsaKey`]. The primality decision is
 /// Baillie-PSW split across backends: the strong Miller-Rabin base-2 half on
-/// the KAT-gated asm modexp (ours, differentially tested against the library),
-/// the strong Lucas half still the vetted library routine. Key assembly is ours
-/// now — [`RsaKey`], checked against OpenSSL vectors rather than a second crate.
+/// the KAT-gated fixed-width modexp (ours, differentially tested against the library),
+/// the strong Lucas half uses the library's algorithm with cancellation. Key
+/// assembly is ours — [`RsaKey`], checked against OpenSSL vectors.
 ///
 /// `step` decomposes into [`try_candidate`](RsaKeygen::try_candidate) (one
 /// draw + test, stateless) and [`offer`](RsaKeygen::offer) (the two-prime
@@ -45,18 +45,28 @@ pub struct RsaKeygen {
     half_bytes: usize,
     e: BigUint,
     p: Option<BigUint>,
-    /// Result of the asm modexp known-answer test, checked once up front: if the
-    /// fast modexp is wrong on this build/silicon, refuse to generate (rather than
-    /// emit a weak key). Always true on the host (num-bigint backend).
-    asm_ok: bool,
+    /// The RSA modexp known-answer test gates generation on both host and device.
+    modexp_ok: bool,
 }
 
 // A keygen abandoned between steps still holds the first found prime.
 impl Drop for RsaKeygen {
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the held prime's drop is its wipe"
+    )]
     fn drop(&mut self) {
-        if let Some(p) = &mut self.p {
+        let Self {
+            half_bytes: _,
+            e: _,
+            p,
+            modexp_ok: _,
+        } = self;
+        if let Some(p) = p {
             p.zeroize();
         }
+        #[cfg(test)]
+        crate::tests::observe_search_drop(p.as_ref());
     }
 }
 
@@ -79,17 +89,15 @@ impl RsaKeygen {
             half_bytes: nbits / 16,
             e: BigUint::from(RSA_E),
             p: None,
-            asm_ok: self_test(),
+            modexp_ok: self_test(),
         }
     }
 
-    /// Whether this keygen can run at all: the modulus size is supported (the
-    /// asm modexp needs the prime length to be a multiple of 32 bytes — every
-    /// standard RSA size qualifies) and the modexp known-answer test passed
-    /// (a broken fast modexp must never yield a key).
+    /// Generation requires a supported prime width in multiples of 32 bytes
+    /// and a passing modexp known-answer test.
     pub fn usable(&self) -> bool {
         let half = self.half_bytes;
-        self.asm_ok && half != 0 && half <= MAX_RSA_BYTES / 2 && half.is_multiple_of(32)
+        self.modexp_ok && half != 0 && half <= MAX_RSA_BYTES / 2 && half.is_multiple_of(32)
     }
 
     /// One prime's size in bytes (half the modulus).
@@ -102,7 +110,7 @@ impl RsaKeygen {
     /// concurrently with its own RNG stream. The pipeline is Baillie-PSW split
     /// across backends: the cheap rejections (the small-prime sieve, the
     /// `gcd(e, n−1)` check), then the strong Miller-Rabin base-2 gate on the
-    /// KAT-gated asm modexp, then the vetted software strong Lucas test for
+    /// KAT-gated fixed-width modexp, then the cancellable software strong Lucas test for
     /// the final accept. Admitting a composite would take a simultaneous
     /// failure of both halves — the same combined guarantee
     /// `probably_prime(_, 0)` gives, with the modexp-heavy half on the fast
@@ -118,14 +126,26 @@ impl RsaKeygen {
         rng: &mut dyn Rng,
         half_bytes: usize,
     ) -> Option<BigUint> {
+        Self::try_candidate_with_cancel(sieve, rng, half_bytes, &mut || false)
+    }
+
+    fn try_candidate_with_cancel(
+        sieve: &mut IncrementalSieve,
+        rng: &mut dyn Rng,
+        half_bytes: usize,
+        cancelled: &mut dyn FnMut() -> bool,
+    ) -> Option<BigUint> {
+        if cancelled() {
+            return None;
+        }
         match sieve.step() {
             None => {
                 // Window exhausted (or never seeded) — draw a fresh random odd
                 // top-two-bits start; this call yields no candidate.
-                let mut seed = [0u8; MAX_RSA_BYTES / 2];
-                rng.fill(&mut seed[..half_bytes]);
-                sieve.reseed(half_bytes, &seed[..half_bytes]);
-                seed.zeroize();
+                let mut seed = Secret::<[u8; MAX_RSA_BYTES / 2]>::zeroed();
+                rng.fill(&mut seed.expose_mut()[..half_bytes]);
+                sieve.reseed(half_bytes, &seed.expose()[..half_bytes]);
+                seed.wipe();
                 return None;
             }
             Some(false) => return None, // composite by a small prime — cheap
@@ -136,18 +156,17 @@ impl RsaKeygen {
         if mod_small(n, RSA_E) == 1 {
             return None;
         }
-        // The strong Miller-Rabin half of Baillie-PSW, on the asm modexp.
+        // The strong Miller-Rabin half of Baillie-PSW, on the fixed-width modexp.
         if !passes_strong_mr_base2(n) {
             return None;
         }
-        let cand = BigUint::from_bytes_le(n);
-        // The strong Lucas half (vetted library code). Together with the MR
-        // gate above this is exactly `probably_prime(_, 0)` — see the
-        // `keygen_bpsw_split_matches_library` test.
-        if !probably_prime_lucas(&cand) {
+        let mut cand = Secret::new(BigUint::from_bytes_le(n));
+        // The library's strong Lucas algorithm, with cancellation boundaries.
+        // The MR + Lucas verdict is checked by keygen_bpsw_split_matches_library.
+        if !crate::lucas::passes_lucas(cand.expose(), cancelled) {
             return None;
         }
-        Some(cand)
+        Some(core::mem::take(cand.expose_mut()))
     }
 
     /// Feed a found prime into the two-prime pool: the first is held, a second
@@ -162,6 +181,10 @@ impl RsaKeygen {
             }
             Some(p) if p == cand => {
                 self.p = Some(p);
+                #[expect(
+                    clippy::disallowed_methods,
+                    reason = "a by-value prime the caller handed over, dropped as a duplicate"
+                )]
                 cand.zeroize();
                 RsaStep::More
             }
@@ -183,12 +206,26 @@ impl RsaKeygen {
         half_bytes: usize,
         out: &mut [u8],
     ) -> Option<usize> {
-        let mut p = Self::try_candidate(sieve, rng, half_bytes)?;
-        let mut v = p.to_bytes_le();
-        p.zeroize();
-        let n = v.len();
-        out[..n].copy_from_slice(&v);
-        v.zeroize();
+        Self::try_candidate_le_with_cancel(sieve, rng, half_bytes, out, &mut || false)
+    }
+
+    /// Abandon a candidate when the other core has completed the key. Cancellation
+    /// never exports a partial prime or changes the caller's output buffer.
+    pub fn try_candidate_le_with_cancel(
+        sieve: &mut IncrementalSieve,
+        rng: &mut dyn Rng,
+        half_bytes: usize,
+        out: &mut [u8],
+        cancelled: &mut dyn FnMut() -> bool,
+    ) -> Option<usize> {
+        let mut p = Secret::new(Self::try_candidate_with_cancel(
+            sieve, rng, half_bytes, cancelled,
+        )?);
+        let mut v = Secret::new(p.expose().to_bytes_le());
+        p.wipe();
+        let n = v.expose().len();
+        out[..n].copy_from_slice(v.expose());
+        v.wipe();
         Some(n)
     }
 
@@ -198,12 +235,15 @@ impl RsaKeygen {
         // Belt-and-suspenders: a byte-transport find must be exactly this key's
         // half size — a wrong length is a stale prime from a prior different-size
         // job (mailbox scrubbed on engage, so never fires today); pooling corrupts n.
-        if bytes.len() != self.half_bytes {
-            bytes.zeroize();
-            return RsaStep::More;
-        }
-        let cand = BigUint::from_bytes_le(bytes);
-        bytes.zeroize();
+        let cand = {
+            // Wiped when this block is left, the early return included, and
+            // before `offer` runs the key assembly.
+            let bytes = WipeGuard::new(bytes);
+            if bytes.len() != self.half_bytes {
+                return RsaStep::More;
+            }
+            BigUint::from_bytes_le(&bytes)
+        };
         self.offer(cand)
     }
 

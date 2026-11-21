@@ -121,12 +121,14 @@ BUNDLE = BUNDLE_DIR / "SEC-FIDO-001.toml"
 #: green, which is the family "the table was DELETED rather than EMPTIED" one
 #: layer out.
 #:
-#: Moved 2 -> 8 the day the six remaining P0 bundles landed, and 8 -> 11 the day
+#: Moved 2 -> 8 the day the six remaining P0 bundles landed, 8 -> 11 the day
 #: `SEC-FIDO-006` was split into `SEC-FIDO-006A/B/C` and the three clause bundles
-#: landed together. The value is the measured roster and not a margin under it: a
-#: floor below the count is a bundle that can leave with the row green, which is
-#: the direction above.
-ROSTER_FLOOR = 11
+#: landed together, and 11 -> 17 the day the six `SEC-STORE-*` bundles landed —
+#: the rest of the `p0-launch` tranche, which until then carried no bundle at all.
+#: The value is the measured roster and not a margin under it: a floor below the
+#: count is a bundle that can leave with the row green, which is the direction
+#: above.
+ROSTER_FLOOR = 17
 
 #: The evidence store. Held BOTH ways, like [`BUNDLE_DIR`] one layer in: the
 #: `[[artifact]]` rule below reads a bundle's path and asks whether the tree has
@@ -157,8 +159,10 @@ STORE = BUNDLE_DIR / "logs"
 #: at the root that are `SEC-FIDO-001`'s — the one bundle with no directory of its
 #: own, which is why this walks the store rather than the ten names. Like
 #: `ROSTER_FLOOR` it moves UP when a slice lands, and a diff someone has to write
-#: is the point.
-STORE_FLOOR = 100
+#: is the point. 100 -> 126 with the six `SEC-STORE-*` bundles: 25 TLC logs over
+#: six new directories, plus the one gzipped Kani log the store slice's only
+#: BOUNDED row rests on.
+STORE_FLOOR = 126
 
 REGISTRY = pathlib.Path("assurance/properties.toml")
 #: Where a bare `Name.cfg` lives. The bundle names TLC configurations without a
@@ -173,7 +177,7 @@ FORMAL = pathlib.Path("formal")
 #: gates and `tools/` is a CLI, and both resolved a KAT row at exit 0 before this.
 RUNNERS = pathlib.Path("tests")
 
-#: Stage 1A п.3's ten groups, in its order, with the table each is spelled as.
+#: Stage 1A item 3's ten groups, in its order, with the table each is spelled as.
 #: The names are the contract's; renaming one here would be renaming the
 #: contract, so a group that is gone reads as gone.
 GROUPS = (
@@ -314,15 +318,15 @@ UNIT_TEST = re.compile(r"#\[test\]")
 #: (`narrow_gate.py::test_functions`, `token_refinement_gate.py::
 #: test_only_sources`). **pytest's ROOTS, derived from `check.sh`**: the rows
 #: hand it three (`scripts`, `tools/rsk`, `tests/interop`) while
-#: `tests/third_party.py` calls `pytest.main` over two more trees carrying 90
-#: collected `test_*.py` between them, every one of which the rule would call
+#: `tests/third_party.py` calls `pytest.main` over three more trees carrying 103
+#: `test_*.py` between them, every one of which the rule would call
 #: un-run. What the prefix alone still cannot see is a `def test_*` that runs no
 #: vector; the `.rs` arm cannot see that either, since `#[test]` says a function
 #: is a test and not what it checks.
 PYTEST_FUNCTION = "test"
 
-#: §4.1's method vocabulary, in `docs/authorization-slice.md` п.3's order — held
-#: to that page by [`vocabulary_problems`], because until it was, "in п.3's order"
+#: §4.1's method vocabulary, in `docs/authorization-slice.md` item 3's order — held
+#: to that page by [`vocabulary_problems`], because until it was, "in item 3's order"
 #: was a sentence and not a rule: both rosters were extended BY HAND when
 #: `KAT/differential` arrived, and nothing anywhere compared them. A word
 #: outside it is a finding and not a shrug: [`METHOD_KIND`] reads this field, so
@@ -456,9 +460,9 @@ OWNED_PAIR = re.compile(
 #: `name=<count>/<roster>`, the shape three of the ledger's axes carry. The pair
 #: rule reads `persistent=12/4` as `persistent=12` and stops at the slash, so the
 #: DENOMINATOR fell through to the bare-integer rule, which asks only whether the
-#: number stands SOMEWHERE in the derived line — 33 denominators over 11 bundles
-#: held that way, and `persistent=12/4 → 12/11` was exit 0 off the `api=11` in
-#: the same line. Compared as the whole token, numerator included.
+#: number stands SOMEWHERE in the derived line — 33 denominators over the 11
+#: bundles of that day held that way, 51 over 17 today — and `persistent=12/4 →
+#: 12/11` was exit 0 off the `api=11` beside it. Compared whole, numerator included.
 #:
 #: Arms, over the shipped bundles: `persistent=12/4 → 12/11` and `outcomes=7/6 →
 #: 7/12` are each exit 1 here, naming the token; delete this clause and both are
@@ -492,10 +496,10 @@ CLAIMED_TOTAL = re.compile(rf"(\d+) {re.escape(STANDING)}")
 #: no `name=value` pair at all. `gate_ghost` and `gate_matrix` are written
 #: entirely that way, so the pair rule reads NOTHING in either and every number
 #: fell through to the bare-integer rule, which asks only whether the digits
-#: stand SOMEWHERE in the derived line: 33 + 99 numbers over 11 bundles held
-#: that way, and `(37 covered → (37 equivalent` and `21 action(s) → 24 action(s)`
-#: were each exit 0 on the shipped tree, every swap taking its digits off a
-#: sibling count of the very line it falsifies.
+#: stand SOMEWHERE in the derived line: 33 + 99 numbers over the 11 bundles of
+#: that day held that way, 51 + 153 over 17 today, and `(37 covered → (37
+#: equivalent` and `21 action(s) → 24 action(s)` were each exit 0 on the shipped
+#: tree, every swap taking its digits off a sibling count of the line it falsifies.
 #:
 #: The lookbehind is what keeps this off the numbers another rule already reads
 #: IN POSITION: `=` for the pair rule, `/` and `,` for the fraction rule and for
@@ -521,10 +525,10 @@ CLAIMED_TOTAL = re.compile(rf"(\d+) {re.escape(STANDING)}")
 #: accident: a `<count> <noun>` the row is CITING goes in backticks, which is
 #: where this tree already puts quoted history — `SEC-FIDO-003` quotes the `4
 #: standing assumption(s)` it once carried, and that is the one honest text a
-#: version reading every occurrence called red. Measured over all 11 bundles:
-#: 2 false findings without the carve-out, 0 with it, and all 55 gate lines
-#: carry balanced backticks. The cost is that an UNquoted `<count> <derived
-#: noun>` anywhere in a `gate_*` line now reads as a transcription of it.
+#: version reading every occurrence called red. Measured over the 11 bundles of
+#: that day: 2 false findings without the carve-out, 0 with it; and all 85 gate
+#: lines carry balanced backticks now. The cost is that an UNquoted `<count>
+#: <derived noun>` anywhere in a `gate_*` line now reads as a transcription of it.
 #:
 #: Arms, over the shipped bundles: `(37 covered → (37 equivalent`, `21 action(s)
 #: → 24 action(s)`, `11 guard(s) → 24 guards`, `31 build configurations → 37
@@ -561,12 +565,12 @@ DERIVED_WORD = re.compile(r"(?<![\w-])([A-Za-z][A-Za-z0-9]*(?:-[A-Za-z0-9]+)*)(?
 #: new way to switch the clause off — backtick a whole transcription and every
 #: count in it stops being compared, with the pair and bare-integer rules the
 #: only things left — so the reading is counted and floored. Under the measured
-#: 12, which is the same 12 in every one of the eleven bundles because they all
+#: 12, which is the same 12 in every one of the seventeen bundles because they all
 #: transcribe the same five lines: 3 of `gate_ghost`, 1 of `gate_assumption`, 8
 #: of `gate_matrix`, and none of the two lines written entirely in pairs. Per
 #: bundle and not over the roster, because a roster total is exactly what one
 #: bundle going quiet does not move: backticking `gate_matrix` alone takes one
-#: bundle to 4 and the roster to 124, and only the first of those is a floor
+#: bundle to 4 and the roster to 196, and only the first of those is a floor
 #: anything sits under.
 UNIT_FLOOR = 9
 
@@ -636,10 +640,12 @@ LOG_NAME = re.compile(r"[A-Za-z0-9_.\-/]*\.log(?:\.gz)?")
 #: What [`quoted_numbers`] must reach. THE POINT OF THE RULE, not decoration:
 #: `check_evidence`'s only shape rule keyed on a `board_revision` no row carried,
 #: so it guarded zero rows while reading as if it guarded the hardware axis. The
-#: measured tree is 198 numbers over 63 joins; AT the measurement like every
+#: measured tree is 289 numbers over 91 joins; AT the measurement like every
 #: ratchet here, so a join that stops forming is a finding rather than a quieter
-#: summary line.
-QUOTE_FLOOR, QUOTE_JOIN_FLOOR = 198, 63
+#: summary line. 198 over 63 before the six `SEC-STORE-*` bundles landed with 83
+#: more numbers over 27 more joins, and 8 more over 1 more when their `t_tier`
+#: named its own log as well as `formal/runs.toml`, which no rule here can read.
+QUOTE_FLOOR, QUOTE_JOIN_FLOOR = 289, 91
 
 #: The two rosters above must name the same ten groups. One in `GROUPS` and not
 #: in `FLOORS` is a `KeyError`; one in `FLOORS` and not in `GROUPS` is silently
@@ -867,12 +873,12 @@ def vocabulary_problems(text: str | None, methods=METHODS) -> list[str]:
     """[`METHODS`] against the page it says it is a copy of, in order.
 
     Two registers extended by hand on the same day and compared by nothing: the
-    tenth word went into `METHODS`, `METHOD_KIND` and п.3 in one commit and would
+    tenth word went into `METHODS`, `METHOD_KIND` and item 3 in one commit and would
     have gone into one of them just as quietly. `methods` is a PARAMETER so both
     directions are drivable without patching the roster the shipped run is judged
     by — the same shape as `bounds_gate`'s floors.
 
-    ORDER as well as membership, because `METHODS` claims п.3's order in as many
+    ORDER as well as membership, because `METHODS` claims item 3's order in as many
     words, and a set equality would leave that half of the sentence a promise.
     """
     if text is None:
@@ -889,7 +895,7 @@ def vocabulary_problems(text: str | None, methods=METHODS) -> list[str]:
         ]
     if published != tuple(methods):
         return [
-            f"{SLICE} п.3 publishes {list(published)} and this gate reads"
+            f"{SLICE} item 3 publishes {list(published)} and this gate reads"
             f" {list(methods)} — one was extended by hand and the other was not."
             " The page is what a reader is held to; make them the same list, in"
             " the same order"
@@ -1327,10 +1333,10 @@ def gate_words(
     Two shapes, because the two corpora are two shapes. Four gates derive ONE
     line, so every [`DERIVED_WORD`] of it must stand in the claim. `gate_registry`
     derives a ROSTER and the claim transcribes one row of it, abbreviated: two of
-    the eleven bundles write the id and the verdict without the invariant name,
+    the seventeen bundles write the id and the verdict without the invariant name,
     so requiring every word there is the rule firing on honest text — measured.
     What that row is held to instead is its own id, its own verdict, and no
-    sibling's verdict, each of which every one of the eleven carries today.
+    sibling's verdict, each of which every one of the seventeen carries today.
     """
     if key != "gate_registry":
         named = {name for name, _ in CLAIMED_PAIR.findall(derived)}
@@ -1643,8 +1649,9 @@ def orphan_evidence(
     `./` or `../` spelling would surface HERE, as a loud finding naming the file,
     rather than as a normalisation quietly agreeing with whatever was written.
 
-    By full path and never by name: 15 basenames are carried by more than one
-    directory — `tlc-Shipped.log` by all eleven, `tlc-AlwaysUv.log` by nine — and
+    By full path and never by name: 17 basenames are carried by more than one
+    directory — `tlc-Shipped.log` by eleven, `tlc-AlwaysUv.log` by nine,
+    `tlc-Store.log` by the six `SEC-STORE-*` — and
     they are different runs of the same configuration. A name-keyed reading lets
     one bundle's copy discharge every other bundle's, which is the join
     [`quoted_join`] already had to un-widen for its own reason.
@@ -1745,7 +1752,7 @@ def audit_one(root: pathlib.Path, bundle: pathlib.Path) -> tuple[list[str], str]
     for group in GROUPS:
         if group not in doc:
             findings.append(
-                f"{bundle}: group `{group}` is missing — stage 1A п.3 blocks the exit"
+                f"{bundle}: group `{group}` is missing — stage 1A item 3 blocks the exit"
                 " on any field of the contract, not on most of them"
             )
     for group in sorted(set(doc) - set(GROUPS)):

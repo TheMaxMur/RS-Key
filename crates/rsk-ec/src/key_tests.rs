@@ -3,6 +3,98 @@
 
 use super::*;
 
+std::thread_local! {
+    static DROP_WIPED: core::cell::Cell<Option<bool>> = const { core::cell::Cell::new(None) };
+}
+
+pub(super) fn observe_drop(scalar: &[u8]) {
+    DROP_WIPED.with(|observed| {
+        if observed.get().is_some() {
+            observed.set(Some(scalar.iter().all(|&byte| byte == 0)));
+        }
+    });
+}
+
+#[test]
+fn dropping_each_private_key_variant_wipes_its_live_scalar() {
+    for key in [
+        PrivKey::P256([0x5a; 32]),
+        PrivKey::P384([0x5a; 48]),
+        PrivKey::P521([0x5a; 66]),
+        PrivKey::K256([0x5a; 32]),
+        PrivKey::Bp256([0x5a; 32]),
+        PrivKey::Bp384([0x5a; 48]),
+        PrivKey::Ed25519([0x5a; 32]),
+        PrivKey::X25519([0x5a; 32]),
+    ] {
+        let curve = key.curve();
+        assert!(key.scalar().iter().all(|&byte| byte == 0x5a));
+        DROP_WIPED.with(|observed| observed.set(Some(false)));
+        drop(key);
+        DROP_WIPED.with(|observed| {
+            assert_eq!(
+                observed.replace(None),
+                Some(true),
+                "{curve:?} survived Drop"
+            );
+        });
+    }
+}
+
+#[test]
+fn imported_scalars_cannot_exceed_any_curves_field_width() {
+    for (curve, width) in [
+        (Curve::P256, 32),
+        (Curve::P384, 48),
+        (Curve::P521, 66),
+        (Curve::K256, 32),
+        (Curve::Bp256, 32),
+        (Curve::Bp384, 48),
+        (Curve::Ed25519, 32),
+        (Curve::X25519, 32),
+    ] {
+        assert!(PrivKey::from_scalar(curve, &vec![1; width + 1]).is_none());
+        let key = PrivKey::from_scalar(curve, &[1]).unwrap();
+        assert_eq!(key.scalar().len(), width);
+        assert!(key.scalar()[..width - 1].iter().all(|&byte| byte == 0));
+        assert_eq!(key.scalar()[width - 1], 1);
+    }
+}
+
+#[test]
+fn weierstrass_generation_retries_a_zero_sample_before_accepting_one() {
+    struct Samples(usize);
+    impl Rng for Samples {
+        fn fill(&mut self, out: &mut [u8]) {
+            out.fill(0);
+            if self.0 != 0 {
+                *out.last_mut().unwrap() = 1;
+            }
+            self.0 += 1;
+        }
+    }
+    for curve in [Curve::P256, Curve::P384, Curve::P521, Curve::K256] {
+        let mut rng = Samples(0);
+        let key = PrivKey::generate(curve, &mut rng).unwrap();
+        assert_eq!(rng.0, 2, "{curve:?}");
+        assert_eq!(key.curve(), curve);
+        let mut expected = vec![0; key.scalar().len()];
+        *expected.last_mut().unwrap() = 1;
+        assert_eq!(key.scalar(), expected);
+    }
+}
+
+#[test]
+fn edwards_and_montgomery_keys_refuse_the_other_private_operation() {
+    let mut out = [0x55; MAX_EC_SIG];
+    let x25519 = PrivKey::from_scalar(Curve::X25519, &[1; 32]).unwrap();
+    assert_eq!(x25519.sign(&[0; 32], &mut out), Err(EcError::Unsupported));
+    assert_eq!(out, [0x55; MAX_EC_SIG]);
+    let ed25519 = PrivKey::from_scalar(Curve::Ed25519, &[1; 32]).unwrap();
+    assert_eq!(ed25519.ecdh(&[1; 32], &mut out), Err(EcError::Unsupported));
+    assert_eq!(out, [0x55; MAX_EC_SIG]);
+}
+
 // These check the raw `r ‖ s` output and the public-point round-trip for the
 // heavier Weierstrass curves; P-256 and Ed25519 are covered end-to-end by the
 // two applets' own suites.
@@ -89,4 +181,85 @@ fn ecdh_weierstrass_dh_symmetry() {
     a[0] = 0;
     b[0] = 0;
     ecdh_symmetry(Curve::P521, &a, &b, 66);
+}
+
+#[test]
+fn weierstrass_ecdh_tells_undecodable_from_off_curve() {
+    // A YubiKey 5.8.0's OpenPGP answers these apart on every curve it has: 6A80
+    // for bytes the curve cannot decode, 6581 for a decoded point off the curve.
+    let curves = [
+        Curve::P256,
+        Curve::P384,
+        Curve::P521,
+        Curve::K256,
+        Curve::Bp256,
+        Curve::Bp384,
+    ];
+    for curve in curves {
+        let key = PrivKey::from_scalar(curve, &[0x11; 31]).unwrap();
+        let mut point = [0u8; MAX_EC_POINT];
+        let n = key.public_point(&mut point).unwrap();
+        let valid = &point[..n];
+        let flen = (n - 1) / 2;
+        let mut off_curve = valid.to_vec();
+        *off_curve.last_mut().unwrap() ^= 1;
+        // x at or past p: a coordinate that decodes but is no field element.
+        let mut past_p = valid.to_vec();
+        past_p[1..1 + flen].fill(0xFF);
+        // The same good point, compressed (`02|03 ‖ x`, y's parity in the tag) and
+        // compact (`05 ‖ x`, y left to the reader).
+        let mut compressed = vec![0x02 | (valid[n - 1] & 1)];
+        compressed.extend_from_slice(&valid[1..1 + flen]);
+        let mut compact = compressed.clone();
+        compact[0] = 0x05;
+        let mut out = [0u8; 66];
+        assert!(key.ecdh(valid, &mut out).is_ok(), "{curve:?}: the control");
+        for refused in [&off_curve, &past_p] {
+            assert_eq!(
+                key.ecdh(refused, &mut out),
+                Err(EcError::RejectedPoint),
+                "{curve:?}: {refused:02x?}"
+            );
+        }
+        let undecodable = [
+            &valid[1..],
+            compressed.as_slice(),
+            compact.as_slice(),
+            &[0x00][..],
+            &[][..],
+        ];
+        for bad in undecodable {
+            assert_eq!(
+                key.ecdh(bad, &mut out),
+                Err(EcError::BadPoint),
+                "{curve:?}: {bad:02x?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn ecdh_over_a_stored_scalar_the_curve_refuses_is_a_failure() {
+    // The peer is not at fault, so not BadPoint: the agreement fails the way
+    // signing with the same key does, whatever point arrives.
+    let curves = [
+        Curve::P256,
+        Curve::P384,
+        Curve::P521,
+        Curve::K256,
+        Curve::Bp256,
+        Curve::Bp384,
+    ];
+    for curve in curves {
+        let peer = PrivKey::from_scalar(curve, &[0x11; 31]).unwrap();
+        let mut point = [0u8; MAX_EC_POINT];
+        let n = peer.public_point(&mut point).unwrap();
+        let zero = PrivKey::from_scalar(curve, &[0x00]).unwrap();
+        let mut out = [0u8; 66];
+        assert_eq!(
+            zero.ecdh(&point[..n], &mut out),
+            Err(EcError::Failed),
+            "{curve:?}"
+        );
+    }
 }

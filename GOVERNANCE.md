@@ -24,8 +24,9 @@ the release signing keys and the boards. The job:
   signing, OTP fuse writes, pushing and tagging, bumping the embassy/toolchain
   pins, and any change that weakens the gate, the at-rest seals or a
   threat-model assumption ([AGENTS.md](AGENTS.md) → "Maintainer-only");
-- keep the gate honest — `scripts/check.sh` is the bar the maintainer is also
-  held to, not an obstacle applied to other people's patches.
+- keep the gate honest — `scripts/check.sh` and `scripts/check-assurance.sh`
+  are the bar the maintainer is also held to, not an obstacle applied to other
+  people's patches.
 
 **Contributor** — anyone who opens an issue or a pull request. No paperwork, no
 CLA; the AGPL-3.0-only header on each file is the whole agreement
@@ -43,11 +44,11 @@ contributors and the maintainer both do; merge rights sit with the maintainer.
 ## How decisions get made
 
 Most of them aren't judgment calls. **The gate decides what is correct**:
-`nix develop -c ./scripts/check.sh` is the same script locally and in CI, and a
-change that fails it does not land regardless of who wrote it or how good the
-idea is. Tests, proofs, mutation tables and measurements settle questions of
-fact, and the standing rule is that a claim without a way to check it is not an
-argument.
+`nix develop -c ./scripts/check.sh` and `./scripts/check-assurance.sh` are the
+same scripts locally and in CI, and a change that fails either does not land
+regardless of who wrote it or how good the idea is. Tests, proofs, mutation
+tables and measurements settle questions of fact, and the standing rule is that
+a claim without a way to check it is not an argument.
 
 What the gate cannot decide, the maintainer does, in the open:
 

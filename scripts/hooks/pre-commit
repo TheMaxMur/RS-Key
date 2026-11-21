@@ -19,7 +19,18 @@ cargo fmt --all --check
 # bakes the erase length in, and an under-sized wiper leaves sealed secrets on
 # the chip. `waveshare-one` is the reference board (same values as every
 # default). scripts/check.sh does the same, and builds it for every board.
-BOARD=waveshare-one cargo clippy --workspace -- -D warnings
+cargo clippy --workspace --exclude firmware --exclude firmware-ns --exclude rsk-wipe -- -D warnings
+# The two worlds select incompatible critical-section state types. NS also
+# needs the Secure-generated layout and gateway import library before linting.
+bash scripts/build.sh
+tz_out="${RSK_TZ_OUT:-${CARGO_TARGET_DIR:-$PWD/target}/trustzone}"
+tz_out=$(cd "$tz_out" && pwd)
+export RSK_TZ_IMPLIB="$tz_out/ns-import.a"
+export RSK_TZ_NS_MEMORY="$tz_out/nonsecure-memory.x"
+export RSK_TZ_SECURE_MEMORY="$tz_out/secure-memory.x"
+export RSK_TZ_STAGE=import
+BOARD=waveshare-one cargo clippy -p firmware -p rsk-wipe -- -D warnings # roster: scoped
+cargo clippy -p firmware-ns -- -D warnings # roster: scoped
 
 # Advisory, never fatal: which users of a redefined constant this commit leaves
 # unread. Nothing above can catch that class — the value still type-checks and a

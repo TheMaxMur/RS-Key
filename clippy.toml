@@ -1,0 +1,12 @@
+# Contracts clippy holds for every crate in the repository. See AGENTS.md.
+disallowed-methods = [
+    { path = "zeroize::Zeroize::zeroize", reason = "hold key-grade bytes in rsk_secret::Secret, or a buffer that outlives the scope in a WipeGuard: a bare wipe is skipped by any `?` above it" },
+    { path = "cortex_m::peripheral::SCB::sys_reset", reason = "reset through Worker::reboot, which scrubs the RAM secrets first: a direct reset skips the scrub (audit run-34 #16)" },
+    { path = "embassy_rp::rom_data::reset_to_usb_boot", reason = "reset through Worker::reboot, which scrubs the RAM secrets first: a direct reset skips the scrub (audit run-34 #16)" },
+    { path = "embassy_rp::rom_data::reboot", reason = "reset through Worker::reboot, which scrubs the RAM secrets first: a direct reset skips the scrub (audit run-34 #16)" },
+    { path = "embassy_rp::rom_data::reboot_ns", reason = "reset through Worker::reboot, which scrubs the RAM secrets first: a direct reset skips the scrub (audit run-34 #16)" },
+    { path = "embassy_rp::watchdog::Watchdog::trigger_reset", reason = "reset through Worker::reboot, which scrubs the RAM secrets first: a direct reset skips the scrub (audit run-34 #16)" },
+]
+disallowed-types = [
+    { path = "zeroize::Zeroizing", reason = "use rsk_secret::Secret: Zeroizing derives Debug and PartialEq, so it prints a secret and compares it in variable time" },
+]

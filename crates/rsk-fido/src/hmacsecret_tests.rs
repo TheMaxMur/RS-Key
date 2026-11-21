@@ -2,6 +2,17 @@
 // Copyright (C) 2026 RS-Key contributors
 
 use super::*;
+
+#[test]
+fn unknown_nested_hmac_fields_are_consumed_before_the_protocol() {
+    let req = parse_bytes(&[0xa2, 5, 0x82, 0xa0, 0xf6, 4, 2]).unwrap();
+    assert!(req.present);
+    assert_eq!(req.proto, 2);
+    assert!(matches!(
+        parse_bytes(&[0xa1, 5, 0x82, 0xf6]),
+        Err(CtapError::InvalidCbor)
+    ));
+}
 use rsk_crypto::hmac_sha256;
 use rsk_crypto::pinproto::{authenticate, encrypt, public_xy};
 
@@ -50,7 +61,7 @@ fn roundtrip(proto: PinProto, two_salts: bool) {
     let (ax, ay) = public_xy(&auth_scalar).unwrap();
     let (px, py) = public_xy(&plat_scalar).unwrap();
 
-    let salt64 = [0xA1u8; 64];
+    let salt64: [u8; 64] = core::array::from_fn(|i| if i < 32 { 0xA1 } else { 0xB2 });
     let salt: &[u8] = if two_salts { &salt64 } else { &salt64[..32] };
     let (salt_enc, salt_auth, shared) = platform(proto, &plat_scalar, &ax, &ay, salt);
 
@@ -81,10 +92,16 @@ fn roundtrip(proto: PinProto, two_salts: bool) {
     let mut dec = [0u8; 64];
     let ndec = pinproto::decrypt(proto, &shared, &out[..nout], &mut dec).unwrap();
     let cr = derive_hmac_key(&SEED, &CRED_ID);
-    assert_eq!(&dec[..32], &hmac_sha256(&cr[..32], &salt[..32])[..]);
+    assert_eq!(
+        &dec[..32],
+        &hmac_sha256(&cr.expose()[..32], &salt[..32])[..]
+    );
     if two_salts {
         assert_eq!(ndec, 64);
-        assert_eq!(&dec[32..64], &hmac_sha256(&cr[..32], &salt[32..64])[..]);
+        assert_eq!(
+            &dec[32..64],
+            &hmac_sha256(&cr.expose()[..32], &salt[32..64])[..]
+        );
     } else {
         assert_eq!(ndec, 32);
     }
@@ -126,8 +143,8 @@ fn uv_half_differs_from_non_uv() {
     let cr = derive_hmac_key(&SEED, &CRED_ID);
     let without = decrypt_out(false);
     let with = decrypt_out(true);
-    assert_eq!(&without[..32], &hmac_sha256(&cr[..32], &salt)[..]);
-    assert_eq!(&with[..32], &hmac_sha256(&cr[32..], &salt)[..]);
+    assert_eq!(&without[..32], &hmac_sha256(&cr.expose()[..32], &salt)[..]);
+    assert_eq!(&with[..32], &hmac_sha256(&cr.expose()[32..], &salt)[..]);
     assert_ne!(&without[..32], &with[..32]);
 }
 

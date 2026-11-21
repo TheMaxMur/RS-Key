@@ -4,6 +4,15 @@
 //! Data-object builders. Each `emit_*` appends BER-TLV to the [`DoWriter`]
 //! output cursor, reading sub-objects from flash or the ROM table.
 
+// Host-written DOs and attributes: a panic here is a board that answers nothing.
+#![deny(
+    clippy::indexing_slicing,
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::cast_possible_truncation
+)]
+
 use rsk_fs::{Fs, Storage};
 
 use crate::consts::*;
@@ -11,10 +20,12 @@ use crate::files::{DoSource, FuncDo, source};
 
 // Algorithm-attribute templates, each prefixed with its TLV length byte —
 // `emit_algo` copies `algo[0]+1` bytes after the tag.
-const ATTR_RSA1K: &[u8] = &[6, ALGO_RSA, 0x04, 0x00, 0x00, 0x20, 0x00];
-const ATTR_RSA2K: &[u8] = &[6, ALGO_RSA, 0x08, 0x00, 0x00, 0x20, 0x00];
-const ATTR_RSA3K: &[u8] = &[6, ALGO_RSA, 0x0C, 0x00, 0x00, 0x20, 0x00];
-const ATTR_RSA4K: &[u8] = &[6, ALGO_RSA, 0x10, 0x00, 0x00, 0x20, 0x00];
+const E_HI: u8 = RSA_E_BITS_BE[0];
+const E_LO: u8 = RSA_E_BITS_BE[1];
+const ATTR_RSA1K: &[u8] = &[6, ALGO_RSA, 0x04, 0x00, E_HI, E_LO, 0x00];
+const ATTR_RSA2K: &[u8] = &[6, ALGO_RSA, 0x08, 0x00, E_HI, E_LO, 0x00];
+const ATTR_RSA3K: &[u8] = &[6, ALGO_RSA, 0x0C, 0x00, E_HI, E_LO, 0x00];
+const ATTR_RSA4K: &[u8] = &[6, ALGO_RSA, 0x10, 0x00, E_HI, E_LO, 0x00];
 pub(crate) const ATTR_P256K1: &[u8] = &[6, ALGO_ECDSA, 0x2b, 0x81, 0x04, 0x00, 0x0a];
 pub(crate) const ATTR_P256R1: &[u8] = &[
     9, ALGO_ECDSA, 0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x03, 0x01, 0x07,
@@ -76,12 +87,23 @@ pub(crate) const ALGO_DEC_SUPPORTED: &[&[u8]] = &[
     ATTR_CV25519,
 ];
 pub(crate) const ALGO_AUT_SUPPORTED: &[&[u8]] = ALGO_SIG_SUPPORTED;
+/// The attestation key's one algorithm: the card mints it, and `DA` takes no write.
+pub(crate) const ALGO_ATT_SUPPORTED: &[&[u8]] = &[ATTR_P384R1];
 
-/// Whether `data` is an algorithm attribute this card advertises for `fid`
-/// (C1/C2/C3). `data` is the DO *value*; the templates carry a leading TLV length
-/// byte, so compare against `attr[1..]` — after the same ECDSA→ECDH rewrite
-/// [`DoWriter::emit_algo`] applies to the DEC list, so what we accept is exactly what DO
-/// `0xFA` published.
+/// A short BER-TLV length byte for a size fixed at build time: a build error past 127.
+const fn short_len(n: usize) -> u8 {
+    assert!(n < 0x80, "a short BER-TLV length");
+    let [low, ..] = n.to_le_bytes();
+    low
+}
+const FP_LIST_LEN: u8 = short_len(FP_DOS.len() * FP_LEN);
+const CA_FP_LIST_LEN: u8 = short_len(CA_FP_DOS.len() * FP_LEN);
+const TS_LIST_LEN: u8 = short_len(TS_DOS.len() * TS_LEN);
+const KEY_INFO_LEN: u8 = short_len(2 * (KEY_SLOTS + 1));
+
+/// Whether `data`, a C1/C2/C3 value, is an attribute DO `0xFA` advertises for `fid`:
+/// matched against `attr[1..]` after [`DoWriter::emit_algo`]'s ECDSA→ECDH rewrite, and
+/// with an RSA exponent length from 17 bits up read as the 17 it is stored as.
 pub(crate) fn advertised_algo(fid: u16, data: &[u8]) -> bool {
     let set = match fid {
         EF_ALGO_SIG => ALGO_SIG_SUPPORTED,
@@ -90,7 +112,12 @@ pub(crate) fn advertised_algo(fid: u16, data: &[u8]) -> bool {
         _ => return false,
     };
     set.iter().any(|a| {
-        let val = &a[1..a[0] as usize + 1];
+        let Some((&n, rest)) = a.split_first() else {
+            return false;
+        };
+        let Some(val) = rest.get(..n as usize) else {
+            return false;
+        };
         match (val.split_first(), data.split_first()) {
             // ECDSA (0x13) and ECDH (0x12) over the same OID name the same curve —
             // which one a slot carries depends on how the key is used, and MSE can
@@ -100,15 +127,51 @@ pub(crate) fn advertised_algo(fid: u16, data: &[u8]) -> bool {
             (Some((&(ALGO_ECDSA | ALGO_ECDH), lhs)), Some((&(ALGO_ECDSA | ALGO_ECDH), rhs))) => {
                 lhs == rhs
             }
+            // A YubiKey 5.8.0 takes any e length from 17 bits and stores 17
+            // ([`canonical_algo`]); the size and the import format must match.
+            (Some((&ALGO_RSA, lhs)), Some((&ALGO_RSA, rhs))) => {
+                match (lhs.first_chunk::<5>(), rhs.first_chunk::<5>()) {
+                    (Some(l), Some(r)) => {
+                        rhs.len() == lhs.len()
+                            && l[..2] == r[..2]
+                            && l[4] == r[4]
+                            && u16::from_be_bytes([r[2], r[3]]) >= RSA_E_BITS
+                    }
+                    _ => false,
+                }
+            }
             _ => val == data,
         }
     })
+}
+
+/// An RSA attribute as a YubiKey 5.8.0 stores and reports it: an exponent length of
+/// 17 bits or more becomes [`RSA_E_BITS`]. `None` for anything else, a shorter length
+/// an older build stored included, so it reads back as the refusal it is.
+pub(crate) fn canonical_algo(attr: &[u8]) -> Option<[u8; 6]> {
+    match *attr {
+        [ALGO_RSA, n_hi, n_lo, e_hi, e_lo, format]
+            if u16::from_be_bytes([e_hi, e_lo]) >= RSA_E_BITS =>
+        {
+            Some([ALGO_RSA, n_hi, n_lo, E_HI, E_LO, format])
+        }
+        _ => None,
+    }
+}
+
+/// Whether `a` and `b` name the same key, reading RSA as [`canonical_algo`] does.
+pub(crate) fn same_algo(a: &[u8], b: &[u8]) -> bool {
+    match (canonical_algo(a), canonical_algo(b)) {
+        (Some(a), Some(b)) => a == b,
+        _ => a == b,
+    }
 }
 
 /// Builds DO responses into a caller buffer, reading sub-DOs from `fs`.
 pub struct DoWriter<'a, S: Storage> {
     out: &'a mut [u8],
     pos: usize,
+    failed: bool,
     fs: &'a mut Fs<S>,
     full_aid: &'a [u8; 16],
 }
@@ -118,75 +181,116 @@ impl<'a, S: Storage> DoWriter<'a, S> {
         Self {
             out,
             pos: 0,
+            failed: false,
             fs,
             full_aid,
         }
     }
 
     pub fn len(&self) -> usize {
-        self.pos
+        self.pos.min(self.out.len())
     }
 
     pub fn is_empty(&self) -> bool {
-        self.pos == 0
+        self.len() == 0
     }
 
     pub fn bytes(&self) -> &[u8] {
-        &self.out[..self.pos]
+        self.out.get(..self.len()).unwrap_or_default()
     }
 
     fn push(&mut self, b: u8) {
-        if self.pos < self.out.len() {
-            self.out[self.pos] = b;
-            self.pos += 1;
+        if let Some(slot) = self.out.get_mut(self.pos) {
+            *slot = b;
+        } else {
+            self.failed = true;
         }
+        self.pos += 1;
     }
 
     fn extend(&mut self, s: &[u8]) {
-        let n = s.len().min(self.out.len() - self.pos);
-        self.out[self.pos..self.pos + n].copy_from_slice(&s[..n]);
-        self.pos += n;
+        let room = self.out.get_mut(self.pos..).unwrap_or_default();
+        let n = s.len().min(room.len());
+        for (dst, src) in room.iter_mut().zip(s) {
+            *dst = *src;
+        }
+        self.failed |= n < s.len();
+        self.pos += s.len();
     }
 
     /// BER-TLV length encoding: 1 byte (<128), `81 LL` (<256), or `82 HH LL`.
     fn fmt_len(&mut self, len: usize) {
+        // Past 65,535 the DO outgrows any reply, and GET DATA refuses it on its size.
+        let [hi, lo] = u16::try_from(len).unwrap_or(u16::MAX).to_be_bytes();
         if len < 0x80 {
-            self.push(len as u8);
+            self.push(lo);
         } else if len < 0x100 {
             self.push(0x81);
-            self.push(len as u8);
+            self.push(lo);
         } else {
             self.push(0x82);
-            self.push((len >> 8) as u8);
-            self.push((len & 0xff) as u8);
+            self.push(hi);
+            self.push(lo);
         }
     }
 
-    fn read_flash(&mut self, fid: u16) {
-        let cap = &mut self.out[self.pos..];
-        if let Some(n) = self.fs.read(fid, cap) {
-            // `fs.read` returns the value's FULL stored length while it copies only
-            // `min(len, cap.len())`; advance by what actually fit, or an over-long
-            // stored DO would push `pos` past `out` and panic on the next slice.
-            self.pos += n.min(cap.len());
+    fn read_flash(&mut self, fid: u16) -> usize {
+        let cap = self.out.get_mut(self.pos..).unwrap_or_default();
+        match self.fs.try_read(fid, cap) {
+            Ok(Some(n)) => {
+                self.failed |= n > cap.len();
+                self.pos += n;
+                n
+            }
+            Ok(None) => 0,
+            Err(_) => {
+                self.failed = true;
+                0
+            }
         }
+    }
+
+    fn emit_flash(&mut self, fid: u16, tagged: bool) -> usize {
+        let lp = if tagged {
+            if fid >= 0x0100 {
+                self.push((fid >> 8) as u8);
+            }
+            Some(self.open((fid & 0xff) as u8))
+        } else {
+            None
+        };
+        let len = self.read_flash(fid);
+        if let Some(lp) = lp {
+            self.close(lp);
+        }
+        len
     }
 
     /// Top-level builder for a GET DATA tag: `[1, fid]` with `mode == 1`.
     pub fn build(&mut self, fid: u16) -> usize {
-        self.emit_do(&[1, fid], 1)
+        let len = self.emit_do(&[1, fid], 1);
+        if self.failed {
+            self.out.len().saturating_add(1)
+        } else {
+            len
+        }
     }
 
     /// Walk a fid list, appending each sub-DO. For a multi-element list (a
     /// constructed DO) each child is tag + length prefixed.
     fn emit_do(&mut self, fids: &[u16], mode: i32) -> usize {
         let mut len = 0usize;
-        let count = fids[0] as usize;
-        for i in 0..count {
-            let fid = fids[i + 1];
+        let Some((&count, list)) = fids.split_first() else {
+            return 0;
+        };
+        let count = count as usize;
+        for &fid in list.iter().take(count) {
             match source(fid) {
                 DoSource::Func(f) => len += self.emit_func(f, fid, mode),
                 DoSource::None | DoSource::Internal => {}
+                DoSource::Flash if mode == 1 => {
+                    len += self.emit_flash(fid, count > 1 && self.pos > 0);
+                }
                 src => {
                     let data_len = match src {
                         DoSource::Rom(c) => c.len(),
@@ -210,7 +314,6 @@ impl<'a, S: Storage> DoWriter<'a, S> {
                                 let a = *self.full_aid;
                                 self.extend(&a);
                             }
-                            DoSource::Flash => self.read_flash(fid),
                             _ => {}
                         }
                     }
@@ -237,29 +340,46 @@ impl<'a, S: Storage> DoWriter<'a, S> {
         }
     }
 
-    /// A constructed DO: outer tag (1 byte) + `82 HH LL` + nested, length
-    /// back-patched.
+    /// A constructed DO: outer tag (1 byte), its length and the nested DOs, the
+    /// length filled in once they are written.
     fn constructed(&mut self, tag: u8, fids: &[u16], mode: i32) -> usize {
-        self.push(tag);
-        self.push(0x82);
-        let lp = self.pos;
-        self.pos += 2;
+        let lp = self.open(tag);
         self.emit_do(fids, mode);
-        let lpdif = self.pos - lp - 2;
-        self.out[lp] = (lpdif >> 8) as u8;
-        self.out[lp + 1] = (lpdif & 0xff) as u8;
-        lpdif + 4
+        self.close(lp)
+    }
+
+    /// Reserve the shortest header: a growing header never needs temporary
+    /// space beyond the completed response's size.
+    fn open(&mut self, tag: u8) -> usize {
+        self.push(tag);
+        let lp = self.pos;
+        self.push(0);
+        lp
+    }
+
+    /// Close what [`Self::open`] began and return its size, tag included. The length
+    /// takes BER's shortest form, moving the body forward for a long-form length.
+    fn close(&mut self, lp: usize) -> usize {
+        let body = self.pos - lp - 1;
+        let mut head = [0u8; 3];
+        let n = rsk_sdk::tlv::format_len(u16::try_from(body).unwrap_or(u16::MAX), &mut head);
+        let written = self.pos.min(self.out.len());
+        if lp < written && lp + n + body <= self.out.len() {
+            self.out.copy_within(lp + 1..written, lp + n);
+        } else {
+            self.failed = true;
+        }
+        if let (Some(dst), Some(src)) = (self.out.get_mut(lp..lp + n), head.get(..n)) {
+            dst.copy_from_slice(src);
+        } else {
+            self.failed = true;
+        }
+        self.pos = lp + n + body;
+        1 + n + body
     }
 
     fn emit_app_data(&mut self, mode: i32) -> usize {
-        let fids = [
-            5,
-            EF_FULL_AID,
-            EF_HIST_BYTES,
-            EF_EXLEN_INFO,
-            EF_GFM,
-            EF_DISCRETE_DO,
-        ];
+        let fids = [4, EF_FULL_AID, EF_HIST_BYTES, EF_GFM, EF_DISCRETE_DO];
         self.constructed((EF_APP_DATA & 0xff) as u8, &fids, mode)
     }
 
@@ -270,102 +390,123 @@ impl<'a, S: Storage> DoWriter<'a, S> {
 
     fn emit_discrete_do(&mut self, mode: i32) -> usize {
         // 0xDE (Key Information) is a child of the 0x73 discretionary DOs per the
-        // OpenPGP Card spec — where ykman >= 5.2 looks for it — not a bare child of
-        // 0x6E. Placed after the generation times, before the UIF DOs, as YubiKey does.
+        // OpenPGP Card spec — where ykman >= 5.2 looks for it — not a bare child of 0x6E.
+        // A YubiKey 5.8.0's order, 7F66 included, after DE.
+        let lp = self.open((EF_DISCRETE_DO & 0xff) as u8);
+        self.emit_do(
+            &[4, EF_EXT_CAP, EF_ALGO_SIG, EF_ALGO_DEC, EF_ALGO_AUT],
+            mode,
+        );
+        // DA is served here and nowhere else: GET DATA DA is `6B00` on a YubiKey.
+        if let Some(att) = ALGO_ATT_SUPPORTED.first() {
+            self.emit_algo(att, EF_ALGO_ATT);
+        }
         let fids = [
-            12,
-            EF_EXT_CAP,
-            EF_ALGO_SIG,
-            EF_ALGO_DEC,
-            EF_ALGO_AUT,
+            10,
             EF_PW_STATUS,
             EF_FP,
             EF_CA_FP,
             EF_TS_ALL,
             EF_KEY_INFO,
+            EF_EXLEN_INFO,
             EF_UIF_SIG,
             EF_UIF_DEC,
             EF_UIF_AUT,
+            EF_UIF_ATT,
         ];
-        self.constructed((EF_DISCRETE_DO & 0xff) as u8, &fids, mode)
+        self.emit_do(&fids, mode);
+        self.close(lp)
     }
 
     fn emit_sec_tpl(&mut self) -> usize {
+        let mut count = [0u8; 3];
+        if self.fs.try_read(EF_SIG_COUNT, &mut count) != Ok(Some(count.len())) {
+            self.failed = true;
+            return 0;
+        }
         let start = self.pos;
         self.push((EF_SEC_TPL & 0xff) as u8);
         self.push(5);
-        if self.fs.has_data(EF_SIG_COUNT) {
-            self.push((EF_SIG_COUNT & 0xff) as u8);
-            self.push(3);
-            self.read_flash(EF_SIG_COUNT);
-        }
-        // Return what was actually written: when EF_SIG_COUNT is absent (or short)
-        // only the 2-byte header lands, so a constant `5 + 2` would over-read the
-        // scratch tail (stale bytes from a prior command).
+        self.push((EF_SIG_COUNT & 0xff) as u8);
+        self.push(3);
+        self.extend(&count);
         self.pos - start
     }
 
-    /// `num` consecutive fids, each written as exactly `size` bytes. A short or
-    /// absent slot is zero-padded and an over-long stored value is truncated to
-    /// `size`, so the caller's fixed DO length byte stays honest and the response
-    /// never exposes the scratch tail past what was written (a present-but-short slot
-    /// would otherwise leak stale bytes from a prior command — cf. `emit_sec_tpl`).
-    fn emit_trium(&mut self, fid: u16, num: usize, size: usize) -> usize {
-        for i in 0..num {
-            let f = fid + i as u16;
-            let before = self.pos;
-            if self.fs.has_data(f) {
-                self.read_flash(f);
-            }
-            let written = self.pos - before;
-            if written < size {
-                for _ in written..size {
-                    self.push(0);
-                }
+    /// `fids`, each written as exactly `size` bytes: zero-padded when short or absent,
+    /// cut when over-long, so the aggregate's fixed length byte stays honest and no
+    /// stale scratch from a prior command leaks past what was written.
+    fn emit_fixed(&mut self, fids: &[u16], size: usize) -> usize {
+        for &f in fids {
+            let end = self.pos + size;
+            if let Some(window) = self.out.get_mut(self.pos..end) {
+                window.fill(0);
+                let _ = self.fs.read(f, window);
             } else {
-                self.pos = before + size;
+                self.failed = true;
             }
+            self.pos = end;
         }
-        num * size
+        fids.len() * size
     }
 
     fn emit_fp(&mut self) -> usize {
         self.push((EF_FP & 0xff) as u8);
-        self.push((KEY_SLOTS * FP_LEN) as u8);
-        self.emit_trium(EF_FP_SIG, KEY_SLOTS, FP_LEN) + 2
+        self.push(FP_LIST_LEN);
+        self.emit_fixed(&FP_DOS, FP_LEN) + 2
     }
 
     fn emit_cafp(&mut self) -> usize {
         self.push((EF_CA_FP & 0xff) as u8);
-        self.push((KEY_SLOTS * FP_LEN) as u8);
-        self.emit_trium(EF_FP_CA1, KEY_SLOTS, FP_LEN) + 2
+        self.push(CA_FP_LIST_LEN);
+        self.emit_fixed(&CA_FP_DOS, FP_LEN) + 2
     }
 
     fn emit_ts(&mut self) -> usize {
         self.push((EF_TS_ALL & 0xff) as u8);
-        self.push((KEY_SLOTS * TS_LEN) as u8);
-        self.emit_trium(EF_TS_SIG, KEY_SLOTS, TS_LEN) + 2
+        self.push(TS_LIST_LEN);
+        self.emit_fixed(&TS_DOS, TS_LEN) + 2
     }
 
     fn emit_keyinfo(&mut self) -> usize {
         let init = self.pos;
         if self.pos > 0 {
             self.push((EF_KEY_INFO & 0xff) as u8);
-            self.push(6);
+            self.push(KEY_INFO_LEN);
         }
         // OpenPGP Card 3.4 §4.4.3.8: key-ref 01=SIG, 02=DEC, 03=AUT, then a status
         // byte — 00 not present, 01 generated on card, 02 imported. ykman >= 5.2
         // keys its parse on these refs, so they must be the spec values, not
         // 0-indexed.
-        for (key_ref, fid) in [(1u8, EF_PK_SIG), (2, EF_PK_DEC), (3, EF_PK_AUT)] {
+        let mut origins = None;
+        for (slot, (key_ref, fid)) in [
+            (KEY_REF_SIG, EF_PK_SIG),
+            (KEY_REF_DEC, EF_PK_DEC),
+            (KEY_REF_AUT, EF_PK_AUT),
+        ]
+        .into_iter()
+        .enumerate()
+        {
             self.push(key_ref);
             let status = if self.fs.has_key(fid) {
-                crate::origin::of(self.fs, fid)
+                origins
+                    .get_or_insert_with(|| crate::origin::read_all(self.fs))
+                    .get(slot)
+                    .copied()
+                    .unwrap_or(crate::origin::ORIGIN_IMPORTED)
             } else {
                 0x00
             };
             self.push(status);
         }
+        // Yubico's attestation key, which only the card generates.
+        self.push(KEY_REF_ATT);
+        let att = if self.fs.has_key(EF_PK_ATT) {
+            crate::origin::ORIGIN_GENERATED
+        } else {
+            0x00
+        };
+        self.push(att);
         self.pos - init
     }
 
@@ -375,26 +516,27 @@ impl<'a, S: Storage> DoWriter<'a, S> {
             self.push((EF_PW_STATUS & 0xff) as u8);
             self.push(7);
         }
-        if self.fs.has_data(EF_PW_PRIV) {
-            self.read_flash(EF_PW_PRIV);
-        }
+        self.read_flash(EF_PW_PRIV);
         self.pos - init
     }
 
     /// Append `tag | length-prefixed-template`.
     fn emit_algo(&mut self, algo: &[u8], tag: u16) -> usize {
         self.push((tag & 0xff) as u8);
-        let n = algo[0] as usize + 1;
+        let Some(&len) = algo.first() else {
+            return 2;
+        };
+        let n = len as usize + 1;
         // The DEC list carries the same curve OIDs as SIG/AUT but as ECDH (0x12),
         // not ECDSA (0x13): a decryption key does key agreement (matches YubiKey).
         if tag == EF_ALGO_DEC && algo.get(1) == Some(&ALGO_ECDSA) {
-            self.push(algo[0]);
+            self.push(len);
             self.push(ALGO_ECDH);
-            self.extend(&algo[2..n]);
+            self.extend(algo.get(2..n).unwrap_or_default());
         } else {
-            self.extend(&algo[..n]);
+            self.extend(algo.get(..n).unwrap_or_default());
         }
-        algo[0] as usize + 2
+        len as usize + 2
     }
 
     fn emit_algoinfo(&mut self, fid: u16) -> usize {
@@ -412,28 +554,47 @@ impl<'a, S: Storage> DoWriter<'a, S> {
             for a in ALGO_AUT_SUPPORTED {
                 self.emit_algo(a, EF_ALGO_AUT);
             }
+            for a in ALGO_ATT_SUPPORTED {
+                self.emit_algo(a, EF_ALGO_ATT);
+            }
             let lpdif = self.pos - lp - 2;
-            self.out[lp] = (lpdif >> 8) as u8;
-            self.out[lp + 1] = (lpdif & 0xff) as u8;
+            let [hi, lo] = u16::try_from(lpdif).unwrap_or(u16::MAX).to_be_bytes();
+            if let Some(slot) = self.out.get_mut(lp) {
+                *slot = hi;
+            }
+            if let Some(slot) = self.out.get_mut(lp + 1) {
+                *slot = lo;
+            }
             lpdif + 4
         } else {
-            // C1/C2/C3: the stored algorithm attributes, or rsa2k by default. The
-            // tag+length goes on unconditionally, exactly as the default arm's
-            // `emit_algo` does: `get_data` strips a primitive DO's header for a
-            // standalone read by *sniffing* one, so a value emitted bare here loses
-            // two bytes whenever it happens to parse as a single TLV. `rsa1024`
-            // (`01 04 00 00 20 00`) is precisely that shape, so the card answered
-            // `00 00 20 00` to GET DATA C1 while GENERATE still read the stored six
-            // bytes and made a 1024-bit key. Found by differential against a real
-            // YubiKey while verifying audit run-34.
+            // C1/C2/C3: the stored algorithm attributes, or rsa2k by default, always
+            // with the tag+length 73 lists them by, as the default arm's `emit_algo`
+            // does. GET DATA no longer serves them alone (a YubiKey 5.8.0 says 6B00).
             let priv_fid = algo_tag_to_priv(fid);
-            if !self.fs.has_data(priv_fid) {
+            let start = self.pos;
+            self.push((fid & 0xff) as u8);
+            let lp = self.pos;
+            self.push(0);
+            let at = self.pos;
+            let len = self.read_flash(priv_fid);
+            if len == 0 {
+                self.pos = start;
                 self.emit_algo(ATTR_RSA2K, fid)
             } else {
-                let len = self.fs.size(priv_fid).unwrap_or(0);
-                self.push((fid & 0xff) as u8);
-                self.push((len & 0xff) as u8);
-                self.read_flash(priv_fid);
+                #[expect(
+                    clippy::cast_possible_truncation,
+                    reason = "PUT DATA stores no attribute near 255 bytes; a longer one, from \
+                              corrupt flash, has always kept its low byte here"
+                )]
+                if let Some(byte) = self.out.get_mut(lp) {
+                    *byte = len as u8;
+                }
+                // An older build stored the e length it was sent.
+                if let Some(stored) = self.out.get_mut(at..self.pos)
+                    && let Some(attr) = canonical_algo(stored)
+                {
+                    stored.copy_from_slice(&attr);
+                }
                 2 + len
             }
         }
@@ -441,5 +602,13 @@ impl<'a, S: Storage> DoWriter<'a, S> {
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::indexing_slicing,
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::cast_possible_truncation,
+    reason = "a test's fixture is its own bound, and a panic is its failure report"
+)]
 #[path = "dobj_tests.rs"]
 mod tests;

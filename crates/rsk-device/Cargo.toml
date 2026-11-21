@@ -5,9 +5,8 @@ license = "AGPL-3.0-only"
 edition = "2024"
 publish = false
 
-# `cfg(kani)` guards the proof harnesses (set by `cargo kani`, unknown to rustc).
-[lints.rust]
-unexpected_cfgs = { level = "warn", check-cfg = ["cfg(kani)"] }
+[lints]
+workspace = true
 
 # The applet wiring both the firmware and `tools/emu` run: which applets exist, in
 # what order, what gates each, and how a CTAPHID or CCID message reaches one. It
@@ -49,6 +48,9 @@ rsk-fs = { workspace = true, features = ["test-util"] }
 # `rsk_devconf::raw::TAG_USB_ENABLED` — the wire tag the `dev_conf` test helper
 # builds its enabled-applications blob from.
 rsk-devconf = { workspace = true, features = ["test-util"] }
+# `rsk_rsa::vectors` — a fixed RSA-2048 key for the test board's keygen
+# accelerator to find, so a fast path runs to its answer.
+rsk-rsa = { workspace = true, features = ["test-util"] }
 
 [features]
 # `scripts/kani.sh` only: forwards to the dependency that carries the switch.
@@ -56,7 +58,7 @@ rsk-devconf = { workspace = true, features = ["test-util"] }
 # `crates/rsk-crypto/Cargo.toml`.
 kani-soft = ["rsk-crypto/kani-soft", "rsk-fido/kani-soft"]
 # The strict admin-write profile: see firmware's `strict-config`. It decides
-# whether CTAPHID carries WRITE CONFIG and whether Management RESET wipes.
+# whether CTAPHID carries WRITE CONFIG.
 strict-config = ["rsk-mgmt/strict-config", "rsk-fido/strict-config", "rsk-otp/strict-config", "rsk-vendor/strict-config"]
 # The trusted-display build: adds the on-pad PIN paths the screen drives.
 display = []

@@ -1,0 +1,15 @@
+[package]
+name = "rsk-secret"
+version = "0.1.0"
+license = "AGPL-3.0-only"
+edition = "2024"
+publish = false
+
+[lints]
+workspace = true
+
+# Where key-grade bytes live in RAM: a type that wipes itself on every exit and
+# cannot be copied, printed or compared in variable time. The bottom of the crate
+# graph, so every crate holding a secret — the algorithm crates too — can name it.
+[dependencies]
+zeroize = { workspace = true }

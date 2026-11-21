@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 RS-Key contributors
 
-#![no_main]
+#![cfg_attr(not(test), no_main)]
 
 //! Power-cut torture for the rsk-fs flash stack. `fs_ops` proves the `Fs`
 //! bookkeeping over clean reboots; this target cuts the power *mid-write* and
@@ -36,6 +36,7 @@ use std::rc::Rc;
 
 use embassy_futures::block_on;
 use embedded_storage_async::nor_flash::{ErrorType, MultiwriteNorFlash, NorFlash, ReadNorFlash};
+#[cfg(not(test))]
 use libfuzzer_sys::fuzz_target;
 use rsk_fs::Fs;
 use rsk_fs::powercut::{Device, Op, PowerCutModel};
@@ -64,18 +65,44 @@ type CounterCache = Cache<ArrayPageStates<4>, ArrayPagePointers<4>, ArrayKeyPoin
 /// convenience, so it is passed in — as this target has always spelled it.
 const META_MAX: usize = 1024;
 
-// Five main-partition FIDs plus every counter-routed one
-// (`rsk_store::is_counter_fid`) — both partitions get torn. The mirror this
-// replaced listed only three of the four; `EF_CRED_CTR` (0xC001), rewritten on
-// every getAssertion, was the one it missed.
-//
-// The selector below is `% FIDS.len()`, not `& 7`: three bits index 0..7, so the
-// ninth entry — `0xCC01`, a counter FID — could never be written by any input,
-// while the sweep asserted it absent on every one of them. A whole partition
-// routing was in the roster and out of the reach of the fuzzer.
-const FIDS: [u16; 9] = [
-    0xB000, 0xB001, 0xB002, 0xB003, 0xB004, 0xC000, 0xC001, 0x0093, 0xCC01,
-];
+/// The FIDs an op picks from: five main-partition ones and every counter-routed
+/// one, from the one list `rsk_store::is_counter_fid` routes by, so both
+/// partitions get torn. A hand-written mirror of that list once missed
+/// `EF_CRED_CTR`, rewritten on every getAssertion. The list is private: the one
+/// index into it is `pick`'s, modulo its length. A `& 7` over nine entries once
+/// left the ninth, a counter FID, out of every input's reach while the sweep
+/// asserted it absent.
+mod fids {
+    use rsk_fs::counter::COUNTER_FIDS;
+    use rsk_fs::powercut::PowerCutModel;
+
+    const MAIN: [u16; 5] = [0xB000, 0xB001, 0xB002, 0xB003, 0xB004];
+    const ALL: [u16; MAIN.len() + COUNTER_FIDS.len()] = {
+        let mut out = [0; MAIN.len() + COUNTER_FIDS.len()];
+        let mut i = 0;
+        while i < out.len() {
+            out[i] = if i < MAIN.len() {
+                MAIN[i]
+            } else {
+                COUNTER_FIDS[i - MAIN.len()].get()
+            };
+            i += 1;
+        }
+        out
+    };
+    const _: () = assert!(ALL.len() <= 16, "`touched` is a u16 mask of indices");
+
+    /// The model over every FID an op can pick.
+    pub fn model(meta_max: usize) -> PowerCutModel {
+        PowerCutModel::new(&ALL, meta_max)
+    }
+
+    /// The FID selector byte `b` picks, with its index. Every entry is reachable.
+    pub fn pick(b: u8) -> (usize, u16) {
+        let index = (b >> 3) as usize % ALL.len();
+        (index, ALL[index])
+    }
+}
 
 /// The `SharedFlash` analog: one mock flash shared by both partitions, plus
 /// the power latch. Mutations after a fired cut fail without touching flash.
@@ -174,6 +201,25 @@ impl Device for MockDevice {
     }
 }
 
+fn diagnostic_mount(dev: &MockDevice) -> Fs<TortureStorage> {
+    let mut snapshot = dev.shared.flash.borrow().clone();
+    snapshot.bytes_until_shutoff = None;
+    let mut fs = Fs::new(new_storage(SharedMock {
+        flash: Rc::new(RefCell::new(snapshot)),
+        dead: Rc::new(Cell::new(false)),
+    }));
+    fs.scan();
+    fs
+}
+
+fn recovery_mount(dev: &mut MockDevice, budget: u32) -> Fs<TortureStorage> {
+    dev.revive();
+    dev.shared.flash.borrow_mut().bytes_until_shutoff = Some(budget);
+    let mut fs = dev.boot();
+    fs.scan();
+    fs
+}
+
 struct ResetRng(u8);
 
 impl rsk_fido::Rng for ResetRng {
@@ -224,6 +270,7 @@ fn reset_probe(data: &[u8]) {
         serial_hash: &[0xa5; 32],
         serial_id: &[1, 2, 3, 4, 5, 6, 7, 8],
         otp_key: None,
+        latched: false,
     };
     rsk_fido::seed::ensure_seed(&identity, &mut fs, &mut rng).unwrap();
     fs.put(EF_CRED, &[0x5a; 96]).unwrap();
@@ -333,10 +380,45 @@ fn scribble(flash: &mut Mock, len: usize, seed: &[u8]) {
     }
 }
 
-fuzz_target!(|data: &[u8]| {
+pub enum Outcome {
+    Credentials(credentials::Outcome),
+    Config(config::Outcome),
+    Piv(piv::Outcome),
+    OpenPgp(openpgp::Outcome),
+    Journal(journal::Outcome),
+    Backup(backup::Outcome),
+    Reset,
+    Store,
+}
+
+pub fn run(data: &[u8]) -> Outcome {
+    if data
+        .first()
+        .is_some_and(|b| b & 0xf0 == credentials::MODE_PREFIX)
+    {
+        return Outcome::Credentials(credentials::run(data));
+    }
+    if data
+        .first()
+        .is_some_and(|b| b & 0xf0 == config::MODE_PREFIX)
+    {
+        return Outcome::Config(config::run(data));
+    }
+    if data.first().is_some_and(|b| b & 0xf0 == 0xb0) {
+        return Outcome::Piv(piv::run(data));
+    }
+    if data.first().is_some_and(|b| b & 0xf0 == 0xc0) {
+        return Outcome::OpenPgp(openpgp::run(data));
+    }
+    if data.first().is_some_and(|b| b & 0xf0 == 0xd0) {
+        return Outcome::Journal(journal::run(data));
+    }
+    if data.first().is_some_and(|b| b & 0xf0 == 0xe0) {
+        return Outcome::Backup(backup::run(data));
+    }
     if data.first().is_some_and(|b| b & 0xf0 == 0xf0) {
         reset_probe(data);
-        return;
+        return Outcome::Reset;
     }
     let flash = Rc::new(RefCell::new(Mock::new(
         // Twice, not OnceOnly: remove_item rewrites the header once (erase_data,
@@ -366,7 +448,7 @@ fuzz_target!(|data: &[u8]| {
     };
     let mut fs = Fs::new(new_storage(dev.shared.clone()));
     fs.scan();
-    let mut model = PowerCutModel::new(&FIDS, META_MAX);
+    let mut model = fids::model(META_MAX);
     if dirty > 0 {
         // Whatever the store made of the garbage is the committed truth from here.
         model.adopt(&mut dev, &mut fs);
@@ -378,8 +460,7 @@ fuzz_target!(|data: &[u8]| {
     let mut it = data.iter().copied();
     while let Some(b) = it.next() {
         ops += 1;
-        let index = (b >> 3) as usize % FIDS.len();
-        let fid = FIDS[index];
+        let (index, fid) = fids::pick(b);
         touched |= 1 << index;
         tag = tag.wrapping_add(0x35);
 
@@ -411,4 +492,28 @@ fuzz_target!(|data: &[u8]| {
         model.step(&mut dev, &mut fs, op);
     }
     report(dirty, ops, touched.count_ones(), from, &dev, &model);
+    Outcome::Store
+}
+
+#[cfg(not(test))]
+fuzz_target!(|data: &[u8]| {
+    let _ = run(data);
 });
+
+#[path = "power_cut_backup.rs"]
+pub mod backup;
+
+#[path = "power_cut_journal.rs"]
+pub mod journal;
+
+#[path = "power_cut_openpgp.rs"]
+pub mod openpgp;
+
+#[path = "power_cut_piv.rs"]
+pub mod piv;
+
+#[path = "power_cut_config.rs"]
+pub mod config;
+
+#[path = "power_cut_credential.rs"]
+pub mod credentials;

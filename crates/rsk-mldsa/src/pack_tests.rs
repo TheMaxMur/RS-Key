@@ -6,6 +6,33 @@ use crate::params::{D, ML_DSA_44, ML_DSA_65};
 use crate::testutil::{Rng, rand_poly_range};
 
 #[test]
+fn unsigned_unpack_refuses_unused_bit_patterns_for_a_partial_width_range() {
+    let b = 5;
+    let valid = vec![0; 32 * bit_length(b)];
+    assert_eq!(simple_bit_unpack(&valid, b).unwrap().0, [0; 256]);
+    let invalid = vec![0xff; valid.len()];
+    assert!(simple_bit_unpack(&invalid, b).is_err());
+}
+
+#[cfg(debug_assertions)]
+#[test]
+#[should_panic(expected = "bit_pack input out of [-a,b]")]
+fn signed_pack_refuses_a_coefficient_below_its_declared_range() {
+    let mut poly = Poly::zero();
+    poly.0[0] = -6;
+    bit_pack(&poly, 5, 5, &mut vec![0; 32 * bit_length(10)]);
+}
+
+#[cfg(debug_assertions)]
+#[test]
+#[should_panic(expected = "bit_pack input out of [-a,b]")]
+fn signed_pack_refuses_a_coefficient_above_its_declared_range() {
+    let mut poly = Poly::zero();
+    poly.0[0] = 6;
+    bit_pack(&poly, 5, 5, &mut vec![0; 32 * bit_length(10)]);
+}
+
+#[test]
 fn bit_pack_roundtrip_s_vectors() {
     for p in [ML_DSA_44, ML_DSA_65] {
         let mut rng = Rng::new(p.eta as u64);
@@ -71,6 +98,17 @@ fn hint_pack_roundtrip() {
 }
 
 #[test]
+fn hint_row_limits_cannot_go_backwards_or_exceed_the_capacity() {
+    let mut buf = [0; 84];
+    buf[80] = 1;
+    assert!(hint_bit_unpack::<4>(80, &buf).is_err());
+    buf[81] = 81;
+    assert!(hint_bit_unpack::<4>(80, &buf).is_err());
+    buf[80..].fill(1);
+    assert!(hint_bit_unpack::<4>(80, &buf).is_ok());
+}
+
+#[test]
 fn hint_unpack_rejects_nonzero_padding() {
     const K: usize = 4;
     let omega = 80;
@@ -88,4 +126,75 @@ fn hint_unpack_rejects_overlarge_count() {
     let mut buf = vec![0u8; omega as usize + K];
     buf[omega as usize] = (omega + 1) as u8; // row-0 count > omega
     assert!(hint_bit_unpack::<K>(omega, &buf).is_err());
+}
+
+#[test]
+fn signed_unpack_reads_the_entire_encoded_range_without_clamping() {
+    for (a, b, bits) in [(2, 2, 3), (4, 4, 4), (4095, 4096, 13)] {
+        for byte in [0, 1, 0x55, 0xaa, 0xff] {
+            let encoded = vec![byte; 32 * bits];
+            let decoded = bit_unpack(&encoded, a, b).unwrap();
+            for i in 0..crate::params::N {
+                let raw: i32 = (0..bits)
+                    .map(|bit| {
+                        let position = i * bits + bit;
+                        i32::from((encoded[position / 8] >> (position % 8)) & 1) << bit
+                    })
+                    .sum();
+                assert_eq!(
+                    decoded.0[i],
+                    b - raw,
+                    "a={a} b={b} byte={byte} coefficient={i}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn hint_positions_must_increase_strictly_within_each_row() {
+    for positions in [[7, 7], [8, 7]] {
+        let mut encoded = [0; 84];
+        encoded[..2].copy_from_slice(&positions);
+        encoded[80..].fill(2);
+        assert!(
+            hint_bit_unpack::<4>(80, &encoded).is_err(),
+            "accepted {positions:?}"
+        );
+    }
+    let mut encoded = [0; 84];
+    encoded[..2].copy_from_slice(&[7, 8]);
+    encoded[80..].fill(2);
+    let decoded = hint_bit_unpack::<4>(80, &encoded).unwrap();
+    assert_eq!(decoded[0].0[7], 1);
+    assert_eq!(decoded[0].0[8], 1);
+    assert_eq!(decoded[0].0.iter().sum::<i32>(), 2);
+}
+
+#[cfg(debug_assertions)]
+#[test]
+#[should_panic(expected = "bit_pack bad size")]
+fn pack_refuses_a_short_output_before_encoding() {
+    bit_pack(&Poly::zero(), 0, 1, &mut [0; 31]);
+}
+
+#[cfg(debug_assertions)]
+#[test]
+#[should_panic(expected = "bit_unpack bad size")]
+fn unpack_refuses_a_short_input_before_decoding() {
+    let _ = bit_unpack(&[0; 31], 0, 1);
+}
+
+#[cfg(debug_assertions)]
+#[test]
+#[should_panic(expected = "hint_bit_pack bad size")]
+fn hint_pack_refuses_a_short_output_before_encoding() {
+    hint_bit_pack::<1>(1, &[Poly::zero()], &mut [0; 1]);
+}
+
+#[cfg(debug_assertions)]
+#[test]
+#[should_panic(expected = "hint_bit_unpack bad size")]
+fn hint_unpack_refuses_a_short_input_before_decoding() {
+    let _ = hint_bit_unpack::<1>(1, &[0; 1]);
 }

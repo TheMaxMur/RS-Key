@@ -128,6 +128,7 @@ fn a_build_without_the_hardware_says_so() {
         INS_CORE1_STATS,
         INS_KEYGEN_BENCH,
         INS_BENCH,
+        INS_STACK_RESIDUE,
     ] {
         let (sw, body) = run(&mut app, &mut fs, &apdu(ins, 0, 0, &[]));
         assert_eq!(sw, Sw::INS_NOT_SUPPORTED, "ins {ins:#04x}");
@@ -170,6 +171,32 @@ fn set_led_applies_and_persists_the_block() {
         (CONF_LEN, &block[..]),
         "persisted == live"
     );
+}
+
+#[cfg(feature = "strict-config")]
+#[test]
+fn declining_a_strict_led_write_preserves_live_and_stored_configuration() {
+    let pres = RefCell::new(Declining);
+    let owner = [0x11; CONF_LEN];
+    let mut app = VendorApplet::new(
+        FullPlatform {
+            led: owner,
+            ..Default::default()
+        },
+        &pres,
+    );
+    let mut fs = Fs::new(RamStorage::default());
+    fs.put(EF_LED_CONF, &owner).unwrap();
+    let before = fs.write_gen();
+    assert_eq!(
+        run(&mut app, &mut fs, &apdu(INS_SET_LED, 200, 0x10, &[])),
+        (Sw::SECURITY_STATUS_NOT_SATISFIED, Vec::new())
+    );
+    assert_eq!(app.platform.led, owner);
+    assert_eq!(fs.write_gen(), before);
+    let mut stored = [0; CONF_LEN];
+    assert_eq!(fs.read(EF_LED_CONF, &mut stored), Some(CONF_LEN));
+    assert_eq!(stored, owner);
 }
 
 #[test]
@@ -324,7 +351,7 @@ fn incrementing_the_counter_needs_the_operator() {
     assert_eq!(sw, Sw::CONDITIONS_NOT_SATISFIED);
     assert!(body.is_empty(), "a refused increment answered with a value");
     assert!(
-        !fs.has_data(COUNTER_FID),
+        !fs.has_counter(COUNTER_FID),
         "a declined touch wrote flash anyway — the wear this gate exists to close"
     );
 
@@ -349,6 +376,60 @@ fn reboot_rejects_a_bad_p1_and_a_body() {
         Sw::WRONG_LENGTH
     );
     assert!(app.platform.reboots.is_empty());
+}
+
+#[test]
+fn core1_statistics_and_confirmed_bootsel_reach_the_platform_hooks() {
+    let pres = RefCell::new(AlwaysConfirm);
+    let mut app = VendorApplet::new(FullPlatform::default(), &pres);
+    let mut fs = Fs::new(RamStorage::default());
+    assert_eq!(
+        run(&mut app, &mut fs, &apdu(INS_CORE1_STATS, 0, 0, &[])),
+        (Sw::OK, vec![7; 32])
+    );
+    assert_eq!(
+        run(&mut app, &mut fs, &apdu(INS_REBOOT, 1, 0, &[])),
+        (Sw::OK, vec![])
+    );
+    assert_eq!(app.platform.reboots, vec![(true,)]);
+}
+
+#[test]
+fn refused_counter_and_led_writes_report_the_storage_failure() {
+    for raw in [
+        apdu(INS_INCREMENT, 0, 0, &[]),
+        apdu(INS_SET_LED, 200, 0, &[1, 2]),
+    ] {
+        let (storage, medium) = rsk_fs::storage::faults::Cut::new();
+        let mut fs = Fs::new(storage);
+        fs.scan();
+        let pres = RefCell::new(AlwaysConfirm);
+        let mut app = VendorApplet::new(FullPlatform::default(), &pres);
+        medium.arm(0);
+        let parsed = Apdu::parse(&raw).unwrap();
+        let mut bytes = [0; 64];
+        let mut response = ResBuf::new(&mut bytes);
+        assert_eq!(
+            Applet::process(&mut app, &parsed, &mut fs, &mut response),
+            Sw::MEMORY_FAILURE
+        );
+        assert!(response.is_empty());
+        assert!(!fs.has_data(COUNTER_FID.get()));
+        assert!(!fs.has_data(EF_LED_CONF));
+    }
+}
+
+#[test]
+fn a_later_led_record_is_clamped_to_the_current_format() {
+    let mut fs = Fs::new(RamStorage::default());
+    let record: Vec<_> = (0..u8::try_from(CONF_LEN + 5).unwrap()).collect();
+    fs.put(EF_LED_CONF, &record).unwrap();
+    let mut conf = [0; CONF_LEN];
+    assert_eq!(
+        load_or_seed_led_config(&mut fs, &[0; CONF_LEN], &mut conf),
+        Ok(CONF_LEN)
+    );
+    assert_eq!(&conf, &record[..CONF_LEN]);
 }
 
 #[test]
@@ -435,3 +516,136 @@ fn a_faulted_led_probe_does_not_overwrite_the_owners_block() {
         "a boot that could not read the LED block must apply nothing, not the defaults"
     );
 }
+
+/// The configuration lock covers the LED record, and no code opens it here: while
+/// one is set, SET LED answers `6986` and neither the live block nor flash moves.
+/// Cleared, the same write lands.
+#[test]
+fn a_locked_configuration_refuses_set_led() {
+    let pres = RefCell::new(AlwaysConfirm);
+    let mut app = VendorApplet::new(FullPlatform::default(), &pres);
+    let mut fs = Fs::new(RamStorage::default());
+    let mut code = vec![0x0A, 16];
+    code.extend_from_slice(&[0xA5; 16]);
+    rsk_devconf::persist_touched(&[0; 4], &mut fs, &code).unwrap();
+    let set = apdu(INS_SET_LED, 0x80, 0x03, &[]);
+    let live = app.platform.led;
+    assert_eq!(run(&mut app, &mut fs, &set).0, Sw::COMMAND_NOT_ALLOWED);
+    assert_eq!(
+        app.platform.led, live,
+        "the live LED moved for a refused write"
+    );
+    assert!(!fs.has_data(EF_LED_CONF), "a refused write reached flash");
+
+    let mut clear = vec![0x0B, 16];
+    clear.extend_from_slice(&[0xA5; 16]);
+    clear.extend_from_slice(&[0x0A, 16]);
+    clear.extend_from_slice(&[0; 16]);
+    rsk_devconf::persist_touched(&[0; 4], &mut fs, &clear).unwrap();
+    assert_eq!(run(&mut app, &mut fs, &set).0, Sw::OK);
+    assert!(fs.has_data(EF_LED_CONF));
+}
+
+#[test]
+fn a_short_counter_record_reads_as_the_default_without_rewriting_it() {
+    for len in 0..4 {
+        let mut fs = Fs::new(RamStorage::new());
+        fs.put_counter(COUNTER_FID, &vec![0xa5; len]).unwrap();
+        let generation = fs.write_gen();
+        assert_eq!(read_counter(&mut fs), 0);
+        assert_eq!(fs.write_gen(), generation);
+    }
+}
+
+/// P2's steady bit is bit 3 ([`P2_STEADY`]) and nothing else: `|`/`^` in place of
+/// the `&` make every non-zero P2 — a color-only write included — read as steady,
+/// so a host clearing the blink would silently keep the LED solid.
+#[test]
+fn the_steady_bit_is_bit_three_alone() {
+    let pres = RefCell::new(AlwaysConfirm);
+    let mut app = VendorApplet::new(FullPlatform::default(), &pres);
+    let mut fs = Fs::new(RamStorage::default());
+
+    // Colour 3, steady clear.
+    assert_eq!(
+        run(&mut app, &mut fs, &apdu(INS_SET_LED, 10, 0x03, &[])).0,
+        Sw::OK
+    );
+    let (_, block) = run(&mut app, &mut fs, &apdu(INS_GET_LED, 0, 0, &[]));
+    assert_eq!(block[0], 0, "a colour-only write set the steady bit");
+    assert_eq!(block[2], 3, "colour");
+
+    // Now with the steady bit over a different colour.
+    assert_eq!(
+        run(
+            &mut app,
+            &mut fs,
+            &apdu(INS_SET_LED, 10, P2_STEADY | 0x05, &[])
+        )
+        .0,
+        Sw::OK
+    );
+    let (_, block) = run(&mut app, &mut fs, &apdu(INS_GET_LED, 0, 0, &[]));
+    assert_eq!(block[0], 1, "steady");
+    assert_eq!(block[2], 5, "colour");
+}
+
+/// A [`Platform`] that serves the three measurement hooks, so the applet's
+/// routing to them is observable. The default platform answers
+/// `INS_NOT_SUPPORTED` from the applet's own `_` arm, which is exactly why a
+/// deleted match arm is invisible without this.
+#[derive(Default)]
+struct MeasurementPlatform {
+    keygen: Vec<(u8, Vec<u8>)>,
+    latency: Vec<(u8, u8)>,
+    residue: Vec<(u8, Vec<u8>)>,
+}
+
+impl Platform for MeasurementPlatform {
+    fn keygen_bench(&mut self, p1: u8, data: &[u8], res: &mut ResBuf) -> Sw {
+        self.keygen.push((p1, data.to_vec()));
+        res.extend(&[0x13]);
+        Sw::OK
+    }
+
+    fn latency_bench(&mut self, p1: u8, p2: u8, res: &mut ResBuf) -> Sw {
+        self.latency.push((p1, p2));
+        res.extend(&[0x14]);
+        Sw::OK
+    }
+
+    fn stack_residue(&mut self, p1: u8, data: &[u8], res: &mut ResBuf) -> Sw {
+        self.residue.push((p1, data.to_vec()));
+        res.extend(&[0x15]);
+        Sw::OK
+    }
+}
+
+/// INS 0x13/0x14/0x15 are the measurement builds' hooks; the applet must route
+/// them to the platform (with P1 and the data field intact), not answer
+/// `INS_NOT_SUPPORTED` on its own.
+#[test]
+fn the_measurement_instructions_reach_the_platform_hooks() {
+    let pres = RefCell::new(AlwaysConfirm);
+    let mut app = VendorApplet::new(MeasurementPlatform::default(), &pres);
+    let mut fs = Fs::new(RamStorage::default());
+
+    assert_eq!(
+        run(&mut app, &mut fs, &apdu(INS_KEYGEN_BENCH, 0x21, 0, &[9, 8])),
+        (Sw::OK, vec![0x13])
+    );
+    assert_eq!(
+        run(&mut app, &mut fs, &apdu(INS_BENCH, 0x31, 0x32, &[])),
+        (Sw::OK, vec![0x14])
+    );
+    assert_eq!(
+        run(&mut app, &mut fs, &apdu(INS_STACK_RESIDUE, 0x41, 0, &[7])),
+        (Sw::OK, vec![0x15])
+    );
+    assert_eq!(app.platform.keygen, vec![(0x21, vec![9, 8])]);
+    assert_eq!(app.platform.latency, vec![(0x31, 0x32)]);
+    assert_eq!(app.platform.residue, vec![(0x41, vec![7])]);
+}
+
+#[path = "restart_tests.rs"]
+mod restarts;
