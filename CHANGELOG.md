@@ -42,8 +42,9 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 - Repair CI coverage cache keys for combined profiles, use Nix's libclang for
   MC/DC, allow Nix to rename read-only directories in the mutation container,
-  and reserve swap for the heavy Kani solver. Record the reviewed applicability
-  exceptions for the new heapless advisories in `docs/limitations.md`.
+  reserve swap for the heavy Kani solver, and allow the full condition-coverage
+  storage sweeps to finish. Record the reviewed applicability exceptions for the
+  new heapless advisories in `docs/limitations.md`.
 
 ## [0.5.0] - 2026-11-21
 
