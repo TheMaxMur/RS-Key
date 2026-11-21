@@ -35,9 +35,10 @@ trap 'exit 143' TERM
 # Acquire ownership before starting tests; cancellation waits for the CID.
 (
   trap '' INT TERM
+  # Nix renames canonicalized read-only directories across parents.
   exec docker create --init --cidfile "$rsk_run/id" --name rsk-mutants-safe \
   --memory=4g --memory-swap=4g --cpus=2 --pids-limit=256 \
-  --cap-drop=ALL --cap-add=CHOWN --security-opt=no-new-privileges \
+  --cap-drop=ALL --cap-add=CHOWN --cap-add=DAC_OVERRIDE --security-opt=no-new-privileges \
   --mount "type=bind,src=$rsk_root,dst=/repo,readonly" \
   --mount type=volume,src=rsk-mutants-nix,dst=/nix \
   --workdir=/repo --env CARGO_BUILD_JOBS=1 --env CARGO_HOME=/nix/rsk-mutants-cargo-home --env TMPDIR=/tmp \
@@ -51,7 +52,7 @@ cores = 1' \
   sh -ec '
     # Nix uses libgit2, which reads the config file but ignores GIT_CONFIG_COUNT.
     git config --global --add safe.directory /repo
-    # Container root without DAC_OVERRIDE cannot write to the host output directory.
+    # Reports must stay outside the read-only source mount.
     mkdir -p /work/mutants.out
     # The Nix image may have no env at the shebang path used by the test runners.
     if [ ! -x /usr/bin/env ]; then

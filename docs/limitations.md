@@ -103,6 +103,38 @@ The [FIPS-style profile guide](guides/fips.md) covers its validation status.
   PIN/UV protocols still use P-256. See the
   [MSE protocol](protocol.md#91-the-mse-channel-0x41--0x01).
 
+### Dependency advisories
+
+The locked tree uses `heapless` 0.8.0 and 0.9.3. As of 2026-11-21,
+the fixes target 0.9.4, which is not published on crates.io. `cargo-deny`
+permits the following advisories after reviewing the affected APIs against
+the root, emulator and fuzz workspaces, including the display build.
+These are applicability exceptions, not backported fixes.
+
+The direct users in `rsk-fs` and `rsk-store` use `Vec<u16, _>` and
+`Vec<Entry, _>`; `Entry` is `Copy`. Transitive consumers are the pinned
+Embassy USB, synchronization and timer queues, `usb-device`, `mipidsi`
+and the vendored `sequential-storage` codecs. They use vectors, strings,
+and deques; they do not use the linked-list, index-map, SPSC or pool APIs
+below. Embassy creates its deques with `Deque::new()` and does not call
+`make_contiguous`. The `heapless/zeroize` feature is disabled.
+
+| Advisory | Why the affected path is not used |
+|---|---|
+| [RUSTSEC-2026-0574](https://rustsec.org/advisories/RUSTSEC-2026-0574) | No `SortedLinkedList` or `FindMutView::pop`. |
+| [RUSTSEC-2026-0575](https://rustsec.org/advisories/RUSTSEC-2026-0575) | No heapless SPSC queue or its `peek`. |
+| [RUSTSEC-2026-0576](https://rustsec.org/advisories/RUSTSEC-2026-0576) | No heapless `IndexMap::truncate`. |
+| [RUSTSEC-2026-0577](https://rustsec.org/advisories/RUSTSEC-2026-0577) | No affected collection operation unwinds from an element's destructor. Firmware panics halt; host vectors contain bytes, IDs, `Copy` entries, descriptors, colors or timer/waker values with non-panicking destructors. |
+| [RUSTSEC-2026-0578](https://rustsec.org/advisories/RUSTSEC-2026-0578) | No `SortedLinkedList`; its `Zeroize` implementation is not enabled. |
+| [RUSTSEC-2026-0579](https://rustsec.org/advisories/RUSTSEC-2026-0579) | Deques are constructed with `new()`, never the affected full-array `TryFrom`. |
+| [RUSTSEC-2026-0580](https://rustsec.org/advisories/RUSTSEC-2026-0580) | No heapless pool or its Treiber stack. |
+| [RUSTSEC-2026-0581](https://rustsec.org/advisories/RUSTSEC-2026-0581) | No `Deque::make_contiguous`. |
+| [RUSTSEC-2026-0582](https://rustsec.org/advisories/RUSTSEC-2026-0582) | No heapless `IndexMap::insert`, at any capacity. |
+
+Reassess these exceptions when changing `heapless`, its consumers or their
+features. Replace them with an upstream update when the dependency graph
+can resolve to fixed releases, including the transitive 0.8 users.
+
 ## Backup & migration
 
 - **Seed backup recovers the deterministic FIDO identity.** Restoring

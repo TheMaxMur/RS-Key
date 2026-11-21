@@ -2,16 +2,22 @@
 
 [advisories]
 # Unmaintained transitive crates pulled in by embassy/cortex-m; no fix upstream.
-# **No vulnerability is ignored here.** The one that used to be —
-# RUSTSEC-2023-0071, the `rsa` crate's Marvin timing side channel, which has no
-# fixed release at all — went away with the crate in 0.4.12: `rsk-rsa` owns the
-# key type and both private paths now, so there is nothing left to carve out.
-# Adding a vulnerability to this list needs a written justification and an entry
-# in docs/limitations.md; everything below is merely "unmaintained".
+# Security exceptions require a reachability review and docs/limitations.md entry.
+# The heapless exceptions below cover unused APIs in the locked 0.8.0/0.9.3 tree;
+# recheck them when its consumers or features change.
 ignore = [
     "RUSTSEC-2024-0436", # paste — unmaintained, via pio-core
     "RUSTSEC-2026-0110", # bare-metal — deprecated, via cortex-m
     "RUSTSEC-2026-0173", # proc-macro-error2 — unmaintained, build-time only (pio-proc -> embassy-rp)
+    "RUSTSEC-2026-0574", # heapless — no SortedLinkedList / FindMutView
+    "RUSTSEC-2026-0575", # heapless — no SPSC queue
+    "RUSTSEC-2026-0576", # heapless — no IndexMap
+    "RUSTSEC-2026-0577", # heapless — no affected collection drops a panicking element
+    "RUSTSEC-2026-0578", # heapless — no SortedLinkedList; zeroize feature disabled
+    "RUSTSEC-2026-0579", # heapless — Embassy constructs Deque with new(), not TryFrom
+    "RUSTSEC-2026-0580", # heapless — no pool / Treiber stack
+    "RUSTSEC-2026-0581", # heapless — no Deque::make_contiguous call
+    "RUSTSEC-2026-0582", # heapless — no IndexMap
 ]
 
 [licenses]

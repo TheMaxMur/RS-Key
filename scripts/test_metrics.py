@@ -6,11 +6,14 @@ import json
 import hashlib
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import sys
 
 import pytest
+
+import gate_lines
 
 ROOT = Path(__file__).resolve().parent.parent
 CARGO = r'''
@@ -131,3 +134,24 @@ def test_source_change_during_the_command_cannot_complete_a_measurement(tmp_path
     assert result.returncode != 0
     assert "coverage source changed during measurement" in result.stderr
     assert json.loads((out / "manifest.json").read_text())["status"] == "incomplete"
+
+
+def test_coverage_cache_keys_accept_every_shipping_profile(tmp_path):
+    workflow = (ROOT / ".github/workflows/deep-checks.yml").read_text()
+    coverage = workflow.split("\n  coverage:\n", 1)[1].split("\n  mcdc:\n", 1)[0]
+    profiles = json.loads(re.findall(r"'(\[.*?\])'", coverage)[-1])
+    commands = [body.removeprefix("run: ") for body, executed in gate_lines.yaml_runs(coverage)
+                if executed and "GITHUB_OUTPUT" in body]
+    outputs = tmp_path / "outputs"
+    keys = []
+    for profile in profiles:
+        outputs.write_text("")
+        subprocess.run(["bash", "-ec", "\n".join(commands)], check=True,
+                       env=dict(os.environ, PROFILE=profile, GITHUB_OUTPUT=str(outputs)))
+        key = dict(line.split("=", 1) for line in outputs.read_text().splitlines())["profile"]
+        assert key and "," not in key, f"invalid cache key for {profile}"
+        keys.append(key)
+    assert len(keys) == len(set(keys)), "shipping profiles must have separate caches"
+    for line in coverage.splitlines():
+        if line.strip().startswith(("key: coverage-", "restore-keys: coverage-")):
+            assert "${{ steps.cache-profile.outputs.profile }}" in line

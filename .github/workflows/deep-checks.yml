@@ -299,6 +299,12 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      - name: cache-safe profile name
+        id: cache-profile
+        env:
+          PROFILE: ${{ matrix.profile }}
+        run: echo "profile=${PROFILE//,/-}" >> "$GITHUB_OUTPUT"
+
       - uses: DeterminateSystems/nix-installer-action@3138316df39ed29be04236d7ffc686fa525866aa # v23
 
       - uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.2
@@ -312,8 +318,8 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: coverage-${{ runner.os }}-${{ matrix.profile }}-${{ hashFiles('Cargo.lock', 'flake.lock') }}
-          restore-keys: coverage-${{ runner.os }}-${{ matrix.profile }}-
+          key: coverage-${{ runner.os }}-${{ steps.cache-profile.outputs.profile }}-${{ hashFiles('Cargo.lock', 'flake.lock') }}
+          restore-keys: coverage-${{ runner.os }}-${{ steps.cache-profile.outputs.profile }}-
 
       # Keep the embedded-only packages outside the host line-coverage floor.
       - name: llvm-cov — host-crate line coverage, floored at 80%
@@ -390,6 +396,16 @@ jobs:
         run: |
           command -v cargo-kani >/dev/null || cargo install --locked kani-verifier --version "$KANI_VERSION"
           cargo kani setup
+
+      # The phy solver has exceeded the hosted runner's physical RAM.
+      - name: reserve swap for the heavy solver
+        if: matrix.tier == 'heavy'
+        run: |
+          sudo fallocate -l 24G /mnt/kani.swap
+          sudo chmod 600 /mnt/kani.swap
+          sudo mkswap /mnt/kani.swap
+          sudo swapon /mnt/kani.swap
+          free -h
 
       # The tier names come from the matrix and the crates from `scripts/kani.sh`;
       # scripts/kani_gate.py resolves the one to reach the other, and refuses a

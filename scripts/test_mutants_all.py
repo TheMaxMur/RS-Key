@@ -248,7 +248,8 @@ def test_the_container_launcher_enforces_the_whole_tree_limit(tree):
     assert done.returncode == 0, done.stderr
     argv = (tree.fake / "docker-argv").read_text().splitlines()
     for flag in ["--memory=4g", "--memory-swap=4g", "--cpus=2", "--pids-limit=256",
-                 "--cap-drop=ALL", "--security-opt=no-new-privileges", "--init"]:
+                 "--cap-drop=ALL", "--cap-add=CHOWN", "--cap-add=DAC_OVERRIDE",
+                 "--security-opt=no-new-privileges", "--init"]:
         assert flag in argv, f"the actual launcher must enforce {flag}"
     assert argv[argv.index("--name") + 1] == "rsk-mutants-safe"
     assert not any("dst=/work" in arg for arg in argv)
