@@ -56,7 +56,7 @@ filter = 'package(rsk-fido) & (test(getassertion::tests::discovery::) | test(gen
 priority = 100
 
 [[profile.mutants.overrides]]
-filter = 'package(rsk-display) & (test(a_revealed_pin_stays_visible_before_the_idle_deadline) | test(a_pending_rename_character_highlights_its_active_key_group))'
+filter = 'package(rsk-display) & (test(a_revealed_pin_stays_visible_before_the_idle_deadline) | test(a_pending_rename_character_highlights_its_active_key_group) | test(an_overflowing_pin_title_advances_by_elapsed_pixel_steps) | test(a_failed_wipe_delivers_its_notice_before_handing_back_to_the_host))'
 priority = 100
 
 [[profile.mutants.overrides]]

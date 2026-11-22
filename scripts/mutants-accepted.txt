@@ -12,7 +12,7 @@
 #
 # Seeding. A shard writes its unlisted survivors, in this format, to
 # target/mutants/new-survivors.txt, which the weekly job uploads. The first sweep
-# after this file landed is the seed: its twelve lists go in below under
+# after this file landed is the seed: its shard lists go in below under
 # `[untriaged <date>] seeded from that sweep, not yet read`, and triage moves each
 # entry to a class, or deletes it with the test that kills it.
 #
@@ -95,7 +95,7 @@ crates/rsk-rsa/src/pubexp.rs: replace / with * in backend::pow
 crates/rsk-rsa/src/montgomery.rs: replace - with + in subtract
 
 [scalar-fallback] Reversing the minimum width check sends every nonempty modulus through single-word Montgomery reduction. It yields the same canonical result and loses four-limb batching.
-crates/rsk-rsa/src/montgomery.rs: replace >= with < in reduce
+crates/rsk-rsa/src/montgomery.rs: replace >= with < in reduce_width
 crates/rsk-rsa/src/crt.rs: replace * with + in crt_plaintext
 crates/rsk-rsa/src/crt.rs: replace * with + in crt_plaintext
 crates/rsk-rsa/src/crt.rs: replace * with / in crt_plaintext
@@ -114,13 +114,17 @@ crates/rsk-rsa/src/montgomery.rs: replace * with + in reduce
 crates/rsk-rsa/src/montgomery.rs: replace * with / in reduce
 
 [seed-stack-cost] The enlarged temporary seed array still fills, consumes and wipes the same half_bytes prefix. Device stack-cost equivalence is not established by host output tests.
-crates/rsk-rsa/src/keygen.rs: replace / with * in RsaKeygen::try_candidate
+crates/rsk-rsa/src/keygen.rs: replace / with * in RsaKeygen::try_candidate_with_cancel
 
 [sieve-cost] These arms choose the cheap small-prime prefilter roster. Strong Miller-Rabin and Lucas still own acceptance; changed search cost is outside the result oracle.
 crates/rsk-rsa/src/lib.rs: delete match arm 129..= 192 in sieve_count
 crates/rsk-rsa/src/lib.rs: delete match arm 65..= 128 in sieve_count
 
-[scratch-prefix-identity] The widened scratch is only ever read through the unchanged returned prefix; the extra tail is never inspected.
+[scratch-prefix-identity] The widened scratch is only ever read through the unchanged returned prefix; the extra tail is never inspected. This is result/error equivalence, not equivalence of temporary stack space or wipe cost.
+crates/rsk-openpgp/src/attest.rs: replace + with * in write_statement
+crates/rsk-openpgp/src/keys.rs: replace + with * in store_ec_key_under
+crates/rsk-openpgp/src/keys.rs: replace + with * in load_ec_key
+crates/rsk-openpgp/src/keys.rs: replace + with * in store_aes_key
 crates/rsk-openpgp/src/keys.rs: replace + with * in load_aes_key
 crates/rsk-openpgp/src/keys.rs: replace + with * in store_rsa_key
 crates/rsk-openpgp/src/keys.rs: replace + with * in load_rsa_key
@@ -129,9 +133,6 @@ crates/rsk-openpgp/src/keys.rs: replace + with * in load_rsa_crt
 [counter-lane-identity] The counter's three byte lanes are disjoint, so OR and XOR agree for every admitted value; the increment and serialization are unchanged.
 crates/rsk-openpgp/src/keys.rs: replace | with ^ in inc_sig_count
 crates/rsk-openpgp/src/keys.rs: replace | with ^ in inc_sig_count
-
-[short-origin-identity] At idx == n the zero-initialized uncovered slot reads as imported either way; a valid prefix read leaves that byte zero.
-crates/rsk-openpgp/src/origin.rs: replace < with <= in of
 
 [short-dek-identity] A 0- or 1-byte DEK copy reaches EXEC_ERROR either from the format check or from the empty-blob decrypt, with no write and no access.
 crates/rsk-openpgp/src/pin.rs: replace < with == in migrate_pin_kbase
@@ -175,6 +176,7 @@ crates/rsk-x509/src/lib.rs: replace > with >= in DerRev<'a>::uint
 
 [right-clip-widening-identity] The trailing value is right-aligned at tx and never draws past it, so a clip widened to the right changes no pixel.
 crates/rsk-ui/src/render/components/mod.rs: replace - with + in rect_row
+crates/rsk-ui/src/render.rs: replace - with + in row_body
 
 [list-trailing-clip-widening-identity] The list row's trailing value is right-aligned at tx and never draws past it, so widening the trailing clip's right edge (tx + tleft instead of tx - tleft) moves no pixel.
 crates/rsk-ui/src/render/components/list.rs: replace - with + in row
@@ -218,3 +220,630 @@ crates/rsk-ui/src/render/audit.rs: replace - with + in audit_body
 crates/rsk-ui/src/render/audit.rs: replace - with + in audit_body
 crates/rsk-ui/src/render/audit.rs: replace - with + in audit_body
 crates/rsk-ui/src/render/audit.rs: replace - with / in audit_body
+
+[protocol-bit-lanes] BCD digits occupy separate nibbles, BER lengths and RSA widths separate bytes, and USB interface flags separate bits. OTP mode masks contain distinct bits and HID sequences remain below the response/write flag bits, so OR and XOR produce identical bytes.
+crates/rsk-openpgp/src/files.rs: replace | with ^ in serial_bcd
+crates/rsk-openpgp/src/importdata.rs: replace | with ^ in tag_len
+crates/rsk-openpgp/src/importdata.rs: replace | with ^ in try_import
+crates/rsk-openpgp/src/keypairgen.rs: replace | with ^ in generate
+crates/rsk-openpgp/src/keypairgen.rs: replace | with ^ in rsa_generate_params
+crates/rsk-otp/src/lib.rs: replace | with ^ in OtpApplet<'a>::cmd_status_ext
+crates/rsk-otp/src/hid.rs: replace | with ^ in FrameTx::next
+crates/rsk-otp/src/hid.rs: replace | with ^ in split_frame
+crates/rsk-otp/src/ticket.rs: replace | with ^ in build
+crates/rsk-phy/src/lib.rs: replace | with ^
+crates/rsk-phy/src/lib.rs: replace | with ^
+crates/rsk-phy/src/lib.rs: replace | with ^
+crates/rsk-phy/src/lib.rs: replace | with ^
+crates/rsk-phy/src/lib.rs: replace | with ^
+crates/rsk-phy/src/lib.rs: replace | with ^
+crates/rsk-phy/src/lib.rs: replace | with ^
+
+[advertised-rsa-width] read_advertised_algo accepts RSA attributes only at their advertised six-byte width, or returns the six-byte default. The later comparisons against three cannot distinguish an admitted attribute.
+crates/rsk-openpgp/src/importdata.rs: replace < with == in try_import
+crates/rsk-openpgp/src/importdata.rs: replace < with <= in try_import
+crates/rsk-openpgp/src/keypairgen.rs: replace < with == in generate
+crates/rsk-openpgp/src/keypairgen.rs: replace < with <= in generate
+crates/rsk-openpgp/src/keypairgen.rs: replace < with == in rsa_generate_params
+crates/rsk-openpgp/src/keypairgen.rs: replace < with <= in rsa_generate_params
+
+[nonempty-import-elements] parse_ehl_body assigns an element offset only for a nonzero length; a present offset then yields either a nonempty slice or a bounds error before this guard. None of the three is_empty operands can be true here.
+crates/rsk-openpgp/src/importdata.rs: replace || with && in try_import
+crates/rsk-openpgp/src/importdata.rs: replace || with && in try_import
+
+[empty-field-identity] At a zero-length read, the fingerprint's any predicate is false and read_field copies an empty prefix and returns zero under either guard.
+crates/rsk-openpgp/src/info.rs: replace > with >= in read_info
+crates/rsk-openpgp/src/info.rs: replace match guard n > 0 with true in read_field
+crates/rsk-openpgp/src/info.rs: replace > with >= in read_field
+
+[unread-retry-byte] At idx == n, the zero-initialized retry byte was not filled by read_file; the following nonzero check prevents any write in both versions.
+crates/rsk-openpgp/src/init.rs: replace < with <= in settle_rc_retry_counter
+
+[masked-otp-status] Extended status already requires tkt & 0x40 == 0 and cfg & 0x22 == 0. Those conditions make both operands of the earlier challenge-mode conjunction false: TKT_CHAL_RESP equals TKT_OATH_HOTP, and CFG_CHAL_YUBICO equals CFG_STATIC_TICKET. Every listed change leaves the public-id decision identical for all flag bytes.
+crates/rsk-otp/src/lib.rs: replace && with || in OtpApplet<'a>::cmd_status_ext
+crates/rsk-otp/src/lib.rs: replace != with == in OtpApplet<'a>::cmd_status_ext
+crates/rsk-otp/src/lib.rs: replace != with == in OtpApplet<'a>::cmd_status_ext
+crates/rsk-otp/src/lib.rs: replace & with | in OtpApplet<'a>::cmd_status_ext
+crates/rsk-otp/src/lib.rs: replace & with | in OtpApplet<'a>::cmd_status_ext
+crates/rsk-otp/src/lib.rs: replace & with ^ in OtpApplet<'a>::cmd_status_ext
+crates/rsk-otp/src/lib.rs: replace & with ^ in OtpApplet<'a>::cmd_status_ext
+
+[confirmed-challenge-mode] is_chal_resp_slot has already required CFG_CHAL_YUBICO's bit in either challenge mode. Replacing the first cfg & CFG_CHAL_YUBICO with OR therefore preserves the false zero comparison; the HMAC discriminator still refuses a Yubico request in HMAC mode.
+crates/rsk-otp/src/lib.rs: replace & with | in OtpApplet<'a>::cmd_calculate
+
+[stream-activity-invariant] FrameTx::load sets expected to the positive report count whenever remaining is nonzero; next clears expected only after remaining reaches zero. Thus expected > 0 already determines active for every reachable state.
+crates/rsk-otp/src/hid.rs: replace > with < in FrameTx::active
+
+[decimal-reduction-identity] hotp emits only the final six or eight decimal digits. Adding 10^digits instead of reducing modulo it preserves those digits, and bin <= 2^31-1 plus at most 10^8 fits in u32.
+crates/rsk-otp/src/ticket.rs: replace % with + in hotp
+
+[attribute-and-byte-lanes] BER lengths and APDU P1/P2 occupy separate bytes. algo_tag_to_priv is called only for C1/C2/C3, which share no bit with its 0x1000 namespace, so each OR/XOR replacement is identical for its callers.
+crates/rsk-oath/src/lib.rs: replace | with ^ in tlv_at
+crates/rsk-oath/src/lib.rs: replace | with ^ in <impl Iterator for PutIter<'d>>::next
+crates/rsk-openpgp/src/lib.rs: replace | with ^ in <impl Applet<Fs<S>> for OpenpgpApplet<'_>>::process
+crates/rsk-openpgp/src/consts.rs: replace | with ^ in algo_tag_to_priv
+
+[bounded-oath-rebuild] parse_put permits seven unique fields: NAME <=64, KEY <=66, three password-safe fields <=255, one PROPERTY byte, and an eight-byte normalized HOTP counter. Their complete canonical TLVs occupy at most 921 bytes, below CRED_MAX=1024, so every emit_tlv succeeds and both boolean assignments preserve true.
+crates/rsk-oath/src/lib.rs: replace &= with |= in OathApplet<'a>::cmd_put
+crates/rsk-oath/src/lib.rs: replace &= with |= in OathApplet<'a>::cmd_put
+crates/rsk-oath/src/lib.rs: replace &= with |= in OathApplet<'a>::cmd_put
+crates/rsk-oath/src/lib.rs: replace &= with |= in OathApplet<'a>::cmd_put
+
+[ber-cursor-identity] PutIter's cursor is exactly two on entering the 0x82 arm, so p += 2 and p *= 2 both leave it at four before the same bounds-checked slice.
+crates/rsk-oath/src/lib.rs: replace += with *= in <impl Iterator for PutIter<'d>>::next
+
+[empty-search-tail] At i == blob.len(), tlv_at returns None before indexing and the question-mark returns None; the original loop exits with that same answer and no effects.
+crates/rsk-oath/src/lib.rs: replace < with <= in find_tag_range
+
+[empty-apdu-append] PSO, INTERNAL AUTHENTICATE and GENERATE map every error to a zero response length. Extending an empty slice changes nothing, so allowing n == 0, or replacing the conjunction with OR, preserves the response bytes and status.
+crates/rsk-openpgp/src/lib.rs: replace && with || in <impl Applet<Fs<S>> for OpenpgpApplet<'_>>::process
+crates/rsk-openpgp/src/lib.rs: replace && with || in <impl Applet<Fs<S>> for OpenpgpApplet<'_>>::process
+crates/rsk-openpgp/src/lib.rs: replace && with || in <impl Applet<Fs<S>> for OpenpgpApplet<'_>>::process
+crates/rsk-openpgp/src/lib.rs: replace > with >= in <impl Applet<Fs<S>> for OpenpgpApplet<'_>>::process
+crates/rsk-openpgp/src/lib.rs: replace > with >= in <impl Applet<Fs<S>> for OpenpgpApplet<'_>>::process
+crates/rsk-openpgp/src/lib.rs: replace > with >= in <impl Applet<Fs<S>> for OpenpgpApplet<'_>>::process
+
+[bounded-data-response] get_data bounds its successful length by res.spare_mut(), whose length is the original capacity-minus-length. Enlarging only the subsequent min bound leaves the committed prefix unchanged.
+crates/rsk-openpgp/src/lib.rs: replace - with + in OpenpgpApplet<'a>::handle_get_data
+
+[unlisted-tag-boundary] DO 0x0100 has no source in the catalogue, so emit_do never emits its header. The changed one-byte/two-byte tag boundary is not reached.
+crates/rsk-openpgp/src/dobj.rs: replace < with <= in DoWriter<'a, S>::emit_do
+
+[empty-tlv-buffer-boundary] At lp == written the positive length header cannot also satisfy lp + n + body <= out.len(), so close takes its existing failure arm under either comparison.
+crates/rsk-openpgp/src/dobj.rs: replace < with <= in DoWriter<'a, S>::close
+
+[raster-and-touch-lanes] The raster palette index occupies bits above the three run-length bits. CST328 coordinates join byte/nibble lanes, and CST3530 coordinates join low bytes with high nibbles; OR and XOR therefore encode identical values.
+crates/rsk-ui/src/scene.rs: replace | with ^ in Scene::finish_run
+crates/rsk-ui/src/scene.rs: replace | with ^ in Scene::finish_run
+crates/rsk-ui/src/touch.rs: replace | with ^ in parse_cst328
+crates/rsk-ui/src/touch.rs: replace | with ^ in parse_cst328
+crates/rsk-ui/src/touch.rs: replace | with ^ in parse_cst3530
+crates/rsk-ui/src/touch.rs: replace | with ^ in parse_cst3530
+
+[dma-clamp-equality] At rows == PANEL_H both arms return that same height; its u16 cast is exact.
+crates/rsk-ui/src/scene.rs: replace > with >= in dma_band_height
+
+[raster-path-cost] Subtracting a positive width or height makes the unclipped fast-path predicate false. The generic path still consumes and encodes the same visible pixel sequence; only path cost changes.
+crates/rsk-ui/src/scene.rs: replace + with - in Scene::encode_raster
+crates/rsk-ui/src/scene.rs: replace + with - in Scene::encode_raster
+
+[damage-loop-widening] Changing the final tile bound visits at most an adjacent tile. intersection still excludes every part outside the command, including the zero-height tile at y=PANEL_H, before a tag is indexed or changed.
+crates/rsk-ui/src/scene.rs: replace - with + in Scene::finalize
+crates/rsk-ui/src/scene.rs: replace - with + in Scene::finalize
+crates/rsk-ui/src/scene.rs: replace - with / in Scene::finalize
+crates/rsk-ui/src/scene.rs: replace - with / in Scene::finalize
+
+[whole-height-tiles] PANEL_H is exactly ten DAMAGE_TILE rows. Every admitted row retains a full tile height after min(DAMAGE_TILE, ...), and the damage rectangle height uses that same full-row geometry.
+crates/rsk-ui/src/scene.rs: replace - with + in damage_tile
+crates/rsk-ui/src/scene.rs: replace * with + in damage_tile
+crates/rsk-ui/src/scene.rs: replace * with / in damage_tile
+crates/rsk-ui/src/scene.rs: replace - with + in Scene::damage_rects
+
+[horizontal-raster-skip-cost] Rust precedence makes the changed guard A || B && C: the vertical skip A is unchanged. Decoding an extra horizontally disjoint raster still reaches paint_command's intersection, which writes no pixel outside the band.
+crates/rsk-ui/src/scene.rs: replace || with && in Scene::raster_record
+
+[raster-tail-cost] A complete encoded record ends at or beyond last_pixel, so token == end cannot require another pixel. Widening the row bound or scanning extra tokens only reaches runs whose visible interval or paint intersection is empty; output bytes and the returned record end are unchanged, with extra decode cost.
+crates/rsk-ui/src/scene.rs: replace - with + in Scene::raster_record
+crates/rsk-ui/src/scene.rs: replace && with || in Scene::raster_record
+crates/rsk-ui/src/scene.rs: replace < with <= in Scene::raster_record
+crates/rsk-ui/src/scene.rs: replace < with <= in Scene::raster_record
+
+[empty-solid-identity] Clipping a rectangle can only make either span empty, never negative. push_solid rejects either zero span before changing any record state, so widening fill_solid's outer guard still emits no empty rectangle.
+crates/rsk-ui/src/scene.rs: replace && with || in <impl DrawTarget for Scene>::fill_solid
+crates/rsk-ui/src/scene.rs: replace < with <= in <impl DrawTarget for Scene>::fill_solid
+crates/rsk-ui/src/scene.rs: replace < with <= in <impl DrawTarget for Scene>::fill_solid
+
+[protocol-lanes-continued] Status flags occupy bits above the two-bit CCID card status; PIV FID namespaces, APDU masks, firmware-version bytes, TLV lengths, SLIP39 words, boot-policy masks and the Bulk retry flag join disjoint lanes. Clearing the pinpad bit before inserting it also makes OR and XOR identical.
+crates/rsk-piv/src/lib.rs: replace | with ^ in PivApplet<'_>::get_data
+crates/rsk-piv/src/lib.rs: replace | with ^ in put_data_parts
+crates/rsk-piv/src/files.rs: replace | with ^ in key_fid
+crates/rsk-piv/src/files.rs: replace | with ^ in cert_fid_for_slot
+crates/rsk-piv/src/files.rs: replace | with ^ in pubkey_fid
+crates/rsk-piv/src/files.rs: replace | with ^ in data_object_fid
+crates/rsk-rescue/src/boot_status.rs: replace | with ^
+crates/rsk-rescue/src/boot_status.rs: replace | with ^
+crates/rsk-rescue/src/boot_status.rs: replace | with ^
+crates/rsk-rescue/src/boot_status.rs: replace | with ^ in read_status
+crates/rsk-sdk/src/lib.rs: replace | with ^
+crates/rsk-sdk/src/lib.rs: replace | with ^
+crates/rsk-sdk/src/apdu.rs: replace | with ^ in Apdu<'a>::is_served_over_ccid
+crates/rsk-sdk/src/sw.rs: replace | with ^ in Sw::retries
+crates/rsk-sdk/src/tlv.rs: replace | with ^ in <impl Iterator for Tlv<'a>>::next
+crates/rsk-sdk/src/tlv.rs: replace | with ^ in <impl Iterator for Tlv<'a>>::next
+crates/rsk-slip39/src/lib.rs: replace | with ^ in generate
+crates/rsk-slip39/src/lib.rs: replace | with ^ in encode_share
+crates/rsk-slip39/src/lib.rs: replace | with ^ in encode_share
+crates/rsk-slip39/src/lib.rs: replace | with ^ in encode_share
+crates/rsk-slip39/src/lib.rs: replace | with ^ in encode_share
+crates/rsk-slip39/src/lib.rs: replace ^ with | in rs1024_checksum
+crates/rsk-usb/src/bulk_retry.rs: replace | with ^ in eligible
+crates/rsk-usb/src/ccid.rs: replace | with ^ in Ccid<'d, D, H>::run
+crates/rsk-usb/src/ccid.rs: replace | with ^ in Ccid<'d, D, H>::run
+crates/rsk-usb/src/ccid.rs: replace | with ^ in Ccid<'d, D, H>::run_xfr
+crates/rsk-usb/src/ccid.rs: replace | with ^ in Ccid<'d, D, H>::run_secure
+crates/rsk-usb/src/identity.rs: replace | with ^ in Identity::with_pinpad_verify
+
+[sha256-majority-identity] The inner OR/XOR change in (a & b) | (c & (a | b)) is masked when a and b are both set; all eight one-bit inputs have the same majority result.
+crates/rsk-sha256/src/lib.rs: replace | with ^ in round_second
+
+[rollback-majority-identity] Rust binds XOR more tightly than OR. For either changed operator, the unchanged third pair masks the only overlapping pair, so the three-input majority truth table is identical.
+crates/rsk-rescue/src/rollback.rs: replace | with ^ in majority
+crates/rsk-rescue/src/rollback.rs: replace | with ^ in majority
+
+[diagnostic-hash-name] AlgorithmName and Debug only format diagnostic text. Digest output, algorithm selection and wire encodings do not consume this spelling; the diagnostics are deliberately not pinned by crypto tests.
+crates/rsk-sha256/src/lib.rs: replace <impl AlgorithmName for Sha256Core>::write_alg_name -> fmt::Result with Ok(Default::default())
+crates/rsk-sha256/src/lib.rs: replace <impl fmt::Debug for Sha256Core>::fmt -> fmt::Result with Ok(Default::default())
+
+[zero-shift-identity] Shifting the fixed zero extendable flag either way remains zero, and the PreOtp FIDO mask shifts one by zero either way.
+crates/rsk-rescue/src/otp_lock.rs: replace << with >>
+crates/rsk-slip39/src/lib.rs: replace << with >> in encode_share
+
+[single-group-zero-prefix] The single-group share parameters fit in eight bits. Both (params >> 10) & 1023 and (params << 10) & 1023 are zero for every admitted index/threshold.
+crates/rsk-slip39/src/lib.rs: replace >> with << in encode_share
+
+[two-plus-two-identity] The changed final two-plus-two fields are also two-times-two under Rust precedence. The CHUID length, PHY record ceiling and SLIP39 checksum prefix length remain exactly identical.
+crates/rsk-phy/src/lib.rs: replace + with *
+crates/rsk-piv/src/chuid.rs: replace + with *
+crates/rsk-slip39/src/lib.rs: replace + with * in encode_share
+
+[same-clamp-boundary] At equality both arms retain the same value, including the saturated retry nibble and response truncation length.
+crates/rsk-sdk/src/applet.rs: replace < with <= in ResBuf<'a>::truncate
+crates/rsk-sdk/src/sw.rs: replace > with >= in Sw::retries
+
+[empty-get-response-buffer] Dispatcher::process clears the response before its sole serve_pending call, so capacity minus zero and capacity plus zero are identical. The private helper has no other caller.
+crates/rsk-sdk/src/applet.rs: replace - with + in Dispatcher::serve_pending
+
+[constant-session-epoch] These trait defaults are arbitrary constant epochs for handlers without session tracking. Every consumer compares epochs only for changes, and the firmware handlers override both defaults with the live bus epoch; changing zero to one cannot manufacture an epoch transition.
+crates/rsk-usb/src/ccid.rs: replace ApduHandler::session_epoch -> u32 with 1
+crates/rsk-usb/src/ctaphid.rs: replace MsgHandler::session_epoch -> u32 with 1
+
+[default-fips-guards] The default mutation profile has fips-profile disabled. The boolean constant masks these algorithm refusals; the fips-profile tests and coverage job own the enabled arms.
+crates/rsk-fido/src/makecredential.rs: replace match guard cfg!(not(feature = "fips-profile")) with true in alg_to_curve
+crates/rsk-piv/src/lib.rs: replace != with == in PivApplet<'_>::set_mgmkey
+crates/rsk-piv/src/keygen.rs: replace == with != in parse_gen_template
+crates/rsk-piv/src/keygen.rs: replace == with != in import
+
+[symmetric-slot-refusal] Deleting the explicit symmetric-algorithm refusal falls through to the identical wildcard WRONG_DATA return, before any symmetric key operation.
+crates/rsk-piv/src/auth.rs: delete match arm ALGO_3DES | ALGO_AES128 | ALGO_AES192 | ALGO_AES256 in GenAuth<'_, S>::slot_key_op
+
+[piv-scratch-prefix] Only the returned prefix of these widened metadata, management-key, Pivman, sealed-key and certificate scratch buffers is consumed. The producer widths and persisted/wire bytes are unchanged; stack and wipe cost are not equivalent.
+crates/rsk-piv/src/lib.rs: replace + with *
+crates/rsk-piv/src/lib.rs: replace + with *
+crates/rsk-piv/src/lib.rs: replace + with *
+crates/rsk-piv/src/lib.rs: replace + with * in PivApplet<'_>::get_protected_mgm
+crates/rsk-piv/src/lib.rs: replace + with * in pivman_rebuild
+crates/rsk-piv/src/lib.rs: replace + with * in pivman_rebuild
+crates/rsk-piv/src/files.rs: replace + with - in scan_files
+crates/rsk-piv/src/files.rs: replace + with * in scan_files
+crates/rsk-piv/src/keygen.rs: replace + with * in generate_ec
+crates/rsk-piv/src/keygen.rs: replace + with * in generate_retired_ec
+crates/rsk-piv/src/keygen.rs: replace + with * in import
+crates/rsk-piv/src/seal.rs: replace + with * in try_load_ec_key
+
+[rsa-scratch-prefix] The private exponentiation arrays are indexed by the admitted modulus width, so the enlarged maximum adds unused storage. This does not establish device stack-cost equivalence.
+crates/rsk-rsa/src/privexp.rs: replace / with *
+
+[lucas-equal-difference] Swapping equal left/right residues still subtracts zero before the identical divisibility test.
+crates/rsk-rsa/src/lucas.rs: replace < with <= in passes_lucas
+
+[lucas-square-screen-cost] Moving the perfect-square screen to other parameter iterations preserves primality verdicts: odd squares never have Jacobi -1 and are refused by a zero symbol, the square screen or the bounded search. Nonsquares pass the screen unchanged; cancellation poll counts and work differ.
+crates/rsk-rsa/src/lucas.rs: replace == with != in passes_lucas
+
+[lucas-final-parameter] Reaching p=10000 requires Jacobi(k,n)=1 for every k<=10001 (from successive (p-2)(p+2), starting at 1,2,3,4). Since 10002=2*3*1667, the discriminant at 10000 also has symbol +1. Skipping that last unsuccessful iteration preserves refusal, with one less poll.
+crates/rsk-rsa/src/lucas.rs: replace > with == in passes_lucas
+crates/rsk-rsa/src/lucas.rs: replace > with >= in passes_lucas
+
+[lucas-extra-doublings] Admitted keygen candidates have passed the sieve's division by 3. For these odd n, n+1=2^r*s and Jacobi(D,n)=-1, V_(2^j*s)=0 at j>=r-1 would force every prime factor q to satisfy q=(D|q) modulo 2^(j+2), contradicting v2(n+1)=r. A residue of one would similarly force excess 3-adic divisibility of n+1, so the extra BigUint square-minus-two cannot underflow. Extra rounds only delay the same false verdict; cancellation timing and inputs outside that producer invariant are not claimed equivalent.
+crates/rsk-rsa/src/lucas.rs: replace - with + in passes_lucas
+crates/rsk-rsa/src/lucas.rs: replace - with / in passes_lucas
+
+[counter-directory-slack] MAX_COUNTER_ENTRIES is a directory capacity, not a serialized count. Multiplication enlarges it beyond the sum of the fixed public counters and owner buckets; all producers still enumerate only that original finite namespace. Extra stack usage is outside the result oracle.
+crates/rsk-store/src/authenticated.rs: replace + with *
+
+[nonbinding-attestation-budgets] The default chain is bounded by the 2132-byte MAC ceiling, below the 4069-byte store and 3895-byte response ceilings. Each listed arithmetic change leaves that minimum at 2132; authData is assembled from actual writes, not these budget constants. The static overflow assertions still compile. Re-evaluate all three ceilings if any budget or profile changes.
+crates/rsk-fido/src/cert.rs: replace - with +
+crates/rsk-fido/src/cert.rs: replace - with /
+crates/rsk-fido/src/cert.rs: replace - with +
+crates/rsk-fido/src/cert.rs: replace - with /
+crates/rsk-fido/src/cert.rs: replace * with +
+crates/rsk-fido/src/cert.rs: replace * with /
+crates/rsk-fido/src/cert.rs: replace - with +
+crates/rsk-fido/src/makecredential.rs: replace + with -
+crates/rsk-fido/src/makecredential.rs: replace + with *
+crates/rsk-fido/src/makecredential.rs: replace + with -
+crates/rsk-fido/src/makecredential.rs: replace + with *
+crates/rsk-fido/src/makecredential.rs: replace + with -
+crates/rsk-fido/src/makecredential.rs: replace + with *
+crates/rsk-fido/src/makecredential.rs: replace + with -
+crates/rsk-fido/src/makecredential.rs: replace + with *
+crates/rsk-fido/src/makecredential.rs: replace + with -
+crates/rsk-fido/src/makecredential.rs: replace + with *
+crates/rsk-fido/src/makecredential.rs: replace + with -
+crates/rsk-fido/src/makecredential.rs: replace + with *
+crates/rsk-fido/src/makecredential.rs: replace + with *
+crates/rsk-fido/src/makecredential.rs: replace + with -
+crates/rsk-fido/src/makecredential.rs: replace + with *
+crates/rsk-fido/src/makecredential.rs: replace + with *
+crates/rsk-fido/src/makecredential.rs: replace + with *
+crates/rsk-fido/src/makecredential.rs: replace + with -
+crates/rsk-fido/src/makecredential.rs: replace + with *
+crates/rsk-fido/src/makecredential.rs: replace + with -
+crates/rsk-fido/src/makecredential.rs: replace + with *
+crates/rsk-fido/src/makecredential.rs: replace + with -
+crates/rsk-fido/src/makecredential.rs: replace + with *
+crates/rsk-fido/src/makecredential.rs: replace + with -
+crates/rsk-fido/src/makecredential.rs: replace + with *
+crates/rsk-fido/src/makecredential.rs: replace + with -
+crates/rsk-fido/src/makecredential.rs: replace + with *
+crates/rsk-fido/src/makecredential.rs: replace + with -
+crates/rsk-fido/src/makecredential.rs: replace + with *
+crates/rsk-fido/src/makecredential.rs: replace + with -
+crates/rsk-fido/src/makecredential.rs: replace + with *
+crates/rsk-fido/src/makecredential.rs: replace + with -
+crates/rsk-fido/src/makecredential.rs: replace + with *
+crates/rsk-fido/src/makecredential.rs: replace + with -
+crates/rsk-fido/src/makecredential.rs: replace + with *
+crates/rsk-fido/src/makecredential.rs: replace + with -
+crates/rsk-fido/src/makecredential.rs: replace + with *
+crates/rsk-fido/src/makecredential.rs: replace + with -
+crates/rsk-fido/src/makecredential.rs: replace + with *
+crates/rsk-fido/src/makecredential.rs: replace + with *
+crates/rsk-fido/src/makecredential.rs: replace * with +
+crates/rsk-fido/src/makecredential.rs: replace * with /
+
+[preview-sign-default-off] These declarations and branches are under cfg(feature = "preview-sign"), absent from the default mutation profile. The preview-sign and preview-sign,largeblob-ext test/coverage jobs own their enabled behavior.
+crates/rsk-fido/src/consts.rs: delete -
+crates/rsk-fido/src/consts.rs: delete -
+crates/rsk-fido/src/consts.rs: delete -
+crates/rsk-fido/src/getassertion.rs: replace + with -
+crates/rsk-fido/src/getassertion.rs: replace + with *
+crates/rsk-fido/src/getassertion.rs: delete match arm previewsign::NAME in parse_extensions
+crates/rsk-fido/src/getassertion.rs: replace + with - in encode_ga_extensions
+crates/rsk-fido/src/getassertion.rs: replace + with * in encode_ga_extensions
+crates/rsk-fido/src/largeblobext.rs: replace write_mc_entry -> Result<(), Error<W::Error>> with Ok(())
+crates/rsk-fido/src/makecredential.rs: replace + with -
+crates/rsk-fido/src/makecredential.rs: replace + with *
+crates/rsk-fido/src/makecredential.rs: delete match arm previewsign::NAME in parse_extensions
+crates/rsk-fido/src/makecredential.rs: replace || with && in encode_mc_response
+crates/rsk-fido/src/makecredential.rs: replace encode_unsigned_outputs -> Result<(), CtapError> with Ok(())
+crates/rsk-fido/src/makecredential.rs: replace + with - in encode_unsigned_outputs
+crates/rsk-fido/src/makecredential.rs: replace + with * in encode_unsigned_outputs
+crates/rsk-fido/src/makecredential.rs: replace encode_preview_att_obj -> Result<(), CtapError> with Ok(())
+crates/rsk-fido/src/makecredential.rs: replace attestation_key -> Result<P256Key, CtapError> with Ok(Default::default())
+crates/rsk-fido/src/makecredential.rs: replace + with -
+crates/rsk-fido/src/makecredential.rs: replace + with *
+crates/rsk-fido/src/makecredential.rs: replace + with -
+crates/rsk-fido/src/makecredential.rs: replace + with *
+crates/rsk-fido/src/makecredential.rs: replace + with -
+crates/rsk-fido/src/makecredential.rs: replace + with *
+crates/rsk-fido/src/makecredential.rs: replace + with -
+crates/rsk-fido/src/makecredential.rs: replace + with *
+crates/rsk-fido/src/makecredential.rs: replace + with -
+crates/rsk-fido/src/makecredential.rs: replace + with *
+crates/rsk-fido/src/makecredential.rs: replace + with -
+crates/rsk-fido/src/makecredential.rs: replace + with *
+crates/rsk-fido/src/makecredential.rs: replace + with -
+crates/rsk-fido/src/makecredential.rs: replace + with *
+crates/rsk-fido/src/makecredential.rs: replace + with -
+crates/rsk-fido/src/makecredential.rs: replace + with *
+crates/rsk-fido/src/makecredential.rs: replace + with - in encode_mc_extensions
+crates/rsk-fido/src/makecredential.rs: replace + with * in encode_mc_extensions
+
+[default-largeblob-dispatch] LARGE_BLOB_EXT is false in this mutation profile. The altered extension/command guards have their original constant truth values, the GA input remains Absent so its named-list argument is unused and its unsigned-output count is zero. The largeblob-ext jobs own the alternative profile.
+crates/rsk-fido/src/lib.rs: replace match guard !consts::LARGE_BLOB_EXT with true in process_cbor
+crates/rsk-fido/src/getassertion.rs: replace match guard !LARGE_BLOB_EXT with true in parse_extensions
+crates/rsk-fido/src/getassertion.rs: replace match guard LARGE_BLOB_EXT with false in parse_extensions
+crates/rsk-fido/src/getassertion.rs: replace > with == in get_assertion_inner
+crates/rsk-fido/src/getassertion.rs: replace > with < in get_assertion_inner
+crates/rsk-fido/src/getassertion.rs: replace > with >= in get_assertion_inner
+crates/rsk-fido/src/getassertion.rs: replace += with -= in get_assertion_inner
+crates/rsk-fido/src/makecredential.rs: replace match guard !LARGE_BLOB_EXT with true in parse_extensions
+crates/rsk-fido/src/makecredential.rs: replace match guard LARGE_BLOB_EXT with false in parse_extensions
+
+[default-conformance-rpid-off] The fixed conformance RPID override is cfg(feature = "ea-conformance-rpid"), absent from the default mutation profile. Provisioned EA matching remains unchanged.
+crates/rsk-fido/src/makecredential.rs: replace == with != in rp_eligible_for_vendor_ea
+
+[default-zero-extension-count] Without preview-sign, the extra getInfo extension count is zero; without advertise-pqc, the extra algorithm count is zero. Adding or subtracting that zero gives the same CBOR lengths.
+crates/rsk-fido/src/getinfo.rs: replace + with -
+crates/rsk-fido/src/getinfo.rs: replace + with - in write_info
+
+[fido-bit-lanes] The AAGUID joins validated hex nibbles, paths and permissions join distinct flag bits, and authData joins UP/UV/AT/ED bits independently. OR and XOR yield the same bytes for every admitted value.
+crates/rsk-fido/src/clientpin.rs: replace | with ^ in get_pin_token
+crates/rsk-fido/src/clientpin.rs: replace | with ^ in get_uv_token
+crates/rsk-fido/src/consts.rs: replace | with ^ in parse_aaguid
+crates/rsk-fido/src/getassertion.rs: replace | with ^ in get_assertion_inner
+crates/rsk-fido/src/getassertion.rs: replace | with ^ in get_assertion_inner
+crates/rsk-fido/src/getassertion.rs: replace | with ^ in next_assertion_response
+crates/rsk-fido/src/getassertion.rs: replace | with ^ in next_assertion_response
+crates/rsk-fido/src/keyderiv.rs: replace | with ^
+crates/rsk-fido/src/makecredential.rs: replace | with ^ in make_credential_inner
+crates/rsk-fido/src/makecredential.rs: replace | with ^ in make_credential_inner
+crates/rsk-fido/src/makecredential.rs: replace | with ^ in make_credential_inner
+crates/rsk-fido/src/pinpolicy.rs: replace | with ^ in Policy::flags
+
+[fido-scratch-prefix] The enlarged message, token, RP-record and assertion scratch arrays are consumed only through their original written length. Their output and errors agree; temporary stack space and wipe cost are not equivalent.
+crates/rsk-fido/src/clientpin.rs: replace + with * in issue_token
+crates/rsk-fido/src/config.rs: replace + with * in authenticator_config
+crates/rsk-fido/src/config.rs: replace + with * in authenticator_config
+crates/rsk-fido/src/config.rs: replace + with * in set_min_pin_length
+crates/rsk-fido/src/credential.rs: replace + with *
+crates/rsk-fido/src/credential.rs: replace + with *
+crates/rsk-fido/src/credential.rs: replace + with *
+crates/rsk-fido/src/getassertion.rs: replace + with * in get_assertion_inner
+crates/rsk-fido/src/getassertion.rs: replace + with * in get_assertion_inner
+crates/rsk-fido/src/getassertion.rs: replace + with * in next_assertion_response
+crates/rsk-fido/src/getassertion.rs: replace + with * in next_assertion_response
+crates/rsk-fido/src/getassertion.rs: replace + with * in next_assertion_response
+crates/rsk-fido/src/journal.rs: replace + with * in vendor_checkpoint
+crates/rsk-fido/src/journal.rs: replace + with * in vendor_checkpoint
+crates/rsk-fido/src/journal.rs: replace + with * in vendor_checkpoint
+crates/rsk-fido/src/makecredential.rs: replace + with * in rp_min_pin_len
+
+[equal-minimum-choice] At equality min3 selects one of two identical usize values; the minimum is unchanged.
+crates/rsk-fido/src/cert.rs: replace < with <= in min3
+crates/rsk-fido/src/cert.rs: replace < with <= in min3
+
+[short-trivial-pin] Every PIN of at most two code points is already refused by distinct <= 2 (and the empty/singleton step check). Returning earlier at two or continuing for zero/one preserves the triviality verdict.
+crates/rsk-fido/src/clientpin.rs: replace < with == in pin_is_trivial
+crates/rsk-fido/src/clientpin.rs: replace < with <= in pin_is_trivial
+
+[credential-output-budget] At WRAP_LEN there is no room for a CBOR body, so both guards return NoMemory. Widening the body budget still reaches the unchanged ciphertext/tag/silent-tag bounds, preserving success bytes and the NoMemory result. Output on Err is unspecified and callers discard it; intermediate buffer contents and work can differ.
+crates/rsk-fido/src/credential.rs: replace < with <= in credential_create
+crates/rsk-fido/src/credential.rs: replace - with + in credential_create
+crates/rsk-fido/src/credential.rs: replace - with / in credential_create
+crates/rsk-fido/src/credential.rs: replace - with + in credential_create
+
+[empty-authenticated-body] At the changed framing boundary the ciphertext is empty. Even a valid empty AEAD tag cannot produce a CBOR credential: credential_load rejects the empty body, and none of these framing widths equals the 64-byte U2F fallback. Scratch contents on None are unspecified.
+crates/rsk-fido/src/credential.rs: replace < with <= in try_format
+
+[authenticated-rp-filter] A short stored record yields an empty cred_record_box, which credential_load refuses. A foreign RP prefix is independently refused by AEAD/U2F verification bound to the requested rpIdHash. These early for_each_cred guards only avoid failed decrypt work and never change the callback set.
+crates/rsk-fido/src/passkeys.rs: replace || with && in for_each_cred
+crates/rsk-fido/src/passkeys.rs: replace < with == in for_each_cred
+crates/rsk-fido/src/passkeys.rs: replace < with <= in for_each_cred
+
+[idle-empty-blob-reset] The sole in_flight consumer only resets the transfer counters. When expected_length is zero all current producers also leave expected_next_offset zero, so an extra stale reset is unobservable; the borrowed largeblob-ext scratch is untouched.
+crates/rsk-fido/src/state.rs: replace LargeBlobState::in_flight -> bool with true
+
+[reset-phase-budget-slack] Each converging reset phase owns strictly fewer FIDs than the combined namespace budget: gate records are separated, and FIDO seeds are removed first. Thus equality is unreachable on a conforming store. A backend that re-yields deleted FIDs is refused under either guard; its refusal timing is not pinned.
+crates/rsk-fido/src/reset.rs: replace > with >= in sweep
+crates/rsk-piv/src/files.rs: replace > with >= in sweep
+
+[two-root-arm-transition] RootArm has only PreOtp and Otp. Same-arm equality OR the changed transition predicate still accepts exactly the two same-arm cases and PreOtp-to-Otp, refusing Otp-to-PreOtp. The independent same-arm key check is unchanged.
+crates/rsk-store/src/authenticated/authority.rs: replace && with || in Authority::stage_replace
+
+[identical-snapshot-scans] Both successful write_snapshot calls receive the same checkpoint, directory, partition and key, returning identical Complete JournalScan values (fingerprint None). Reordering those equal return values changes nothing; failures return before the array is built.
+crates/rsk-store/src/authenticated/main.rs: replace == with != in Main<F, C>::snapshots
+
+[comb-table-redundant-entries] Enlarged signed-comb tables repeat the low WIDTH-bit point pattern; the correspondingly widened selection mask selects the same point. ECDH only selects magnitudes 1..8, whose entries are unchanged. Extra precomputation and stack costs are outside the output oracle.
+crates/rsk-ec/src/comb_p384_params.rs: replace - with +
+crates/rsk-ec/src/comb_p384_params.rs: replace - with /
+crates/rsk-ec/src/comb_p521_params.rs: replace - with +
+crates/rsk-ec/src/comb_p521_params.rs: replace - with /
+crates/rsk-ec/src/ecdh_p384.rs: replace - with +
+crates/rsk-ec/src/ecdh_p384.rs: replace - with /
+crates/rsk-ec/src/ecdh_p521.rs: replace - with +
+crates/rsk-ec/src/ecdh_p521.rs: replace - with /
+
+[p521-comb-geometry-cost] The generator and consumer share ROUNDS and STRIDE. Both increased round counts cover all 521 scalar bits with zero padding, and the generated correction removes the matching new centers. Scalar multiplication is identical; table-generation and runtime costs differ.
+crates/rsk-ec/src/comb_p521_params.rs: replace * with +
+crates/rsk-ec/src/comb_p521_params.rs: replace * with /
+
+[ecdh-zero-digit-padding] Increasing DIGITS appends leading zero signed digits. Doubling the identity through those zeros leaves the same accumulation for every canonical scalar; stack and work increase.
+crates/rsk-ec/src/ecdh_p384.rs: replace / with *
+
+[ec-affine-validity-lanes] For z=0 the inverse fallback makes coordinates (0,0), invalid on both shipped curves since b is nonzero; only identity is set. For nonzero z identity is clear. Thus the two validity choices cannot overlap, and OR/XOR are identical.
+crates/rsk-ec/src/ecdh_p384.rs: replace | with ^ in Jacobian::affine
+crates/rsk-ec/src/ecdh_p521.rs: replace | with ^ in Jacobian::affine
+
+[scalar-width-equality] When the hash has exactly the order width, taking its full-width prefix preserves the original byte slice before the same scalar reduction.
+crates/rsk-ec/src/sign_p521_deterministic.rs: replace > with >= in bytes2scalar
+
+[nonempty-produced-certificate] att_chain_pack only emits DER frames at least two bytes long, and the device-certificate wrapper also emits a nonempty DER certificate. The changed equality only affects a zero-byte final certificate in a malformed stored record. We deliberately do not pin acceptance of that empty certificate; a real imported or generated chain is unchanged.
+crates/rsk-fido/src/cert.rs: replace > with >= in att_chain_cert_range
+
+[bounded-device-certificate] The default device certificate is generated by the fixed template into a 512-byte buffer. Even the divided chain room remains 713 bytes, so clamping that producer is unchanged; enlarging it is likewise nonbinding. This scope does not include arbitrary corrupted EF_EE_DEV bytes.
+crates/rsk-fido/src/makecredential.rs: replace - with + in make_attestation
+crates/rsk-fido/src/makecredential.rs: replace - with / in make_attestation
+
+[single-certificate-unused-tail] The wrapper writes one certificate and fixes its count at one. Enlarging shape.chain_len adds only unused tail bytes: encode_x5c reads the unchanged two-byte certificate length and that certificate, never the extra tail.
+crates/rsk-fido/src/makecredential.rs: replace + with * in make_attestation
+
+[damaged-prefix-availability] A header-only resident record cannot open as a credential. The changed equality can add a conservative Other refusal when such a damaged record is combined with an unread foreign slot; we deliberately do not pin continuing registration under that malformed-storage combination. Valid records and fail-closed refusal of an unread same-RP passkey are unchanged.
+crates/rsk-fido/src/makecredential.rs: replace < with <= in exclude_hit
+
+[ambient-deadline-scheduling] Gesture handlers refresh activity before returning and the sleep-button path sets asleep, so the extra deadline poll after local activity normally sees fresh deadlines. The exact iteration that first polls after a slow paint is deliberately unpinned; hardware timing equivalence is not established by host tests.
+crates/rsk-display/src/status.rs: replace && with || in status_loop
+
+[raw-bank-repeated-granularity] The nonzero 256-byte scratch window cannot be a multiple of a zero or oversized read/write size. Those divisibility checks repeat the refusals when the local zero/oversized pair is joined by AND; a zero erase size independently fails nonempty range alignment. Rust's AND precedence leaves all other OR terms intact.
+crates/rsk-store/src/authenticated/bank.rs: replace || with && in RawBank<F>::valid_range
+crates/rsk-store/src/authenticated/bank.rs: replace || with && in RawBank<F>::valid_range
+crates/rsk-store/src/authenticated/bank.rs: replace || with && in RawBank<F>::valid_range
+
+[empty-journal-tail] At at == capacity, the widened loop reaches the unchanged short-delta guard and finish_scan at the same offset. Its zero-byte erased tail is true without flash I/O, exactly as the original loop exit.
+crates/rsk-store/src/authenticated/journal.rs: replace < with <= in Journal<F>::scan
+
+[keypad-layout-assertion] Only the unnamed compile-time keypad-fit assertion changes. The actual T9 coordinates and hit testing use the unchanged layout constants; a runtime test cannot distinguish a still-satisfied compile-time assertion.
+crates/rsk-ui/src/lib.rs: replace - with +
+crates/rsk-ui/src/lib.rs: replace - with /
+
+[equal-ui-boundary] At equality the share adjustment and coverage clamp assign the same value. Glyph source sizes are unique in every current table, so the widened tie-breaker cannot select a different bitmap of the same size.
+crates/rsk-ui/src/lib.rs: replace > with >= in step_share_params
+crates/rsk-ui/src/lib.rs: replace > with >= in step_share_params
+crates/rsk-ui/src/aa.rs: replace > with >= in min_coverage
+crates/rsk-ui/src/glyph.rs: replace > with >= in pick
+crates/rsk-ui/src/glyph.rs: replace > with >= in pick_index
+
+[unused-round-span-row] The extra y==half span is within the compile-time array, but every consumer returns full coverage before reading a local row >=half. The additional generated row is unused.
+crates/rsk-ui/src/aa.rs: replace < with <= in rounded_spans
+
+[ring-table-extra-empty-pixel] The only ring table has LEN=DIAMETER squared. At index==LEN its sample y is already outside the outer circle, so no mask[index] access occurs and the extra iteration changes no table byte.
+crates/rsk-ui/src/aa.rs: replace < with <= in ring_sample_mask
+
+[ring-sample-parity] Every ring sample has two odd coordinates, so its squared distance is 2 modulo 8. The inner radius is a multiple of four and its square is 0 modulo 8; the changed equality is impossible.
+crates/rsk-ui/src/aa.rs: replace > with >= in ring_sample_mask
+crates/rsk-ui/src/aa.rs: replace > with >= in ring_arc
+
+[ui-coverage-bit-lanes] Status ring/arc coverage and glyph RLE coverage/run occupy separate nibbles. RGB565 joins disjoint 5/6/5 channel lanes. OR and XOR therefore emit identical bytes.
+crates/rsk-ui/src/aa.rs: replace | with ^ in status_arc_coverages
+crates/rsk-ui/src/glyph.rs: replace | with ^ in fixed_masks
+crates/rsk-ui/src/glyph.rs: replace | with ^ in fixed_masks
+crates/rsk-ui/src/page_templates.rs: replace | with ^ in rgb565
+crates/rsk-ui/src/page_templates.rs: replace | with ^ in rgb565
+
+[empty-round-repeated-bounds] The later rectangle bounds independently reject either empty dimension. In rounded_coverage the odd sample positions cannot straddle a zero-width/height edge on the eight-unit pixel grid. The initial empty checks can therefore be conjoined without admitting any sample.
+crates/rsk-ui/src/aa.rs: replace || with && in rounded_sample
+crates/rsk-ui/src/aa.rs: replace || with && in rounded_coverage
+crates/rsk-ui/src/aa.rs: replace || with && in fixed_rounded_coverage
+
+[rounded-sample-grid-boundary] Rounded samples lie at odd coordinates, while rectangle edges are multiples of eight. The last sample is 7 modulo 8, so it also cannot equal an edge. Each widened equality is unreachable for the renderer sampling grid.
+crates/rsk-ui/src/aa.rs: replace < with <= in rounded_sample
+crates/rsk-ui/src/aa.rs: replace < with <= in rounded_sample
+crates/rsk-ui/src/aa.rs: replace < with <= in rounded_coverage
+crates/rsk-ui/src/aa.rs: replace < with <= in rounded_coverage
+
+[rounded-shortcut-endpoint-slack] The changed shortcut endpoints move from 1/7 modulo 8 to 0/6 modulo 8. Rectangle edges and clamped radii lie on multiples of four, so none of these one-unit shifts crosses a shortcut threshold; the actual sample loop is unchanged.
+crates/rsk-ui/src/aa.rs: replace + with * in rounded_coverage
+crates/rsk-ui/src/aa.rs: replace + with * in rounded_coverage
+crates/rsk-ui/src/aa.rs: replace * with + in rounded_coverage
+crates/rsk-ui/src/aa.rs: replace * with + in rounded_coverage
+
+[rounded-shortcut-radius-cost] Each listed change enlarges only the radius used by the full-coverage shortcut, narrowing its central stripes. The unchanged fixed table or rounded_sample fallback computes the original coverage at the additional pixels; only work changes.
+crates/rsk-ui/src/aa.rs: replace / with * in rounded_coverage
+crates/rsk-ui/src/aa.rs: replace / with * in rounded_coverage
+crates/rsk-ui/src/aa.rs: replace - with + in rounded_coverage
+crates/rsk-ui/src/aa.rs: replace / with * in rounded_coverage
+crates/rsk-ui/src/aa.rs: replace - with + in rounded_coverage
+
+[rounded-shortcut-cost] The conjunctions narrow the central shortcut and leave the exact fallback in place. Replacing right-radius by right/radius also narrows it for the admitted radius>=4 and right>=2*radius; radius zero short-circuits before division. Pixel coverage is unchanged.
+crates/rsk-ui/src/aa.rs: replace || with && in rounded_coverage
+crates/rsk-ui/src/aa.rs: replace || with && in rounded_coverage
+crates/rsk-ui/src/aa.rs: replace - with / in rounded_coverage
+crates/rsk-ui/src/aa.rs: replace - with / in rounded_coverage
+
+[rounded-corner-after-stripes] For supported fixed diameters, the preceding full central stripes already return whenever either local coordinate reaches corner. The widened corner guards and the later default full-coverage return therefore cannot be reached at a newly admitted pixel by these individual mutations.
+crates/rsk-ui/src/aa.rs: replace && with || in rounded_coverage
+crates/rsk-ui/src/aa.rs: replace < with <= in rounded_coverage
+crates/rsk-ui/src/aa.rs: replace < with <= in rounded_coverage
+crates/rsk-ui/src/aa.rs: replace * with + in rounded_coverage
+crates/rsk-ui/src/aa.rs: replace * with / in rounded_coverage
+
+[rounded-strip-boundaries] At local_x==half the exact corner renderer and straight strip renderer agree. At px==inner.right the pixel is already in the corner branch, or a border wider than half makes the unchanged inner-y check false, so widening that later x check is masked.
+crates/rsk-ui/src/aa.rs: replace < with <= in fill_fixed_strips
+crates/rsk-ui/src/aa.rs: replace < with <= in fill_fixed_strips
+
+[circle-cache-cost] The fixed inner-circle coverage table and circle_coverage fallback represent the same samples. Reversing the cache eligibility condition only changes which equivalent path supplies inner coverage; widths beyond the diameter still have an empty inner circle.
+crates/rsk-ui/src/aa.rs: replace <= with > in circle
+
+[arc-clamp-identity] An angle remainder is in 0..359. A sweep of 360 and every larger sweep include that entire range, and equality at the clamp already returns 360. Both changed clamp guards preserve arc membership.
+crates/rsk-ui/src/aa.rs: replace > with == in angle_in_arc
+crates/rsk-ui/src/aa.rs: replace > with >= in angle_in_arc
+
+[generated-font-empty-dimensions] Every current generated font glyph has either width=height=0 or both dimensions positive. The three widened nonempty-glyph checks therefore select exactly the same glyphs. Re-evaluate this invariant when regenerated font metrics change.
+crates/rsk-ui/src/font.rs: replace && with || in draw
+crates/rsk-ui/src/font.rs: replace > with >= in draw
+crates/rsk-ui/src/font.rs: replace > with >= in draw
+
+[font-ink-bounds-pair] Before clipping, bounds come only from glyphs with two positive dimensions: either both extents are nonempty, or all four sentinel bounds remain. The conjoined empty check has the same truth value; the later clipped-bounds check is unchanged.
+crates/rsk-ui/src/font.rs: replace || with && in draw
+
+[transparent-fixed-glyph-tail] Every enabled fixed glyph mask ends in zero coverage, verified against the authored bitmap sampler. The final run therefore shifts zero either way. The existing fixed_masks_match_the_original_sampler_exactly test compares every decoded pixel with the independent uncompressed sampler and will make this entry stale if a future asset has a nonzero tail.
+crates/rsk-ui/src/glyph.rs: replace << with >> in fixed_masks
+
+[bip39-capability-bit-lanes] BIP39 places each index bit in a separate initially zero output lane. Each capability constant and the CCID protocol bit occupy distinct bits. OR and XOR produce the same bytes.
+crates/rsk-bip39/src/lib.rs: replace | with ^ in pack_indices
+crates/rsk-devconf/src/lib.rs: replace | with ^
+crates/rsk-devconf/src/lib.rs: replace | with ^
+crates/rsk-devconf/src/lib.rs: replace | with ^
+crates/rsk-devconf/src/lib.rs: replace | with ^
+crates/rsk-devconf/src/lib.rs: replace | with ^
+crates/rsk-device/src/ccid.rs: replace | with ^
+
+[merge-scratch-capacity-cost] Replacing 64+128 by 64*128 enlarges only the merge scratch. The same bounded input slices are merged and trimmed to the unchanged stored cap; stack cost differs.
+crates/rsk-devconf/src/lib.rs: replace + with *
+
+[fixed-config-header-identity] The changed fixed-header subexpression is 2+2. Multiplication also yields four, so the derived budget is identical.
+crates/rsk-devconf/src/lib.rs: replace + with *
+
+[config-nonempty-repeated-guard] The inner positive-length guard repeats the stored arm admission. Widening the outer admission to include an empty well-formed blob still reaches the unchanged inner guard and default response.
+crates/rsk-devconf/src/lib.rs: replace > with >= in config_tlv
+crates/rsk-devconf/src/lib.rs: replace match guard full > 0 with true in config_tlv
+crates/rsk-devconf/src/lib.rs: replace > with >= in config_tlv
+
+[config-output-scratch-slack] Only the 128-byte local-buffer clamp changes, not the caller-capacity clamp. At the fixed 19-byte prefix its changed room remains at least 71 bytes, above the 64-byte input echo buffer. No echoed byte or response bound changes.
+crates/rsk-devconf/src/lib.rs: replace + with - in config_tlv
+crates/rsk-devconf/src/lib.rs: replace + with * in config_tlv
+
+[config-empty-walk-identity] An oversized read falls back to the empty checked slice and has_tag finds no lock, returning the same Ok without writing. An empty enabled-capability record likewise resolves to the unchanged supported default. At trim m==keep the empty stored prefix offers no eviction and breaks at the same m.
+crates/rsk-devconf/src/lib.rs: replace match guard n <= EF_DEV_CONF_READ_MAX with true in scrub_legacy_lock
+crates/rsk-devconf/src/lib.rs: replace > with >= in trim_to_cap
+crates/rsk-devconf/src/lib.rs: replace match guard full > 0 with true in read_enabled_caps
+crates/rsk-devconf/src/lib.rs: replace > with >= in read_enabled_caps
+
+[device-hook-default-identity] These default hook bodies already return BootState::default(), None (SearchResult is Option), and STATUS_IDLE=0 respectively. The replacement is the same value.
+crates/rsk-device/src/lib.rs: replace Hooks::boot_state -> BootState with Default::default()
+crates/rsk-device/src/lib.rs: replace Hooks::rsa_search -> SearchResult with Default::default()
+crates/rsk-display/src/lib.rs: replace Hooks::led_status -> u8 with 0
+
+[display-wiring-default-off] pin_ref_ready and reset_chaining are compiled only with the display feature, absent from the default mutation run. check.sh explicitly runs rsk-device display tests and Clippy; those enabled tests own the secure-PIN reference and chaining contracts.
+crates/rsk-device/src/ccid.rs: replace CcidApplets<'a, S, R, VP>::pin_ref_ready -> bool with true
+crates/rsk-device/src/ccid.rs: replace CcidApplets<'a, S, R, VP>::pin_ref_ready -> bool with false
+crates/rsk-device/src/ccid.rs: delete match arm rsk_openpgp::consts::PW1_MODE81 | rsk_openpgp::consts::PW1_MODE82 | rsk_openpgp::consts::PW3_MODE83 in CcidApplets<'a, S, R, VP>::pin_ref_ready
+crates/rsk-device/src/ccid.rs: delete match arm rsk_usb::secure_pin::PIV_PIN_P2 in CcidApplets<'a, S, R, VP>::pin_ref_ready
+crates/rsk-device/src/ccid.rs: replace && with || in CcidApplets<'a, S, R, VP>::pin_ref_ready
+crates/rsk-device/src/ccid.rs: replace == with != in CcidApplets<'a, S, R, VP>::pin_ref_ready
+crates/rsk-device/src/ccid.rs: replace CcidApplets<'a, S, R, VP>::reset_chaining with ()
+
+[rsa-public-response-slack] Only the RSA keygen fast paths use these slices. The largest admitted modulus is 512 bytes and its public-key TLV fits below the divided 1531-byte room. The enlarged room also fits the RESP_BUILD+2 allocation. finish_fast_path only receives those same bounded public-key answers.
+crates/rsk-device/src/ccid.rs: replace - with + in CcidApplets<'a, S, R, VP>::try_rsa_keygen
+crates/rsk-device/src/ccid.rs: replace - with / in CcidApplets<'a, S, R, VP>::try_rsa_keygen
+crates/rsk-device/src/ccid.rs: replace - with + in CcidApplets<'a, S, R, VP>::try_piv_rsa_keygen
+crates/rsk-device/src/ccid.rs: replace - with / in CcidApplets<'a, S, R, VP>::try_piv_rsa_keygen
+crates/rsk-device/src/ccid.rs: replace - with + in CcidApplets<'a, S, R, VP>::finish_fast_path
+crates/rsk-device/src/ccid.rs: replace - with / in CcidApplets<'a, S, R, VP>::finish_fast_path
+
+[click-release-sentinel-scope] A nonzero last release is accompanied by a positive count; firing or consuming a ceremony clears both. Widening the count guard is redundant. Widening the timestamp guard changes only a release stamped zero, the unarmed sentinel; the firmware button worker starts polling after boot at a positive monotonic time. This is scoped to that producer, not arbitrary synthetic zero-time edges.
+crates/rsk-device/src/click.rs: replace > with >= in Clicks::tick
+crates/rsk-device/src/click.rs: replace > with >= in Clicks::tick
+
+[security-trace-default-off] The security-trace feature owns these snapshots and token projections; the default mutation binary omits their bodies. The enabled trace build and emulator checks exercise them separately.
+crates/rsk-device/src/ctap.rs: replace AppletHandler<'_, S, R, VP>::security_trace_snapshot -> SecurityTraceSnapshot with Default::default()
+crates/rsk-device/src/ctap.rs: delete match arm Some(1) in AppletHandler<'_, S, R, VP>::security_trace_snapshot
+crates/rsk-device/src/ctap.rs: replace AppletHandler<'_, S, R, VP>::security_trace_abstract_token -> rsk_fido::AbstractTokenState with Default::default()
+
+[u2f-output-scratch-slack] The divided 7609/2-byte HID response room still exceeds the bounded attestation record plus the U2F registration framing and signature. Authentication and version replies are smaller. Only unused output capacity changes.
+crates/rsk-device/src/ctap.rs: replace - with / in AppletHandler<'_, S, R, VP>::handle_msg
+
+[modal-repeated-invalidation] Every current modal paint also clears shown on entry (including render_list, collect_pin and notice/success helpers), and none sets it back before returning. Paths that paint nothing retain the valid ambient frame. Removing the final repeated invalidation changes no delivered frame for those callers.
+crates/rsk-display/src/lib.rs: replace Ui<'a, P, T, H>::end_modal with ()
+
+[audit-page-stop-boundary] The nonempty fixed page callback returns false immediately after filling its last row. The journal walker stops on that result, so the next callback with n==rows.len() cannot occur; widening the inner comparison admits no additional write.
+crates/rsk-display/src/applets.rs: replace < with <= in Local<'_, 'a, P, T, H, S, R>::load_events
+
+[rename-pending-state-pair] All T9 producers set or clear pending and group together. Conjoining their None checks therefore preserves the branch for every reachable state.
+crates/rsk-display/src/pin.rs: replace || with && in T9::settle
+
+[rename-settle-poll-boundary] The widened comparison delays settlement only at the exact 800 ms instant until the next touch poll. Saving commits the pending character independently. The exact transient repaint poll at equality is deliberately unpinned, not claimed timing-equivalent.
+crates/rsk-display/src/pin.rs: replace < with <= in T9::settle
+
+[pin-repaint-cost] The widened repaint condition submits the same current PIN-dot state on an additional poll or completion. It changes panel traffic and timing, not the entered result or displayed value; hardware cost and draw-fault timing are outside this equivalence scope.
+crates/rsk-display/src/pin.rs: replace && with || in Ui<'a, P, T, H>::collect_pin

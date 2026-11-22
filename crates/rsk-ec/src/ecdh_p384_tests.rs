@@ -36,6 +36,25 @@ fn scaled(point: &p384::AffinePoint, scale: u64) -> Jacobian {
 }
 
 #[test]
+fn every_precomputed_multiple_carries_its_own_double() {
+    for scalar in [1u64, 17] {
+        let peer = reference(&p384::AffinePoint::GENERATOR, &p384::Scalar::from(scalar));
+        for (point, twice) in table(&peer).unwrap() {
+            let point =
+                p384::AffinePoint::from_coordinates(&point[0].to_repr(), &point[1].to_repr())
+                    .unwrap();
+            let twice =
+                p384::AffinePoint::from_coordinates(&twice[0].to_repr(), &twice[1].to_repr())
+                    .unwrap();
+            assert_eq!(
+                twice,
+                p384::ProjectivePoint::from(point).double().to_affine()
+            );
+        }
+    }
+}
+
+#[test]
 fn matches_full_points_at_signed_window_carries_and_order_boundaries() {
     let mut scalars = [p384::Scalar::ZERO; 52];
     for (i, scalar) in scalars.iter_mut().take(20).enumerate() {

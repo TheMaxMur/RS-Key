@@ -132,6 +132,51 @@ fn an_authenticated_snapshot_may_end_at_the_bank_boundary() {
 }
 
 #[test]
+fn a_commit_in_the_last_full_journal_slot_is_authenticated_and_published() {
+    let flash = FaultFlash::new();
+    let empty = Directory::<2>::new();
+    let header = checkpoint(&empty, 0).encode(&JOURNAL_KEY).unwrap();
+    let entry = Entry::live(JOURNAL_ID, &JOURNAL_KEY, CRED, 1, b"owner").unwrap();
+    let prepare = Delta {
+        kind: DeltaKind::Prepare,
+        partition: Partition::Main,
+        sequence: 1,
+        address: 4096,
+        entry,
+        previous: rsk_crypto::sha256(&header),
+    }
+    .encode(&JOURNAL_KEY)
+    .unwrap();
+    let commit = Delta {
+        kind: DeltaKind::Commit,
+        previous: rsk_crypto::sha256(&prepare),
+        ..Delta::verify(&prepare, &JOURNAL_KEY).unwrap()
+    }
+    .encode(&JOURNAL_KEY)
+    .unwrap();
+    let end = u32::try_from(CHECKPOINT_BYTES + prepare.len() + commit.len()).unwrap();
+    let mut raw = RawBank::new(Geometry::<1, 4, 4>(flash.clone()), 0..end).unwrap();
+    for (at, bytes) in [
+        (0, header.as_slice()),
+        (CHECKPOINT_BYTES, prepare.as_slice()),
+        (CHECKPOINT_BYTES + prepare.len(), commit.as_slice()),
+    ] {
+        raw.program(u32::try_from(at).unwrap(), bytes).unwrap();
+    }
+    let before = flash.inner.bytes.borrow().clone();
+    let mut restored = Directory::<2>::new();
+    let scan = Journal::new(raw, Partition::Main)
+        .scan(&JOURNAL_KEY, &mut restored)
+        .unwrap();
+    assert_eq!(scan.status, JournalStatus::Complete);
+    assert_eq!(scan.lower_bound, Some(1));
+    assert_eq!(scan.state.unwrap().sequence(), 1);
+    assert_eq!(scan.next, end);
+    assert_eq!(restored.entries(), &[entry]);
+    assert_eq!(*flash.inner.bytes.borrow(), before);
+}
+
+#[test]
 fn journal_snapshot_and_directory_contradictions_remain_dirty_authenticated_progress() {
     for case in 0..5 {
         let flash = FaultFlash::new();

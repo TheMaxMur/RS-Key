@@ -45,6 +45,12 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   reserve swap for the heavy Kani solver, and allow the full condition-coverage
   storage sweeps to finish. Record the reviewed applicability exceptions for the
   new heapless advisories in `docs/limitations.md`.
+- Repair the weekly mutation sweep: cover geometry, text buffers, storage
+  boundaries, PIN title scrolling, wipe-failure notices, P-384 precomputation
+  and keyboard reply flags; document reviewed survivors and remove obsolete
+  entries. Keep generated font data under the existing regeneration check.
+  Optimize host mutation builds and balance whole-file shards without splitting
+  baseline counts. Scope deep-check cancellation to its branch.
 
 ## [0.5.0] - 2026-11-21
 

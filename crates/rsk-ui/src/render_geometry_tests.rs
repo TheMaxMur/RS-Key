@@ -167,6 +167,37 @@ fn a_thin_marked_domain_label_retains_more_than_22_suffix_bytes() {
 }
 
 #[test]
+fn a_multibyte_domain_suffix_respects_the_fixed_text_buffer() {
+    let domain = "\u{1F600}".repeat(20);
+    let expected_text = format!("...{}", "\u{1F600}".repeat(16));
+    assert!(font::width(&format!("...{domain}"), Role::Body).unwrap() <= 227);
+    let clip = Rect::new(0, 30, 227, 20);
+    let mut actual = Rec::new();
+    text_right_ellipsized(
+        &mut actual,
+        &domain,
+        EgPoint::new(0, 40),
+        Role::Body,
+        FG,
+        clip,
+        true,
+    )
+    .unwrap();
+    let mut expected = Rec::new();
+    font::left(
+        &mut expected.clipped(&eg_rect(clip)),
+        &expected_text,
+        EgPoint::new(0, 40),
+        Role::Body,
+        FG,
+        BG,
+    )
+    .unwrap();
+    same_pixels(&actual, &expected);
+    assert!(!actual.oob);
+}
+
+#[test]
 fn title_text_aligns_with_the_back_target_or_the_plain_content_margin() {
     for back in [false, true] {
         let mut actual = Rec::new();
@@ -208,6 +239,26 @@ fn a_wide_title_uses_the_space_after_the_edit_pencil_zone() {
     .unwrap();
     same_pixels(&actual, &expected);
     assert!(actual.wrote_in(Rect::new(193, 24, 34, 30)));
+}
+
+#[test]
+fn an_overflowing_plain_title_still_stops_at_the_content_margin() {
+    let title = "W".repeat(48);
+    let mut actual = Rec::new();
+    title_bar_wide(&mut actual, &title, FG, false).unwrap();
+    let mut expected = Rec::new();
+    font::left(
+        &mut expected.clipped(&eg_rect(Rect::new(13, 24, 214, 30))),
+        "WWWWWWWWWW...",
+        EgPoint::new(13, 39),
+        Role::Heading,
+        FG,
+        BG,
+    )
+    .unwrap();
+    same_pixels(&actual, &expected);
+    assert!(!actual.wrote_outside(Rect::new(13, 24, 214, 30)));
+    assert!(!actual.oob);
 }
 
 #[test]
@@ -315,6 +366,79 @@ fn plain_home_rows_align_the_leading_icon_label_and_trailing_count() {
             )
             .unwrap();
         }
+        same_pixels(&actual, &expected);
+        assert!(!actual.oob);
+    }
+}
+
+#[test]
+fn a_chipped_drill_in_row_keeps_its_icon_and_text_inside_their_columns() {
+    for trailing in [None, Some("65535")] {
+        let label = "W".repeat(48);
+        let mut actual = Rec::new();
+        row_body(
+            &mut actual,
+            Rect::new(8, 128, 224, 34),
+            Glyph::Key,
+            &label,
+            trailing.map(|text| (text, theme::GREY)),
+            true,
+            true,
+        )
+        .unwrap();
+        let mut expected = Rec::new();
+        crate::aa::rounded_rect(
+            &mut expected,
+            Rect::new(11, 134, 22, 22),
+            6,
+            Some(theme::CHIP),
+            None,
+            theme::ROW_BG,
+        )
+        .unwrap();
+        glyph::draw(
+            &mut expected,
+            Glyph::Key,
+            Point::new(15, 138),
+            14,
+            theme::GREY,
+            theme::CHIP,
+        )
+        .unwrap();
+        glyph::draw(
+            &mut expected,
+            Glyph::Chevron,
+            Point::new(212, 139),
+            12,
+            theme::MUTED,
+            theme::ROW_BG,
+        )
+        .unwrap();
+        let label_width = if let Some(text) = trailing {
+            font::right(
+                &mut expected.clipped(&eg_rect(Rect::new(36, 128, 172, 34))),
+                text,
+                EgPoint::new(208, 145),
+                Role::Body,
+                theme::GREY,
+                theme::ROW_BG,
+            )
+            .unwrap();
+            164 - font::width(text, Role::Body).unwrap() as u16
+        } else {
+            168
+        };
+        text_left_ellipsized_on(
+            &mut expected,
+            &label,
+            EgPoint::new(36, 145),
+            Role::Body,
+            theme::TEXT,
+            theme::ROW_BG,
+            Rect::new(36, 128, label_width, 34),
+            false,
+        )
+        .unwrap();
         same_pixels(&actual, &expected);
         assert!(!actual.oob);
     }
