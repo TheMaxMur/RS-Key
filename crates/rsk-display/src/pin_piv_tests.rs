@@ -120,6 +120,7 @@ fn changing_each_reference_verifies_the_old_secret_and_accepts_the_new_one_over_
         let mut ui = env.ui(Pad::taps(&taps));
         ui.hooks.presence_ms = 3000;
         env.local(&mut ui).run_change_piv_ref(which);
+        assert_approval_was_delivered(&env, &ui);
         assert_eq!(verify(&env, which, NEW_PIN), rsk_sdk::Sw::OK);
         assert_ne!(verify(&env, which, default(which)), rsk_sdk::Sw::OK);
         let other = match which {
@@ -153,8 +154,8 @@ fn cancel_at_either_new_pin_step_keeps_the_reference() {
 #[test]
 fn mismatch_reprompts_until_the_new_piv_pin_is_confirmed() {
     let env = Env::new();
-    let mut taps = pin_entry(NEW_PIN);
-    taps.extend(pin_entry(PIN));
+    let mut taps = pin_entry(PIN);
+    taps.extend(pin_entry(NEW_PIN));
     taps.extend(pin_entry(NEW_PIN));
     taps.extend(pin_entry(NEW_PIN));
     let mut ui = env.ui(Pad::taps(&taps));
@@ -307,6 +308,7 @@ fn protecting_the_management_key_requires_device_pin_and_hold() {
         center(rsk_ui::DEL_HOLD_RECT),
     ));
     env.local(&mut ui).run_protect_mgm_key();
+    assert_approval_was_delivered(&env, &ui);
     let mut admin = [0; 64];
     let n = env
         .fs
@@ -477,6 +479,41 @@ fn a_late_fused_read_failure_abandons_piv_change_and_unblock() {
                 rsk_piv::pad_pin(default(PinRef::Pin)).unwrap().expose()
             ),
             rsk_sdk::Sw::OK
+        );
+    }
+}
+
+fn assert_approval_was_delivered(env: &Env, ui: &crate::tests::TestUi<'_>) {
+    let mut reference = env.ui(Pad::idle());
+    rsk_ui::render_success(&mut reference.frame(), SuccessKind::Approved, false).unwrap();
+    rsk_ui::render_success_circle(&mut reference.panel, SuccessKind::Approved, 100).unwrap();
+    assert!(
+        ui.panel.pixels() == reference.panel.pixels(),
+        "a successful PIV action must deliver the approval frame"
+    );
+}
+
+#[test]
+fn a_wrong_piv_reference_can_be_retried_with_the_correct_value() {
+    for which in [PinRef::Pin, PinRef::Puk] {
+        let env = Env::new();
+        provision(&env);
+        let mut taps = pin_entry(NEW_PIN);
+        taps.extend(pin_entry(default(which)));
+        let mut ui = env.ui(Pad::taps(&taps));
+        ui.hooks.presence_ms = 3000;
+        let mut scratch = [0; 8];
+        let value = env
+            .local(&mut ui)
+            .gate_piv_ref(which, &mut scratch)
+            .expect("one wrong attempt must not block the retry");
+        assert_eq!(
+            value.expose(),
+            rsk_piv::pad_pin(default(which)).unwrap().expose()
+        );
+        assert_eq!(
+            rsk_piv::reference_retries_left(&mut env.fs.borrow_mut(), which),
+            Some(3)
         );
     }
 }

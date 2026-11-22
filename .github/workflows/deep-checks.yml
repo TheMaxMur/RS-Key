@@ -78,7 +78,7 @@
 # knob), and self-tests on any push that edits this file — a dispatch or a push
 # runs BOTH cadences, which is what makes an edit here self-testing. Local
 # equivalents:
-#   nix develop .#fuzz -c ./scripts/miri-all.sh   (MIRI_SHARD=2/3 for one shard)
+#   nix develop .#fuzz -c ./scripts/miri-all.sh   (MIRI_SHARD=2/6 for one shard)
 #   nix develop .#fuzz -c ./scripts/fuzz-all.sh   (FUZZ_SECONDS=30 to shorten,
 #                                                  FUZZ_CONFIG=flavours for the
 #                                                  second config both rows run)
@@ -140,7 +140,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3]
+        # The complete eight-seed roster exceeded four hours in three shards.
+        shard: [1, 2, 3, 4, 5, 6]
         config: [default, flavours]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -166,7 +167,7 @@ jobs:
       - name: miri — every fuzz target's logic under the UB checker
         run: nix develop .#fuzz -c ./scripts/miri-all.sh
         env:
-          MIRI_SHARD: ${{ matrix.shard }}/3
+          MIRI_SHARD: ${{ matrix.shard }}/6
           FUZZ_CONFIG: ${{ matrix.config }}
 
   fuzz:

@@ -581,7 +581,7 @@ crates/rsk-fido/src/makecredential.rs: replace | with ^ in make_credential_inner
 crates/rsk-fido/src/makecredential.rs: replace | with ^ in make_credential_inner
 crates/rsk-fido/src/pinpolicy.rs: replace | with ^ in Policy::flags
 
-[fido-scratch-prefix] The enlarged message, token, RP-record and assertion scratch arrays are consumed only through their original written length. Their output and errors agree; temporary stack space and wipe cost are not equivalent.
+[fido-scratch-prefix] The enlarged message, token, RP-record, nickname-IV and assertion scratch arrays are consumed only through their original written length. seal_nick still hashes exactly rpIdHash plus the bounded nickname, so its extra zero tail is unused. Outputs and errors agree; temporary stack space and wipe cost are not equivalent.
 crates/rsk-fido/src/clientpin.rs: replace + with * in issue_token
 crates/rsk-fido/src/config.rs: replace + with * in authenticator_config
 crates/rsk-fido/src/config.rs: replace + with * in authenticator_config
@@ -589,6 +589,7 @@ crates/rsk-fido/src/config.rs: replace + with * in set_min_pin_length
 crates/rsk-fido/src/credential.rs: replace + with *
 crates/rsk-fido/src/credential.rs: replace + with *
 crates/rsk-fido/src/credential.rs: replace + with *
+crates/rsk-fido/src/credential.rs: replace + with * in seal_nick
 crates/rsk-fido/src/getassertion.rs: replace + with * in get_assertion_inner
 crates/rsk-fido/src/getassertion.rs: replace + with * in get_assertion_inner
 crates/rsk-fido/src/getassertion.rs: replace + with * in next_assertion_response
@@ -682,7 +683,9 @@ crates/rsk-store/src/authenticated/bank.rs: replace || with && in RawBank<F>::va
 [empty-journal-tail] At at == capacity, the widened loop reaches the unchanged short-delta guard and finish_scan at the same offset. Its zero-byte erased tail is true without flash I/O, exactly as the original loop exit.
 crates/rsk-store/src/authenticated/journal.rs: replace < with <= in Journal<F>::scan
 
-[keypad-layout-assertion] Only the unnamed compile-time keypad-fit assertion changes. The actual T9 coordinates and hit testing use the unchanged layout constants; a runtime test cannot distinguish a still-satisfied compile-time assertion.
+[compile-time-ui-layout] Only unnamed compile-time settings-list and keypad-fit assertions change. Actual row/key coordinates and hit testing use unchanged layout constants; a runtime test cannot distinguish these still-satisfied compile-time assertions.
+crates/rsk-ui/src/lib.rs: replace - with +
+crates/rsk-ui/src/lib.rs: replace - with /
 crates/rsk-ui/src/lib.rs: replace - with +
 crates/rsk-ui/src/lib.rs: replace - with /
 
@@ -1195,3 +1198,30 @@ crates/rsk-mgmt/src/lib.rs: replace > with == in ManagementApplet<'a>::write_con
 crates/rsk-mgmt/src/lib.rs: replace > with >= in ManagementApplet<'a>::write_config
 crates/rsk-mgmt/src/lib.rs: replace - with + in ManagementApplet<'a>::write_config
 crates/rsk-mgmt/src/lib.rs: replace - with / in ManagementApplet<'a>::write_config
+
+[warm-value-length-tag] The changed guard is reached only on a cache hit. The sole production cache insertion follows Entry::verify_with_mac, including its exact length check. Every later hit compares a payload tag covering the entry and SHA-256 of the complete value, so a changed length still fails the unchanged tag check under the existing hash assumption. Cold reads retain the original length check.
+crates/rsk-store/src/authenticated/main_read_proof.rs: replace match guard value.len() == length with true in Main<F, C>::read_proven
+
+[empty-counter-tail] At at==capacity the unchanged short-entry guard calls finish_scan with the same fingerprint and offset as the original loop exit, without reading another entry. Results and backend calls agree. Secret Drop still wipes scratch on return; the original explicit wipe occurs before completion instead, so precise wipe timing is outside this host-oracle equivalence.
+crates/rsk-store/src/authenticated/counter_scan.rs: replace < with <= in scan_into
+
+[import-positive-progress-repeated] Journal::scan initializes the lower bound from the checkpoint before exposing state, then updates lower_bound and state.sequence together on every admitted delta. A positive state sequence already satisfies the earlier positive-lower-bound refusal. Replacing the later unsigned >0 by <0 only removes that repeated arm; pending and dirty-state refusals remain.
+crates/rsk-store/src/authenticated/managed.rs: replace > with < in Managed<F, C>::check_import_progress
+
+[empty-credential-prefix] Accepting Ok(Some(0)) through the widened match guard still reaches n<RECORD_PREFIX, which continues before inspecting the record or changing any counters. The same slot is skipped with no further backend calls; only read errors set unread.
+crates/rsk-fido/src/credential.rs: replace match guard n > 0 with true in credential_store
+crates/rsk-fido/src/credential.rs: replace > with >= in credential_store
+
+[bound-counter-frame-tail] Canonical private records are bounded by Slot::bytes or the public-PIN envelope, at most BUFFER_BYTES; Storage refuses direct bucket reads/writes. read_bound_frame fills only ENTRY_BYTES plus the padded value, so enlarged mirrored frames retain equal unused zero tails and return the same payload. Out-of-format private payloads are outside this domain; stack space and wipe cost differ.
+crates/rsk-store/src/authenticated/counter_read.rs: replace + with * in Counters<F>::read_proven
+crates/rsk-store/src/authenticated/counter_read.rs: replace + with * in Counters<F>::read_proven
+
+[resolved-main-postcondition] resolve_inner returns either already-synchronized Complete scans at the selected sequence with no pending transaction, or snapshots rebuilt from that sequence. Pending recovery also ends in snapshots. Journal::write_snapshot constructs both Complete scans with TransactionState::new and pending=None, so resolve's final conjunctions repeat the successful producer postcondition.
+crates/rsk-store/src/authenticated/main.rs: replace && with || in Main<F, C>::resolve
+crates/rsk-store/src/authenticated/main.rs: replace && with || in Main<F, C>::resolve
+
+[partial-key-walk] If either partition walk fails, the unchanged final error flag still returns false. The widened guard may additionally verify and yield genuine public-PIN keys; Storage::for_each_key permits a partial walk on false and forbids inferring absence from it. No complete successful key set changes. The partial callback subset, extra reads and possible ordinary read recovery are not claimed identical.
+crates/rsk-store/src/authenticated/storage.rs: replace && with || in <impl Storage for Authenticated<F, C>>::for_each_key
+
+[success-dwell-boundary] At exact equality with the sampled auto-dismiss deadline, <= can perform one more power-button poll and at most one TOUCH_POLL_MS sleep. The success frame is unchanged and the existing polling contract already permits tick-granular dismissal. Exact dwell latency and a button sample scheduled precisely on that boundary are outside this host-result oracle.
+crates/rsk-display/src/pin.rs: replace < with <= in Ui<'a, P, T, H>::show_success

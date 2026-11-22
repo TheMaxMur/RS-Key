@@ -207,6 +207,10 @@ fn word_flash_preserves_alignment_empty_bounds_and_transfer_errors() {
         bank.read(offset, &mut out[padding..padding + count])
             .unwrap();
         let transfers = flash.events().len();
+        assert!(
+            transfers <= count.div_ceil(IO_CHUNK) + 1,
+            "a raw read must make chunk-sized progress across unaligned edges"
+        );
         for skip in 0..transfers {
             flash.arm(&[Rule {
                 io: Io::Read,

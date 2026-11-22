@@ -441,12 +441,25 @@ fn a_quiet_display_or_presence_edit_is_on_flash_before_host_handoff() {
         fs: &'a RefCell<Fs<rsk_fs::storage::ram::RamStorage>>,
         signal: std::rc::Rc<core::cell::Cell<crate::tests::PanelSignal>>,
         entry: DisplayEntry,
+        before_quiet: bool,
         checked: bool,
     }
     impl TouchPad for AfterSettle<'_> {
         fn read(&mut self) -> Option<rsk_ui::Point> {
             if let Some(sample) = self.samples.pop_front() {
                 return sample;
+            }
+            if !self.before_quiet {
+                assert_eq!(
+                    self.fs.borrow().write_gen(),
+                    0,
+                    "an unsettled edit must wait"
+                );
+                self.before_quiet = true;
+                block_for(Duration::from_millis(
+                    SETTINGS_PERSIST_QUIET_MS + TOUCH_POLL_MS,
+                ));
+                return None;
             }
             if !self.checked {
                 match self.entry {
@@ -492,15 +505,12 @@ fn a_quiet_display_or_presence_edit_is_on_flash_before_host_handoff() {
         ] {
             samples.extend([Some(point), None, None, None, None]);
         }
-        samples.extend(core::iter::repeat_n(
-            None,
-            (SETTINGS_PERSIST_QUIET_MS / TOUCH_POLL_MS + 8) as usize,
-        ));
         let touch = AfterSettle {
             samples,
             fs: &env.fs,
             signal: std::rc::Rc::clone(&hooks.signal),
             entry,
+            before_quiet: false,
             checked: false,
         };
         let mut ui = Ui::new(panel, touch, hooks, info, env.cells());
@@ -616,5 +626,37 @@ fn empty_settings_taps_and_cancelled_security_rows_preserve_configuration() {
         ));
         assert!(!dirty);
         assert_eq!(env.fs.borrow().write_gen(), generation);
+    }
+}
+
+#[test]
+fn settings_adjustment_pages_show_the_live_values_in_seconds() {
+    let env = Env::new();
+    let mut ui = env.ui(Pad::idle());
+    let mut expected = env.ui(Pad::idle());
+    ui.hooks.presence_ms = 20_000;
+    SLEEP_TIMEOUT_MS.store(30_000, Ordering::Relaxed);
+    ui.set_brightness(2);
+    for page in [SettingsPage::Timeout, SettingsPage::Sleep] {
+        let view = SettingsView {
+            page,
+            brightness: 2,
+            timeout_secs: 20,
+            sleep_secs: 30,
+            version: ui.info.version,
+            chipid: ui.info.chipid,
+            device_pin_set: false,
+            fido_pin_set: false,
+            backup_sealed: false,
+            scramble_pin: false,
+        };
+        assert!(rsk_ui::render(&mut expected.frame(), &Screen::Settings(view)).is_ok());
+        ui.shown = Some(Screen::Locked);
+        env.local(&mut ui).render_settings(page);
+        assert!(
+            ui.panel.pixels() == expected.panel.pixels(),
+            "{page:?} must paint the live timeout in seconds"
+        );
+        assert_eq!(ui.shown, None);
     }
 }

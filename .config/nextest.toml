@@ -56,11 +56,11 @@ filter = 'package(rsk-fido) & (test(getassertion::tests::discovery::) | test(gen
 priority = 100
 
 [[profile.mutants.overrides]]
-filter = 'package(rsk-display) & (test(a_revealed_pin_stays_visible_before_the_idle_deadline) | test(a_pending_rename_character_highlights_its_active_key_group) | test(an_overflowing_pin_title_advances_by_elapsed_pixel_steps) | test(a_failed_wipe_delivers_its_notice_before_handing_back_to_the_host))'
+filter = 'package(rsk-display) & (test(a_revealed_pin_stays_visible_before_the_idle_deadline) | test(a_pending_rename_character_highlights_its_active_key_group) | test(an_overflowing_pin_title_advances_by_elapsed_pixel_steps) | test(a_failed_wipe_delivers_its_notice_before_handing_back_to_the_host) | test(settings_adjustment_pages_show_the_live_values_in_seconds) | test(a_quiet_display_or_presence_edit_is_on_flash_before_host_handoff) | test(mismatch_reprompts_until_the_new_piv_pin_is_confirmed) | test(a_wrong_piv_reference_can_be_retried_with_the_correct_value) | test(changing_each_reference_verifies_the_old_secret_and_accepts_the_new_one_over_the_host_seam) | test(protecting_the_management_key_requires_device_pin_and_hold))'
 priority = 100
 
 [[profile.mutants.overrides]]
-filter = 'package(rsk-display) & (test(each_piv_overview_row_opens_its_own_detail_screen) | test(oath_pages_open_the_named_credential_at_the_selected_global_index) | test(audit_pager_delivers_the_selected_page_and_clamps_at_both_ends))'
+filter = 'package(rsk-display) & (test(each_piv_overview_row_opens_its_own_detail_screen) | test(oath_pages_open_the_named_credential_at_the_selected_global_index) | test(audit_pager_delivers_the_selected_page_and_clamps_at_both_ends) | test(audit_pages_keep_the_boot_boundary_even_when_it_is_on_a_previous_page))'
 priority = 100
 
 [[profile.mutants.overrides]]
@@ -68,8 +68,8 @@ filter = 'package(rsk-display) & (test(the_phrase_pager_delivers_the_last_twelve
 priority = 100
 
 [[profile.mutants.overrides]]
-# Refute nonprogress before the exhaustive storage fault matrices enter it.
-filter = 'package(rsk-store) & (test(a_program_is_verified_with_nonempty_readback_windows) | test(an_empty_program_requires_no_readback) | test(verified_driver_preserves_capacity_and_makes_bounded_readback_progress) | test(new_and_default_expose_complete_aligned_zeroed_windows) | test(the_mutable_window_changes_the_same_readable_bytes) | test(a_secret_wipe_scrubs_the_live_flash_staging_buffer))'
+# Direct storage-contract failures must precede the exhaustive fault matrices.
+filter = 'package(rsk-store) & (test(a_program_is_verified_with_nonempty_readback_windows) | test(an_empty_program_requires_no_readback) | test(verified_driver_preserves_capacity_and_makes_bounded_readback_progress) | test(new_and_default_expose_complete_aligned_zeroed_windows) | test(the_mutable_window_changes_the_same_readable_bytes) | test(a_secret_wipe_scrubs_the_live_flash_staging_buffer) | test(clearing_counter_read_tags_forgets_mount_and_payload_proofs) | test(a_verified_counter_value_rebinds_after_an_authority_advance) | test(word_flash_preserves_alignment_empty_bounds_and_transfer_errors) | test(a_verified_mount_fetches_a_payload_only_once))'
 priority = 100
 
 [[profile.mutants.overrides]]

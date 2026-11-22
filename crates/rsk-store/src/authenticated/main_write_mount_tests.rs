@@ -110,3 +110,39 @@ fn a_completed_write_still_authenticates_every_byte_of_the_next_read() {
     assert_eq!(flash.image(), changed);
     assert!(flash.events().iter().all(|event| event.0 == Io::Read));
 }
+
+#[test]
+fn a_verified_mount_fetches_a_payload_only_once() {
+    let measure = |through_api: bool| {
+        let flash = crate::tests::fault_flash_for_authenticated_tests();
+        let mut main = main_on(flash.clone());
+        main.initialize(&KEY, 0, &Directory::new()).unwrap();
+        main.write(&KEY, 0xB000, Some(b"owner")).unwrap();
+        assert!(main.read_cache.is_some());
+        let image = flash.image();
+        flash.arm(&[]);
+        if through_api {
+            let mut out = [0xa5; 5];
+            assert_eq!(main.read(&KEY, 0xB000, &mut out), Ok(Some(5)));
+            assert_eq!(&out, b"owner");
+        } else {
+            let value = block_on(
+                main.map
+                    .fetch_item_unrepaired::<&[u8]>(main.buffer.expose_mut(), &0xB000),
+            )
+            .unwrap()
+            .unwrap();
+            assert_eq!(value, b"owner");
+            main.buffer.wipe();
+        }
+        assert!(main.buffer.expose().iter().all(|&byte| byte == 0));
+        assert_eq!(flash.image(), image);
+        assert!(flash.events().iter().all(|event| event.0 == Io::Read));
+        flash.events()
+    };
+    assert_eq!(
+        measure(true),
+        measure(false),
+        "a verified mount must cost one payload fetch"
+    );
+}
