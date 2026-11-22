@@ -847,3 +847,351 @@ crates/rsk-display/src/pin.rs: replace < with <= in T9::settle
 
 [pin-repaint-cost] The widened repaint condition submits the same current PIN-dot state on an additional poll or completion. It changes panel traffic and timing, not the entered result or displayed value; hardware cost and draw-fault timing are outside this equivalence scope.
 crates/rsk-display/src/pin.rs: replace && with || in Ui<'a, P, T, H>::collect_pin
+
+[preview-sign-default-off] The crate root compiles arkg and previewsign only under preview-sign. The default mutation binary omits both complete modules, including their constants and parsers. Enabled ARKG draft vectors and previewSign tests run in the preview-sign gate profile; this entry makes no claim about mutations in that enabled profile.
+crates/rsk-fido/src/arkg.rs: replace + with -
+crates/rsk-fido/src/arkg.rs: replace + with *
+crates/rsk-fido/src/arkg.rs: replace + with -
+crates/rsk-fido/src/arkg.rs: replace + with *
+crates/rsk-fido/src/arkg.rs: replace + with -
+crates/rsk-fido/src/arkg.rs: replace + with *
+crates/rsk-fido/src/arkg.rs: replace + with -
+crates/rsk-fido/src/arkg.rs: replace + with *
+crates/rsk-fido/src/arkg.rs: replace + with -
+crates/rsk-fido/src/arkg.rs: replace + with *
+crates/rsk-fido/src/arkg.rs: replace + with -
+crates/rsk-fido/src/arkg.rs: replace + with *
+crates/rsk-fido/src/arkg.rs: replace + with -
+crates/rsk-fido/src/arkg.rs: replace + with *
+crates/rsk-fido/src/arkg.rs: replace + with -
+crates/rsk-fido/src/arkg.rs: replace + with *
+crates/rsk-fido/src/arkg.rs: replace + with -
+crates/rsk-fido/src/arkg.rs: replace + with *
+crates/rsk-fido/src/arkg.rs: replace + with -
+crates/rsk-fido/src/arkg.rs: replace + with *
+crates/rsk-fido/src/arkg.rs: replace + with -
+crates/rsk-fido/src/arkg.rs: replace + with *
+crates/rsk-fido/src/arkg.rs: replace + with -
+crates/rsk-fido/src/arkg.rs: replace + with *
+crates/rsk-fido/src/arkg.rs: replace cat -> Option<&'b[u8]> with None
+crates/rsk-fido/src/arkg.rs: replace cat -> Option<&'b[u8]> with Some(Vec::leak(Vec::new()))
+crates/rsk-fido/src/arkg.rs: replace cat -> Option<&'b[u8]> with Some(Vec::leak(vec![0]))
+crates/rsk-fido/src/arkg.rs: replace cat -> Option<&'b[u8]> with Some(Vec::leak(vec![1]))
+crates/rsk-fido/src/arkg.rs: replace + with - in cat
+crates/rsk-fido/src/arkg.rs: replace + with * in cat
+crates/rsk-fido/src/arkg.rs: replace hash_to_scalar -> Option<p256::Scalar> with None
+crates/rsk-fido/src/arkg.rs: replace hash_to_scalar -> Option<p256::Scalar> with Some(Default::default())
+crates/rsk-fido/src/arkg.rs: replace > with == in hash_to_scalar
+crates/rsk-fido/src/arkg.rs: replace > with < in hash_to_scalar
+crates/rsk-fido/src/arkg.rs: replace > with >= in hash_to_scalar
+crates/rsk-fido/src/arkg.rs: replace ^ with | in hash_to_scalar
+crates/rsk-fido/src/arkg.rs: replace ^ with & in hash_to_scalar
+crates/rsk-fido/src/arkg.rs: replace - with + in hash_to_scalar
+crates/rsk-fido/src/arkg.rs: replace - with / in hash_to_scalar
+crates/rsk-fido/src/arkg.rs: replace - with + in hash_to_scalar
+crates/rsk-fido/src/arkg.rs: replace - with / in hash_to_scalar
+crates/rsk-fido/src/arkg.rs: replace != with == in hash_to_scalar
+crates/rsk-fido/src/arkg.rs: replace nonzero -> Option<Secret<NonZeroScalar>> with None
+crates/rsk-fido/src/arkg.rs: replace nonzero -> Option<Secret<NonZeroScalar>> with Some(Secret::new())
+crates/rsk-fido/src/arkg.rs: replace nonzero -> Option<Secret<NonZeroScalar>> with Some(Secret::from_iter([Default::default()]))
+crates/rsk-fido/src/arkg.rs: replace nonzero -> Option<Secret<NonZeroScalar>> with Some(Secret::new(Default::default()))
+crates/rsk-fido/src/arkg.rs: replace nonzero -> Option<Secret<NonZeroScalar>> with Some(Secret::from(Default::default()))
+crates/rsk-fido/src/arkg.rs: replace derive_seed -> Option<PrivateSeed> with None
+crates/rsk-fido/src/arkg.rs: replace derive_seed -> Option<PrivateSeed> with Some(Default::default())
+crates/rsk-fido/src/arkg.rs: replace PrivateSeed::public -> Option<([u8; POINT_LEN], [u8; POINT_LEN])> with None
+crates/rsk-fido/src/arkg.rs: replace PrivateSeed::public -> Option<([u8; POINT_LEN], [u8; POINT_LEN])> with Some(([0; POINT_LEN], [0; POINT_LEN]))
+crates/rsk-fido/src/arkg.rs: replace PrivateSeed::public -> Option<([u8; POINT_LEN], [u8; POINT_LEN])> with Some(([0; POINT_LEN], [1; POINT_LEN]))
+crates/rsk-fido/src/arkg.rs: replace PrivateSeed::public -> Option<([u8; POINT_LEN], [u8; POINT_LEN])> with Some(([1; POINT_LEN], [0; POINT_LEN]))
+crates/rsk-fido/src/arkg.rs: replace PrivateSeed::public -> Option<([u8; POINT_LEN], [u8; POINT_LEN])> with Some(([1; POINT_LEN], [1; POINT_LEN]))
+crates/rsk-fido/src/arkg.rs: replace public_point -> Option<[u8; POINT_LEN]> with None
+crates/rsk-fido/src/arkg.rs: replace public_point -> Option<[u8; POINT_LEN]> with Some([0; POINT_LEN])
+crates/rsk-fido/src/arkg.rs: replace public_point -> Option<[u8; POINT_LEN]> with Some([1; POINT_LEN])
+crates/rsk-fido/src/arkg.rs: replace derive_private_key -> Option<Secret<NonZeroScalar>> with None
+crates/rsk-fido/src/arkg.rs: replace derive_private_key -> Option<Secret<NonZeroScalar>> with Some(Secret::new())
+crates/rsk-fido/src/arkg.rs: replace derive_private_key -> Option<Secret<NonZeroScalar>> with Some(Secret::from_iter([Default::default()]))
+crates/rsk-fido/src/arkg.rs: replace derive_private_key -> Option<Secret<NonZeroScalar>> with Some(Secret::new(Default::default()))
+crates/rsk-fido/src/arkg.rs: replace derive_private_key -> Option<Secret<NonZeroScalar>> with Some(Secret::from(Default::default()))
+crates/rsk-fido/src/arkg.rs: replace > with == in derive_private_key
+crates/rsk-fido/src/arkg.rs: replace > with < in derive_private_key
+crates/rsk-fido/src/arkg.rs: replace > with >= in derive_private_key
+crates/rsk-fido/src/arkg.rs: replace + with - in derive_private_key
+crates/rsk-fido/src/arkg.rs: replace + with * in derive_private_key
+crates/rsk-fido/src/arkg.rs: replace kem_decaps -> Option<Secret<[u8; SHA256_LEN]>> with None
+crates/rsk-fido/src/arkg.rs: replace kem_decaps -> Option<Secret<[u8; SHA256_LEN]>> with Some(Secret::new())
+crates/rsk-fido/src/arkg.rs: replace kem_decaps -> Option<Secret<[u8; SHA256_LEN]>> with Some(Secret::from_iter([[0; SHA256_LEN]]))
+crates/rsk-fido/src/arkg.rs: replace kem_decaps -> Option<Secret<[u8; SHA256_LEN]>> with Some(Secret::new([0; SHA256_LEN]))
+crates/rsk-fido/src/arkg.rs: replace kem_decaps -> Option<Secret<[u8; SHA256_LEN]>> with Some(Secret::from([0; SHA256_LEN]))
+crates/rsk-fido/src/arkg.rs: replace kem_decaps -> Option<Secret<[u8; SHA256_LEN]>> with Some(Secret::from_iter([[1; SHA256_LEN]]))
+crates/rsk-fido/src/arkg.rs: replace kem_decaps -> Option<Secret<[u8; SHA256_LEN]>> with Some(Secret::new([1; SHA256_LEN]))
+crates/rsk-fido/src/arkg.rs: replace kem_decaps -> Option<Secret<[u8; SHA256_LEN]>> with Some(Secret::from([1; SHA256_LEN]))
+crates/rsk-fido/src/arkg.rs: delete ! in kem_decaps
+crates/rsk-fido/src/arkg.rs: replace ecdh -> Option<Secret<[u8; SHA256_LEN]>> with None
+crates/rsk-fido/src/arkg.rs: replace ecdh -> Option<Secret<[u8; SHA256_LEN]>> with Some(Secret::new())
+crates/rsk-fido/src/arkg.rs: replace ecdh -> Option<Secret<[u8; SHA256_LEN]>> with Some(Secret::from_iter([[0; SHA256_LEN]]))
+crates/rsk-fido/src/arkg.rs: replace ecdh -> Option<Secret<[u8; SHA256_LEN]>> with Some(Secret::new([0; SHA256_LEN]))
+crates/rsk-fido/src/arkg.rs: replace ecdh -> Option<Secret<[u8; SHA256_LEN]>> with Some(Secret::from([0; SHA256_LEN]))
+crates/rsk-fido/src/arkg.rs: replace ecdh -> Option<Secret<[u8; SHA256_LEN]>> with Some(Secret::from_iter([[1; SHA256_LEN]]))
+crates/rsk-fido/src/arkg.rs: replace ecdh -> Option<Secret<[u8; SHA256_LEN]>> with Some(Secret::new([1; SHA256_LEN]))
+crates/rsk-fido/src/arkg.rs: replace ecdh -> Option<Secret<[u8; SHA256_LEN]>> with Some(Secret::from([1; SHA256_LEN]))
+crates/rsk-fido/src/arkg.rs: replace != with == in ecdh
+crates/rsk-fido/src/previewsign.rs: replace | with &
+crates/rsk-fido/src/previewsign.rs: replace | with ^
+crates/rsk-fido/src/previewsign.rs: delete -
+crates/rsk-fido/src/previewsign.rs: delete -
+crates/rsk-fido/src/previewsign.rs: delete -
+crates/rsk-fido/src/previewsign.rs: delete -
+crates/rsk-fido/src/previewsign.rs: delete -
+crates/rsk-fido/src/previewsign.rs: replace + with -
+crates/rsk-fido/src/previewsign.rs: replace + with *
+crates/rsk-fido/src/previewsign.rs: replace + with -
+crates/rsk-fido/src/previewsign.rs: replace + with *
+crates/rsk-fido/src/previewsign.rs: replace + with -
+crates/rsk-fido/src/previewsign.rs: replace + with *
+crates/rsk-fido/src/previewsign.rs: replace + with -
+crates/rsk-fido/src/previewsign.rs: replace + with *
+crates/rsk-fido/src/previewsign.rs: replace + with -
+crates/rsk-fido/src/previewsign.rs: replace + with *
+crates/rsk-fido/src/previewsign.rs: replace + with -
+crates/rsk-fido/src/previewsign.rs: replace + with *
+crates/rsk-fido/src/previewsign.rs: replace + with -
+crates/rsk-fido/src/previewsign.rs: replace + with *
+crates/rsk-fido/src/previewsign.rs: replace + with -
+crates/rsk-fido/src/previewsign.rs: replace + with *
+crates/rsk-fido/src/previewsign.rs: replace + with -
+crates/rsk-fido/src/previewsign.rs: replace + with *
+crates/rsk-fido/src/previewsign.rs: replace + with -
+crates/rsk-fido/src/previewsign.rs: replace + with *
+crates/rsk-fido/src/previewsign.rs: replace + with -
+crates/rsk-fido/src/previewsign.rs: replace + with *
+crates/rsk-fido/src/previewsign.rs: replace + with -
+crates/rsk-fido/src/previewsign.rs: replace + with *
+crates/rsk-fido/src/previewsign.rs: replace + with -
+crates/rsk-fido/src/previewsign.rs: replace + with *
+crates/rsk-fido/src/previewsign.rs: replace + with -
+crates/rsk-fido/src/previewsign.rs: replace + with *
+crates/rsk-fido/src/previewsign.rs: replace + with -
+crates/rsk-fido/src/previewsign.rs: replace + with *
+crates/rsk-fido/src/previewsign.rs: replace + with -
+crates/rsk-fido/src/previewsign.rs: replace + with *
+crates/rsk-fido/src/previewsign.rs: replace + with -
+crates/rsk-fido/src/previewsign.rs: replace + with *
+crates/rsk-fido/src/previewsign.rs: replace + with -
+crates/rsk-fido/src/previewsign.rs: replace + with *
+crates/rsk-fido/src/previewsign.rs: replace * with +
+crates/rsk-fido/src/previewsign.rs: replace * with /
+crates/rsk-fido/src/previewsign.rs: replace + with -
+crates/rsk-fido/src/previewsign.rs: replace + with *
+crates/rsk-fido/src/previewsign.rs: replace + with -
+crates/rsk-fido/src/previewsign.rs: replace + with *
+crates/rsk-fido/src/previewsign.rs: replace + with -
+crates/rsk-fido/src/previewsign.rs: replace + with *
+crates/rsk-fido/src/previewsign.rs: replace + with -
+crates/rsk-fido/src/previewsign.rs: replace + with *
+crates/rsk-fido/src/previewsign.rs: replace + with -
+crates/rsk-fido/src/previewsign.rs: replace + with *
+crates/rsk-fido/src/previewsign.rs: replace + with -
+crates/rsk-fido/src/previewsign.rs: replace + with *
+crates/rsk-fido/src/previewsign.rs: replace + with -
+crates/rsk-fido/src/previewsign.rs: replace + with *
+crates/rsk-fido/src/previewsign.rs: replace + with -
+crates/rsk-fido/src/previewsign.rs: replace + with *
+crates/rsk-fido/src/previewsign.rs: replace + with -
+crates/rsk-fido/src/previewsign.rs: replace + with *
+crates/rsk-fido/src/previewsign.rs: replace + with -
+crates/rsk-fido/src/previewsign.rs: replace + with *
+crates/rsk-fido/src/previewsign.rs: replace + with -
+crates/rsk-fido/src/previewsign.rs: replace + with *
+crates/rsk-fido/src/previewsign.rs: replace + with -
+crates/rsk-fido/src/previewsign.rs: replace + with *
+crates/rsk-fido/src/previewsign.rs: replace + with -
+crates/rsk-fido/src/previewsign.rs: replace + with *
+crates/rsk-fido/src/previewsign.rs: replace + with -
+crates/rsk-fido/src/previewsign.rs: replace + with *
+crates/rsk-fido/src/previewsign.rs: replace + with -
+crates/rsk-fido/src/previewsign.rs: replace + with *
+crates/rsk-fido/src/previewsign.rs: replace + with -
+crates/rsk-fido/src/previewsign.rs: replace + with *
+crates/rsk-fido/src/previewsign.rs: replace + with -
+crates/rsk-fido/src/previewsign.rs: replace + with *
+crates/rsk-fido/src/previewsign.rs: replace + with -
+crates/rsk-fido/src/previewsign.rs: replace + with *
+crates/rsk-fido/src/previewsign.rs: replace + with -
+crates/rsk-fido/src/previewsign.rs: replace + with *
+crates/rsk-fido/src/previewsign.rs: replace + with -
+crates/rsk-fido/src/previewsign.rs: replace + with *
+crates/rsk-fido/src/previewsign.rs: replace + with -
+crates/rsk-fido/src/previewsign.rs: replace + with *
+crates/rsk-fido/src/previewsign.rs: replace + with -
+crates/rsk-fido/src/previewsign.rs: replace + with *
+crates/rsk-fido/src/previewsign.rs: replace + with -
+crates/rsk-fido/src/previewsign.rs: replace + with *
+crates/rsk-fido/src/previewsign.rs: replace * with +
+crates/rsk-fido/src/previewsign.rs: replace * with /
+crates/rsk-fido/src/previewsign.rs: replace DerSig::bytes -> Result<&[u8], CtapError> with Ok(Vec::leak(Vec::new()))
+crates/rsk-fido/src/previewsign.rs: replace DerSig::bytes -> Result<&[u8], CtapError> with Ok(Vec::leak(vec![0]))
+crates/rsk-fido/src/previewsign.rs: replace DerSig::bytes -> Result<&[u8], CtapError> with Ok(Vec::leak(vec![1]))
+crates/rsk-fido/src/previewsign.rs: replace parse_mc -> Result<McInput<'a>, CtapError> with Ok(Default::default())
+crates/rsk-fido/src/previewsign.rs: delete field present from struct McInput expression in parse_mc
+crates/rsk-fido/src/previewsign.rs: delete match arm KEY_ALG in parse_mc
+crates/rsk-fido/src/previewsign.rs: delete match arm KEY_FLAGS in parse_mc
+crates/rsk-fido/src/previewsign.rs: replace parse_ga -> Result<GaInput<'a>, CtapError> with Ok(Default::default())
+crates/rsk-fido/src/previewsign.rs: delete field present from struct GaInput expression in parse_ga
+crates/rsk-fido/src/previewsign.rs: delete match arm KEY_KH in parse_ga
+crates/rsk-fido/src/previewsign.rs: delete match arm KEY_TBS in parse_ga
+crates/rsk-fido/src/previewsign.rs: delete match arm KEY_ARGS in parse_ga
+crates/rsk-fido/src/previewsign.rs: replace raw_array -> Result<&'a[u8], CtapError> with Ok(Vec::leak(Vec::new()))
+crates/rsk-fido/src/previewsign.rs: replace raw_array -> Result<&'a[u8], CtapError> with Ok(Vec::leak(vec![0]))
+crates/rsk-fido/src/previewsign.rs: replace raw_array -> Result<&'a[u8], CtapError> with Ok(Vec::leak(vec![1]))
+crates/rsk-fido/src/previewsign.rs: replace negotiate -> Result<Option<KeyRequest>, CtapError> with Ok(None)
+crates/rsk-fido/src/previewsign.rs: replace negotiate -> Result<Option<KeyRequest>, CtapError> with Ok(Some(Default::default()))
+crates/rsk-fido/src/previewsign.rs: delete ! in negotiate
+crates/rsk-fido/src/previewsign.rs: replace >= with < in negotiate
+crates/rsk-fido/src/previewsign.rs: replace && with || in negotiate
+crates/rsk-fido/src/previewsign.rs: replace == with != in negotiate
+crates/rsk-fido/src/previewsign.rs: replace == with != in negotiate
+crates/rsk-fido/src/previewsign.rs: replace check_ga -> Result<(), CtapError> with Ok(())
+crates/rsk-fido/src/previewsign.rs: replace && with || in check_ga
+crates/rsk-fido/src/previewsign.rs: replace || with && in check_ga
+crates/rsk-fido/src/previewsign.rs: replace || with && in check_ga
+crates/rsk-fido/src/previewsign.rs: replace == with != in check_ga
+crates/rsk-fido/src/previewsign.rs: replace credential_secret -> Secret<[u8; 32]> with Secret::new()
+crates/rsk-fido/src/previewsign.rs: replace credential_secret -> Secret<[u8; 32]> with Secret::from_iter([[0; 32]])
+crates/rsk-fido/src/previewsign.rs: replace credential_secret -> Secret<[u8; 32]> with Secret::new([0; 32])
+crates/rsk-fido/src/previewsign.rs: replace credential_secret -> Secret<[u8; 32]> with Secret::from([0; 32])
+crates/rsk-fido/src/previewsign.rs: replace credential_secret -> Secret<[u8; 32]> with Secret::from_iter([[1; 32]])
+crates/rsk-fido/src/previewsign.rs: replace credential_secret -> Secret<[u8; 32]> with Secret::new([1; 32])
+crates/rsk-fido/src/previewsign.rs: replace credential_secret -> Secret<[u8; 32]> with Secret::from([1; 32])
+crates/rsk-fido/src/previewsign.rs: replace handle_mac -> Result<[u8; MAC_LEN], CtapError> with Ok([0; MAC_LEN])
+crates/rsk-fido/src/previewsign.rs: replace handle_mac -> Result<[u8; MAC_LEN], CtapError> with Ok([1; MAC_LEN])
+crates/rsk-fido/src/previewsign.rs: replace + with - in handle_mac
+crates/rsk-fido/src/previewsign.rs: replace + with * in handle_mac
+crates/rsk-fido/src/previewsign.rs: replace + with - in handle_mac
+crates/rsk-fido/src/previewsign.rs: replace + with * in handle_mac
+crates/rsk-fido/src/previewsign.rs: replace seed_for -> Result<arkg::PrivateSeed, CtapError> with Ok(Default::default())
+crates/rsk-fido/src/previewsign.rs: replace + with - in seed_for
+crates/rsk-fido/src/previewsign.rs: replace + with * in seed_for
+crates/rsk-fido/src/previewsign.rs: replace generate -> Result<GeneratedKey, CtapError> with Ok(Default::default())
+crates/rsk-fido/src/previewsign.rs: replace != with == in generate
+crates/rsk-fido/src/previewsign.rs: replace write_mc_ext -> Result<(), Error<W::Error>> with Ok(())
+crates/rsk-fido/src/previewsign.rs: replace write_auth_data -> Result<(), Error<W::Error>> with Ok(())
+crates/rsk-fido/src/previewsign.rs: replace write_public_seed -> Result<(), Error<W::Error>> with Ok(())
+crates/rsk-fido/src/previewsign.rs: replace xy -> Option<(&[u8], &[u8])> with None
+crates/rsk-fido/src/previewsign.rs: replace xy -> Option<(&[u8], &[u8])> with Some((Vec::leak(Vec::new()), Vec::leak(Vec::new())))
+crates/rsk-fido/src/previewsign.rs: replace xy -> Option<(&[u8], &[u8])> with Some((Vec::leak(Vec::new()), Vec::leak(vec![0])))
+crates/rsk-fido/src/previewsign.rs: replace xy -> Option<(&[u8], &[u8])> with Some((Vec::leak(Vec::new()), Vec::leak(vec![1])))
+crates/rsk-fido/src/previewsign.rs: replace xy -> Option<(&[u8], &[u8])> with Some((Vec::leak(vec![0]), Vec::leak(Vec::new())))
+crates/rsk-fido/src/previewsign.rs: replace xy -> Option<(&[u8], &[u8])> with Some((Vec::leak(vec![0]), Vec::leak(vec![0])))
+crates/rsk-fido/src/previewsign.rs: replace xy -> Option<(&[u8], &[u8])> with Some((Vec::leak(vec![0]), Vec::leak(vec![1])))
+crates/rsk-fido/src/previewsign.rs: replace xy -> Option<(&[u8], &[u8])> with Some((Vec::leak(vec![1]), Vec::leak(Vec::new())))
+crates/rsk-fido/src/previewsign.rs: replace xy -> Option<(&[u8], &[u8])> with Some((Vec::leak(vec![1]), Vec::leak(vec![0])))
+crates/rsk-fido/src/previewsign.rs: replace xy -> Option<(&[u8], &[u8])> with Some((Vec::leak(vec![1]), Vec::leak(vec![1])))
+crates/rsk-fido/src/previewsign.rs: replace attest -> Result<Attested<'a>, CtapError> with Ok(Default::default())
+crates/rsk-fido/src/previewsign.rs: replace + with - in attest
+crates/rsk-fido/src/previewsign.rs: replace + with * in attest
+crates/rsk-fido/src/previewsign.rs: replace cat_at -> Option<&'b[u8]> with None
+crates/rsk-fido/src/previewsign.rs: replace cat_at -> Option<&'b[u8]> with Some(Vec::leak(Vec::new()))
+crates/rsk-fido/src/previewsign.rs: replace cat_at -> Option<&'b[u8]> with Some(Vec::leak(vec![0]))
+crates/rsk-fido/src/previewsign.rs: replace cat_at -> Option<&'b[u8]> with Some(Vec::leak(vec![1]))
+crates/rsk-fido/src/previewsign.rs: replace + with - in cat_at
+crates/rsk-fido/src/previewsign.rs: replace + with * in cat_at
+crates/rsk-fido/src/previewsign.rs: replace write_attested_auth_data -> Result<(), CtapError> with Ok(())
+crates/rsk-fido/src/previewsign.rs: replace attestation_sig -> Result<Option<&'a[u8]>, CtapError> with Ok(None)
+crates/rsk-fido/src/previewsign.rs: replace attestation_sig -> Result<Option<&'a[u8]>, CtapError> with Ok(Some(Vec::leak(Vec::new())))
+crates/rsk-fido/src/previewsign.rs: replace attestation_sig -> Result<Option<&'a[u8]>, CtapError> with Ok(Some(Vec::leak(vec![0])))
+crates/rsk-fido/src/previewsign.rs: replace attestation_sig -> Result<Option<&'a[u8]>, CtapError> with Ok(Some(Vec::leak(vec![1])))
+crates/rsk-fido/src/previewsign.rs: replace write_unsigned_head -> Result<(), CtapError> with Ok(())
+crates/rsk-fido/src/previewsign.rs: replace <impl Write for Tally>::write_all -> Result<(), Self::Error> with Ok(())
+crates/rsk-fido/src/previewsign.rs: replace += with -= in <impl Write for Tally>::write_all
+crates/rsk-fido/src/previewsign.rs: replace += with *= in <impl Write for Tally>::write_all
+crates/rsk-fido/src/previewsign.rs: replace encoded_len -> Result<u64, CtapError> with Ok(0)
+crates/rsk-fido/src/previewsign.rs: replace encoded_len -> Result<u64, CtapError> with Ok(1)
+crates/rsk-fido/src/previewsign.rs: replace open_handle -> Result<HandleParams<'a>, CtapError> with Ok(Default::default())
+crates/rsk-fido/src/previewsign.rs: replace != with == in open_handle
+crates/rsk-fido/src/previewsign.rs: delete ! in open_handle
+crates/rsk-fido/src/previewsign.rs: replace != with == in open_handle
+crates/rsk-fido/src/previewsign.rs: replace || with && in open_handle
+crates/rsk-fido/src/previewsign.rs: replace || with && in open_handle
+crates/rsk-fido/src/previewsign.rs: replace != with == in open_handle
+crates/rsk-fido/src/previewsign.rs: replace != with == in open_handle
+crates/rsk-fido/src/previewsign.rs: replace != with == in open_handle
+crates/rsk-fido/src/previewsign.rs: replace parse_args -> Result<SignArgs<'_>, CtapError> with Ok(Default::default())
+crates/rsk-fido/src/previewsign.rs: delete match arm ARGS_ALG in parse_args
+crates/rsk-fido/src/previewsign.rs: delete match arm ARGS_ARKG_KH in parse_args
+crates/rsk-fido/src/previewsign.rs: delete match arm ARGS_ARKG_CTX in parse_args
+crates/rsk-fido/src/previewsign.rs: replace != with == in parse_args
+crates/rsk-fido/src/previewsign.rs: replace sign -> Result<Option<DerSig>, CtapError> with Ok(None)
+crates/rsk-fido/src/previewsign.rs: replace sign -> Result<Option<DerSig>, CtapError> with Ok(Some(Default::default()))
+crates/rsk-fido/src/previewsign.rs: delete ! in sign
+crates/rsk-fido/src/previewsign.rs: replace != with == in sign
+crates/rsk-fido/src/previewsign.rs: replace != with == in sign
+crates/rsk-fido/src/previewsign.rs: replace && with || in sign
+crates/rsk-fido/src/previewsign.rs: replace != with == in sign
+crates/rsk-fido/src/previewsign.rs: replace & with | in sign
+crates/rsk-fido/src/previewsign.rs: replace & with ^ in sign
+crates/rsk-fido/src/previewsign.rs: delete ! in sign
+crates/rsk-fido/src/previewsign.rs: replace && with || in sign
+crates/rsk-fido/src/previewsign.rs: replace != with == in sign
+crates/rsk-fido/src/previewsign.rs: replace & with | in sign
+crates/rsk-fido/src/previewsign.rs: replace & with ^ in sign
+crates/rsk-fido/src/previewsign.rs: delete ! in sign
+crates/rsk-fido/src/previewsign.rs: replace write_ga_ext -> Result<(), CtapError> with Ok(())
+
+[crypto-bench-default-off] The entire bench module is behind bench, absent from the default mutation binary. Its fixed-input timing/checksum tests run in check.sh test (bench); benchmark output is not exercised by this default sweep.
+crates/rsk-fido/src/bench.rs: replace run -> u32 with 0
+crates/rsk-fido/src/bench.rs: replace run -> u32 with 1
+crates/rsk-fido/src/bench.rs: delete match arm 0 in run
+crates/rsk-fido/src/bench.rs: delete match arm 1 in run
+crates/rsk-fido/src/bench.rs: delete match arm 2 in run
+crates/rsk-fido/src/bench.rs: replace checksum -> u32 with 0
+crates/rsk-fido/src/bench.rs: replace checksum -> u32 with 1
+crates/rsk-fido/src/bench.rs: replace ^= with |= in checksum
+crates/rsk-fido/src/bench.rs: replace ^= with &= in checksum
+crates/rsk-fido/src/bench.rs: replace << with >> in checksum
+crates/rsk-fido/src/bench.rs: replace * with + in checksum
+crates/rsk-fido/src/bench.rs: replace * with / in checksum
+crates/rsk-fido/src/bench.rs: replace % with / in checksum
+crates/rsk-fido/src/bench.rs: replace % with + in checksum
+
+[config-presence-default-off] The FIDO config presence block is cfg(strict-config); the management twin short-circuits on cfg!(strict-config)==false in the default binary. Enabled strict-config host tests own these presence refusals.
+crates/rsk-fido/src/vendor.rs: delete ! in config_write
+crates/rsk-mgmt/src/lib.rs: delete ! in ManagementApplet<'a>::write_config
+
+[u2f-strict-up-default-identity] Without strict-up, !cfg!(strict-up) is already true. Replacing it by true is identical in this default sweep; the enabled strict-up authenticate P1 matrix separately owns refusal of dont-enforce.
+crates/rsk-fido/src/u2f.rs: replace match guard !cfg!(feature = "strict-up") with true in cmd_authenticate
+
+[u2f-repeated-input-length] The changed minimums are 2, 64, 65 or equality at 66 bytes. The checked 65-byte header split and subsequent KEY_HANDLE_LEN / 65+kh_len checks still refuse all of those short inputs with WRONG_DATA. Valid handles exceed every changed minimum.
+crates/rsk-fido/src/u2f.rs: replace < with == in cmd_authenticate
+crates/rsk-fido/src/u2f.rs: replace < with <= in cmd_authenticate
+crates/rsk-fido/src/u2f.rs: replace + with - in cmd_authenticate
+crates/rsk-fido/src/u2f.rs: replace + with * in cmd_authenticate
+crates/rsk-fido/src/u2f.rs: replace + with - in cmd_authenticate
+crates/rsk-fido/src/u2f.rs: replace + with * in cmd_authenticate
+crates/rsk-fido/src/u2f.rs: replace + with - in cmd_authenticate
+
+[token-state-disjoint-bit-lanes] domain_index places eight booleans in distinct single-bit lanes of one byte. Each OR/XOR replacement therefore gives the same generated-table index for every state.
+crates/rsk-fido/src/generated_token_edges.rs: replace | with ^ in AState::domain_index
+crates/rsk-fido/src/generated_token_edges.rs: replace | with ^ in AState::domain_index
+crates/rsk-fido/src/generated_token_edges.rs: replace | with ^ in AState::domain_index
+crates/rsk-fido/src/generated_token_edges.rs: replace | with ^ in AState::domain_index
+crates/rsk-fido/src/generated_token_edges.rs: replace | with ^ in AState::domain_index
+crates/rsk-fido/src/generated_token_edges.rs: replace | with ^ in AState::domain_index
+crates/rsk-fido/src/generated_token_edges.rs: replace | with ^ in AState::domain_index
+
+[vendor-token-scratch-cost] The 32+2+MAX_RAW_SUBPARA scratch becomes larger under either multiplication. The request retains its unchanged explicit size bound and puat_subcommand_msg returns the same used prefix for token verification. Only stack space changes.
+crates/rsk-fido/src/vendor.rs: replace + with * in pin_gate
+crates/rsk-fido/src/vendor.rs: replace + with * in pin_gate
+
+[compile-time-census-only] These unnamed const blocks assert the full FID slot mapping and factory LED colour separation at compile time. The changed loop guard skips that assertion traversal without changing any runtime slot calculation, LED constant or emitted value; runtime tests cannot distinguish a removed compile-time assertion.
+crates/rsk-fs/src/fs.rs: replace <= with >
+crates/rsk-led/src/lib.rs: replace < with ==
+crates/rsk-led/src/lib.rs: replace < with >
+
+[kani-fid-domain-default-off] FID_LIMIT at this site is cfg(kani), so neither expression exists in the default host binary. The Kani storage harness domain owns this constant; these are not claims of equivalent proof domains.
+crates/rsk-fs/src/store_assurance.rs: replace * with +
+crates/rsk-fs/src/store_assurance.rs: replace * with /
+
+[management-request-cap-slack] persist_dev_conf repeats the 128-byte input refusal with the same WRONG_DATA status. Unique writable tags and their unchanged widths allow at most 60 bytes including both lock codes, so the tightened equality/127-byte cases cannot reject a valid config either. The checked APDU length prefix is unchanged.
+crates/rsk-mgmt/src/lib.rs: replace > with == in ManagementApplet<'a>::write_config
+crates/rsk-mgmt/src/lib.rs: replace > with >= in ManagementApplet<'a>::write_config
+crates/rsk-mgmt/src/lib.rs: replace - with + in ManagementApplet<'a>::write_config
+crates/rsk-mgmt/src/lib.rs: replace - with / in ManagementApplet<'a>::write_config
