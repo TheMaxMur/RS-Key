@@ -110,6 +110,8 @@ rec {
 
     # Cargo may prefer rustup's subcommand shims in ~/.cargo/bin over PATH.
     RUSTUP_TOOLCHAIN = "${toolchain}";
+    # Supercov's bindgen must load Nix's libclang and its matching shared libraries.
+    LIBCLANG_PATH = "${pkgs.lib.getLib pkgs.llvmPackages.libclang}/lib";
 
     shellHook = ''
       # flip-link (the embedded linker in .cargo/config.toml) shells out to

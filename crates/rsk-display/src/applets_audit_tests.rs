@@ -31,9 +31,11 @@ fn audit_pages_keep_the_boot_boundary_even_when_it_is_on_a_previous_page() {
     let mut rows = [AuditRow::default(); rsk_ui::PK_ROWS_MAX];
     let local = env.local(&mut ui);
     assert_eq!(local.load_events(&mut rows, 0), (5, 7));
+    assert_eq!(rows[0].kind, rsk_ui::AuditKind::Pin);
     assert_eq!(rows[0].secs_ago, Some(4));
     assert_eq!(rows[4].secs_ago, Some(8));
     assert_eq!(local.load_events(&mut rows, 1), (2, 7));
+    assert_eq!(rows[0].kind, rsk_ui::AuditKind::Boot);
     assert_eq!(rows[0].secs_ago, Some(9));
     assert_eq!(rows[1].secs_ago, None);
     assert_eq!(local.load_events(&mut rows, 2), (0, 7));

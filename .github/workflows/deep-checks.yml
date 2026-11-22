@@ -78,14 +78,14 @@
 # knob), and self-tests on any push that edits this file — a dispatch or a push
 # runs BOTH cadences, which is what makes an edit here self-testing. Local
 # equivalents:
-#   nix develop .#fuzz -c ./scripts/miri-all.sh   (MIRI_SHARD=2/3 for one shard)
+#   nix develop .#fuzz -c ./scripts/miri-all.sh   (MIRI_SHARD=2/6 for one shard)
 #   nix develop .#fuzz -c ./scripts/fuzz-all.sh   (FUZZ_SECONDS=30 to shorten,
 #                                                  FUZZ_CONFIG=flavours for the
 #                                                  second config both rows run)
 #   nix develop .#fuzz -c ./scripts/fuzz-coverage.sh
 #   ./scripts/kani.sh all   (needs `cargo install kani-verifier` first — not nix)
 #   ./scripts/kani.sh light1   ./scripts/kani.sh heavy   # what the weekly rows run
-#   nix develop -c ./scripts/mutants-all.sh   (MUTANTS_SHARD=2/12 for one shard)
+#   nix develop -c ./scripts/mutants-all.sh   (MUTANTS_SHARD=2/64 for one shard)
 #   nix develop -c python scripts/comutate.py run
 #   nix develop -c ./scripts/check-assurance.sh
 #   nix develop -c cargo llvm-cov --summary-only --fail-under-lines 80 --target <host> --workspace --exclude firmware --exclude firmware-ns --exclude rsk-wipe
@@ -126,7 +126,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: deep-checks
+  group: deep-checks-${{ github.ref }}
   cancel-in-progress: true
 
 # Each job names the cadence it is NOT, rather than the one it is: a scheduled run
@@ -140,7 +140,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3]
+        # The complete eight-seed roster exceeded four hours in three shards.
+        shard: [1, 2, 3, 4, 5, 6]
         config: [default, flavours]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -166,7 +167,7 @@ jobs:
       - name: miri — every fuzz target's logic under the UB checker
         run: nix develop .#fuzz -c ./scripts/miri-all.sh
         env:
-          MIRI_SHARD: ${{ matrix.shard }}/3
+          MIRI_SHARD: ${{ matrix.shard }}/6
           FUZZ_CONFIG: ${{ matrix.config }}
 
   fuzz:
@@ -290,7 +291,9 @@ jobs:
 
   coverage:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    # The default line pass took 110 minutes before condition coverage started.
+    # Cold, instrumented storage sweeps also need margin in the other profiles.
+    timeout-minutes: ${{ matrix.profile == 'default' && 300 || 240 }}
     strategy:
       fail-fast: false
       matrix:
@@ -298,6 +301,12 @@ jobs:
         profile: ${{ fromJSON(github.event.schedule == '17 5 * * *' && '["default"]' || '["default", "advertise-pqc", "fips-profile", "fips-profile,advertise-pqc", "strong-pin", "strong-pin,advertise-pqc", "always-uv", "always-uv,advertise-pqc", "strict-up", "strict-up,advertise-pqc", "display", "strict-config", "largeblob-ext", "preview-sign", "preview-sign,largeblob-ext", "display,strong-pin", "display,fips-profile", "fido-conformance"]') }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: cache-safe profile name
+        id: cache-profile
+        env:
+          PROFILE: ${{ matrix.profile }}
+        run: echo "profile=${PROFILE//,/-}" >> "$GITHUB_OUTPUT"
 
       - uses: DeterminateSystems/nix-installer-action@3138316df39ed29be04236d7ffc686fa525866aa # v23
 
@@ -312,8 +321,8 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: coverage-${{ runner.os }}-${{ matrix.profile }}-${{ hashFiles('Cargo.lock', 'flake.lock') }}
-          restore-keys: coverage-${{ runner.os }}-${{ matrix.profile }}-
+          key: coverage-${{ runner.os }}-${{ steps.cache-profile.outputs.profile }}-${{ hashFiles('Cargo.lock', 'flake.lock') }}
+          restore-keys: coverage-${{ runner.os }}-${{ steps.cache-profile.outputs.profile }}-
 
       # Keep the embedded-only packages outside the host line-coverage floor.
       - name: llvm-cov — host-crate line coverage, floored at 80%
@@ -391,6 +400,16 @@ jobs:
           command -v cargo-kani >/dev/null || cargo install --locked kani-verifier --version "$KANI_VERSION"
           cargo kani setup
 
+      # The phy solver has exceeded the hosted runner's physical RAM.
+      - name: reserve swap for the heavy solver
+        if: matrix.tier == 'heavy'
+        run: |
+          sudo fallocate -l 24G /mnt/kani.swap
+          sudo chmod 600 /mnt/kani.swap
+          sudo mkswap /mnt/kani.swap
+          sudo swapon /mnt/kani.swap
+          free -h
+
       # The tier names come from the matrix and the crates from `scripts/kani.sh`;
       # scripts/kani_gate.py resolves the one to reach the other, and refuses a
       # `-p` roster written anywhere but that script.
@@ -413,7 +432,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
+        shard:
+          [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16,
+           17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32,
+           33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48,
+           49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -433,17 +456,9 @@ jobs:
           key: mutants-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
           restore-keys: mutants-${{ runner.os }}-
 
-      # 12 shards, measured rather than estimated. `--shard` takes a CONTIGUOUS
-      # slice, not every n-th mutant, so a shard's crate mix — and with it the
-      # build output that accumulates on the runner's ~14 GB — is decided by where
-      # its boundaries fall. At 8 the 6th slice was `rsk-piv` … `rsk-rsa-asm` …
-      # `rsk-slip39`, 1802 mutants over 6 crates, and it took the runner down with
-      # it twice (SIGTERM at 85 % of the shard, the same 358 survivors both times,
-      # the tool healthy to the last line). At 12 it is ~1201 over 5, a third less
-      # accumulated build per job. A reduction in pressure, NOT a proven fix: what
-      # killed the host was never measurable from the log.
-      # The denominator is `strategy.job-total` and not a second hand-kept 12 —
-      # two numbers that must agree is how the shard space silently loses a slice.
+      # Twelve contiguous shards exceeded 350 minutes on 2026-11-22.
+      # Whole-file groups spread storage fault sweeps without splitting baseline
+      # counts; job-total keeps the runner's denominator equal to the matrix.
       - name: mutants — would a test notice if this line changed?
         run: nix develop -c ./scripts/mutants-container.sh
         env:

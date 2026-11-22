@@ -226,6 +226,34 @@ fn an_authenticated_array_at_the_storage_limit_commits_in_fragments() {
 }
 
 #[test]
+fn a_transport_sized_fragment_reaches_the_storage_bound_before_refusal() {
+    for extra in [0, 1] {
+        let mut fs = seeded_fs();
+        let mut state = FidoState::new();
+        let fragment = vec![0; MAX_FRAGMENT_LENGTH + extra];
+        let mut request = vec![0; crate::consts::MAX_MSG_SIZE as usize + 1];
+        let mut enc = Encoder::new(Cursor::new(request.as_mut_slice()));
+        enc.map(3).unwrap();
+        enc.u8(2).unwrap().bytes(&fragment).unwrap();
+        enc.u8(3).unwrap().u8(0).unwrap();
+        enc.u8(4).unwrap().u64(MAX_LARGE_BLOB_SIZE as u64).unwrap();
+        let expected = if extra == 0 {
+            CtapError::InvalidParameter
+        } else {
+            CtapError::InvalidLength
+        };
+        let len = enc.writer().position();
+        assert_eq!(
+            run(&mut fs, &mut state, &request[..len], &mut []),
+            Err(expected)
+        );
+        let mut saved = [0; LARGEBLOB_INITIAL.len()];
+        assert_eq!(fs.read(EF_LARGEBLOB, &mut saved), Some(saved.len()));
+        assert_eq!(saved, LARGEBLOB_INITIAL);
+    }
+}
+
+#[test]
 fn set_single_fragment_roundtrips() {
     let mut fs = seeded_fs();
     let mut state = armed(PERM_LBW);

@@ -507,6 +507,11 @@ change, `--in-diff HEAD` limits the run to the working diff. CI divides large
 diffs into round-robin shards over the same candidate list. Completed diff
 shards report survivors and mutation timeouts as warnings in CI. The deep
 workflow compares the broad run with the accepted survivor list.
+The IBM Plex tables are compared with fresh generator output by `check.sh`;
+cargo-mutants excludes that generated file.
+The broad sweep balances whole files by candidate count, keeping repeated
+baseline names on one runner while distributing expensive storage tests.
+Its host builds optimize for speed with debug assertions and overflow checks.
 
 A recorded in-diff mutation run caught **20 / 20** mutants in the storage
 oracle and USB changes. Each verdict applies to that diff's mutation set.

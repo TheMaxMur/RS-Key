@@ -21,6 +21,8 @@ Each rule, the arm that falls when it is deleted, and in which direction:
 * an entry outside a `[class] reason` line — `..._an_entry_needs_a_class`;
 * `:LINE:COL` is dropped before comparing — the control itself, whose survivors
   sit at other lines than the file's entries;
+* whole-file shards cover the roster exactly once and keep repeated names
+  together — `..._keep_every_file_and_its_repeated_baseline_names_together`;
 * `--in-diff` reads the working tree AND the files git has never seen, exits 2
   on a survivor and 0 on none, and a list that failed is not "none" — the
   `in_diff` cases.
@@ -41,6 +43,9 @@ SCRIPT = ROOT / "scripts" / "mutants-all.sh"
 #: outcomes into `--output` and prints the fixture summary, with the real
 #: tool's exit codes for survivors and timeouts.
 FAKE = """#!/usr/bin/env bash
+for rsk_profile_var in CARGO_PROFILE_TEST_OPT_LEVEL CARGO_PROFILE_TEST_DEBUG CARGO_PROFILE_TEST_DEBUG_ASSERTIONS CARGO_PROFILE_TEST_OVERFLOW_CHECKS; do
+  printenv "$rsk_profile_var" || echo unset
+done > "$FAKE/build-profile"
 printf '%s\\n' "$@" > "$FAKE/argv"
 out="" list=0 diff=""
 while [ $# -gt 0 ]; do
@@ -200,6 +205,22 @@ def test_the_control_passes(tree):
     assert "every survivor of shard 1/1 is accepted" in out
 
 
+@pytest.mark.parametrize("in_diff", [False, True])
+def test_generated_font_data_uses_the_generator_oracle_in_both_selections(tree, in_diff):
+    args = ()
+    if in_diff:
+        (tree.fake / "diff-list").write_text(f"{F}\n")
+        tree.outcomes(caught=[F])
+        tree.summary("1 mutants tested in 1s: 1 caught")
+        args = ("--in-diff", "HEAD")
+    code, out = tree.run(*args)
+    assert code == 0, out
+    for file in ("argv", "list-argv"):
+        argv = (tree.fake / file).read_text().splitlines()
+        exclusions = [argv[i + 1] for i, arg in enumerate(argv) if arg == "-e"]
+        assert exclusions == ["**/kani.rs", "**/*_kani.rs", "**/third_party/ibm-plex/font_data.rs"]
+
+
 def test_an_unbounded_native_host_is_refused_through_the_shard_row(tree):
     uname = tree.fake / "bin/uname"
     uname.write_text("#!/usr/bin/env bash\necho Darwin\n")
@@ -215,6 +236,41 @@ def test_the_shard_row_cannot_increase_mutation_concurrency(tree):
     assert code == 0, out
     argv = (tree.fake / "argv").read_text().splitlines()
     assert argv[argv.index("-j") + 1] == "1"
+
+
+def test_mutation_builds_optimize_speed_and_keep_runtime_checks(tree):
+    code, out = tree.run(CARGO_PROFILE_TEST_OPT_LEVEL="0", CARGO_PROFILE_TEST_DEBUG="2",
+                         CARGO_PROFILE_TEST_DEBUG_ASSERTIONS="false",
+                         CARGO_PROFILE_TEST_OVERFLOW_CHECKS="false")
+    assert code == 0, out
+    assert (tree.fake / "build-profile").read_text().splitlines() == ["3", "0", "true", "true"]
+
+
+def test_broad_shards_keep_every_file_and_its_repeated_baseline_names_together(tree):
+    filler = [f"crates/rsk-a/src/fill{i % 4}.rs:{i}:1: replace fill{i} -> bool with true"
+              for i in range(10000)]
+    roster = [F, G1, G2, H, ELSEWHERE] + filler
+    tree.roster(roster)
+    owners = {}
+    for shard in range(1, 5):
+        code, out = tree.run(MUTANTS_SHARD=f"{shard}/4")
+        assert code == 0, out
+        argv = (tree.fake / "argv").read_text().splitlines()
+        assert "--shard" not in argv and "--sharding" not in argv
+        selected = [argv[i + 1] for i, arg in enumerate(argv) if arg == "-f"]
+        assert selected
+        for path in selected:
+            assert path not in owners, "one file's baseline counts must not span shards"
+            owners[path] = shard
+        listed = (tree.fake / "list-argv").read_text().splitlines()
+        assert "--shard" not in listed and "-f" not in listed
+    assert set(owners) == {line.split(":", 1)[0] for line in roster}
+
+
+def test_a_broad_shard_without_an_assigned_file_is_an_apparatus_failure(tree):
+    code, out = tree.run(MUTANTS_SHARD="64/64")
+    assert code == 1, out
+    assert "has no source files" in out
 
 
 @pytest.mark.parametrize("memory,swap", [("max", "0"), ("4294967297", "0"),
@@ -248,7 +304,8 @@ def test_the_container_launcher_enforces_the_whole_tree_limit(tree):
     assert done.returncode == 0, done.stderr
     argv = (tree.fake / "docker-argv").read_text().splitlines()
     for flag in ["--memory=4g", "--memory-swap=4g", "--cpus=2", "--pids-limit=256",
-                 "--cap-drop=ALL", "--security-opt=no-new-privileges", "--init"]:
+                 "--cap-drop=ALL", "--cap-add=CHOWN", "--cap-add=DAC_OVERRIDE",
+                 "--security-opt=no-new-privileges", "--init"]:
         assert flag in argv, f"the actual launcher must enforce {flag}"
     assert argv[argv.index("--name") + 1] == "rsk-mutants-safe"
     assert not any("dst=/work" in arg for arg in argv)
@@ -415,7 +472,7 @@ def test_an_accepted_mutant_no_longer_a_mutant_is_stale(tree):
 
 
 def test_the_roster_question_is_asked_of_shard_one_only(tree):
-    """Twelve shards reporting the same gone entry is one finding said twelve times."""
+    """Many shards reporting the same gone entry are still one finding."""
     tree.accept(ACCEPTED + f"{name(H).replace('h -> u8', 'gone -> u8')}\n")
     code, out = tree.run(MUTANTS_SHARD="2/2")
     assert code == 0, out

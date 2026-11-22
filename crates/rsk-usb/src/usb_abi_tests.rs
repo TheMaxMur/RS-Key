@@ -14,6 +14,23 @@ fn control_flags_preserve_the_selector_and_endpoint_address_fields() {
 }
 
 #[test]
+fn keyboard_reply_flags_distinguish_an_absent_key_and_preserve_every_byte() {
+    use crate::worker_abi::{KEY_ENCODE, KEY_PRESENT};
+
+    assert_ne!(KEY_PRESENT, 0);
+    assert_ne!(KEY_ENCODE, 0);
+    assert_eq!(KEY_PRESENT & KEY_ENCODE, 0);
+    for byte in 0..=u8::MAX {
+        for encode in [false, true] {
+            let reply = u32::from(byte) | KEY_PRESENT | if encode { KEY_ENCODE } else { 0 };
+            assert_ne!(reply & KEY_PRESENT, 0);
+            assert_eq!(reply & KEY_ENCODE != 0, encode);
+            assert_eq!(reply & 0xff, u32::from(byte));
+        }
+    }
+}
+
+#[test]
 fn status_codes_reserve_only_the_top_values_of_the_ticket_space() {
     let codes = [
         crate::worker_abi::INVALID,

@@ -63,6 +63,11 @@ fn the_exclude_list_finds_a_resident_id_in_the_second_slot() {
 
 #[test]
 fn a_matching_truncated_prefix_cannot_hide_an_unread_excluded_passkey() {
+    check_truncated_prefix(32);
+    check_truncated_prefix(RECORD_PREFIX);
+}
+
+fn check_truncated_prefix(prefix_len: usize) {
     let (backend, medium) = rsk_fs::storage::faults::ProbeStuck::new();
     let mut fs = Fs::new(backend);
     crate::tests::uv_optional(&mut fs);
@@ -79,11 +84,11 @@ fn a_matching_truncated_prefix_cannot_hide_an_unread_excluded_passkey() {
     }
     let fid = crate::consts::EF_CRED;
     let first = medium.value(fid).unwrap();
-    fs.put(fid, &first[..32]).unwrap();
+    fs.put(fid, &first[..prefix_len]).unwrap();
     crate::credmgmt::settle_rp_records(&mut fs).unwrap();
     assert_eq!(
         crate::credential::rp_count(&mut fs, &sha256(b"example.com")),
-        Ok(1)
+        Ok(if prefix_len == RECORD_PREFIX { 2 } else { 1 })
     );
     medium.stick(Some(fid + 1));
     let generation = fs.write_gen();

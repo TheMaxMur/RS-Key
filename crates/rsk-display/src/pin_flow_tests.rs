@@ -283,7 +283,7 @@ fn an_overflowing_pin_title_advances_by_elapsed_pixel_steps() {
     );
     assert!(rsk_ui::pin_title_overflows(title));
     let mut ui = env.ui(Pad::idle());
-    ui.hooks.presence_ms = 1000;
+    ui.hooks.presence_ms = 1500;
     let started = Instant::now();
     assert!(matches!(
         ui.collect_pin(title, None, 6, 6, &mut [0; 64], false),
@@ -291,7 +291,7 @@ fn an_overflowing_pin_title_advances_by_elapsed_pixel_steps() {
     ));
     assert!(
         started.elapsed()
-            < Duration::from_millis(MARQUEE_PAUSE_MS + MARQUEE_MS_PER_PX * MARQUEE_MS_PER_PX)
+            < Duration::from_millis(MARQUEE_PAUSE_MS + 2 * MARQUEE_MS_PER_PX * MARQUEE_MS_PER_PX)
     );
     let band = rsk_ui::PIN_TITLE_BAND;
     let actual = ui.panel.area_pixels(band);
@@ -304,7 +304,7 @@ fn an_overflowing_pin_title_advances_by_elapsed_pixel_steps() {
         "the fixture period changed"
     );
     let mut expected = Vec::new();
-    for offset in 1..MARQUEE_MS_PER_PX as u32 {
+    for offset in MARQUEE_MS_PER_PX as u32 + 1..(2 * MARQUEE_MS_PER_PX) as u32 {
         reference.render_marquee_frame(title, offset);
         expected.push(reference.panel.area_pixels(band));
     }
@@ -312,14 +312,32 @@ fn an_overflowing_pin_title_advances_by_elapsed_pixel_steps() {
         expected.contains(&actual),
         "the marquee used the wrong elapsed-time unit"
     );
-    for offset in (0..PERIOD).step_by(MARQUEE_MS_PER_PX as usize) {
+    for offset in (0..PERIOD)
+        .step_by(MARQUEE_MS_PER_PX as usize)
+        .chain(0..MARQUEE_MS_PER_PX as u32)
+    {
         reference.render_marquee_frame(title, offset);
         let wrong = reference.panel.area_pixels(band);
         assert!(
             !expected.contains(&wrong),
-            "the fixture does not separate multiplied offsets"
+            "the fixture does not separate multiplied or remainder offsets"
         );
     }
+    assert!(!ui.panel.oob);
+}
+
+#[test]
+fn a_failed_wipe_delivers_its_notice_before_handing_back_to_the_host() {
+    let env = Env::new();
+    let mut ui = env.ui(Pad::idle());
+    ui.hooks.host_pending = true;
+    let generation = env.cells().fs.borrow().write_gen();
+    ui.show_wipe_failed();
+    let mut reference = env.ui(Pad::idle());
+    rsk_ui::render_wipe_failed(&mut reference.frame()).unwrap();
+    assert_eq!(ui.panel.pixels(), reference.panel.pixels());
+    assert_eq!(env.cells().fs.borrow().write_gen(), generation);
+    assert!(!ui.asleep);
     assert!(!ui.panel.oob);
 }
 

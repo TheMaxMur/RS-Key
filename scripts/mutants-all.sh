@@ -6,7 +6,7 @@
 # and the same roster over the lines one diff touches.
 #
 #   nix develop -c ./scripts/mutants-container.sh
-#   MUTANTS_SHARD=2/12 nix develop -c ./scripts/mutants-container.sh
+#   MUTANTS_SHARD=2/64 nix develop -c ./scripts/mutants-container.sh
 #   nix develop -c ./scripts/mutants-container.sh --in-diff HEAD      # uncommitted work
 #   nix develop -c ./scripts/mutants-container.sh --in-diff HEAD~1    # the last commit
 #
@@ -69,11 +69,16 @@ for dir in crates/*/; do
   packages+=(-p "$(basename "$dir")")
 done
 
-# Two exclusions, each for a measured reason (see the sweep's triage):
-#   --target        the workspace default is thumbv8m, where no test runs at all
-#   -e **/*kani.rs  `#[cfg(kani)]` code `cargo test` never builds, so every
-#                   mutation in it survives and means nothing
-# `#[cfg(test)]` modules need no exclusion — cargo-mutants already skips them.
+# Speed-optimize the host fault sweeps; symbols cost disk space on each runner.
+# Runtime assertions and overflow checks remain part of every mutated test.
+export CARGO_PROFILE_TEST_OPT_LEVEL=3
+export CARGO_PROFILE_TEST_DEBUG=0
+export CARGO_PROFILE_TEST_DEBUG_ASSERTIONS=true
+export CARGO_PROFILE_TEST_OVERFLOW_CHECKS=true
+
+# Host tests need this target and cannot exercise cfg(kani) harnesses.
+# check.sh regenerates IBM Plex data byte for byte; UI tests share those tables.
+# cargo-mutants already skips cfg(test) modules.
 common=(
   "${packages[@]}"
   -C "--target=$HOST"
@@ -81,6 +86,7 @@ common=(
   --test-tool nextest
   -e '**/kani.rs'
   -e '**/*_kani.rs'
+  -e '**/third_party/ibm-plex/font_data.rs'
 )
 
 tmp="$(mktemp -d)"
@@ -178,8 +184,33 @@ if [ "$total" -lt "$MUTANT_FLOOR" ]; then
   exit 1
 fi
 
-cargo-mutants mutants "${common[@]}" \
-  --shard "$shard" -j 1 --output "$OUT" 2>&1 | tee "$tmp/log" || true
+# Keep each file's repeated baseline names together, balancing candidate counts.
+# Splitting one name across runners loses its global accepted-survivor count.
+python - "$tmp/list" "$shard_i" "$shard_n" > "$tmp/files" <<'PY'
+from collections import Counter
+from pathlib import Path
+import sys
+
+counts = Counter(line.split(":", 1)[0] for line in Path(sys.argv[1]).read_text().splitlines()
+                 if line.startswith("crates/"))
+shards = [[] for _ in range(int(sys.argv[3]))]
+loads = [0] * len(shards)
+for path, count in sorted(counts.items(), key=lambda item: (-item[1], item[0])):
+    owner = min(range(len(shards)), key=loads.__getitem__)
+    shards[owner].append(path)
+    loads[owner] += count
+print("\n".join(shards[int(sys.argv[2]) - 1]))
+PY
+selection=()
+while IFS= read -r file; do
+  [ -n "$file" ] && selection+=(-f "$file")
+done < "$tmp/files"
+if [ "${#selection[@]}" -eq 0 ]; then
+  echo "::error::shard $MUTANTS_SHARD has no source files — reduce the shard count" >&2
+  exit 1
+fi
+cargo-mutants mutants "${common[@]}" "${selection[@]}" \
+  -j 1 --output "$OUT" 2>&1 | tee "$tmp/log" || true
 summary="$(run_summary "shard ${MUTANTS_SHARD}")"
 echo "mutants: shard ${MUTANTS_SHARD}, ${summary}"
 

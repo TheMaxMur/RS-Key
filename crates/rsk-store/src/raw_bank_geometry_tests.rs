@@ -87,6 +87,24 @@ fn unsupported_raw_bank_geometry_refuses_before_io() {
 }
 
 #[test]
+fn page_sized_read_and_write_granularities_are_admitted_without_io() {
+    let flash = FaultFlash::new();
+    assert!(RawBank::new(Geometry::<256, 4, SECTOR>(flash.clone()), MAIN).is_ok());
+    assert!(RawBank::new(Geometry::<1, 256, SECTOR>(flash.clone()), MAIN).is_ok());
+    assert!(flash.events().is_empty());
+}
+
+#[test]
+fn io_and_erase_granularity_checks_each_refuse_without_another_alignment_fault() {
+    let flash = FaultFlash::new();
+    assert!(RawBank::new(Geometry::<3, 1, 12288, 24576>(flash.clone()), 0..24576).is_err());
+    assert!(RawBank::new(Geometry::<1, 3, 12288, 24576>(flash.clone()), 0..24576).is_err());
+    assert!(RawBank::new(Geometry::<4, 1, 6, 12>(flash.clone()), 0..12).is_err());
+    assert!(RawBank::new(Geometry::<1, 4, 6, 12>(flash.clone()), 0..12).is_err());
+    assert!(flash.events().is_empty());
+}
+
+#[test]
 fn an_unaligned_bank_read_crosses_scratch_windows_without_growing_them() {
     let flash = FaultFlash::new();
     let mut bank = RawBank::new(Geometry::<4, 4, SECTOR>(flash), MAIN).unwrap();

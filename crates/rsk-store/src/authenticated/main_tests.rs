@@ -249,6 +249,40 @@ fn payload_read_refusals_are_errors_in_published_and_reserved_value_checks() {
 }
 
 #[test]
+fn an_authenticated_current_payload_does_not_require_a_second_scan() {
+    let flash = crate::tests::fault_flash_for_authenticated_tests();
+    let mut main = main_on(flash.clone());
+    main.initialize(&KEY, 0, &Directory::new()).unwrap();
+    main.write(&KEY, 0xB000, Some(b"owner")).unwrap();
+    let entry = main.directory.find(0xB000).unwrap();
+    main.map.invalidate_cache();
+    flash.arm(&[]);
+    assert!(
+        block_on(
+            main.map
+                .fetch_item_unrepaired::<&[u8]>(main.buffer.expose_mut(), &0xB000)
+        )
+        .unwrap()
+        .is_some()
+    );
+    let reads = flash
+        .events()
+        .iter()
+        .filter(|event| event.0 == crate::tests::Io::Read)
+        .count();
+    assert!(reads > 0);
+    main.map.invalidate_cache();
+    flash.arm(&[crate::tests::Rule {
+        io: crate::tests::Io::Read,
+        skip: reads,
+        effect: crate::tests::Effect::Refuse,
+        latched: true,
+    }]);
+    assert_eq!(main.published_value(&KEY, entry), Ok(5));
+    assert_eq!(flash.hits(), [0]);
+}
+
+#[test]
 fn two_invalid_main_headers_are_neither_empty_nor_a_complete_authority() {
     let flash = crate::tests::fault_flash_for_authenticated_tests();
     let mut main = main_on(flash.clone());
