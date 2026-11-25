@@ -140,9 +140,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # The complete eight-seed roster exceeded four hours in three shards.
+        # Even six shards exceeded four hours when eight seeds shared a runner.
         shard: [1, 2, 3, 4, 5, 6]
         config: [default, flavours]
+        seeds: [0..4, 4..8]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -165,10 +166,16 @@ jobs:
           restore-keys: miri-${{ runner.os }}-${{ matrix.config }}-
 
       - name: miri — every fuzz target's logic under the UB checker
-        run: nix develop .#fuzz -c ./scripts/miri-all.sh
+        run: |
+          nix develop .#fuzz -c bash -euo pipefail <<'MIRI'
+            [[ "$MIRIFLAGS" == *-Zmiri-many-seeds=0..8* ]]
+            export MIRIFLAGS="${MIRIFLAGS/-Zmiri-many-seeds=0..8/-Zmiri-many-seeds=$MIRI_SEEDS}"
+            exec ./scripts/miri-all.sh
+          MIRI
         env:
           MIRI_SHARD: ${{ matrix.shard }}/6
           FUZZ_CONFIG: ${{ matrix.config }}
+          MIRI_SEEDS: ${{ matrix.seeds }}
 
   fuzz:
     if: github.event.schedule != '41 5 * * 0'
@@ -291,14 +298,17 @@ jobs:
 
   coverage:
     runs-on: ubuntu-latest
-    # The default line pass took 110 minutes before condition coverage started.
-    # Cold, instrumented storage sweeps also need margin in the other profiles.
+    # A cold line pass consumed half the default condition pass's five-hour cap.
     timeout-minutes: ${{ matrix.profile == 'default' && 300 || 240 }}
     strategy:
       fail-fast: false
       matrix:
         # Daily keeps the default lane; Sunday and manual runs measure each build.
         profile: ${{ fromJSON(github.event.schedule == '17 5 * * *' && '["default"]' || '["default", "advertise-pqc", "fips-profile", "fips-profile,advertise-pqc", "strong-pin", "strong-pin,advertise-pqc", "always-uv", "always-uv,advertise-pqc", "strict-up", "strict-up,advertise-pqc", "display", "strict-config", "largeblob-ext", "preview-sign", "preview-sign,largeblob-ext", "display,strong-pin", "display,fips-profile", "fido-conformance"]') }}
+        measurement: [conditions]
+        include:
+          - profile: default
+            measurement: lines
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -321,25 +331,28 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: coverage-${{ runner.os }}-${{ steps.cache-profile.outputs.profile }}-${{ hashFiles('Cargo.lock', 'flake.lock') }}
-          restore-keys: coverage-${{ runner.os }}-${{ steps.cache-profile.outputs.profile }}-
+          key: coverage-${{ runner.os }}-${{ steps.cache-profile.outputs.profile }}-${{ matrix.measurement }}-${{ hashFiles('Cargo.lock', 'flake.lock') }}
+          restore-keys: |
+            coverage-${{ runner.os }}-${{ steps.cache-profile.outputs.profile }}-${{ matrix.measurement }}-
+            coverage-${{ runner.os }}-${{ steps.cache-profile.outputs.profile }}-
 
       # Keep the embedded-only packages outside the host line-coverage floor.
       - name: llvm-cov — host-crate line coverage, floored at 80%
-        if: matrix.profile == 'default'
+        if: matrix.measurement == 'lines'
         run: |
           nix develop -c cargo llvm-cov --summary-only --fail-under-lines 80 \
             --target x86_64-unknown-linux-gnu \
             --workspace --exclude firmware --exclude firmware-ns --exclude rsk-wipe
 
       - name: condition coverage and raw evidence for the shipping profile
+        if: matrix.measurement == 'conditions'
         run: nix develop .#fuzz -c ./scripts/metrics.sh --coverage
         env:
           COVERAGE_PROFILE: ${{ matrix.profile }}
           COVERAGE_OUT: target/coverage-profiles/${{ github.run_id }}-${{ matrix.profile }}
 
       - name: retain profile logs, feature closure and raw coverage
-        if: always()
+        if: always() && matrix.measurement == 'conditions'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: unit-coverage-${{ github.run_id }}-${{ matrix.profile }}
@@ -423,7 +436,18 @@ jobs:
       # more than it saves, because the non-zero exit ends the script at the `tee`
       # and the harness and cover floors below it are never read.
       - name: prove this tier's harnesses
-        run: ./scripts/kani.sh ${{ matrix.tier }}
+        run: |
+          if [[ '${{ matrix.tier }}' == heavy ]]; then
+            # Keep the runner agent outside the solver's RAM and CPU budget.
+            sudo systemd-run --unit=kani-heavy --wait --pipe --collect \
+              --uid="$(id -u)" --gid="$(id -g)" --working-directory="$PWD" \
+              --setenv="HOME=$HOME" --setenv="PATH=$PATH" \
+              --property=MemoryMax=12G --property=MemorySwapMax=22G \
+              --property=CPUQuota=300% \
+              ./scripts/kani.sh ${{ matrix.tier }}
+          else
+            ./scripts/kani.sh ${{ matrix.tier }}
+          fi
 
   mutants:
     if: github.event.schedule != '17 5 * * *'
